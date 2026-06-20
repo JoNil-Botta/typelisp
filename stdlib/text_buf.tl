@@ -11,20 +11,26 @@
 ;# modules share the owned ordered-chunk render helper so the final materialize
 ;# path stays in one place.
 ;#
-;# Usage: `(import "stdlib/text_buf.tl")`
+;# Usage: `(import stdlib.text_buf)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/text_buf.tl")
+;# (import stdlib.text_buf)
+;# (import stdlib.string)
 ;# (define (main) : i64
-;#   (let ([buf : TextBuf
-;#     (text-buf-append-int (text-buf-append (text-buf-empty) "n=") 7)])
-;#     (if (string-eq (text-buf-render buf) "n=7") 42 1)))
+;#   (let ([buf : text_buf.TextBuf
+;#     (text_buf.text-buf-append-int
+;#       (text_buf.text-buf-append (text_buf.text-buf-empty) "n=")
+;#       7)])
+;#     (if (string.string-eq (text_buf.text-buf-render buf) "n=7") 42 1)))
 ;# ```
 ;#
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
-(import "io.tl")
+(module stdlib.text_buf)
+
+(import stdlib.io)
+(import stdlib.string as string_mod)
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
 (defenum TextBufChunkList
@@ -52,6 +58,10 @@
 (define (text-buf-length [buf : TextBuf]) : i64
   (struct-get buf len))
 
+;: Construct a chunk-list cons node for imported macro expansions.
+(define (text-buf-chunk-cons [chunk : String] [rest : TextBufChunkList]) : TextBufChunkList
+  (TextBufChunkCons chunk (box rest)))
+
 ;: Mutably append `chunk` to the owned `buf` place without rendering its prefix.
 (defmacro (text-buf-append! [buf : Expr] [chunk : String]) : unit
   `(let
@@ -62,9 +72,7 @@
       (begin
         (set!
           (struct-get ,buf chunks)
-          (TextBufChunkCons
-            text-buf-append-chunk
-            (box (struct-get ,buf chunks))))
+          (text-buf-chunk-cons text-buf-append-chunk (struct-get ,buf chunks)))
         (set!
           (struct-get ,buf len)
           (+ (struct-get ,buf len) text-buf-append-chunk-len))))))
@@ -88,12 +96,15 @@
       [(= code 10) "\n"]
       [(= code 13) "\r"]
       [(and (>= code 32) (<= code 126))
-        (substring text-buf-ascii-printable-table (- code 32) 1)]
-      [else (panic "text-buf: unsupported non-printable char")])))
+        (string_mod.substring
+          stdlib.text_buf.text-buf-ascii-printable-table
+          (- code 32)
+          1)]
+      [else (io.panic "text-buf: unsupported non-printable char")])))
 
 ;: Append one char byte to `buf`.
 (define (text-buf-append-char [buf : TextBuf] [c : char]) : TextBuf
-  (text-buf-append buf (text-buf-char-string c)))
+  (stdlib.text_buf.text-buf-append buf (stdlib.text_buf.text-buf-char-string c)))
 
 ;: Mutably append one char byte to `buf`.
 (defmacro (text-buf-append-char! [buf : Expr] [c : char]) : unit
@@ -101,11 +112,15 @@
 
 ;: Append the decimal text for `value` to `buf`.
 (define (text-buf-append-int [buf : TextBuf] [value : i64]) : TextBuf
-  (text-buf-append buf (int->string value)))
+  (stdlib.text_buf.text-buf-append buf (string_mod.int->string value)))
+
+;: Wrapper used by `text-buf-append-int!` macro expansions.
+(define (text-buf-int-string [value : i64]) : String
+  (string_mod.int->string value))
 
 ;: Mutably append the decimal text for `value` to `buf`.
 (defmacro (text-buf-append-int! [buf : Expr] [value : i64]) : unit
-  `(text-buf-append! ,buf (int->string ,value)))
+  `(text-buf-append! ,buf (text-buf-int-string ,value)))
 
 ;: Concatenate chunk lists while preserving their current order.
 (define (text-buf-chunk-list-concat
@@ -116,7 +131,7 @@
     [(TextBufChunkCons chunk rest)
       (TextBufChunkCons
         chunk
-        (box (text-buf-chunk-list-concat (box-get rest) back)))]))
+        (box (stdlib.text_buf.text-buf-chunk-list-concat (box-get rest) back)))]))
 
 ;: Append all chunks from `right` after `left`.
 (define (text-buf-append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
@@ -128,7 +143,7 @@
       (if (= left-len 0)
         right
         (TextBuf
-          (text-buf-chunk-list-concat
+          (stdlib.text_buf.text-buf-chunk-list-concat
             (struct-get right chunks)
             (struct-get left chunks))
           (+ left-len right-len))))))
@@ -138,14 +153,16 @@
   (match chunks
     [(TextBufChunkNil) out]
     [(TextBufChunkCons chunk rest)
-      (text-buf-chunks-render-rev (box-get rest) (string-append chunk out))]))
+      (stdlib.text_buf.text-buf-chunks-render-rev
+        (box-get rest)
+        (string_mod.string-append chunk out))]))
 
 ;: Return the number of chunk nodes in `chunks`, accumulating into `count`.
 (define (text-buf-chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
   (match chunks
     [(TextBufChunkNil) count]
     [(TextBufChunkCons _ rest)
-      (text-buf-chunk-count (box-get rest) (+ count 1))]))
+      (stdlib.text_buf.text-buf-chunk-count (box-get rest) (+ count 1))]))
 
 ;: Fill `items` from a reversed chunk list so array order matches render order.
 (define (text-buf-chunks-fill-array-rev
@@ -157,7 +174,10 @@
     [(TextBufChunkCons chunk rest)
       (begin
         (array-set! items index chunk)
-        (text-buf-chunks-fill-array-rev (box-get rest) items (- index 1)))]))
+        (stdlib.text_buf.text-buf-chunks-fill-array-rev
+          (box-get rest)
+          items
+          (- index 1)))]))
 
 ;: Render the half-open chunk array range `[lo, hi)` with balanced concatenation.
 (define (text-buf-chunks-render-array-range
@@ -170,9 +190,9 @@
       (array-ref items lo)
       (let
         [mid : i64 (/ (+ lo hi) 2)]
-        (string-append
-          (text-buf-chunks-render-array-range items lo mid)
-          (text-buf-chunks-render-array-range items mid hi))))))
+        (string_mod.string-append
+          (stdlib.text_buf.text-buf-chunks-render-array-range items lo mid)
+          (stdlib.text_buf.text-buf-chunks-render-array-range items mid hi))))))
 
 ;: Render many chunks through an array to avoid a deep left-leaning concat chain.
 (define (text-buf-chunks-render-balanced
@@ -181,8 +201,8 @@
   (let
     [items : (Array String) (make-array String count)]
     (begin
-      (text-buf-chunks-fill-array-rev chunks items (- count 1))
-      (text-buf-chunks-render-array-range items 0 count))))
+      (stdlib.text_buf.text-buf-chunks-fill-array-rev chunks items (- count 1))
+      (stdlib.text_buf.text-buf-chunks-render-array-range items 0 count))))
 
 ;: Render `buf` to an owned String allocated in the active arena.
 ;: Copy `chunk`'s bytes into `dst` starting at byte offset `start`.
@@ -237,7 +257,7 @@
     [cursor : TextBufChunkList chunks]
     [out-pos : i64 pos]
     [done : bool false]
-    [small-limit : i64 (text-buf-render-small-chunk-limit)]
+    [small-limit : i64 (stdlib.text_buf.text-buf-render-small-chunk-limit)]
     (begin
       (while (not done)
         (match cursor
@@ -280,7 +300,10 @@
                 (let
                   [start : i64 (- out-pos clen)]
                   (begin
-                    (text-buf-copy-chunk-into (& chunk) dst start)
+                    (stdlib.text_buf.text-buf-copy-chunk-into
+                      (& chunk)
+                      dst
+                      start)
                     (set! out-pos start)
                     (set! cursor (box-get rest))))))]))
       unit)))
@@ -297,23 +320,26 @@
         (unsafe
           (array-data out))]
       (begin
-        (text-buf-fill-rev-into chunks dst len)
+        (stdlib.text_buf.text-buf-fill-rev-into chunks dst len)
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
 
 ;: Render the buffer to an owned String allocated in the active arena.
 (define (text-buf-render [buf : TextBuf]) : String
-  (text-buf-render-chunks (struct-get buf chunks) (struct-get buf len)))
+  (stdlib.text_buf.text-buf-render-chunks
+    (struct-get buf chunks)
+    (struct-get buf len)))
 
 ;: Write chunks in insertion order to an open raw file handle.
 (define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
   (match chunks
-    [(TextBufChunkNil) io-status-ok]
+    [(TextBufChunkNil) io.io-status-ok]
     [(TextBufChunkCons chunk rest)
       (let
-        [status : i64 (text-buf-write-chunks-rev raw (box-get rest))]
-        (if (= status io-status-ok)
-          (file-write-status raw chunk)
+        [status : i64
+          (stdlib.text_buf.text-buf-write-chunks-rev raw (box-get rest))]
+        (if (= status io.io-status-ok)
+          (io.file-write-status raw chunk)
           status))]))
 
 ;: Buffers larger than this are rendered and written in bounded batches. This
@@ -331,9 +357,9 @@
   [batch-limit : i64]) : i64
   (let
     [index : i64 0]
-    [status : i64 io-status-ok]
+    [status : i64 io.io-status-ok]
     (begin
-      (while (and (= status io-status-ok) (< index count))
+      (while (and (= status io.io-status-ok) (< index count))
         (let
           [start : i64 index]
           [bytes : i64 0]
@@ -350,42 +376,53 @@
                     (set! index (+ index 1))))))
             (set!
               status
-              (file-write-status
+              (io.file-write-status
                 raw
-                (text-buf-chunks-render-array-range items start index))))))
+                (stdlib.text_buf.text-buf-chunks-render-array-range
+                  items
+                  start
+                  index))))))
       status)))
 
 ;: Write chunked buffer contents to `raw` by first flattening chunk order into
 ;: an array, then emitting bounded batches.
 (define (text-buf-write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
   (let
-    [count : i64 (text-buf-chunk-count chunks 0)]
+    [count : i64 (stdlib.text_buf.text-buf-chunk-count chunks 0)]
     [items : (Array String) (make-array String count)]
     (begin
-      (text-buf-chunks-fill-array-rev chunks items (- count 1))
-      (text-buf-write-array-batches
+      (stdlib.text_buf.text-buf-chunks-fill-array-rev chunks items (- count 1))
+      (stdlib.text_buf.text-buf-write-array-batches
         raw
         items
         count
-        (text-buf-batched-write-threshold)))))
+        (stdlib.text_buf.text-buf-batched-write-threshold)))))
 
 ;: Write the rendered buffer contents to `path`, replacing any existing file.
 (define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
   (let
     [chunks : TextBufChunkList (struct-get buf chunks)]
     [len : i64 (struct-get buf len)]
-    (match (file-open (& path) (OpenWriteTruncate))
-      [(OkIoFile handle)
+    [open-result : io.ResultIoFile
+      (io.file-open (& path) (io.OpenWriteTruncate))]
+    (if (io.io-result-file-ok? open-result)
+      (let
+        [handle : io.FileHandle
+          (io.io-result-file-value-or open-result (io.FileHandle -1))]
         (let
           [write-status : i64
-            (if (> len (text-buf-batched-write-threshold))
-              (text-buf-write-chunks-batched (struct-get handle id) chunks)
-              (text-buf-write-chunks-rev (struct-get handle id) chunks))]
-          [close-result : ResultIoUnit (file-close handle)]
-          (match close-result
-            [(OkIoUnit) write-status]
-            [(ErrIoUnit _) 1]))]
-      [(ErrIoFile _) 1])))
+            (if (> len (stdlib.text_buf.text-buf-batched-write-threshold))
+              (stdlib.text_buf.text-buf-write-chunks-batched
+                (struct-get handle id)
+                chunks)
+              (stdlib.text_buf.text-buf-write-chunks-rev
+                (struct-get handle id)
+                chunks))]
+          [close-result : io.ResultIoUnit (io.file-close handle)]
+          (if (io.io-result-unit-ok? close-result)
+            write-status
+            1)))
+      1)))
 
 ;: Mutably clear `buf`, leaving it ready for reuse.
 (define (text-buf-clear-ref! [buf : (&mut buf TextBuf)]) : unit
@@ -399,7 +436,7 @@
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [_buf : TextBuf]) : TextBuf
-  (text-buf-empty))
+  (stdlib.text_buf.text-buf-empty))
 
 ;: Mutably reset `buf`, leaving it ready for reuse.
 (defmacro (text-buf-reset! [buf : Expr]) : unit
@@ -407,7 +444,7 @@
 
 ;: Alias for `text-buf-clear` for call sites that model builder reuse as reset.
 (define (text-buf-reset [buf : TextBuf]) : TextBuf
-  (text-buf-clear buf))
+  (stdlib.text_buf.text-buf-clear buf))
 
 (test
   text-buf-scoped-arena-render-policy
@@ -417,20 +454,23 @@
         (begin
           (/ 1 0)
           unit))]
-    [program-buf : TextBuf (text-buf-append (text-buf-empty) "scoped")]
+    [program-buf : TextBuf
+      (stdlib.text_buf.text-buf-append
+        (stdlib.text_buf.text-buf-empty)
+        "scoped")]
     (with-arena
       outer
       (with-arena
         inner
         (let
-          [rendered : String (text-buf-render program-buf)]
+          [rendered : String (stdlib.text_buf.text-buf-render program-buf)]
           [expected : String "scoped"]
-          (if (string-eq-borrowed (& rendered) (& expected))
+          (if (string_mod.string-eq-borrowed (& rendered) (& expected))
             unit
             (fail)))))))
 
 ;; Inline coverage migrated from stdlib/tests/text_buf_api.tl (#3082).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -438,7 +478,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -447,144 +487,229 @@
     [expected : String]
     [message : String]) : unit
     (begin
-      (text-buf-test-assert-owned-string-eq
-        (text-buf-render buf)
+      (stdlib.text_buf.text-buf-test-assert-owned-string-eq
+        (stdlib.text_buf.text-buf-render buf)
         expected
         message)
-      (assert-i64-eq (text-buf-length buf) (string-length expected) message))))
+      (test.assert-i64-eq
+        (stdlib.text_buf.text-buf-length buf)
+        (string-length expected)
+        message))))
 
 (cfg
   test
   (define (text-buf-test-main) : i64
     (begin
-      (assert-true (text-buf-empty? (text-buf-empty)) "empty buffer predicate")
-      (text-buf-test-assert-text-buf
-        (text-buf-empty)
+      (test.assert-true
+        (stdlib.text_buf.text-buf-empty? (stdlib.text_buf.text-buf-empty))
+        "empty buffer predicate")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.text-buf-empty)
         ""
         "empty buffer renders empty")
-      (text-buf-test-assert-text-buf
-        (text-buf-append
-          (text-buf-append (text-buf-append (text-buf-empty) "alpha") " ")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.text-buf-append
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-append
+              (stdlib.text_buf.text-buf-empty)
+              "alpha")
+            " ")
           "beta")
         "alpha beta"
         "append order")
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : TextBuf (stdlib.text_buf.text-buf-empty)]
         (begin
-          (text-buf-append! buf "")
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-append! buf "")
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             ""
             "mutable empty append leaves buffer empty")
-          (text-buf-append! buf "alpha")
-          (text-buf-append! buf "")
-          (text-buf-append! buf " beta")
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-append! buf "alpha")
+          (stdlib.text_buf.text-buf-append! buf "")
+          (stdlib.text_buf.text-buf-append! buf " beta")
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "alpha beta"
             "mutable append order")))
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : TextBuf (stdlib.text_buf.text-buf-empty)]
         [i : i64 0]
         (begin
           (while (< i 6)
             (begin
-              (set! buf (text-buf-append buf "ha"))
+              (set! buf (stdlib.text_buf.text-buf-append buf "ha"))
               (set! i (+ i 1))))
-          (text-buf-test-assert-text-buf buf "hahahahahaha" "repeated append")))
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            buf
+            "hahahahahaha"
+            "repeated append")))
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : TextBuf (stdlib.text_buf.text-buf-empty)]
         [i : i64 0]
         (begin
           (while (< i 6)
             (begin
-              (text-buf-append! buf "ha")
+              (stdlib.text_buf.text-buf-append! buf "ha")
               (set! i (+ i 1))))
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "hahahahahaha"
             "mutable repeated append")))
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : TextBuf (stdlib.text_buf.text-buf-empty)]
         [i : i64 0]
         (begin
           (while (< i 40)
             (begin
-              (set! buf (text-buf-append buf "x"))
+              (set! buf (stdlib.text_buf.text-buf-append buf "x"))
               (set! i (+ i 1))))
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
             "balanced repeated append")))
-      (text-buf-test-assert-text-buf
-        (text-buf-append
-          (text-buf-append
-            (text-buf-append
-              (text-buf-append (text-buf-empty) "0123456789abcdefg")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.text-buf-append
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-append
+              (stdlib.text_buf.text-buf-append
+                (stdlib.text_buf.text-buf-empty)
+                "0123456789abcdefg")
               "a")
             "b")
           "0123456789abcdefg")
         "0123456789abcdefgab0123456789abcdefg"
         "mixed small and large chunks")
-      (text-buf-test-assert-text-buf
-        (text-buf-append-int
-          (text-buf-append-char
-            (text-buf-append-char (text-buf-append (text-buf-empty) "A") '\n')
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.text-buf-append-int
+          (stdlib.text_buf.text-buf-append-char
+            (stdlib.text_buf.text-buf-append-char
+              (stdlib.text_buf.text-buf-append
+                (stdlib.text_buf.text-buf-empty)
+                "A")
+              '\n')
             '\t')
           -12)
         "A\n\t-12"
         "char and int append")
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : TextBuf (stdlib.text_buf.text-buf-empty)]
         (begin
-          (text-buf-append! buf "A")
-          (text-buf-append-char! buf '\n')
-          (text-buf-append-char! buf '\t')
-          (text-buf-append-int! buf (cast -12 : i64))
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-append! buf "A")
+          (stdlib.text_buf.text-buf-append-char! buf '\n')
+          (stdlib.text_buf.text-buf-append-char! buf '\t')
+          (stdlib.text_buf.text-buf-append-int! buf (cast -12 : i64))
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "A\n\t-12"
             "mutable char and int append")))
       (let
         [left : TextBuf
-          (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-append
+              (stdlib.text_buf.text-buf-empty)
+              "left")
+            "-")]
         [right : TextBuf
-          (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")]
-        (text-buf-test-assert-text-buf
-          (text-buf-append-buffer left right)
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-append
+              (stdlib.text_buf.text-buf-empty)
+              "right")
+            "\n")]
+        (stdlib.text_buf.text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-append-buffer left right)
           "left-right\n"
           "append buffer"))
       (let
-        [original : TextBuf (text-buf-append (text-buf-empty) "keep")]
+        [original : TextBuf
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-empty)
+            "keep")]
         (begin
-          (text-buf-test-assert-text-buf
-            (text-buf-clear original)
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            (stdlib.text_buf.text-buf-clear original)
             ""
             "clear returns empty")
-          (text-buf-test-assert-text-buf
-            (text-buf-reset original)
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            (stdlib.text_buf.text-buf-reset original)
             ""
             "reset returns empty")
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             original
             "keep"
             "clear leaves original value")))
       (let
-        [buf : TextBuf (text-buf-append (text-buf-empty) "drop")]
+        [buf : TextBuf
+          (stdlib.text_buf.text-buf-append
+            (stdlib.text_buf.text-buf-empty)
+            "drop")]
         (begin
-          (text-buf-clear! buf)
-          (text-buf-test-assert-text-buf buf "" "mutable clear empties buffer")
-          (text-buf-append! buf "again")
-          (text-buf-test-assert-text-buf
+          (stdlib.text_buf.text-buf-clear! buf)
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            buf
+            ""
+            "mutable clear empties buffer")
+          (stdlib.text_buf.text-buf-append! buf "again")
+          (stdlib.text_buf.text-buf-test-assert-text-buf
             buf
             "again"
             "mutable append after clear")
-          (text-buf-reset! buf)
-          (text-buf-test-assert-text-buf buf "" "mutable reset empties buffer")))
+          (stdlib.text_buf.text-buf-reset! buf)
+          (stdlib.text_buf.text-buf-test-assert-text-buf
+            buf
+            ""
+            "mutable reset empties buffer")))
       42)))
 
 (cfg
   test
   (test
     text-buf-api
-    (assert-i64-eq (text-buf-test-main) 42 "text-buf-api fixture result")))
+    (test.assert-i64-eq
+      (stdlib.text_buf.text-buf-test-main)
+      42
+      "text-buf-api fixture result")))
+
+(export
+  (value text-buf-ascii-printable-table)
+  (value text-buf-empty)
+  (value text-buf-empty?)
+  (value text-buf-length)
+  (value text-buf-chunk-cons)
+  (value text-buf-append)
+  (value text-buf-char-string)
+  (value text-buf-append-char)
+  (value text-buf-append-int)
+  (value text-buf-int-string)
+  (value text-buf-chunk-list-concat)
+  (value text-buf-append-buffer)
+  (value text-buf-chunks-render-rev)
+  (value text-buf-chunk-count)
+  (value text-buf-chunks-fill-array-rev)
+  (value text-buf-chunks-render-array-range)
+  (value text-buf-chunks-render-balanced)
+  (value text-buf-copy-chunk-into)
+  (value text-buf-render-small-chunk-limit)
+  (value text-buf-fill-rev-into)
+  (value text-buf-render-chunks)
+  (value text-buf-render)
+  (value text-buf-write-chunks-rev)
+  (value text-buf-batched-write-threshold)
+  (value text-buf-write-array-batches)
+  (value text-buf-write-chunks-batched)
+  (value text-buf-write-file)
+  (value text-buf-clear-ref!)
+  (value text-buf-clear)
+  (value text-buf-reset)
+  (type TextBufChunkList)
+  (type TextBuf)
+  (constructor TextBuf)
+  (field TextBuf chunks)
+  (field TextBuf len)
+  (variant TextBufChunkNil)
+  (variant TextBufChunkCons)
+  (macro text-buf-append!)
+  (macro text-buf-append-char!)
+  (macro text-buf-append-int!)
+  (macro text-buf-clear!)
+  (macro text-buf-reset!))

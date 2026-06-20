@@ -11,19 +11,23 @@
 ;# constructors are tied to an owner witness so the borrow checker can keep the
 ;# source alive.
 ;#
-;# Usage: `(import "stdlib/byte_buf.tl")`
+;# Usage: `(import stdlib.byte_buf)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/byte_buf.tl")
+;# (import stdlib.byte_buf)
 ;# (define (main) : i64
 ;#   (let
-;#     [buf : ByteBuf
-;#       (byte-buf-push (byte-buf-append-string (byte-buf-new) "A") (cast 0 : u8))]
-;#     (if (= (byte-buf-len buf) 2)
+;#     [buf : byte_buf.ByteBuf
+;#       (byte_buf.byte-buf-push
+;#         (byte_buf.byte-buf-append-string (byte_buf.byte-buf-new) "A")
+;#         (cast 0 : u8))]
+;#     (if (= (byte_buf.byte-buf-len buf) 2)
 ;#       42
 ;#       1)))
 ;# ```
-(import "string.tl")
+(module stdlib.byte_buf)
+
+(import stdlib.string)
 
 ;: Owned mutable binary byte buffer. Only the prefix `[0, len)` is live.
 (defstruct ByteBuf
@@ -93,14 +97,14 @@
 ;: Trap when `[start, start + count)` is outside a sequence of `length` bytes.
 (define (byte-buf-check-range [length : i64] [start : i64] [count : i64]) : unit
   (cond
-    [(< start 0) (tl_oob_abort)]
-    [(< count 0) (tl_oob_abort)]
-    [(> start length) (tl_oob_abort)]
+    [(< start 0) (string.tl_oob_abort)]
+    [(< count 0) (string.tl_oob_abort)]
+    [(> start length) (string.tl_oob_abort)]
     [else
       (let
         [remaining : i64 (- length start)]
         (if (> count remaining)
-          (tl_oob_abort)
+          (string.tl_oob_abort)
           unit))]))
 
 ;: Number of bytes in an immutable borrowed byte view.
@@ -204,7 +208,7 @@
         (unsafe
           (array-data out))]
       (begin
-        (str-copy-bytes-into
+        (string.str-copy-bytes-into
           (unsafe
             (ptr-offset (bytes-data view) start))
           dst
@@ -426,7 +430,7 @@
         (unsafe
           (array-data (struct-get ready slots)))]
       (begin
-        (str-copy-bytes-into
+        (string.str-copy-bytes-into
           (unsafe
             (ptr-offset (bytes-data src) start))
           dst
@@ -504,7 +508,7 @@
           (string-from-bytes (ptr-cast dst : (Ptr u8)) n))))))
 
 ;; Inline coverage for the owned ByteBuf core (#3061).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -517,7 +521,7 @@
     [actual : u8]
     [expected : i64]
     [message : String]) : unit
-    (assert-i64-eq (cast actual : i64) expected message)))
+    (test.assert-i64-eq (cast actual : i64) expected message)))
 
 (cfg
   test
@@ -532,15 +536,15 @@
       (let
         [empty : ByteBuf (byte-buf-with-capacity 2)]
         (begin
-          (assert-i64-eq (byte-buf-len empty) 0 "empty len")
-          (assert-i64-eq (byte-buf-length empty) 0 "empty length alias")
-          (assert-i64-eq (byte-buf-capacity empty) 2 "empty capacity")
-          (assert-true (byte-buf-empty? empty) "empty predicate")
+          (test.assert-i64-eq (byte-buf-len empty) 0 "empty len")
+          (test.assert-i64-eq (byte-buf-length empty) 0 "empty length alias")
+          (test.assert-i64-eq (byte-buf-capacity empty) 2 "empty capacity")
+          (test.assert-true (byte-buf-empty? empty) "empty predicate")
           (byte-buf-test-assert-u8-eq
             (byte-buf-get empty 0 (byte-buf-test-u8 77))
             77
             "empty get fallback")))
-      (assert-i64-eq
+      (test.assert-i64-eq
         (byte-buf-capacity (byte-buf-with-capacity 0))
         1
         "zero capacity clamps")
@@ -549,23 +553,25 @@
         (begin
           (set! buf (byte-buf-push buf (byte-buf-test-u8 10)))
           (set! buf (byte-buf-push buf (byte-buf-test-u8 20)))
-          (assert-i64-eq (byte-buf-len buf) 2 "push len")
-          (assert-i64-eq (byte-buf-capacity buf) 2 "push no growth")
+          (test.assert-i64-eq (byte-buf-len buf) 2 "push len")
+          (test.assert-i64-eq (byte-buf-capacity buf) 2 "push no growth")
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 0) 10 "ref first")
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 1) 20 "ref second")
           (set! buf (byte-buf-push buf (byte-buf-test-u8 30)))
-          (assert-i64-eq (byte-buf-len buf) 3 "growth push len")
-          (assert-i64-eq (byte-buf-capacity buf) 4 "growth capacity")
+          (test.assert-i64-eq (byte-buf-len buf) 3 "growth push len")
+          (test.assert-i64-eq (byte-buf-capacity buf) 4 "growth capacity")
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 2) 30 "growth value")
           (set! buf (byte-buf-set! buf 1 (byte-buf-test-u8 99)))
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 1) 99 "set value")
           (set! buf (byte-buf-reserve buf 5))
-          (assert-i64-eq (byte-buf-len buf) 3 "reserve keeps len")
-          (assert-true (>= (byte-buf-capacity buf) 8) "reserve grows enough")
+          (test.assert-i64-eq (byte-buf-len buf) 3 "reserve keeps len")
+          (test.assert-true
+            (>= (byte-buf-capacity buf) 8)
+            "reserve grows enough")
           (set! buf (byte-buf-clear! buf))
-          (assert-true (byte-buf-empty? buf) "clear empties")
+          (test.assert-true (byte-buf-empty? buf) "clear empties")
           (set! buf (byte-buf-push buf (byte-buf-test-u8 7)))
-          (assert-i64-eq (byte-buf-len buf) 1 "reuse after clear")
+          (test.assert-i64-eq (byte-buf-len buf) 1 "reuse after clear")
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 0) 7 "reuse value")))
       (let
         [src : (Array u8) (make-array u8 4)]
@@ -577,7 +583,7 @@
           (let
             [buf : ByteBuf (byte-buf-from-array src)]
             (begin
-              (assert-i64-eq (byte-buf-len buf) 4 "from-array len")
+              (test.assert-i64-eq (byte-buf-len buf) 4 "from-array len")
               (array-set! src 2 (byte-buf-test-u8 2))
               (byte-buf-test-assert-u8-eq
                 (byte-buf-ref buf 2)
@@ -586,7 +592,7 @@
               (let
                 [slice : (Array u8) (byte-buf-copy-range buf 1 2)]
                 (begin
-                  (assert-i64-eq (array-length slice) 2 "copy-range len")
+                  (test.assert-i64-eq (array-length slice) 2 "copy-range len")
                   (byte-buf-test-assert-u8-eq
                     (array-ref slice 0)
                     0
@@ -598,7 +604,7 @@
               (let
                 [snap : (Array u8) (byte-buf-to-array buf)]
                 (begin
-                  (assert-i64-eq (array-length snap) 4 "to-array len")
+                  (test.assert-i64-eq (array-length snap) 4 "to-array len")
                   (byte-buf-test-assert-u8-eq
                     (array-ref snap 3)
                     255
@@ -625,32 +631,32 @@
               (let
                 [actual : String (byte-buf-to-string buf)]
                 [expected : String "xyBC"]
-                (assert-string-eq
+                (test.assert-string-eq
                   (& actual)
                   (& expected)
                   "append string and array range"))
-              (assert-i64-eq (byte-buf-len buf) 4 "append mixed len")))))
+              (test.assert-i64-eq (byte-buf-len buf) 4 "append mixed len")))))
       (let
         [buf : ByteBuf (byte-buf-from-string "hello")]
         (begin
-          (assert-i64-eq (byte-buf-len buf) 5 "from-string len")
+          (test.assert-i64-eq (byte-buf-len buf) 5 "from-string len")
           (byte-buf-test-assert-u8-eq (byte-buf-ref buf 1) 101 "from-string e")
           (let
             [out : String (byte-buf-to-string buf)]
             [expected : String "hello"]
-            (assert-string-eq (& out) (& expected) "to-string text"))))
+            (test.assert-string-eq (& out) (& expected) "to-string text"))))
       (let
         [text : String "abcdef"]
         [view : (& text bytes) (str-as-bytes (& text))]
         [middle : (& text bytes) (bytes-slice-view view 2 3)]
         (begin
-          (assert-i64-eq (bytes-length view) 6 "bytes view len")
+          (test.assert-i64-eq (bytes-length view) 6 "bytes view len")
           (byte-buf-test-assert-u8-eq (bytes-ref view 1) 98 "bytes ref")
           (byte-buf-test-assert-u8-eq
             (bytes-get view 99 (byte-buf-test-u8 77))
             77
             "bytes get fallback")
-          (assert-i64-eq (bytes-length middle) 3 "bytes sub-slice len")
+          (test.assert-i64-eq (bytes-length middle) 3 "bytes sub-slice len")
           (byte-buf-test-assert-u8-eq
             (bytes-ref middle 0)
             99
@@ -658,7 +664,7 @@
           (let
             [arr : (Array u8) (bytes-to-array middle)]
             (begin
-              (assert-i64-eq (array-length arr) 3 "bytes to-array len")
+              (test.assert-i64-eq (array-length arr) 3 "bytes to-array len")
               (byte-buf-test-assert-u8-eq
                 (array-ref arr 2)
                 101
@@ -666,23 +672,29 @@
           (let
             [copy : String (bytes-to-string middle)]
             [expected : String "cde"]
-            (assert-string-eq (& copy) (& expected) "bytes to-string"))
+            (test.assert-string-eq (& copy) (& expected) "bytes to-string"))
           (let
             [buf : ByteBuf (byte-buf-from-bytes middle)]
             [actual : String (byte-buf-to-string buf)]
             [expected : String "cde"]
-            (assert-string-eq (& actual) (& expected) "byte-buf from bytes"))
+            (test.assert-string-eq
+              (& actual)
+              (& expected)
+              "byte-buf from bytes"))
           (let
             [buf : ByteBuf
               (byte-buf-append-bytes (byte-buf-from-string "x") middle)]
             [actual : String (byte-buf-to-string buf)]
             [expected : String "xcde"]
-            (assert-string-eq (& actual) (& expected) "byte-buf append bytes"))))
+            (test.assert-string-eq
+              (& actual)
+              (& expected)
+              "byte-buf append bytes"))))
       (let
         [buf : ByteBuf (byte-buf-from-string "view")]
         [view : (& buf bytes) (byte-buf-as-bytes (& buf))]
         (begin
-          (assert-i64-eq (bytes-length view) 4 "byte-buf view len")
+          (test.assert-i64-eq (bytes-length view) 4 "byte-buf view len")
           (byte-buf-test-assert-u8-eq
             (bytes-ref view 2)
             101
@@ -693,7 +705,7 @@
           (let
             [view : (&mut buf bytes) (byte-buf-as-mut-bytes (&mut buf))]
             (begin
-              (assert-i64-eq (bytes-mut-length view) 3 "mutable bytes len")
+              (test.assert-i64-eq (bytes-mut-length view) 3 "mutable bytes len")
               (byte-buf-test-assert-u8-eq
                 (bytes-mut-ref view 0)
                 97
@@ -719,7 +731,7 @@
             (byte-buf-test-u8 255))]
         [text : String (byte-buf-to-string binary)]
         (begin
-          (assert-i64-eq (string-length text) 3 "binary string length")
+          (test.assert-i64-eq (string-length text) 3 "binary string length")
           (byte-buf-test-assert-u8-eq
             (byte-buf-test-string-byte text 0)
             0
@@ -738,4 +750,59 @@
   test
   (test
     byte-buf-api
-    (assert-i64-eq (byte-buf-test-main) 42 "byte-buf-api fixture result")))
+    (test.assert-i64-eq (byte-buf-test-main) 42 "byte-buf-api fixture result")))
+
+(export
+  (value byte-buf-len)
+  (value byte-buf-length)
+  (value byte-buf-capacity)
+  (value byte-buf-empty?)
+  (value byte-buf-with-capacity)
+  (value byte-buf-new)
+  (value byte-buf-check-range)
+  (value bytes-length)
+  (value bytes-mut-length)
+  (value bytes-data)
+  (value bytes-mut-data)
+  (value bytes-get)
+  (value bytes-mut-get)
+  (value bytes-ref)
+  (value bytes-mut-ref)
+  (value bytes-set!)
+  (value str-as-bytes)
+  (value bytes-slice-view)
+  (value bytes-mut-slice-view)
+  (value bytes-copy-range)
+  (value bytes-to-array)
+  (value bytes-to-string)
+  (value byte-buf-as-bytes)
+  (value byte-buf-as-mut-bytes)
+  (value byte-buf-get)
+  (value byte-buf-ref)
+  (value byte-buf-set!)
+  (value byte-buf-copy-array-range-into)
+  (value byte-buf-grow-to)
+  (value byte-buf-grow)
+  (value byte-buf-reserve)
+  (value byte-buf-clear!)
+  (value byte-buf-clear)
+  (value byte-buf-push)
+  (value byte-buf-append-array-range)
+  (value byte-buf-append-array)
+  (value byte-buf-append-string-range)
+  (value byte-buf-append-string)
+  (value byte-buf-append-bytes-range)
+  (value byte-buf-append-bytes)
+  (value byte-buf-from-array-range)
+  (value byte-buf-from-array)
+  (value byte-buf-from-string-range)
+  (value byte-buf-from-string)
+  (value byte-buf-from-bytes-range)
+  (value byte-buf-from-bytes)
+  (value byte-buf-copy-range)
+  (value byte-buf-to-array)
+  (value byte-buf-to-string)
+  (type ByteBuf)
+  (constructor ByteBuf)
+  (field ByteBuf slots)
+  (field ByteBuf len))

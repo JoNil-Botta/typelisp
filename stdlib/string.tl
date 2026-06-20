@@ -4,18 +4,20 @@
 ;# `string-length`, `string-ref`, `string-data`, `array-data`, `tl_alloc`, and
 ;# `string-from-bytes`.
 ;#
-;# Usage: `(import "stdlib/string.tl")`
+;# Usage: `(import stdlib.string)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/string.tl")
+;# (import stdlib.string)
 ;# (define ok : bool
 ;#   (let
 ;#     [s : String "  alpha  "]
-;#     [haystack : String (string-trim-left (& s))]
+;#     [haystack : String (string.string-trim-left (& s))]
 ;#     [needle : String "ph"]
-;#     (string-contains (& haystack) (& needle))))
+;#     (string.string-contains (& haystack) (& needle))))
 ;# ```
 ;: Runtime bounds-check trap shared with array/string indexing.
+(module stdlib.string)
+
 (extern (tl_oob_abort) : never)
 
 ;: Runtime helper that builds a borrowed string view record without copying
@@ -340,13 +342,19 @@
 (define (string-slice [text : String] [start : i64] [len : i64]) : String
   (substring text start len))
 
-;: Return true if the character is ASCII whitespace.
-(define (is-char-whitespace [c : char]) : bool
-  (or (char-eq c ' ') (char-eq c '\t') (char-eq c '\n') (char-eq c '\r')))
-
 ;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
+
+;: Return true if the character is ASCII whitespace.
+(define (is-char-whitespace [c : char]) : bool
+  (if (char-eq c ' ')
+    true
+    (if (char-eq c '\t')
+      true
+      (if (char-eq c '\n')
+        true
+        (char-eq c '\r')))))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
@@ -403,7 +411,9 @@
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (and (> n 0) (char-eq (string-ref text 0) '-'))
+      (if (if (> n 0)
+        (char-eq (string-ref text 0) '-')
+        false)
         (begin
           (set! negative true)
           (set! i 1))
@@ -630,40 +640,53 @@
       outer
       (let
         [s : String "  outer  "]
-        [outer-trimmed : String (string-trim (& s))]
-        [outer-slice : String (substring-borrowed (& s) 2 5)]
+        [outer-trimmed : String (stdlib.string.string-trim (& s))]
+        [outer-slice : String (stdlib.string.substring-borrowed (& s) 2 5)]
         [outer-suffix : String "-append"]
         [outer-appended : String
-          (string-append-borrowed (& outer-trimmed) (& outer-suffix))]
-        [outer-number : String (int->string 12345)]
+          (stdlib.string.string-append-borrowed
+            (& outer-trimmed)
+            (& outer-suffix))]
+        [outer-number : String (stdlib.string.int->string 12345)]
         [outer-expected : String "outer"]
         [outer-appended-expected : String "outer-append"]
         [outer-number-expected : String "12345"]
         (begin
-          (if (string-eq-borrowed (& outer-trimmed) (& outer-expected))
+          (if (stdlib.string.string-eq-borrowed
+            (& outer-trimmed)
+            (& outer-expected))
             unit
             (fail))
-          (if (string-eq-borrowed (& outer-slice) (& outer-expected))
+          (if (stdlib.string.string-eq-borrowed
+            (& outer-slice)
+            (& outer-expected))
             unit
             (fail))
-          (if (string-eq-borrowed
+          (if (stdlib.string.string-eq-borrowed
             (& outer-appended)
             (& outer-appended-expected))
             unit
             (fail))
-          (if (string-eq-borrowed (& outer-number) (& outer-number-expected))
+          (if (stdlib.string.string-eq-borrowed
+            (& outer-number)
+            (& outer-number-expected))
             unit
             (fail))
           (with-arena
             inner
             (let
-              [inner-replaced : String (string-replace "alpha" "ph" "ren")]
-              [inner-slice : String (string-slice "alphabet" 2 3)]
-              [inner-appended : String (string-append "inner" "-append")]
-              [inner-concat : String (string-concat "inner" "-concat")]
-              [inner-number : String (int->string -6789)]
+              [inner-replaced : String
+                (stdlib.string.string-replace "alpha" "ph" "ren")]
+              [inner-slice : String (stdlib.string.string-slice "alphabet" 2 3)]
+              [inner-appended : String
+                (stdlib.string.string-append "inner" "-append")]
+              [inner-concat : String
+                (stdlib.string.string-concat "inner" "-concat")]
+              [inner-number : String (stdlib.string.int->string -6789)]
               [inner-borrowed : String
-                (string-append-borrowed (& inner-slice) (& inner-replaced))]
+                (stdlib.string.string-append-borrowed
+                  (& inner-slice)
+                  (& inner-replaced))]
               [inner-replaced-expected : String "alrena"]
               [inner-slice-expected : String "pha"]
               [inner-appended-expected : String "inner-append"]
@@ -671,32 +694,32 @@
               [inner-number-expected : String "-6789"]
               [inner-borrowed-expected : String "phaalrena"]
               (begin
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-replaced)
                   (& inner-replaced-expected))
                   unit
                   (fail))
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-slice)
                   (& inner-slice-expected))
                   unit
                   (fail))
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-appended)
                   (& inner-appended-expected))
                   unit
                   (fail))
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-concat)
                   (& inner-concat-expected))
                   unit
                   (fail))
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-number)
                   (& inner-number-expected))
                   unit
                   (fail))
-                (if (string-eq-borrowed
+                (if (stdlib.string.string-eq-borrowed
                   (& inner-borrowed)
                   (& inner-borrowed-expected))
                   unit
@@ -712,7 +735,7 @@
                   (fail))))))))))
 
 ;; Inline coverage migrated from stdlib/tests/string_edges.tl (#3082).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -720,7 +743,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -869,16 +892,20 @@
   test
   (define (string-test-main) : i64
     (begin
-      (assert-true (is-char-whitespace ' ') "space is whitespace")
-      (assert-true (is-char-whitespace '\t') "tab is whitespace")
-      (assert-true (is-char-whitespace '\n') "newline is whitespace")
-      (assert-true (is-char-whitespace '\r') "return is whitespace")
-      (assert-false (is-char-whitespace 'A') "letter is not whitespace")
-      (assert-true (char-eq 'A' 'A') "same chars compare equal")
-      (assert-false (char-eq 'A' 'B') "different chars do not compare equal")
-      (assert-true (string-eq "" "") "empty strings compare equal")
-      (assert-true (string-eq "hello" "hello") "same strings compare equal")
-      (assert-true
+      (test.assert-true (is-char-whitespace ' ') "space is whitespace")
+      (test.assert-true (is-char-whitespace '\t') "tab is whitespace")
+      (test.assert-true (is-char-whitespace '\n') "newline is whitespace")
+      (test.assert-true (is-char-whitespace '\r') "return is whitespace")
+      (test.assert-false (is-char-whitespace 'A') "letter is not whitespace")
+      (test.assert-true (char-eq 'A' 'A') "same chars compare equal")
+      (test.assert-false
+        (char-eq 'A' 'B')
+        "different chars do not compare equal")
+      (test.assert-true (string-eq "" "") "empty strings compare equal")
+      (test.assert-true
+        (string-eq "hello" "hello")
+        "same strings compare equal")
+      (test.assert-true
         (string=? "alias" (string-append "ali" "as"))
         "string=? aliases string-eq")
       (string-test-assert-owned-string-eq
@@ -939,19 +966,22 @@
         (string-test-concat-borrowed "" "borrowed")
         "borrowed"
         "string-concat-borrowed handles empty borrowed input")
-      (assert-false (string-eq "hello" "world") "different strings differ")
-      (assert-false (string-eq "hi" "high") "length mismatch differs")
-      (assert-true
+      (test.assert-false (string-eq "hello" "world") "different strings differ")
+      (test.assert-false (string-eq "hi" "high") "length mismatch differs")
+      (test.assert-true
         (string-test-eq-borrowed "borrow" (string-append "bor" "row"))
         "borrowed string equality compares contents")
-      (assert-false
+      (test.assert-false
         (string-test-eq-borrowed "borrow" "borrows")
         "borrowed string equality rejects length mismatch")
-      (assert-i64-eq (string->int "") 0 "empty string parses as zero")
-      (assert-i64-eq (string->int "-") 0 "minus-only string parses as zero")
-      (assert-i64-eq (string->int "123") 123 "positive integer parses")
-      (assert-i64-eq (string->int "-42") -42 "negative integer parses")
-      (assert-i64-eq
+      (test.assert-i64-eq (string->int "") 0 "empty string parses as zero")
+      (test.assert-i64-eq
+        (string->int "-")
+        0
+        "minus-only string parses as zero")
+      (test.assert-i64-eq (string->int "123") 123 "positive integer parses")
+      (test.assert-i64-eq (string->int "-42") -42 "negative integer parses")
+      (test.assert-i64-eq
         (string-test-to-int-borrowed "12a")
         169
         "borrowed parser keeps legacy non-digit arithmetic")
@@ -1001,14 +1031,14 @@
       (cfg
         feature-str-view
         (begin
-          (assert-true
+          (test.assert-true
             (string-test-substring-view-eq "abcdef" 2 3 "cde")
             "substring-view borrows middle slice")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (string-test-substring-view-len "abcdef" 6 0)
             0
             "substring-view borrows empty boundary slice")
-          (assert-true
+          (test.assert-true
             (string-test-slice-view-eq "abcdef" 5 1 "f")
             "string-slice-view aliases borrowed substring view"))
         unit)
@@ -1039,38 +1069,38 @@
       (cfg
         feature-str-view
         (begin
-          (assert-true
+          (test.assert-true
             (string-test-trim-left-view-eq "  hello" "hello")
             "trim-left-view removes leading spaces")
-          (assert-true
+          (test.assert-true
             (string-test-trim-right-view-eq "hello  " "hello")
             "trim-right-view removes trailing spaces")
-          (assert-true
+          (test.assert-true
             (string-test-trim-view-eq "  hello  " "hello")
             "trim-view removes both sides")
-          (assert-true
+          (test.assert-true
             (string-test-trim-view-eq "   " "")
             "trim-view handles all-space strings"))
         unit)
-      (assert-true
+      (test.assert-true
         (string-test-contains "hello" "ell")
         "contains finds middle needle")
-      (assert-true
+      (test.assert-true
         (string-test-contains "hello" "")
         "contains accepts empty needle")
-      (assert-false
+      (test.assert-false
         (string-test-contains "hello" "world")
         "contains reports miss")
-      (assert-false
+      (test.assert-false
         (string-test-contains "hi" "hello")
         "contains rejects too-long needle")
-      (assert-true
+      (test.assert-true
         (string-test-contains-char "hello" 'e')
         "contains-char finds char")
-      (assert-false
+      (test.assert-false
         (string-test-contains-char "hello" 'z')
         "contains-char reports miss")
-      (assert-false
+      (test.assert-false
         (string-test-contains-char "" 'z')
         "contains-char handles empty string")
       (string-test-assert-owned-string-eq
@@ -1093,20 +1123,67 @@
         (string-replace "abc" "" "x")
         "xabc"
         "replace empty needle prefixes")
-      (assert-true (string-test-prefix-at "hello" "he" 0) "prefix at start")
-      (assert-true (string-test-prefix-at "hello" "ll" 2) "prefix in middle")
-      (assert-true (string-test-prefix-at "hello" "" 5) "empty prefix at end")
-      (assert-false
+      (test.assert-true
+        (string-test-prefix-at "hello" "he" 0)
+        "prefix at start")
+      (test.assert-true
+        (string-test-prefix-at "hello" "ll" 2)
+        "prefix in middle")
+      (test.assert-true
+        (string-test-prefix-at "hello" "" 5)
+        "empty prefix at end")
+      (test.assert-false
         (string-test-prefix-at "hello" "he" -1)
         "negative prefix position")
-      (assert-false
+      (test.assert-false
         (string-test-prefix-at "hello" "hello!" 0)
         "too-long prefix")
-      (assert-false (string-test-prefix-at "hello" "lo" 4) "prefix past end")
+      (test.assert-false
+        (string-test-prefix-at "hello" "lo" 4)
+        "prefix past end")
       42)))
 
 (cfg
   test
   (test
     string-api-edges
-    (assert-i64-eq (string-test-main) 42 "string-api-edges fixture result")))
+    (test.assert-i64-eq (string-test-main) 42 "string-api-edges fixture result")))
+
+(export
+  (value tl_oob_abort)
+  (value string-runtime-alloc)
+  (value int->string-write-byte!)
+  (value int->string-negative-digit-count)
+  (value int->string-write-negative-digits!)
+  (value int->string)
+  (value substring-bounds-check)
+  (value str-copy-bytes-into)
+  (value substring-copy-checked)
+  (value string-append-borrowed)
+  (value string-copy-borrowed)
+  (value string-concat-borrowed)
+  (value string-append)
+  (value string-concat)
+  (value string-concat-all)
+  (value string-concat-all-pack-part)
+  (value string-concat3)
+  (value string-concat4)
+  (value string-concat5)
+  (value substring-borrowed)
+  (value substring)
+  (value string-slice-borrowed)
+  (value string-slice)
+  (value is-char-whitespace)
+  (value char-eq)
+  (value string-eq-borrowed)
+  (value string-eq)
+  (value string=?)
+  (value string->int-borrowed)
+  (value string->int)
+  (value string-trim-left)
+  (value string-trim-right)
+  (value string-trim)
+  (value string-contains)
+  (value string-contains-char)
+  (value string-replace)
+  (value is-string-prefix-at))

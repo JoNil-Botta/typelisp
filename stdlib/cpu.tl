@@ -11,8 +11,10 @@
 ;# i64 before bit testing; single-bit tests use `(bit-and (shr v n) 1)` so the
 ;# sign of the widening cast is irrelevant.
 ;#
-;# Usage: `(import "stdlib/cpu.tl")`
+;# Usage: `(import stdlib.cpu)`
 ;: Return CPUID EAX for `leaf` and `subleaf`.
+(module stdlib.cpu)
+
 (define (cpu-cpuid-eax [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-eax leaf subleaf) : i32))
 
@@ -90,15 +92,21 @@
 
 ;: AVX2 is runnable when the CPU advertises it and the OS has enabled YMM state.
 (define (cpu-runs-avx2?) : bool
-  (and (cpu-has-avx2?) (cpu-ymm-enabled?)))
+  (if (cpu-has-avx2?)
+    (cpu-ymm-enabled?)
+    false))
 
 ;: AVX-512 Foundation is runnable when advertised and ZMM/opmask state is enabled.
 (define (cpu-runs-avx512f?) : bool
-  (and (cpu-has-avx512f?) (cpu-zmm-enabled?)))
+  (if (cpu-has-avx512f?)
+    (cpu-zmm-enabled?)
+    false))
 
 ;: AVX-512BW is runnable when Foundation, BW, and ZMM/opmask state are enabled.
 (define (cpu-runs-avx512bw?) : bool
-  (and (cpu-runs-avx512f?) (cpu-has-avx512bw?)))
+  (if (cpu-runs-avx512f?)
+    (cpu-has-avx512bw?)
+    false))
 
 ;: Inline test failure helper.
 (define (cpu-test-fail) : unit
@@ -150,3 +158,21 @@
       (if (cpu-runs-avx2?)
         (cpu-osxsave?)
         true))))
+
+(export
+  (value cpu-cpuid-eax)
+  (value cpu-cpuid-ebx)
+  (value cpu-cpuid-ecx)
+  (value cpu-cpuid-edx)
+  (value cpuid)
+  (value cpu-osxsave?)
+  (value cpu-xcr0)
+  (value cpu-max-leaf)
+  (value cpu-ymm-enabled?)
+  (value cpu-zmm-enabled?)
+  (value cpu-has-avx2?)
+  (value cpu-has-avx512f?)
+  (value cpu-has-avx512bw?)
+  (value cpu-runs-avx2?)
+  (value cpu-runs-avx512f?)
+  (value cpu-runs-avx512bw?))

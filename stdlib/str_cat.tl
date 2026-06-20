@@ -5,21 +5,24 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The macro owns
-;# its concat helper dependency, so callers do not need to import
-;# `stdlib/string.tl` unless they use string helpers directly.
+;# Usage: `(import stdlib.string)` plus `(import stdlib.str_cat)`, then
+;# `(str_cat.str-cat a b c)`.
 ;#
-;# ```typelisp
-;# (import "stdlib/str_cat.tl")
+;# The multi-argument dotted-import example below is illustrative until #3436
+;# lets macro expansions emit qualified helper calls.
+;#
+;# ```lisp
+;# (import stdlib.string)
+;# (import stdlib.str_cat)
 ;#
 ;# (define (greet [name : String]) : String
-;#   (str-cat "hello, " name "!"))
+;#   (str_cat.str-cat "hello, " name "!"))
 ;# ```
-(import "string.tl")
-(cfg test (import "test.tl"))
-(cfg test (import "hashmap.tl"))
+(module stdlib.str_cat)
 
-(cfg (not test) (module stdlib.str-cat))
+(import stdlib.string)
+(cfg test (import stdlib.test))
+(cfg test (import stdlib.hashmap))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
@@ -29,8 +32,8 @@
 (defmacro (str-cat-pack [parts : Expr] [index : Expr] [args : String ...]) : Expr
   (if (expr-list-empty? args)
     parts
-    `(str-cat-pack
-      (string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
+    `(str_cat.str-cat-pack
+      (string.string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
       (+ ,index 1)
       ,@(expr-list-tail args))))
 
@@ -52,24 +55,24 @@
           [b : Expr (expr-list-head rest1)]
           [rest2 : ExprList (expr-list-tail rest1)]
           (if (expr-list-empty? rest2)
-            `(string-append ,a ,b)
+            `(string.string-append ,a ,b)
             (let
               [c : Expr (expr-list-head rest2)]
               [rest3 : ExprList (expr-list-tail rest2)]
               (if (expr-list-empty? rest3)
-                `(string-concat3 ,a ,b ,c)
+                `(string.string-concat3 ,a ,b ,c)
                 (let
                   [d : Expr (expr-list-head rest3)]
                   [rest4 : ExprList (expr-list-tail rest3)]
                   (if (expr-list-empty? rest4)
-                    `(string-concat4 ,a ,b ,c ,d)
+                    `(string.string-concat4 ,a ,b ,c ,d)
                     (let
                       [e : Expr (expr-list-head rest4)]
                       [rest5 : ExprList (expr-list-tail rest4)]
                       (if (expr-list-empty? rest5)
-                        `(string-concat5 ,a ,b ,c ,d ,e)
-                        `(string-concat-all
-                          (str-cat-pack
+                        `(string.string-concat5 ,a ,b ,c ,d ,e)
+                        `(string.string-concat-all
+                          (str_cat.str-cat-pack
                             (make-array
                               String
                               ,(expr-int (expr-list-length args)))
@@ -86,7 +89,7 @@
 (cfg
   test
   (define (str-cat-api-eq [got : String] [want : String]) : i64
-    (if (string-eq got want)
+    (if (string.string-eq got want)
       1
       0)))
 
@@ -154,4 +157,4 @@
   test
   (test
     str-cat-api
-    (assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))
+    (test.assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))

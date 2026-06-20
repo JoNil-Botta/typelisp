@@ -5,7 +5,7 @@
 ;# `stdlib/vector.tl`.
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector_family.tl")
+;# (import stdlib.vector_family as vf)
 ;#
 ;# (defstruct Point
 ;#   (x i64))
@@ -13,8 +13,8 @@
 ;# (defstruct Token
 ;#   (id i64))
 ;#
-;# (vector-family Point PointVec point-vec)
-;# (vector-family Token TokenVec token-vec)
+;# (vf.vector-family Point PointVec point-vec)
+;# (vf.vector-family Token TokenVec token-vec)
 ;#
 ;# (define (main) : i64
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
@@ -28,6 +28,8 @@
 ;: `point-vec-set!`, and private copy/grow helpers. Use this helper when a
 ;: module needs more than one concrete vector instantiation or when stable
 ;: prefixed names are clearer than the one-instantiation `(vector T)` surface.
+(module stdlib.vector_family)
+
 (defmacro (vector-family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
   (match prefix
     [(ExprVar base)

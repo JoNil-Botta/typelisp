@@ -7,8 +7,10 @@
 ;#
 ;# This module intentionally remains separate from `text_buf.tl` while the
 ;# compatibility surface keeps owned chunk storage.
-(import "text_buf.tl")
-(import "string.tl")
+(module stdlib.text_buf_borrowed)
+
+(import stdlib.text_buf)
+(import stdlib.string)
 
 ;: Borrowed buffer chunk. Borrowed chunks are not copied until render; owned
 ;: chunks are available as explicit lifetime boundaries.
@@ -90,7 +92,7 @@
   [chunk : (& chunk str)]) : (TextBufBorrowed text)
   (text-buf-borrowed-append-owned
     buf
-    (substring-borrowed chunk 0 (string-length chunk))))
+    (string.substring-borrowed chunk 0 (string-length chunk))))
 
 ;: Append rendered `right` after `left`. This is an explicit owned-copy
 ;: boundary, so `right` may be assembled independently before being appended.
@@ -103,17 +105,17 @@
 (define (text-buf-borrowed-chunk-string [chunk : (TextBufBorrowedChunk text)]) : String
   (match chunk
     [(TextBufBorrowedChunkBorrowed text)
-      (substring-borrowed text 0 (string-length text))]
+      (string.substring-borrowed text 0 (string-length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
 ;: Convert borrowed chunks to the owned chunk-list shape without changing the
 ;: reversed render order. Borrowed chunks copy here; owned chunks are reused.
 (define (text-buf-borrowed-chunks-to-owned
-  [chunks : (TextBufBorrowedChunkList text)]) : TextBufChunkList
+  [chunks : (TextBufBorrowedChunkList text)]) : text_buf.TextBufChunkList
   (match chunks
-    [(TextBufBorrowedChunkNil) TextBufChunkNil]
+    [(TextBufBorrowedChunkNil) text_buf.TextBufChunkNil]
     [(TextBufBorrowedChunkCons chunk rest)
-      (TextBufChunkCons
+      (text_buf.TextBufChunkCons
         (text-buf-borrowed-chunk-string chunk)
         (box (text-buf-borrowed-chunks-to-owned (box-get rest))))]))
 
@@ -121,7 +123,9 @@
 (define (text-buf-borrowed-render [buf : (TextBufBorrowed text)]) : String
   (match buf
     [(TextBufBorrowed chunks len)
-      (text-buf-render-chunks (text-buf-borrowed-chunks-to-owned chunks) len)]))
+      (text_buf.text-buf-render-chunks
+        (text-buf-borrowed-chunks-to-owned chunks)
+        len)]))
 
 ;: Inline test helper that forces a borrowed text buffer test failure.
 (define (text-buf-borrowed-test-fail) : unit
@@ -158,6 +162,27 @@
       (if (= (text-buf-borrowed-length empty) 0)
         unit
         (text-buf-borrowed-test-fail))
-      (if (string-eq rendered "alpha-alphatail")
+      (if (string.string-eq rendered "alpha-alphatail")
         unit
         (text-buf-borrowed-test-fail)))))
+
+(export
+  (value text-buf-borrowed-empty-like)
+  (value text-buf-borrowed-single)
+  (value text-buf-borrowed-empty?)
+  (value text-buf-borrowed-length)
+  (value text-buf-borrowed-append)
+  (value text-buf-borrowed-append-owned)
+  (value text-buf-borrowed-append-copy)
+  (value text-buf-borrowed-append-buffer)
+  (value text-buf-borrowed-chunk-string)
+  (value text-buf-borrowed-chunks-to-owned)
+  (value text-buf-borrowed-render)
+  (type TextBufBorrowedChunk)
+  (type TextBufBorrowedChunkList)
+  (type TextBufBorrowed)
+  (variant TextBufBorrowedChunkBorrowed)
+  (variant TextBufBorrowedChunkOwned)
+  (variant TextBufBorrowedChunkNil)
+  (variant TextBufBorrowedChunkCons)
+  (variant TextBufBorrowed))

@@ -30,14 +30,15 @@
 ;# language model, pattern matching is the main operation, or preserving a stable
 ;# checked-in recursive representation matters more than append throughput.
 ;#
-;# Usage: `(import "stdlib/vector.tl")`
+;# Usage: `(import stdlib.vector)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector.tl")
+;# (import stdlib.vector)
 ;# (define (main) : i64
 ;#   (let
-;#     [v : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 10) 32)]
-;#     (+ (i64-vec-get v 0 0) (i64-vec-get v 1 0))))
+;#     [v : vector.I64Vec
+;#       (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 10) 32)]
+;#     (+ (vector.i64-vec-get v 0 0) (vector.i64-vec-get v 1 0))))
 ;# ```
 ;#
 ;# The module-emitting `(vector T)` macro is the migration path away from
@@ -45,10 +46,10 @@
 ;# receives its own generated module namespace:
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector.tl")
+;# (import stdlib.vector)
 ;#
-;# (import (vector i64))
-;# (import (vector String) as svec)
+;# (import (vector.vector i64))
+;# (import (vector.vector String) as svec)
 ;#
 ;# (define (main) : i64
 ;#   (let
@@ -65,7 +66,7 @@
 ;# vector families with stable names:
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector_family.tl")
+;# (import stdlib.vector_family as vf)
 ;#
 ;# (defstruct Point
 ;#   (x i64))
@@ -73,14 +74,16 @@
 ;# (defstruct Token
 ;#   (id i64))
 ;#
-;# (vector-family Point PointVec point-vec)
-;# (vector-family Token TokenVec token-vec)
+;# (vf.vector-family Point PointVec point-vec)
+;# (vf.vector-family Token TokenVec token-vec)
 ;#
 ;# (define (main) : i64
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
 ;: Emit a generated growable vector module for element type `T`.
+(module stdlib.vector)
+
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr
@@ -880,7 +883,7 @@
     (string-vec-contains-from? v x 0)))
 
 ;; Inline coverage migrated from stdlib/tests/vector_api.tl (#3082).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -888,7 +891,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -1353,56 +1356,64 @@
       (let
         [empty : I64Vec (i64-vec-with-capacity 2)]
         (begin
-          (assert-i64-eq (i64-vec-len empty) 0 "empty len 0")
-          (assert-i64-eq (i64-vec-capacity empty) 2 "empty capacity 2")
-          (assert-true (i64-vec-is-empty? empty) "empty is-empty?")
+          (test.assert-i64-eq (i64-vec-len empty) 0 "empty len 0")
+          (test.assert-i64-eq (i64-vec-capacity empty) 2 "empty capacity 2")
+          (test.assert-true (i64-vec-is-empty? empty) "empty is-empty?")
           ;; out-of-range reads fall back
-          (assert-i64-eq (i64-vec-get empty 0 -1) -1 "empty get 0 fallback")
-          (assert-i64-eq (i64-vec-last empty -1) -1 "empty last fallback")))
+          (test.assert-i64-eq
+            (i64-vec-get empty 0 -1)
+            -1
+            "empty get 0 fallback")
+          (test.assert-i64-eq (i64-vec-last empty -1) -1 "empty last fallback")))
       ;; --- non-positive capacity is clamped to 1 ---
-      (assert-i64-eq
+      (test.assert-i64-eq
         (i64-vec-capacity (i64-vec-with-capacity 0))
         1
         "zero capacity clamps to 1")
-      (assert-true (>= (i64-vec-capacity (i64-vec-new)) 1) "new has capacity")
+      (test.assert-true
+        (>= (i64-vec-capacity (i64-vec-new)) 1)
+        "new has capacity")
       ;; --- push within capacity: no growth ---
       (let
         [v2 : I64Vec
           (i64-vec-push (i64-vec-push (i64-vec-with-capacity 2) 10) 20)]
         (begin
-          (assert-i64-eq (i64-vec-len v2) 2 "two pushes -> len 2")
-          (assert-i64-eq (i64-vec-capacity v2) 2 "still capacity 2")
-          (assert-i64-eq (i64-vec-get v2 0 -1) 10 "get 0 -> 10")
-          (assert-i64-eq (i64-vec-get v2 1 -1) 20 "get 1 -> 20")
-          (assert-i64-eq (i64-vec-last v2 -1) 20 "last -> 20")
+          (test.assert-i64-eq (i64-vec-len v2) 2 "two pushes -> len 2")
+          (test.assert-i64-eq (i64-vec-capacity v2) 2 "still capacity 2")
+          (test.assert-i64-eq (i64-vec-get v2 0 -1) 10 "get 0 -> 10")
+          (test.assert-i64-eq (i64-vec-get v2 1 -1) 20 "get 1 -> 20")
+          (test.assert-i64-eq (i64-vec-last v2 -1) 20 "last -> 20")
           ;; index at len and a negative index both fall back
-          (assert-i64-eq (i64-vec-get v2 2 -1) -1 "get at len fallback")
-          (assert-i64-eq (i64-vec-get v2 -1 -1) -1 "get negative fallback")
+          (test.assert-i64-eq (i64-vec-get v2 2 -1) -1 "get at len fallback")
+          (test.assert-i64-eq (i64-vec-get v2 -1 -1) -1 "get negative fallback")
           ;; --- push past capacity: grows, preserves prefix ---
           (let
             [v3 : I64Vec (i64-vec-push v2 30)]
             (begin
-              (assert-i64-eq (i64-vec-len v3) 3 "third push -> len 3")
-              (assert-i64-eq (i64-vec-capacity v3) 4 "grew to capacity 4")
-              (assert-i64-eq
+              (test.assert-i64-eq (i64-vec-len v3) 3 "third push -> len 3")
+              (test.assert-i64-eq (i64-vec-capacity v3) 4 "grew to capacity 4")
+              (test.assert-i64-eq
                 (i64-vec-get v3 0 -1)
                 10
                 "prefix preserved: 0 -> 10")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (i64-vec-get v3 1 -1)
                 20
                 "prefix preserved: 1 -> 20")
-              (assert-i64-eq (i64-vec-get v3 2 -1) 30 "new element: 2 -> 30")
-              (assert-i64-eq (i64-vec-last v3 -1) 30 "last -> 30")
+              (test.assert-i64-eq
+                (i64-vec-get v3 2 -1)
+                30
+                "new element: 2 -> 30")
+              (test.assert-i64-eq (i64-vec-last v3 -1) 30 "last -> 30")
               ;; --- set! mutates in place within bounds ---
               (let
                 [v4 : I64Vec (i64-vec-set! v3 1 99)]
                 (begin
-                  (assert-i64-eq (i64-vec-get v4 1 -1) 99 "set! 1 -> 99")
-                  (assert-i64-eq (i64-vec-len v4) 3 "set! keeps len")
+                  (test.assert-i64-eq (i64-vec-get v4 1 -1) 99 "set! 1 -> 99")
+                  (test.assert-i64-eq (i64-vec-len v4) 3 "set! keeps len")
                   ;; out-of-range set! is a no-op
                   (i64-vec-set! v4 5 7)
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (i64-vec-get v4 5 -1)
                     -1
                     "set! out of range no-op")
@@ -1410,16 +1421,19 @@
                   (let
                     [popped : I64VecPop (i64-vec-pop v4)]
                     (begin
-                      (assert-true (vector-test-pop-ok? popped) "pop ok")
-                      (assert-i64-eq
+                      (test.assert-true (vector-test-pop-ok? popped) "pop ok")
+                      (test.assert-i64-eq
                         (vector-test-pop-value-or popped -1)
                         30
                         "pop value -> 30")
                       (let
                         [rest : I64Vec (vector-test-pop-vec-or popped v4)]
                         (begin
-                          (assert-i64-eq (i64-vec-len rest) 2 "pop shrinks len")
-                          (assert-i64-eq
+                          (test.assert-i64-eq
+                            (i64-vec-len rest)
+                            2
+                            "pop shrinks len")
+                          (test.assert-i64-eq
                             (i64-vec-last rest -1)
                             99
                             "rest last -> 99")))))))))))
@@ -1428,30 +1442,43 @@
         [mut : I64Vec (i64-vec-with-capacity 1)]
         (begin
           (set! mut (i64-vec-push mut 41))
-          (assert-i64-eq (i64-vec-len mut) 1 "mutable push len 1")
-          (assert-i64-eq (i64-vec-capacity mut) 1 "mutable push no growth")
+          (test.assert-i64-eq (i64-vec-len mut) 1 "mutable push len 1")
+          (test.assert-i64-eq (i64-vec-capacity mut) 1 "mutable push no growth")
           (set! mut (i64-vec-push mut 42))
-          (assert-i64-eq (i64-vec-len mut) 2 "mutable growth push len 2")
-          (assert-i64-eq (i64-vec-capacity mut) 2 "mutable growth capacity 2")
+          (test.assert-i64-eq (i64-vec-len mut) 2 "mutable growth push len 2")
+          (test.assert-i64-eq
+            (i64-vec-capacity mut)
+            2
+            "mutable growth capacity 2")
           (set! mut (i64-vec-set! mut 0 40))
-          (assert-i64-eq (i64-vec-get mut 0 -1) 40 "mutable set after push")
+          (test.assert-i64-eq
+            (i64-vec-get mut 0 -1)
+            40
+            "mutable set after push")
           (set! mut (i64-vec-reverse! mut))
-          (assert-i64-eq (i64-vec-get mut 0 -1) 42 "mutable reverse first")
-          (assert-i64-eq (i64-vec-get mut 1 -1) 40 "mutable reverse second")
+          (test.assert-i64-eq (i64-vec-get mut 0 -1) 42 "mutable reverse first")
+          (test.assert-i64-eq
+            (i64-vec-get mut 1 -1)
+            40
+            "mutable reverse second")
           (match (i64-vec-pop mut)
             [(I64VecPopOk value rest)
               (begin
                 (set! mut rest)
-                (assert-i64-eq value 40 "mutable pop value")
-                (assert-i64-eq (i64-vec-len mut) 1 "mutable pop len 1")
-                (assert-i64-eq (i64-vec-last mut -1) 42 "mutable pop rest last"))]
-            [(I64VecPopEmpty) (assert-true false "mutable pop should be ok")])))
+                (test.assert-i64-eq value 40 "mutable pop value")
+                (test.assert-i64-eq (i64-vec-len mut) 1 "mutable pop len 1")
+                (test.assert-i64-eq
+                  (i64-vec-last mut -1)
+                  42
+                  "mutable pop rest last"))]
+            [(I64VecPopEmpty)
+              (test.assert-true false "mutable pop should be ok")])))
       ;; --- pop on an empty vector is Empty ---
       (let
         [pe : I64VecPop (i64-vec-pop (i64-vec-with-capacity 1))]
         (begin
-          (assert-true (not (vector-test-pop-ok? pe)) "empty pop not ok")
-          (assert-i64-eq
+          (test.assert-true (not (vector-test-pop-ok? pe)) "empty pop not ok")
+          (test.assert-i64-eq
             (vector-test-pop-value-or pe -1)
             -1
             "empty pop value fallback")))
@@ -1466,22 +1493,27 @@
           (let
             [fv : I64Vec (i64-vec-from-array src 3)]
             (begin
-              (assert-i64-eq (i64-vec-len fv) 3 "from-array len 3")
-              (assert-i64-eq (i64-vec-get fv 0 -1) 5 "from-array[0] = 5")
-              (assert-i64-eq (i64-vec-get fv 2 -1) 7 "from-array[2] = 7")
+              (test.assert-i64-eq (i64-vec-len fv) 3 "from-array len 3")
+              (test.assert-i64-eq (i64-vec-get fv 0 -1) 5 "from-array[0] = 5")
+              (test.assert-i64-eq (i64-vec-get fv 2 -1) 7 "from-array[2] = 7")
               ;; sum + contains? over the live elements
-              (assert-i64-eq (i64-vec-sum fv) 18 "sum 5+6+7 = 18")
-              (assert-true (i64-vec-contains? fv 6) "contains 6")
-              (assert-false (i64-vec-contains? fv 99) "does not contain 99")
+              (test.assert-i64-eq (i64-vec-sum fv) 18 "sum 5+6+7 = 18")
+              (test.assert-true (i64-vec-contains? fv 6) "contains 6")
+              (test.assert-false
+                (i64-vec-contains? fv 99)
+                "does not contain 99")
               ;; to-array snapshot has exactly len elements and is independent
               (let
                 [snap : (Array i64) (i64-vec-to-array fv)]
                 (begin
-                  (assert-i64-eq (array-length snap) 3 "to-array length = len")
-                  (assert-i64-eq (array-ref snap 1) 6 "to-array[1] = 6")
+                  (test.assert-i64-eq
+                    (array-length snap)
+                    3
+                    "to-array length = len")
+                  (test.assert-i64-eq (array-ref snap 1) 6 "to-array[1] = 6")
                   ;; mutating the snapshot does not affect the vector
                   (array-set! snap 1 0)
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (i64-vec-get fv 1 -1)
                     6
                     "vector unaffected by snapshot mutation")))
@@ -1489,25 +1521,25 @@
               (let
                 [rv : I64Vec (i64-vec-reverse! fv)]
                 (begin
-                  (assert-i64-eq (i64-vec-get rv 0 -1) 7 "reverse![0] = 7")
-                  (assert-i64-eq (i64-vec-get rv 2 -1) 5 "reverse![2] = 5")
-                  (assert-i64-eq (i64-vec-sum rv) 18 "reverse keeps sum")))))
+                  (test.assert-i64-eq (i64-vec-get rv 0 -1) 7 "reverse![0] = 7")
+                  (test.assert-i64-eq (i64-vec-get rv 2 -1) 5 "reverse![2] = 5")
+                  (test.assert-i64-eq (i64-vec-sum rv) 18 "reverse keeps sum")))))
           ;; from-array with non-positive count yields an empty, growable vector
           (let
             [ev : I64Vec (i64-vec-from-array src 0)]
             (begin
-              (assert-true (i64-vec-is-empty? ev) "from-array 0 is empty")
-              (assert-true
+              (test.assert-true (i64-vec-is-empty? ev) "from-array 0 is empty")
+              (test.assert-true
                 (>= (i64-vec-capacity ev) 1)
                 "empty from-array still growable")
               ;; extend pushes the first count elements (growing as needed)
               (let
                 [xv : I64Vec (i64-vec-extend ev src 3)]
                 (begin
-                  (assert-i64-eq (i64-vec-len xv) 3 "extend len 3")
-                  (assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
-                  (assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
-                  (assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
+                  (test.assert-i64-eq (i64-vec-len xv) 3 "extend len 3")
+                  (test.assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
+                  (test.assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
+                  (test.assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
       ;; --- I64Vec higher-order fold/map helpers (#2067) ---
       (let
         [src : (Array i64) (make-array i64 5)]
@@ -1520,15 +1552,15 @@
           (let
             [hv : I64Vec (i64-vec-from-array src 5)]
             (begin
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (i64-vec-fold hv 0 vec-api-fold-decimal)
                 12345
                 "fold named function preserves order")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (i64-vec-fold-from hv 2 10 vec-api-fold-decimal)
                 10345
                 "fold-from starts at index")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (i64-vec-fold (i64-vec-new) 77 vec-api-fold-decimal)
                 77
                 "fold empty returns initial")
@@ -1536,29 +1568,38 @@
                 [empty-mapped : I64Vec
                   (i64-vec-map (i64-vec-new) vec-api-double)]
                 (begin
-                  (assert-i64-eq (i64-vec-len empty-mapped) 0 "map empty len 0")
-                  (assert-true
+                  (test.assert-i64-eq
+                    (i64-vec-len empty-mapped)
+                    0
+                    "map empty len 0")
+                  (test.assert-true
                     (>= (i64-vec-capacity empty-mapped) 1)
                     "map empty remains growable")))
               (let
                 [doubled : I64Vec (i64-vec-map hv vec-api-double)]
                 (begin
-                  (assert-i64-eq (i64-vec-len doubled) 5 "map len 5")
-                  (assert-i64-eq
+                  (test.assert-i64-eq (i64-vec-len doubled) 5 "map len 5")
+                  (test.assert-i64-eq
                     (i64-vec-capacity doubled)
                     8
                     "map output grows through push")
-                  (assert-i64-eq (i64-vec-get doubled 0 -1) 2 "map order 0")
-                  (assert-i64-eq (i64-vec-get doubled 4 -1) 10 "map order 4")))
+                  (test.assert-i64-eq
+                    (i64-vec-get doubled 0 -1)
+                    2
+                    "map order 0")
+                  (test.assert-i64-eq
+                    (i64-vec-get doubled 4 -1)
+                    10
+                    "map order 4")))
               (let
                 [suffix : I64Vec (i64-vec-map-from hv 2 vec-api-double)]
                 (begin
-                  (assert-i64-eq (i64-vec-len suffix) 3 "map-from len 3")
-                  (assert-i64-eq
+                  (test.assert-i64-eq (i64-vec-len suffix) 3 "map-from len 3")
+                  (test.assert-i64-eq
                     (i64-vec-get suffix 0 -1)
                     6
                     "map-from first suffix")
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (i64-vec-get suffix 2 -1)
                     10
                     "map-from last suffix")))
@@ -1570,11 +1611,11 @@
                     (lambda ([x : i64]) : i64
                       (+ x bias)))]
                 (begin
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (i64-vec-get biased 0 -1)
                     8
                     "map scalar-capturing lambda first")
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (i64-vec-get biased 4 -1)
                     12
                     "map scalar-capturing lambda last")))))))
@@ -1585,8 +1626,11 @@
             (string-vec-push (string-vec-with-capacity 2) "alpha")
             "beta")]
         (begin
-          (assert-i64-eq (string-vec-len sv2) 2 "string two pushes -> len 2")
-          (assert-i64-eq
+          (test.assert-i64-eq
+            (string-vec-len sv2)
+            2
+            "string two pushes -> len 2")
+          (test.assert-i64-eq
             (string-vec-capacity sv2)
             2
             "string capacity unchanged")
@@ -1601,9 +1645,15 @@
           (let
             [sv3 : StringVec (string-vec-push sv2 "gamma")]
             (begin
-              (assert-i64-eq (string-vec-len sv3) 3 "string third push len")
-              (assert-i64-eq (string-vec-capacity sv3) 4 "string grow capacity")
-              (assert-true
+              (test.assert-i64-eq
+                (string-vec-len sv3)
+                3
+                "string third push len")
+              (test.assert-i64-eq
+                (string-vec-capacity sv3)
+                4
+                "string grow capacity")
+              (test.assert-true
                 (string-vec-contains? sv3 "beta")
                 "string contains beta")
               (let
@@ -1616,7 +1666,7 @@
                   (let
                     [popped : StringVecPop (string-vec-pop sv4)]
                     (begin
-                      (assert-true
+                      (test.assert-true
                         (vector-test-string-pop-ok? popped)
                         "string pop ok")
                       (vector-test-assert-owned-string-eq
@@ -1627,14 +1677,14 @@
                         [rest : StringVec
                           (vector-test-string-pop-vec-or popped sv4)]
                         (begin
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (string-vec-len rest)
                             2
                             "string pop shrinks")
                           (let
                             [snap : (Array String) (string-vec-to-array rest)]
                             (begin
-                              (assert-i64-eq
+                              (test.assert-i64-eq
                                 (array-length snap)
                                 2
                                 "string snapshot length")
@@ -1667,24 +1717,26 @@
               (VecApiTagA 1))
             (VecApiTagB 2))]
         (begin
-          (assert-i64-eq (vec-api-tag-vec-len tv2) 2 "tag vec len")
-          (assert-i64-eq (vec-api-tag-vec-capacity tv2) 2 "tag vec grew")
-          (assert-i64-eq
+          (test.assert-i64-eq (vec-api-tag-vec-len tv2) 2 "tag vec len")
+          (test.assert-i64-eq (vec-api-tag-vec-capacity tv2) 2 "tag vec grew")
+          (test.assert-i64-eq
             (vec-api-tag-score (vec-api-tag-vec-get tv2 1 (VecApiTagA 0)))
             102
             "tag vec get")
           (let
             [tv3 : VecApiTagVec (vec-api-tag-vec-set! tv2 0 (VecApiTagB 7))]
             (begin
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (vec-api-tag-score (vec-api-tag-vec-get tv3 0 (VecApiTagA 0)))
                 107
                 "tag vec set!")
               (let
                 [popped : VecApiTagVecPop (vec-api-tag-vec-pop tv3)]
                 (begin
-                  (assert-true (vector-test-tag-pop-ok? popped) "tag pop ok")
-                  (assert-i64-eq
+                  (test.assert-true
+                    (vector-test-tag-pop-ok? popped)
+                    "tag pop ok")
+                  (test.assert-i64-eq
                     (vector-test-tag-pop-score-or popped -1)
                     102
                     "tag pop value")
@@ -1692,21 +1744,24 @@
                     [rest : VecApiTagVec
                       (vector-test-tag-pop-vec-or popped tv3)]
                     (begin
-                      (assert-i64-eq (vec-api-tag-vec-len rest) 1 "tag pop len")
+                      (test.assert-i64-eq
+                        (vec-api-tag-vec-len rest)
+                        1
+                        "tag pop len")
                       (let
                         [snap : (Array VecApiTag)
                           (vec-api-tag-vec-to-array rest)]
                         (begin
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (array-length snap)
                             1
                             "tag snapshot length")
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (vec-api-tag-score (array-ref snap 0))
                             107
                             "tag snapshot value")
                           (array-set! snap 0 (VecApiTagA 99))
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (vec-api-tag-score
                               (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
                             107
@@ -1720,14 +1775,17 @@
               (VecApiPoint 1 2))
             (VecApiPoint 3 4))]
         (begin
-          (assert-i64-eq (vec-api-point-vec-len pv2) 2 "point vec len")
-          (assert-i64-eq (vec-api-point-vec-capacity pv2) 2 "point vec grew")
-          (assert-i64-eq
+          (test.assert-i64-eq (vec-api-point-vec-len pv2) 2 "point vec len")
+          (test.assert-i64-eq
+            (vec-api-point-vec-capacity pv2)
+            2
+            "point vec grew")
+          (test.assert-i64-eq
             (vec-api-point-score
               (vec-api-point-vec-get pv2 1 (VecApiPoint 0 0)))
             43
             "point vec get")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (vec-api-point-vec-score pv2)
             64
             "point vec index iteration")
@@ -1735,12 +1793,12 @@
             [pv3 : VecApiPointVec
               (vec-api-point-vec-set! pv2 0 (VecApiPoint 5 6))]
             (begin
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (vec-api-point-score
                   (vec-api-point-vec-get pv3 0 (VecApiPoint 0 0)))
                 65
                 "point vec set!")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (vec-api-point-vec-score pv3)
                 108
                 "point vec iteration after set!")
@@ -1748,17 +1806,17 @@
                 [pv4 : VecApiPointVec
                   (vec-api-point-vec-set! pv3 99 (VecApiPoint 9 9))]
                 (begin
-                  (assert-i64-eq
+                  (test.assert-i64-eq
                     (vec-api-point-vec-score pv4)
                     108
                     "point vec out-of-range set! no-op")
                   (let
                     [popped : VecApiPointVecPop (vec-api-point-vec-pop pv4)]
                     (begin
-                      (assert-true
+                      (test.assert-true
                         (vector-test-point-pop-ok? popped)
                         "point pop ok")
-                      (assert-i64-eq
+                      (test.assert-i64-eq
                         (vector-test-point-pop-score-or popped -1)
                         43
                         "point pop value")
@@ -1766,7 +1824,7 @@
                         [rest : VecApiPointVec
                           (vector-test-point-pop-vec-or popped pv4)]
                         (begin
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (vec-api-point-vec-len rest)
                             1
                             "point pop len")
@@ -1774,16 +1832,16 @@
                             [snap : (Array VecApiPoint)
                               (vec-api-point-vec-to-array rest)]
                             (begin
-                              (assert-i64-eq
+                              (test.assert-i64-eq
                                 (array-length snap)
                                 1
                                 "point snapshot length")
-                              (assert-i64-eq
+                              (test.assert-i64-eq
                                 (vec-api-point-score (array-ref snap 0))
                                 65
                                 "point snapshot value")
                               (array-set! snap 0 (VecApiPoint 9 9))
-                              (assert-i64-eq
+                              (test.assert-i64-eq
                                 (vec-api-point-score
                                   (vec-api-point-vec-get
                                     rest
@@ -1797,4 +1855,69 @@
   test
   (test
     vector-api
-    (assert-i64-eq (vector-test-main) 42 "vector-api fixture result")))
+    (test.assert-i64-eq (vector-test-main) 42 "vector-api fixture result")))
+
+(export
+  (value i64-vec-slots)
+  (value i64-vec-len)
+  (value i64-vec-capacity)
+  (value i64-vec-is-empty?)
+  (value i64-vec-with-capacity)
+  (value i64-vec-new)
+  (value i64-vec-get)
+  (value i64-vec-last)
+  (value i64-vec-set!)
+  (value i64-vec-copy-range)
+  (value i64-vec-grow)
+  (value i64-vec-push)
+  (value i64-vec-pop)
+  (value i64-vec-from-array)
+  (value i64-vec-to-array)
+  (value i64-vec-extend-from)
+  (value i64-vec-extend)
+  (value i64-vec-reverse-range!)
+  (value i64-vec-reverse!)
+  (value i64-vec-fold-from)
+  (value i64-vec-fold)
+  (value i64-vec-map-build-from)
+  (value i64-vec-map-from)
+  (value i64-vec-map)
+  (value i64-vec-sum-from)
+  (value i64-vec-sum)
+  (value i64-vec-contains-from?)
+  (value i64-vec-contains?)
+  (value string-vec-slots)
+  (value string-vec-len)
+  (value string-vec-capacity)
+  (value string-vec-is-empty?)
+  (value string-vec-with-capacity)
+  (value string-vec-new)
+  (value string-vec-get)
+  (value string-vec-last)
+  (value string-vec-set!)
+  (value string-vec-copy-range)
+  (value string-vec-grow)
+  (value string-vec-push)
+  (value string-vec-pop)
+  (value string-vec-from-array)
+  (value string-vec-to-array)
+  (value string-vec-extend-from)
+  (value string-vec-extend)
+  (value string-vec-reverse-range!)
+  (value string-vec-reverse!)
+  (value string-vec-contains-from?)
+  (value string-vec-contains?)
+  (type I64Vec)
+  (type I64VecPop)
+  (type StringVec)
+  (type StringVecPop)
+  (constructor I64Vec)
+  (constructor StringVec)
+  (field I64Vec slots)
+  (field I64Vec len)
+  (field StringVec slots)
+  (field StringVec len)
+  (variant I64VecPopEmpty)
+  (variant I64VecPopOk)
+  (variant StringVecPopEmpty)
+  (variant StringVecPopOk))

@@ -10,20 +10,22 @@
 ;# value forward, matching `stdlib/vector.tl` and `stdlib/hashmap.tl`.
 ;# Empty pops return an explicit enum and peeks use caller fallbacks.
 ;#
-;# Usage: `(import "stdlib/queue.tl")`
+;# Usage: `(import stdlib.queue)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/queue.tl")
+;# (import stdlib.queue)
 ;# (define (main) : i64
 ;#   (let
-;#     [q : I64Deque
-;#       (i64-deque-push-back
-;#         (i64-deque-push-back (i64-deque-new) 10)
+;#     [q : queue.I64Deque
+;#       (queue.i64-deque-push-back
+;#         (queue.i64-deque-push-back (queue.i64-deque-new) 10)
 ;#         32)]
-;#     (i64-deque-peek-front q 0)))
+;#     (queue.i64-deque-peek-front q 0)))
 ;# ```
 ;: A growable circular deque: `slots` holds capacity elements, `head` points to
 ;: the first live element, and `len` is the live element count.
+(module stdlib.queue)
+
 (defstruct I64Deque
   (slots (Array i64))
   (head i64)
@@ -395,3 +397,32 @@
       (match (i64-deque-pop-back (i64-deque-new))
         [(I64DequePopEmpty) unit]
         [(I64DequePopOk _ _) (fail)]))))
+
+(export
+  (value i64-deque-slots)
+  (value i64-deque-head)
+  (value i64-deque-len)
+  (value i64-deque-capacity)
+  (value i64-deque-is-empty?)
+  (value i64-deque-with-capacity)
+  (value i64-deque-new)
+  (value i64-deque-next-index)
+  (value i64-deque-prev-index)
+  (value i64-deque-physical-index)
+  (value i64-deque-get)
+  (value i64-deque-peek-front)
+  (value i64-deque-peek-back)
+  (value i64-deque-copy-live)
+  (value i64-deque-grow)
+  (value i64-deque-push-back)
+  (value i64-deque-push-front)
+  (value i64-deque-pop-front)
+  (value i64-deque-pop-back)
+  (type I64Deque)
+  (type I64DequePop)
+  (constructor I64Deque)
+  (field I64Deque slots)
+  (field I64Deque head)
+  (field I64Deque len)
+  (variant I64DequePopEmpty)
+  (variant I64DequePopOk))

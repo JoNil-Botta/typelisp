@@ -6,21 +6,23 @@
 ;# Windows SDK discovery, and return the `PATH`, `LIB`, and `INCLUDE` overrides
 ;# needed to invoke the requested MSVC tool from a normal shell.
 ;#
-;# Usage: `(import "stdlib/msvc.tl")`
+;# Usage: `(import stdlib.msvc)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/msvc.tl")
+;# (import stdlib.msvc)
 ;# (define target : String "x86_64-pc-windows-msvc")
 ;# (define tool : String "link.exe")
-;# (define resolved : ResultMsvcTool
-;#   (msvc-find-tool (& target) (& tool)))
+;# (define resolved : msvc.ResultMsvcTool
+;#   (msvc.msvc-find-tool (& target) (& tool)))
 ;# ```
-(import "env.tl")
-(import "io.tl")
-(import "fs.tl")
-(import "process.tl")
-(import "string.tl")
-(import "vector.tl")
+(module stdlib.msvc)
+
+(import stdlib.env)
+(import stdlib.io)
+(import stdlib.fs)
+(import stdlib.process)
+(import stdlib.string)
+(import stdlib.vector)
 
 ;: Resolved MSVC tool: executable path plus the command-environment overrides.
 (defstruct MsvcTool
@@ -88,21 +90,24 @@
   (struct-get tool include))
 
 ;: Return process environment overrides for invoking the tool.
-(define (msvc-tool-process-env [tool : MsvcTool]) : ProcessEnvList
-  (process-env-cons
+(define (msvc-tool-process-env [tool : MsvcTool]) : process.ProcessEnvList
+  (process.process-env-cons
     "PATH"
     (msvc-tool-path tool)
-    (process-env-cons
+    (process.process-env-cons
       "LIB"
       (msvc-tool-lib tool)
-      (process-env-cons "INCLUDE" (msvc-tool-include tool) (process-env-empty)))))
+      (process.process-env-cons
+        "INCLUDE"
+        (msvc-tool-include tool)
+        (process.process-env-empty)))))
 
 ;: Return vector-backed process environment overrides for invoking the tool.
-(define (msvc-tool-process-env-vec [tool : MsvcTool]) : ProcessEnvVec
-  (process-env-vec-append
-    (process-env-vec-append
-      (process-env-vec-append
-        (process-env-vec-new)
+(define (msvc-tool-process-env-vec [tool : MsvcTool]) : process.ProcessEnvVec
+  (process.process-env-vec-append
+    (process.process-env-vec-append
+      (process.process-env-vec-append
+        (process.process-env-vec-new)
         "PATH"
         (msvc-tool-path tool))
       "LIB"
@@ -120,19 +125,21 @@
 
 ;: Return true when the host path-list separator identifies Windows.
 (define (msvc-host-windows?) : bool
-  (string-eq (env-path-list-separator) ";"))
+  (string.string-eq (env.env-path-list-separator) ";"))
 
 ;: Return true when `target` is a v1-supported MSVC target triple.
 (define (msvc-supported-target? [target : (& target str)]) : bool
   (let
     [supported : String "x86_64-pc-windows-msvc"]
-    (string-eq-borrowed target (& supported))))
+    (string.string-eq-borrowed target (& supported))))
 
 ;: Return true when `c` is an ASCII decimal digit.
 (define (msvc-digit? [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
-    (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64)))))
+    (if (>= code (cast '0' : i64))
+      (<= code (cast '9' : i64))
+      false)))
 
 ;: Return the numeric value of an ASCII decimal digit, or zero otherwise.
 (define (msvc-digit-value [c : char]) : i64
@@ -141,53 +148,118 @@
     0))
 
 ;: Read one dotted numeric version segment starting at `index`.
-(define (msvc-version-read-segment [version : String] [index : i64]) : MsvcVersionCursor
+(define (msvc-version-read-segment-from
+  [version : String]
+  [index : i64]
+  [n : i64]
+  [value : i64]) : MsvcVersionCursor
   (let
-    [n : i64 (string-length version)]
     [i : i64 index]
-    [value : i64 0]
+    [out : i64 value]
     [done : bool false]
     (begin
-      (while (and (< i n) (not done))
+      (while (if (< i n)
+        (not done)
+        false)
         (let
           [c : char (string-ref version i)]
-          (if (char-eq c '.')
+          (if (string.char-eq c '.')
             (set! done true)
             (begin
               (if (msvc-digit? c)
-                (set! value (+ (* value 10) (msvc-digit-value c)))
+                (set! out (+ (* out 10) (- (cast c : i64) (cast '0' : i64))))
                 unit)
               (set! i (+ i 1))))))
-      (MsvcVersionCursor value i))))
+      (MsvcVersionCursor out i))))
+
+;: Read one dotted numeric version segment starting at `index`.
+(define (msvc-version-read-segment [version : String] [index : i64]) : MsvcVersionCursor
+  (msvc-version-read-segment-from version index (string-length version) 0))
+
+;: Return the numeric segment value starting at `index`, accumulating in `value`.
+(define (msvc-version-segment-value-from
+  [version : String]
+  [index : i64]
+  [n : i64]
+  [value : i64]) : i64
+  (let
+    [i : i64 index]
+    [out : i64 value]
+    [done : bool false]
+    (begin
+      (while (if (< i n)
+        (not done)
+        false)
+        (let
+          [c : char (string-ref version i)]
+          (if (string.char-eq c '.')
+            (set! done true)
+            (begin
+              (if (msvc-digit? c)
+                (set! out (+ (* out 10) (- (cast c : i64) (cast '0' : i64))))
+                unit)
+              (set! i (+ i 1))))))
+      out)))
+
+;: Return the numeric value of the dotted version segment starting at `index`.
+(define (msvc-version-segment-value [version : String] [index : i64]) : i64
+  (msvc-version-segment-value-from version index (string-length version) 0))
+
+;: Return the end index of the dotted version segment starting at `index`.
+(define (msvc-version-segment-next-from
+  [version : String]
+  [index : i64]
+  [n : i64]) : i64
+  (let
+    [i : i64 index]
+    [done : bool false]
+    (begin
+      (while (if (< i n)
+        (not done)
+        false)
+        (if (string.char-eq (string-ref version i) '.')
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+;: Return the index where the dotted version segment starting at `index` stops.
+(define (msvc-version-segment-next [version : String] [index : i64]) : i64
+  (msvc-version-segment-next-from version index (string-length version)))
 
 ;: Advance past a dotted version separator if one is present.
 (define (msvc-version-next-index [version : String] [index : i64]) : i64
   (let
     [n : i64 (string-length version)]
-    (if (and (< index n) (char-eq (string-ref version index) '.'))
+    (if (and (< index n) (string.char-eq (string-ref version index) '.'))
       (+ index 1)
       index)))
 
 ;: Return true when owned `left` is a newer dotted numeric version than `right`.
-(define (msvc-version-greater-owned? [left : String] [right : String]) : bool
+(define (msvc-version-greater-owned-from
+  [left : String]
+  [right : String]
+  [left-len : i64]
+  [right-len : i64]
+  [left-index : i64]
+  [right-index : i64]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
-    [left-index : i64 0]
-    [right-index : i64 0]
+    [li : i64 left-index]
+    [ri : i64 right-index]
     [greater : bool false]
     [done : bool false]
     (begin
-      (while (and
-        (not done)
-        (or (< left-index left-len) (< right-index right-len)))
+      (while (if (not done)
+        (if (< li left-len)
+          true
+          (< ri right-len))
+        false)
         (let
-          [left-segment : MsvcVersionCursor
-            (msvc-version-read-segment left left-index)]
-          [right-segment : MsvcVersionCursor
-            (msvc-version-read-segment right right-index)]
-          [left-value : i64 (struct-get left-segment value)]
-          [right-value : i64 (struct-get right-segment value)]
+          [left-value : i64
+            (msvc-version-segment-value-from left li left-len 0)]
+          [right-value : i64
+            (msvc-version-segment-value-from right ri right-len 0)]
+          [left-next : i64 (msvc-version-segment-next-from left li left-len)]
+          [right-next : i64 (msvc-version-segment-next-from right ri right-len)]
           (if (> left-value right-value)
             (begin
               (set! greater true)
@@ -195,28 +267,32 @@
             (if (< left-value right-value)
               (set! done true)
               (begin
-                (set!
-                  left-index
-                  (msvc-version-next-index left (struct-get left-segment next)))
-                (set!
-                  right-index
-                  (msvc-version-next-index
-                    right
-                    (struct-get right-segment next))))))))
+                (set! li (msvc-version-next-index left left-next))
+                (set! ri (msvc-version-next-index right right-next)))))))
       greater)))
+
+;: Return true when owned `left` is a newer dotted numeric version than `right`.
+(define (msvc-version-greater-owned? [left : String] [right : String]) : bool
+  (msvc-version-greater-owned-from
+    left
+    right
+    (string-length left)
+    (string-length right)
+    0
+    0))
 
 ;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : (& left str)] [right : (& right str)]) : bool
   (let
-    [left-text : String (string-copy-borrowed left)]
-    [right-text : String (string-copy-borrowed right)]
+    [left-text : String (string.string-copy-borrowed left)]
+    [right-text : String (string.string-copy-borrowed right)]
     (msvc-version-greater-owned? left-text right-text)))
 
 ;: Return true when `path` exists, mapping probe errors to false.
 (define (msvc-path-exists? [path : (& path str)]) : bool
-  (match (try-file-exists? path)
-    [(OkIoBool exists) exists]
-    [(ErrIoBool _) false]))
+  (match (io.try-file-exists? path)
+    [(io.OkIoBool exists) exists]
+    [(io.ErrIoBool _) false]))
 
 ;: Return true when an owned path exists through the borrowed public helper.
 (define (msvc-path-exists-owned? [path : String]) : bool
@@ -224,13 +300,11 @@
 
 ;: Return true when an owned path exists and is a directory.
 (define (msvc-dir-exists-owned? [path : String]) : bool
-  (match (try-file-kind (& path))
-    [(OkFsFileKind kind) (fs-file-kind-directory? kind)]
-    [(ErrFsFileKind _) false]))
+  (= (fs.fs-file-kind-status path) fs.fs-file-kind-directory-code))
 
 ;: Join two filesystem path segments using the platform separator.
 (define (msvc-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (fs.fs-path-join (& left) (& right)))
 
 ;: Join three filesystem path segments.
 (define (msvc-path-join3 [a : String] [b : String] [c : String]) : String
@@ -261,50 +335,51 @@
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-vec-owned-from
-  [dirs : StringVec]
+  [dirs : vector.StringVec]
   [index : i64]
   [tool : String]) : MsvcMaybeString
-  (if (>= index (string-vec-len dirs))
+  (if (>= index (vector.string-vec-len dirs))
     (MsvcNoString)
     (let
-      [candidate : String (msvc-path-join (string-vec-get dirs index "") tool)]
+      [candidate : String
+        (msvc-path-join (vector.string-vec-get dirs index "") tool)]
       (if (msvc-path-exists-owned? candidate)
         (MsvcSomeString candidate)
         (msvc-search-dirs-vec-owned-from dirs (+ index 1) tool)))))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs-vec-owned [dirs : StringVec] [tool : String]) : MsvcMaybeString
+(define (msvc-search-dirs-vec-owned [dirs : vector.StringVec] [tool : String]) : MsvcMaybeString
   (msvc-search-dirs-vec-owned-from dirs 0 tool))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs-owned [dirs : EnvStringList] [tool : String]) : MsvcMaybeString
-  (msvc-search-dirs-vec-owned (env-string-list-to-vec dirs) tool))
+(define (msvc-search-dirs-owned [dirs : env.EnvStringList] [tool : String]) : MsvcMaybeString
+  (msvc-search-dirs-vec-owned (env.env-string-list-to-vec dirs) tool))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs-vec [dirs : StringVec] [tool : (& tool str)]) : MsvcMaybeString
+(define (msvc-search-dirs-vec [dirs : vector.StringVec] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy-borrowed tool)]
     (msvc-search-dirs-vec-owned dirs tool-text)))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs [dirs : EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
+(define (msvc-search-dirs [dirs : env.EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy-borrowed tool)]
     (msvc-search-dirs-owned dirs tool-text)))
 
 ;: Locate `tool` on the PATH environment variable.
 (define (msvc-find-on-path [tool : (& tool str)]) : MsvcMaybeString
   (let
     [name : String "PATH"]
-    (match (env-path-list-vec (& name))
-      [(EnvNoStringVec) (MsvcNoString)]
-      [(EnvSomeStringVec dirs) (msvc-search-dirs-vec dirs tool)])))
+    (match (env.env-path-list-vec (& name))
+      [(env.EnvNoStringVec) (MsvcNoString)]
+      [(env.EnvSomeStringVec dirs) (msvc-search-dirs-vec dirs tool)])))
 
 ;: Read an environment variable or the empty string when it is unset.
 (define (msvc-env-or-empty [name : (& name str)]) : String
-  (match (env-get name)
-    [(EnvSomeString value) value]
-    [(EnvNoString) ""]))
+  (match (env.env-get name)
+    [(env.EnvSomeString value) value]
+    [(env.EnvNoString) ""]))
 
 ;: Read an owned environment variable name or the empty string when it is unset.
 (define (msvc-env-or-empty-owned [name : String]) : String
@@ -314,32 +389,36 @@
 (define (msvc-env-or-default-owned [name : String] [fallback : String]) : String
   (let
     [value : String (msvc-env-or-empty-owned name)]
-    (if (string-eq value "")
+    (if (string.string-eq value "")
       fallback
       value)))
 
 ;: Join owned `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend-owned [head : String] [tail : String]) : String
-  (if (string-eq tail "")
+  (if (string.string-eq tail "")
     head
-    (string-append (string-append head (env-path-list-separator)) tail)))
+    (string.string-append
+      (string.string-append head (env.env-path-list-separator))
+      tail)))
 
 ;: Join `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
   (let
-    [head-text : String (string-copy-borrowed head)]
-    [tail-text : String (string-copy-borrowed tail)]
+    [head-text : String (string.string-copy-borrowed head)]
+    [tail-text : String (string.string-copy-borrowed tail)]
     (msvc-path-list-prepend-owned head-text tail-text)))
 
 ;: Join two owned required PATH-style entries.
 (define (msvc-path-list-join2-owned [a : String] [b : String]) : String
-  (string-append (string-append a (env-path-list-separator)) b))
+  (string.string-append
+    (string.string-append a (env.env-path-list-separator))
+    b))
 
 ;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : (& a str)] [b : (& b str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
     (msvc-path-list-join2-owned a-text b-text)))
 
 ;: Join three owned required PATH-style entries.
@@ -349,9 +428,9 @@
 ;: Join three required PATH-style entries.
 (define (msvc-path-list-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
-    [c-text : String (string-copy-borrowed c)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
+    [c-text : String (string.string-copy-borrowed c)]
     (msvc-path-list-join3-owned a-text b-text c-text)))
 
 ;: Join four owned required PATH-style entries.
@@ -369,10 +448,10 @@
   [c : (& c str)]
   [d : (& d str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
-    [c-text : String (string-copy-borrowed c)]
-    [d-text : String (string-copy-borrowed d)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
+    [c-text : String (string.string-copy-borrowed c)]
+    [d-text : String (string.string-copy-borrowed d)]
     (msvc-path-list-join4-owned a-text b-text c-text d-text)))
 
 ;: Join an optional inherited path list after required entries.
@@ -390,10 +469,10 @@
   [c : (& c str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
-    [c-text : String (string-copy-borrowed c)]
-    [tail-text : String (string-copy-borrowed tail)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
+    [c-text : String (string.string-copy-borrowed c)]
+    [tail-text : String (string.string-copy-borrowed tail)]
     (msvc-path-list-join3-with-tail-owned a-text b-text c-text tail-text)))
 
 ;: Join an optional inherited path list after two required entries.
@@ -409,9 +488,9 @@
   [b : (& b str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
-    [tail-text : String (string-copy-borrowed tail)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
+    [tail-text : String (string.string-copy-borrowed tail)]
     (msvc-path-list-join2-with-tail-owned a-text b-text tail-text)))
 
 ;: Join an optional inherited path list after four required entries.
@@ -431,31 +510,31 @@
   [d : (& d str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string-copy-borrowed a)]
-    [b-text : String (string-copy-borrowed b)]
-    [c-text : String (string-copy-borrowed c)]
-    [d-text : String (string-copy-borrowed d)]
-    [tail-text : String (string-copy-borrowed tail)]
+    [a-text : String (string.string-copy-borrowed a)]
+    [b-text : String (string.string-copy-borrowed b)]
+    [c-text : String (string.string-copy-borrowed c)]
+    [d-text : String (string.string-copy-borrowed d)]
+    [tail-text : String (string.string-copy-borrowed tail)]
     (msvc-path-list-join4-with-tail-owned a-text b-text c-text d-text tail-text)))
 
 ;: Build a configured tool result once the executable path is known.
 (define (msvc-configured-result [executable : String]) : ResultMsvcTool
   (let
     [name : String "LIB"]
-    (match (env-get (& name))
-      [(EnvNoString)
+    (match (env.env-get (& name))
+      [(env.EnvNoString)
         (ErrMsvcTool
           (MsvcMissingEnvironment
             "msvc: LIB is not set; run from a Developer Command Prompt or use auto-discovery"))]
-      [(EnvSomeString lib)
+      [(env.EnvSomeString lib)
         (let
           [name : String "INCLUDE"]
-          (match (env-get (& name))
-            [(EnvNoString)
+          (match (env.env-get (& name))
+            [(env.EnvNoString)
               (ErrMsvcTool
                 (MsvcMissingEnvironment
                   "msvc: INCLUDE is not set; run from a Developer Command Prompt or use auto-discovery"))]
-            [(EnvSomeString include)
+            [(env.EnvSomeString include)
               (OkMsvcTool
                 (MsvcTool
                   executable
@@ -469,11 +548,11 @@
     [(MsvcSomeString executable) (msvc-configured-result executable)]
     [(MsvcNoString)
       (let
-        [tool-text : String (string-copy-borrowed tool)]
+        [tool-text : String (string.string-copy-borrowed tool)]
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string-append
-              (string-append "msvc: could not find " tool-text)
+            (string.string-append
+              (string.string-append "msvc: could not find " tool-text)
               " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools"))))]))
 
 ;: Program Files root used by ordinary Visual Studio SKUs.
@@ -498,38 +577,50 @@
     "Tools/MSVC"))
 
 ;: Candidate Visual Studio / Build Tools toolset parent directories.
-(define (msvc-toolset-parent-candidates) : StringVec
+(define (msvc-toolset-parent-candidates) : vector.StringVec
   (let
     [pf : String (msvc-program-files)]
     [pfx : String (msvc-program-files-x86)]
-    [items : StringVec (string-vec-with-capacity 8)]
+    [items : vector.StringVec (vector.string-vec-with-capacity 8)]
     (begin
       (set!
         items
-        (string-vec-push items (msvc-vs-toolset-parent pf "2022" "Enterprise")))
+        (vector.string-vec-push
+          items
+          (msvc-vs-toolset-parent pf "2022" "Enterprise")))
       (set!
         items
-        (string-vec-push
+        (vector.string-vec-push
           items
           (msvc-vs-toolset-parent pf "2022" "Professional")))
       (set!
         items
-        (string-vec-push items (msvc-vs-toolset-parent pf "2022" "Community")))
+        (vector.string-vec-push
+          items
+          (msvc-vs-toolset-parent pf "2022" "Community")))
       (set!
         items
-        (string-vec-push items (msvc-vs-toolset-parent pfx "2022" "BuildTools")))
+        (vector.string-vec-push
+          items
+          (msvc-vs-toolset-parent pfx "2022" "BuildTools")))
       (set!
         items
-        (string-vec-push items (msvc-vs-toolset-parent pf "2019" "Enterprise")))
+        (vector.string-vec-push
+          items
+          (msvc-vs-toolset-parent pf "2019" "Enterprise")))
       (set!
         items
-        (string-vec-push
+        (vector.string-vec-push
           items
           (msvc-vs-toolset-parent pf "2019" "Professional")))
       (set!
         items
-        (string-vec-push items (msvc-vs-toolset-parent pf "2019" "Community")))
-      (string-vec-push items (msvc-vs-toolset-parent pfx "2019" "BuildTools")))))
+        (vector.string-vec-push
+          items
+          (msvc-vs-toolset-parent pf "2019" "Community")))
+      (vector.string-vec-push
+        items
+        (msvc-vs-toolset-parent pfx "2019" "BuildTools")))))
 
 ;: Return the bin directory for host x64 -> target x64 tools.
 (define (msvc-toolset-bin-dir [toolset-root : String]) : String
@@ -541,28 +632,29 @@
 
 ;: Scan one VC Tools/MSVC parent for the newest version containing `tool`.
 (define (msvc-toolset-scan-entries
-  [entries : StringVec]
+  [entries : vector.StringVec]
   [index : i64]
   [parent : String]
   [tool : String]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeToolset
-  (if (>= index (string-vec-len entries))
+  (if (>= index (vector.string-vec-len entries))
     (if has-best
       (MsvcSomeToolset (MsvcToolset best-root best-version))
       (MsvcNoToolset))
     (let
-      [version : String (string-vec-get entries index "")]
-      [toolset-root : String (msvc-path-join parent version)]
-      [tool-path : String (msvc-toolset-tool-path toolset-root tool)]
-      [usable : bool (msvc-path-exists-owned? tool-path)]
-      [newer : bool
+      [version : String (vector.string-vec-get entries index "")]
+      [toolset-root : String (stdlib.msvc.msvc-path-join parent version)]
+      [tool-path : String
+        (stdlib.msvc.msvc-toolset-tool-path toolset-root tool)]
+      [usable : bool (stdlib.msvc.msvc-path-exists-owned? tool-path)]
+      (if (if usable
         (if has-best
           (msvc-version-greater-owned? version best-version)
-          true)]
-      (if (and usable newer)
-        (msvc-toolset-scan-entries
+          true)
+        false)
+        (stdlib.msvc.msvc-toolset-scan-entries
           entries
           (+ index 1)
           parent
@@ -570,7 +662,7 @@
           toolset-root
           version
           true)
-        (msvc-toolset-scan-entries
+        (stdlib.msvc.msvc-toolset-scan-entries
           entries
           (+ index 1)
           parent
@@ -581,10 +673,10 @@
 
 ;: Return the newest toolset under one parent, if any.
 (define (msvc-find-toolset-in-parent [parent : String] [tool : String]) : MsvcMaybeToolset
-  (match (try-read-dir-vec (& parent))
-    [(OkIoStringVec entries)
+  (match (fs.try-read-dir-vec (& parent))
+    [(fs.OkIoStringVec entries)
       (msvc-toolset-scan-entries entries 0 parent tool "" "" false)]
-    [(ErrIoStringVec _) (MsvcNoToolset)]))
+    [(fs.ErrIoStringVec _) (MsvcNoToolset)]))
 
 ;: Return true when `candidate` should replace the current best toolset.
 (define (msvc-toolset-candidate-newer?
@@ -597,18 +689,18 @@
 
 ;: Scan standard Visual Studio locations for the newest toolset containing `tool`.
 (define (msvc-find-toolset-parents
-  [parents : StringVec]
+  [parents : vector.StringVec]
   [index : i64]
   [tool : String]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeToolset
-  (if (>= index (string-vec-len parents))
+  (if (>= index (vector.string-vec-len parents))
     (if has-best
       (MsvcSomeToolset (MsvcToolset best-root best-version))
       (MsvcNoToolset))
     (let
-      [parent : String (string-vec-get parents index "")]
+      [parent : String (vector.string-vec-get parents index "")]
       (match (msvc-find-toolset-in-parent parent tool)
         [(MsvcNoToolset)
           (msvc-find-toolset-parents
@@ -646,20 +738,20 @@
     false))
 
 ;: Candidate Windows SDK roots.
-(define (msvc-sdk-root-candidates) : StringVec
+(define (msvc-sdk-root-candidates) : vector.StringVec
   (let
     [env-root : String (msvc-env-or-empty-owned "WindowsSdkDir")]
     [pfx : String (msvc-program-files-x86)]
     [pf : String (msvc-program-files)]
-    [items : StringVec (string-vec-with-capacity 3)]
+    [items : vector.StringVec (vector.string-vec-with-capacity 3)]
     (begin
-      (if (string-eq env-root "")
+      (if (string.string-eq env-root "")
         unit
-        (set! items (string-vec-push items env-root)))
+        (set! items (vector.string-vec-push items env-root)))
       (set!
         items
-        (string-vec-push items (msvc-path-join3 pfx "Windows Kits" "10")))
-      (string-vec-push items (msvc-path-join3 pf "Windows Kits" "10")))))
+        (vector.string-vec-push items (msvc-path-join3 pfx "Windows Kits" "10")))
+      (vector.string-vec-push items (msvc-path-join3 pf "Windows Kits" "10")))))
 
 ;: Return the root for one Windows SDK version.
 (define (msvc-sdk-version-root [sdk-root : String] [version : String]) : String
@@ -692,39 +784,53 @@
 ;: Return true when a Windows SDK version has the pieces needed by link.exe.
 (define (msvc-sdk-version-usable? [sdk-root : String] [version : String]) : bool
   (let
-    [lib-root : String (msvc-sdk-version-root sdk-root version)]
-    [kernel32 : String (msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
-    [ucrt : String (msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
+    [lib-root : String (stdlib.msvc.msvc-sdk-version-root sdk-root version)]
+    [kernel32 : String
+      (stdlib.msvc.msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
+    [ucrt : String (stdlib.msvc.msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
     [include-root : String
-      (msvc-path-join (msvc-path-join sdk-root "Include") version)]
-    (and
-      (msvc-path-exists-owned? kernel32)
-      (msvc-path-exists-owned? ucrt)
-      (msvc-dir-exists-owned? (msvc-path-join include-root "shared"))
-      (msvc-dir-exists-owned? (msvc-path-join include-root "um"))
-      (msvc-dir-exists-owned? (msvc-path-join include-root "ucrt")))))
+      (stdlib.msvc.msvc-path-join
+        (stdlib.msvc.msvc-path-join sdk-root "Include")
+        version)]
+    (if (stdlib.msvc.msvc-path-exists-owned? kernel32)
+      (if (stdlib.msvc.msvc-path-exists-owned? ucrt)
+        (if (stdlib.msvc.msvc-dir-exists-owned?
+          (stdlib.msvc.msvc-path-join include-root "shared"))
+          (if (stdlib.msvc.msvc-dir-exists-owned?
+            (stdlib.msvc.msvc-path-join include-root "um"))
+            (stdlib.msvc.msvc-dir-exists-owned?
+              (stdlib.msvc.msvc-path-join include-root "ucrt"))
+            false)
+          false)
+        false)
+      false)))
 
 ;: Scan one Windows SDK root for the newest usable version.
 (define (msvc-sdk-scan-entries
-  [entries : StringVec]
+  [entries : vector.StringVec]
   [index : i64]
   [sdk-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeSdk
-  (if (>= index (string-vec-len entries))
+  (if (>= index (vector.string-vec-len entries))
     (if has-best
       (MsvcSomeSdk (MsvcSdk sdk-root best-version))
       (MsvcNoSdk))
     (let
-      [version : String (string-vec-get entries index "")]
-      [usable : bool (msvc-sdk-version-usable? sdk-root version)]
-      [newer : bool
+      [version : String (vector.string-vec-get entries index "")]
+      [usable : bool (stdlib.msvc.msvc-sdk-version-usable? sdk-root version)]
+      (if (if usable
         (if has-best
           (msvc-version-greater-owned? version best-version)
-          true)]
-      (if (and usable newer)
-        (msvc-sdk-scan-entries entries (+ index 1) sdk-root version true)
-        (msvc-sdk-scan-entries
+          true)
+        false)
+        (stdlib.msvc.msvc-sdk-scan-entries
+          entries
+          (+ index 1)
+          sdk-root
+          version
+          true)
+        (stdlib.msvc.msvc-sdk-scan-entries
           entries
           (+ index 1)
           sdk-root
@@ -735,10 +841,10 @@
 (define (msvc-find-sdk-in-root [sdk-root : String]) : MsvcMaybeSdk
   (let
     [lib-dir : String (msvc-path-join sdk-root "Lib")]
-    (match (try-read-dir-vec (& lib-dir))
-      [(OkIoStringVec entries)
+    (match (fs.try-read-dir-vec (& lib-dir))
+      [(fs.OkIoStringVec entries)
         (msvc-sdk-scan-entries entries 0 sdk-root "" false)]
-      [(ErrIoStringVec _) (MsvcNoSdk)])))
+      [(fs.ErrIoStringVec _) (MsvcNoSdk)])))
 
 ;: Return true when `candidate` should replace the current best SDK.
 (define (msvc-sdk-candidate-newer?
@@ -751,17 +857,17 @@
 
 ;: Scan standard Windows SDK roots.
 (define (msvc-find-sdk-roots
-  [roots : StringVec]
+  [roots : vector.StringVec]
   [index : i64]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeSdk
-  (if (>= index (string-vec-len roots))
+  (if (>= index (vector.string-vec-len roots))
     (if has-best
       (MsvcSomeSdk (MsvcSdk best-root best-version))
       (MsvcNoSdk))
     (let
-      [root : String (string-vec-get roots index "")]
+      [root : String (vector.string-vec-get roots index "")]
       (match (msvc-find-sdk-in-root root)
         [(MsvcNoSdk)
           (msvc-find-sdk-roots
@@ -822,13 +928,13 @@
 ;: Discover a Visual Studio toolset and Windows SDK from standard locations.
 (define (msvc-find-tool-auto [tool : (& tool str)]) : ResultMsvcTool
   (let
-    [tool-text : String (string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy-borrowed tool)]
     (match (msvc-find-toolset tool-text)
       [(MsvcNoToolset)
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string-append
-              (string-append "msvc: could not discover " tool-text)
+            (string.string-append
+              (string.string-append "msvc: could not discover " tool-text)
               " under standard Visual Studio Build Tools locations")))]
       [(MsvcSomeToolset toolset)
         (match (msvc-find-sdk)
@@ -851,9 +957,9 @@
     (if (not (msvc-supported-target? target))
       (ErrMsvcTool
         (let
-          [target-text : String (string-copy-borrowed target)]
+          [target-text : String (string.string-copy-borrowed target)]
           (MsvcUnsupported
-            (string-append "msvc: unsupported target " target-text))))
+            (string.string-append "msvc: unsupported target " target-text))))
       (match (msvc-find-tool-configured tool)
         [(OkMsvcTool resolved) (OkMsvcTool resolved)]
         [(ErrMsvcTool _) (msvc-find-tool-auto tool)]))))
@@ -876,27 +982,27 @@
 
 ;: Inline test owned string assertion.
 (define (msvc-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (msvc-test-assert (string-eq actual expected)))
+  (msvc-test-assert (string.string-eq actual expected)))
 
 ;: Inline test helper to unwrap `ResultIoString`.
-(define (msvc-test-expect-ok-string [result : ResultIoString]) : String
+(define (msvc-test-expect-ok-string [result : io.ResultIoString]) : String
   (match result
-    [(OkIoString value) value]
-    [(ErrIoString _) ""]))
+    [(io.OkIoString value) value]
+    [(io.ErrIoString _) ""]))
 
 ;: Inline test helper to assert `ResultIoUnit`.
-(define (msvc-test-assert-ok-unit [result : ResultIoUnit]) : unit
+(define (msvc-test-assert-ok-unit [result : io.ResultIoUnit]) : unit
   (match result
-    [(OkIoUnit) unit]
-    [(ErrIoUnit _) (msvc-test-fail)]))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit _) (msvc-test-fail)]))
 
 ;: Inline test mkdir helper.
 (define (msvc-test-mkdir [path : String]) : unit
-  (msvc-test-assert-ok-unit (try-mkdir-if-missing (& path))))
+  (msvc-test-assert-ok-unit (fs.try-mkdir-if-missing (& path))))
 
 ;: Inline test write-file helper.
 (define (msvc-test-write [path : String] [contents : String]) : unit
-  (msvc-test-assert-ok-unit (try-write-file (& path) (& contents))))
+  (msvc-test-assert-ok-unit (io.try-write-file (& path) (& contents))))
 
 ;: Inline test helper to create a fake toolset bin directory.
 (define (msvc-test-mkdir-toolset-bin [toolset-root : String]) : String
@@ -938,7 +1044,7 @@
         (begin
           (msvc-test-assert-string-eq (struct-get toolset version) "14.20.0")
           (msvc-test-assert-string-eq (struct-get toolset root) new-root)
-          (msvc-test-assert (not (string-eq old-root new-root))))]
+          (msvc-test-assert (not (string.string-eq old-root new-root))))]
       [(MsvcNoToolset) (msvc-test-fail)])))
 
 ;: Inline test helper to create fake SDK directory roots.
@@ -1005,14 +1111,130 @@
   (let
     [prefix : String "typelisp msvc vector scan"]
     [root : String
-      (msvc-test-expect-ok-string (try-create-temp-dir (& prefix)))]
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
     [sdk-root : String (msvc-path-join root "WindowsKits10")]
     (begin
       (msvc-test-mkdir toolset-parent)
       (msvc-test-mkdir sdk-root)
       (msvc-test-assert-i64-eq
-        (string-vec-len (msvc-toolset-parent-candidates))
+        (vector.string-vec-len (msvc-toolset-parent-candidates))
         8)
       (msvc-test-assert-toolset-scan toolset-parent)
       (msvc-test-assert-sdk-scan sdk-root))))
+
+(export
+  (value msvc-tool-executable)
+  (value msvc-tool-path)
+  (value msvc-tool-lib)
+  (value msvc-tool-include)
+  (value msvc-tool-process-env)
+  (value msvc-tool-process-env-vec)
+  (value msvc-error-message)
+  (value msvc-host-windows?)
+  (value msvc-supported-target?)
+  (value msvc-digit?)
+  (value msvc-digit-value)
+  (value msvc-version-read-segment-from)
+  (value msvc-version-read-segment)
+  (value msvc-version-segment-value-from)
+  (value msvc-version-segment-value)
+  (value msvc-version-segment-next-from)
+  (value msvc-version-segment-next)
+  (value msvc-version-next-index)
+  (value msvc-version-greater-owned-from)
+  (value msvc-version-greater-owned?)
+  (value msvc-version-greater?)
+  (value msvc-path-exists?)
+  (value msvc-path-exists-owned?)
+  (value msvc-dir-exists-owned?)
+  (value msvc-path-join)
+  (value msvc-path-join3)
+  (value msvc-path-join4)
+  (value msvc-path-join5)
+  (value msvc-path-join6)
+  (value msvc-search-dirs-vec-owned-from)
+  (value msvc-search-dirs-vec-owned)
+  (value msvc-search-dirs-owned)
+  (value msvc-search-dirs-vec)
+  (value msvc-search-dirs)
+  (value msvc-find-on-path)
+  (value msvc-env-or-empty)
+  (value msvc-env-or-empty-owned)
+  (value msvc-env-or-default-owned)
+  (value msvc-path-list-prepend-owned)
+  (value msvc-path-list-prepend)
+  (value msvc-path-list-join2-owned)
+  (value msvc-path-list-join2)
+  (value msvc-path-list-join3-owned)
+  (value msvc-path-list-join3)
+  (value msvc-path-list-join4-owned)
+  (value msvc-path-list-join4)
+  (value msvc-path-list-join3-with-tail-owned)
+  (value msvc-path-list-join3-with-tail)
+  (value msvc-path-list-join2-with-tail-owned)
+  (value msvc-path-list-join2-with-tail)
+  (value msvc-path-list-join4-with-tail-owned)
+  (value msvc-path-list-join4-with-tail)
+  (value msvc-configured-result)
+  (value msvc-find-tool-configured)
+  (value msvc-program-files)
+  (value msvc-program-files-x86)
+  (value msvc-vs-toolset-parent)
+  (value msvc-toolset-parent-candidates)
+  (value msvc-toolset-bin-dir)
+  (value msvc-toolset-tool-path)
+  (value msvc-toolset-scan-entries)
+  (value msvc-find-toolset-in-parent)
+  (value msvc-toolset-candidate-newer?)
+  (value msvc-find-toolset-parents)
+  (value msvc-find-toolset)
+  (value msvc-sdk-root-candidates)
+  (value msvc-sdk-version-root)
+  (value msvc-sdk-um-lib-dir)
+  (value msvc-sdk-ucrt-lib-dir)
+  (value msvc-sdk-include-dir)
+  (value msvc-sdk-version-usable?)
+  (value msvc-sdk-scan-entries)
+  (value msvc-find-sdk-in-root)
+  (value msvc-sdk-candidate-newer?)
+  (value msvc-find-sdk-roots)
+  (value msvc-find-sdk)
+  (value msvc-auto-result)
+  (value msvc-find-tool-auto)
+  (value msvc-find-tool)
+  (type MsvcTool)
+  (type MsvcError)
+  (type ResultMsvcTool)
+  (type MsvcMaybeString)
+  (type MsvcVersionCursor)
+  (type MsvcToolset)
+  (type MsvcMaybeToolset)
+  (type MsvcSdk)
+  (type MsvcMaybeSdk)
+  (constructor MsvcTool)
+  (constructor MsvcVersionCursor)
+  (constructor MsvcToolset)
+  (constructor MsvcSdk)
+  (field MsvcTool executable)
+  (field MsvcTool path)
+  (field MsvcTool lib)
+  (field MsvcTool include)
+  (field MsvcVersionCursor value)
+  (field MsvcVersionCursor next)
+  (field MsvcToolset root)
+  (field MsvcToolset version)
+  (field MsvcSdk root)
+  (field MsvcSdk version)
+  (variant MsvcUnsupported)
+  (variant MsvcMissingEnvironment)
+  (variant MsvcToolNotFound)
+  (variant MsvcSetupUnavailable)
+  (variant OkMsvcTool)
+  (variant ErrMsvcTool)
+  (variant MsvcNoString)
+  (variant MsvcSomeString)
+  (variant MsvcNoToolset)
+  (variant MsvcSomeToolset)
+  (variant MsvcNoSdk)
+  (variant MsvcSomeSdk))

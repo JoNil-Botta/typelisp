@@ -2,9 +2,11 @@
 ;#
 ;# Provides allocation counters and a coarse monotonic millisecond timestamp.
 ;# Time is implemented here over platform FFI/syscalls; allocation counters remain
-;# allocator-runtime hooks. Import explicitly with `(import "stdlib/profile.tl")`.
+;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `profile-now-ms` does not allocate on every sample.
+(module stdlib.profile)
+
 (define profile-now-scratch : (Array i64)
   (make-array i64 2))
 
@@ -126,3 +128,18 @@
         (profile-test-assert (>= after-total before-total))
         (profile-test-assert (>= after-live before-live))
         (profile-test-assert (>= peak after-live))))))
+
+(export
+  (value profile-now-scratch)
+  (value tl_profile_alloc_total)
+  (value tl_profile_alloc_live)
+  (value tl_profile_alloc_peak)
+  (value tl_profile_alloc_reset_peak)
+  (value profile-scratch-ptr)
+  (value profile-scratch-addr)
+  (value profile-linux-now-ms)
+  (value profile-now-ms)
+  (value profile-alloc-total)
+  (value profile-alloc-live)
+  (value profile-alloc-peak)
+  (value profile-alloc-reset-peak))

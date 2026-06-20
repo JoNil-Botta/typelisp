@@ -5,16 +5,18 @@
 ;# and monotonic elapsed milliseconds. Calendar conversion, formatting, time
 ;# zones, locale behavior, sleep, timers, and scheduling are deferred.
 ;#
-;# Usage: `(import "stdlib/time.tl")`
+;# Usage: `(import stdlib.time)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/time.tl")
+;# (import stdlib.time)
 ;# (define (main) : i64
-;#   (match (time-unix-ms)
-;#     [(OkTimeMs ms) (if (> ms 0) 42 1)]
-;#     [(ErrTimeMs _) 2]))
+;#   (match (time.time-unix-ms)
+;#     [(time.OkTimeMs ms) (if (> ms 0) 42 1)]
+;#     [(time.ErrTimeMs _) 2]))
 ;# ```
 ;: Recoverable time source error.
+(module stdlib.time)
+
 (defenum TimeError
   (TimeUnavailable String))
 
@@ -189,3 +191,16 @@
         (time-test-assert-i64-eq
           (time-ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
           7)))))
+
+(export
+  (value time-error-message)
+  (value time-ms-or)
+  (value time-unavailable)
+  (value time-timespec-ms)
+  (value time-unix-ms)
+  (value time-monotonic-ms)
+  (type TimeError)
+  (type ResultTimeMs)
+  (variant TimeUnavailable)
+  (variant OkTimeMs)
+  (variant ErrTimeMs))

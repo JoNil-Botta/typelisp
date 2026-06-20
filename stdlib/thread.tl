@@ -15,16 +15,18 @@
 ;# thread-safety classifier, consume typed handles on join, and copy current
 ;# concrete aggregate results into atomic arenas that span the worker and joiner.
 ;#
-;# Usage: `(import "stdlib/thread.tl")`
+;# Usage: `(import stdlib.thread)`
 ;#
 ;# ```typelisp run
 ;# ;; doctest-exit: 42
-;# (import "stdlib/thread.tl")
+;# (import stdlib.thread)
 ;# (define (main) : i64
-;#   (if (>= (thread-default-worker-count) 1) 42 1))
+;#   (if (>= (thread.thread-default-worker-count) 1) 42 1))
 ;# ```
-(import "arena.tl")
-(import "string.tl")
+(module stdlib.thread)
+
+(import stdlib.arena)
+(import stdlib.string)
 
 ;: Opaque native thread handle plus runtime-owned join state.
 (defstruct Thread
@@ -138,6 +140,52 @@
 (defenum ThreadSemaphoreResult
   (ThreadSemaphoreOk ThreadSemaphore)
   (ThreadSemaphoreErr String))
+
+;: Return true when raw thread spawn succeeded.
+(define (thread-spawn-result-ok? [result : ThreadSpawnResult]) : bool
+  (match result
+    [(ThreadSpawnOk _) true]
+    [(ThreadSpawnErr _) false]))
+
+;: Return the raw spawned thread handle, or `fallback` when spawn failed.
+(define (thread-spawn-result-handle-or
+  [result : ThreadSpawnResult]
+  [fallback : i64]) : i64
+  (match result
+    [(ThreadSpawnOk thread) (struct-get thread handle)]
+    [(ThreadSpawnErr _) fallback]))
+
+;: Return the raw spawned thread clear-tid address, or `fallback`.
+(define (thread-spawn-result-clear-tid-addr-or
+  [result : ThreadSpawnResult]
+  [fallback : i64]) : i64
+  (match result
+    [(ThreadSpawnOk thread) (struct-get thread clear-tid-addr)]
+    [(ThreadSpawnErr _) fallback]))
+
+;: Return the raw spawned thread result address, or `fallback`.
+(define (thread-spawn-result-result-addr-or
+  [result : ThreadSpawnResult]
+  [fallback : i64]) : i64
+  (match result
+    [(ThreadSpawnOk thread) (struct-get thread result-addr)]
+    [(ThreadSpawnErr _) fallback]))
+
+;: Return the raw join code, or `fallback` when join failed.
+(define (thread-join-result-value-or
+  [result : ThreadJoinResult]
+  [fallback : i64]) : i64
+  (match result
+    [(ThreadJoinOk value) value]
+    [(ThreadJoinErr _) fallback]))
+
+;: Return the joined i64 value, or `fallback` when join failed.
+(define (thread-i64-join-result-value-or
+  [result : ThreadI64JoinResult]
+  [fallback : i64]) : i64
+  (match result
+    [(ThreadI64JoinOk value) value]
+    [(ThreadI64JoinErr _) fallback]))
 
 ;: Windows raw entry pointer cell emitted by the backend runtime.
 (cfg
@@ -471,14 +519,15 @@
 ;: worker and the joining thread. The handle must be joined exactly once.
 (define (thread-spawn-string [task : (-> String)]) : ThreadStringSpawnResult
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : i64 (arena.arena-make-atomic)]
     [result : (Array String) (in-arena owner (make-array String 1))]
     [result-addr : i64 (thread-array-string-addr result)]
     (match (thread-spawn
       (lambda ([_ignored : i64]) : i64
         (let
           [value : String (in-arena owner (task))]
-          [copied : String (in-arena owner (string-copy-borrowed (& value)))]
+          [copied : String
+            (in-arena owner (string.string-copy-borrowed (& value)))]
           (begin
             (thread-write-string! result-addr copied)
             0)))
@@ -493,7 +542,7 @@
 ;: joiner. The handle must be joined exactly once.
 (define (thread-spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : i64 (arena.arena-make-atomic)]
     [result : (Array (Array i64)) (in-arena owner (make-array (Array i64) 1))]
     [result-addr : i64 (thread-array-array-i64-addr result)]
     (match (thread-spawn
@@ -516,7 +565,7 @@
 ;: fresh box in that same spanning owner. The handle must be joined exactly once.
 (define (thread-spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : i64 (arena.arena-make-atomic)]
     [result : (Array i64) (in-arena owner (make-array i64 1))]
     [result-addr : i64 (thread-array-i64-addr result)]
     (match (thread-spawn
@@ -663,12 +712,12 @@
     (thread-windows-default-worker-count)
     (thread-linux-default-worker-count)))
 
-;: Create a counting semaphore.
-(define (thread-semaphore-create [initial : i64]) : ThreadSemaphoreResult
+;: Create a counting semaphore and return its raw handle, or `fallback`.
+(define (thread-semaphore-create-handle-or [initial : i64] [fallback : i64]) : i64
   (if (< initial 0)
-    (ThreadSemaphoreErr "thread: semaphore initial count must be non-negative")
+    fallback
     (if (> initial (cast thread-semaphore-max-count : i64))
-      (ThreadSemaphoreErr "thread: semaphore initial count exceeds maximum")
+      fallback
       (cfg
         windows
         (let
@@ -679,15 +728,27 @@
               thread-semaphore-max-count
               0)]
           (if (= handle 0)
-            (ThreadSemaphoreErr "thread: semaphore create failed")
-            (ThreadSemaphoreOk (ThreadSemaphore handle))))
+            fallback
+            handle))
         (let
           [fd : i64
             (unsafe
               (syscall 290 initial 1))]
           (if (< fd 0)
-            (ThreadSemaphoreErr "thread: semaphore create failed")
-            (ThreadSemaphoreOk (ThreadSemaphore fd))))))))
+            fallback
+            fd))))))
+
+;: Create a counting semaphore.
+(define (thread-semaphore-create [initial : i64]) : ThreadSemaphoreResult
+  (if (< initial 0)
+    (ThreadSemaphoreErr "thread: semaphore initial count must be non-negative")
+    (if (> initial (cast thread-semaphore-max-count : i64))
+      (ThreadSemaphoreErr "thread: semaphore initial count exceeds maximum")
+      (let
+        [handle : i64 (thread-semaphore-create-handle-or initial -1)]
+        (if (= handle -1)
+          (ThreadSemaphoreErr "thread: semaphore create failed")
+          (ThreadSemaphoreOk (ThreadSemaphore handle)))))))
 
 ;: Wait for one semaphore token.
 (define (thread-semaphore-wait [sem : ThreadSemaphore]) : bool
@@ -767,13 +828,8 @@
   (thread-test-assert (= actual expected)))
 
 ;: Inline test assertion for semaphore validation failures.
-(define (thread-test-assert-semaphore-err [result : ThreadSemaphoreResult]) : unit
-  (match result
-    [(ThreadSemaphoreErr _) unit]
-    [(ThreadSemaphoreOk sem)
-      (begin
-        (thread-semaphore-close sem)
-        (thread-test-fail))]))
+(define (thread-test-assert-semaphore-err [initial : i64]) : unit
+  (thread-test-assert (= (thread-semaphore-create-handle-or initial -1) -1)))
 
 (test
   thread-api
@@ -790,5 +846,140 @@
       (thread-test-assert-i64-eq (thread-count-byte-bits 3) 2)
       (thread-test-assert-i64-eq (thread-count-byte-bits 255) 8)
       (thread-test-assert-i64-eq (thread-count-affinity-bytes mask) 11)
-      (thread-test-assert-semaphore-err (thread-semaphore-create -1))
-      (thread-test-assert-semaphore-err (thread-semaphore-create 2147483648)))))
+      (thread-test-assert-semaphore-err -1)
+      (thread-test-assert-semaphore-err 2147483648))))
+
+(export
+  (value thread-default-stack-size)
+  (value thread-semaphore-max-count)
+  (value thread-array-u8-addr)
+  (value thread-array-u64-addr)
+  (value thread-array-i64-addr)
+  (value thread-array-i32-addr)
+  (value thread-array-string-addr)
+  (value thread-array-array-i64-addr)
+  (value thread-addr->mut-i32)
+  (value thread-addr->mut-i64)
+  (value thread-addr->mut-string)
+  (value thread-addr->mut-array-i64)
+  (value thread-read-i32)
+  (value thread-write-i32!)
+  (value thread-read-i64)
+  (value thread-write-i64!)
+  (value thread-read-string)
+  (value thread-write-string!)
+  (value thread-read-array-i64)
+  (value thread-write-array-i64!)
+  (value thread-array-i64-copy)
+  (value thread-linux-clone-flags)
+  (value thread-linux-futex-wait)
+  (value thread-linux-futex-wake)
+  (value thread-linux-exit-current)
+  (value thread-linux-child-main)
+  (value thread-linux-wait-i32-change)
+  (value thread-linux-spawn)
+  (value thread-spawn)
+  (value thread-spawn-i64)
+  (value thread-spawn-bool)
+  (value thread-spawn-unit)
+  (value thread-spawn-string)
+  (value thread-spawn-array-i64)
+  (value thread-spawn-box-i64)
+  (value thread-linux-join)
+  (value thread-join)
+  (value thread-join-i64)
+  (value thread-join-bool)
+  (value thread-join-unit)
+  (value thread-join-string)
+  (value thread-join-array-i64)
+  (value thread-join-box-i64)
+  (value thread-spawn-result-ok?)
+  (value thread-spawn-result-handle-or)
+  (value thread-spawn-result-clear-tid-addr-or)
+  (value thread-spawn-result-result-addr-or)
+  (value thread-join-result-value-or)
+  (value thread-i64-join-result-value-or)
+  (value thread-count-byte-bits)
+  (value thread-count-affinity-bytes)
+  (value thread-linux-default-worker-count)
+  (value thread-default-worker-count)
+  (value thread-semaphore-create-handle-or)
+  (value thread-semaphore-create)
+  (value thread-semaphore-wait)
+  (value thread-semaphore-post)
+  (value thread-semaphore-close)
+  (type Thread)
+  (type ThreadSpawnResult)
+  (type ThreadJoinResult)
+  (type ThreadI64)
+  (type ThreadBool)
+  (type ThreadUnit)
+  (type ThreadString)
+  (type ThreadArrayI64)
+  (type ThreadBoxI64)
+  (type ThreadI64SpawnResult)
+  (type ThreadBoolSpawnResult)
+  (type ThreadUnitSpawnResult)
+  (type ThreadStringSpawnResult)
+  (type ThreadArrayI64SpawnResult)
+  (type ThreadBoxI64SpawnResult)
+  (type ThreadI64JoinResult)
+  (type ThreadBoolJoinResult)
+  (type ThreadUnitJoinResult)
+  (type ThreadStringJoinResult)
+  (type ThreadArrayI64JoinResult)
+  (type ThreadBoxI64JoinResult)
+  (type ThreadSemaphore)
+  (type ThreadSemaphoreResult)
+  (constructor Thread)
+  (constructor ThreadI64)
+  (constructor ThreadBool)
+  (constructor ThreadUnit)
+  (constructor ThreadString)
+  (constructor ThreadArrayI64)
+  (constructor ThreadBoxI64)
+  (constructor ThreadSemaphore)
+  (field Thread handle)
+  (field Thread clear-tid-addr)
+  (field Thread result-addr)
+  (field ThreadI64 raw)
+  (field ThreadBool raw)
+  (field ThreadUnit raw)
+  (field ThreadString raw)
+  (field ThreadString result-addr)
+  (field ThreadArrayI64 raw)
+  (field ThreadArrayI64 result-addr)
+  (field ThreadBoxI64 raw)
+  (field ThreadBoxI64 result-addr)
+  (field ThreadBoxI64 owner)
+  (field ThreadSemaphore handle)
+  (variant ThreadSpawnOk)
+  (variant ThreadSpawnErr)
+  (variant ThreadJoinOk)
+  (variant ThreadJoinErr)
+  (variant ThreadI64SpawnOk)
+  (variant ThreadI64SpawnErr)
+  (variant ThreadBoolSpawnOk)
+  (variant ThreadBoolSpawnErr)
+  (variant ThreadUnitSpawnOk)
+  (variant ThreadUnitSpawnErr)
+  (variant ThreadStringSpawnOk)
+  (variant ThreadStringSpawnErr)
+  (variant ThreadArrayI64SpawnOk)
+  (variant ThreadArrayI64SpawnErr)
+  (variant ThreadBoxI64SpawnOk)
+  (variant ThreadBoxI64SpawnErr)
+  (variant ThreadI64JoinOk)
+  (variant ThreadI64JoinErr)
+  (variant ThreadBoolJoinOk)
+  (variant ThreadBoolJoinErr)
+  (variant ThreadUnitJoinOk)
+  (variant ThreadUnitJoinErr)
+  (variant ThreadStringJoinOk)
+  (variant ThreadStringJoinErr)
+  (variant ThreadArrayI64JoinOk)
+  (variant ThreadArrayI64JoinErr)
+  (variant ThreadBoxI64JoinOk)
+  (variant ThreadBoxI64JoinErr)
+  (variant ThreadSemaphoreOk)
+  (variant ThreadSemaphoreErr))

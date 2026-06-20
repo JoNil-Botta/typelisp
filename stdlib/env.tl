@@ -7,15 +7,14 @@
 ;# list-returning PATH helpers remain for compatibility; vector-returning
 ;# variants avoid cons/reverse work for new internal callers.
 ;#
-;# Usage: `(import "stdlib/env.tl")`
+;# Usage: `(import stdlib.env)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/env.tl")
-;# (define fallback : EnvMaybeString
-;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
+;# (import stdlib.env)
+;# (define fallback : env.EnvMaybeString
+;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env.env-get (& name))))
 ;# ```
-(import "string.tl")
-(import "vector.tl")
+(module stdlib.env)
 
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
@@ -230,11 +229,23 @@
 ;: present empty variables use `EnvSomeStringVec` with an empty `StringVec`.
 (defenum EnvMaybeStringVec
   (EnvNoStringVec)
-  (EnvSomeStringVec StringVec))
+  (EnvSomeStringVec vector.StringVec))
+
+;: Return a present environment string result.
+(define (env-some-string [value : String]) : EnvMaybeString
+  (EnvSomeString value))
+
+;: Return a present PATH-style string-list result.
+(define (env-some-string-list [value : EnvStringList]) : EnvMaybeStringList
+  (EnvSomeStringList value))
+
+;: Return a present PATH-style string-vector result.
+(define (env-some-string-vec [value : vector.StringVec]) : EnvMaybeStringVec
+  (EnvSomeStringVec value))
 
 ;: Return an empty environment string list.
 (define (env-string-list-empty) : EnvStringList
-  (EnvStringNil))
+  EnvStringNil)
 
 ;: Prepend an owned string to an environment string list.
 (define (env-string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
@@ -253,11 +264,14 @@
 
 ;: Return `items` in reverse order.
 (define (env-string-list-reverse [items : EnvStringList]) : EnvStringList
-  (env-string-list-reverse-onto items (EnvStringNil)))
+  (env-string-list-reverse-onto items EnvStringNil))
+
+(import stdlib.string)
+(import stdlib.vector)
 
 ;: Build an environment string list from `items`, preserving vector order.
 (define (env-string-list-from-vec-from
-  [items : StringVec]
+  [items : vector.StringVec]
   [index : i64]
   [acc : EnvStringList]) : EnvStringList
   (if (< index 0)
@@ -265,25 +279,29 @@
     (env-string-list-from-vec-from
       items
       (- index 1)
-      (EnvStringCons (string-vec-get items index "") (box acc)))))
+      (env-string-list-cons (vector.string-vec-get items index "") acc))))
 
 ;: Build an environment string list from `items`, preserving vector order.
-(define (env-string-list-from-vec [items : StringVec]) : EnvStringList
+(define (env-string-list-from-vec [items : vector.StringVec]) : EnvStringList
   (env-string-list-from-vec-from
     items
-    (- (string-vec-len items) 1)
-    (EnvStringNil)))
+    (- (vector.string-vec-len items) 1)
+    EnvStringNil))
 
 ;: Copy `items` into `out`, preserving list order.
-(define (env-string-list-to-vec-into [items : EnvStringList] [out : StringVec]) : StringVec
+(define (env-string-list-to-vec-into
+  [items : EnvStringList]
+  [out : vector.StringVec]) : vector.StringVec
   (match items
     [(EnvStringNil) out]
     [(EnvStringCons head rest)
-      (env-string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+      (env-string-list-to-vec-into
+        (box-get rest)
+        (vector.string-vec-push out head))]))
 
 ;: Copy `items` into a fresh `StringVec`, preserving list order.
-(define (env-string-list-to-vec [items : EnvStringList]) : StringVec
-  (env-string-list-to-vec-into items (string-vec-new)))
+(define (env-string-list-to-vec [items : EnvStringList]) : vector.StringVec
+  (env-string-list-to-vec-into items (vector.string-vec-new)))
 
 ;: Return the current platform PATH-list separator as a one-byte String.
 (define (env-path-list-separator) : String
@@ -292,37 +310,39 @@
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
   (let
-    [owned-name : String (string-copy-borrowed name)]
+    [owned-name : String (string.string-copy-borrowed name)]
     (if (env-var-exists? owned-name)
-      (EnvSomeString (env-var-value owned-name))
-      (EnvNoString))))
+      (env-some-string (env-var-value owned-name))
+      EnvNoString)))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator-vec
   [value : (& value str)]
-  [separator : (& separator str)]) : StringVec
+  [separator : (& separator str)]) : vector.StringVec
   (let
     [n : i64 (string-length value)]
     (if (= n 0)
-      (string-vec-new)
+      (vector.string-vec-new)
       (let
         [sep : char (string-ref separator 0)]
-        [items : StringVec (string-vec-new)]
+        [items : vector.StringVec (vector.string-vec-new)]
         [start : i64 0]
         [i : i64 0]
         (begin
           (while (< i n)
-            (if (char-eq (string-ref value i) sep)
+            (if (string.char-eq (string-ref value i) sep)
               (begin
                 (set!
                   items
-                  (string-vec-push
+                  (vector.string-vec-push
                     items
-                    (substring-borrowed value start (- i start))))
+                    (string.substring-borrowed value start (- i start))))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (string-vec-push items (substring-borrowed value start (- n start))))))))
+          (vector.string-vec-push
+            items
+            (string.substring-borrowed value start (- n start))))))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator
@@ -331,7 +351,7 @@
   (env-string-list-from-vec (env-path-split-with-separator-vec value separator)))
 
 ;: Split a PATH-style string using the current platform separator.
-(define (env-path-split-vec [value : (& value str)]) : StringVec
+(define (env-path-split-vec [value : (& value str)]) : vector.StringVec
   (let
     [separator : String (env-path-list-separator)]
     (env-path-split-with-separator-vec value (& separator))))
@@ -343,15 +363,15 @@
 ;: Read `name` and split it as a PATH-style list when present.
 (define (env-path-list-vec [name : (& name str)]) : EnvMaybeStringVec
   (match (env-get name)
-    [(EnvSomeString value) (EnvSomeStringVec (env-path-split-vec (& value)))]
-    [(EnvNoString) (EnvNoStringVec)]))
+    [(EnvSomeString value) (env-some-string-vec (env-path-split-vec (& value)))]
+    [(EnvNoString) EnvNoStringVec]))
 
 ;: Read `name` and split it as a PATH-style list when present.
 (define (env-path-list [name : (& name str)]) : EnvMaybeStringList
   (match (env-path-list-vec name)
     [(EnvSomeStringVec value)
-      (EnvSomeStringList (env-string-list-from-vec value))]
-    [(EnvNoStringVec) (EnvNoStringList)]))
+      (env-some-string-list (env-string-list-from-vec value))]
+    [(EnvNoStringVec) EnvNoStringList]))
 
 ;: Append PATH-style `items` to `acc`, allocating joined string segments.
 (define (env-path-join-tail
@@ -364,37 +384,44 @@
       (env-path-join-tail
         (let
           [acc-with-separator : String
-            (string-append-borrowed (& acc) separator)]
-          (string-append acc-with-separator head))
+            (string.string-append-borrowed (& acc) separator)]
+          (string.string-append acc-with-separator head))
         (box-get rest)
         separator)]))
 
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-vec-tail
   [acc : String]
-  [items : StringVec]
+  [items : vector.StringVec]
   [index : i64]
   [separator : (& separator str)]) : String
-  (if (>= index (string-vec-len items))
+  (if (>= index (vector.string-vec-len items))
     acc
     (env-path-join-vec-tail
       (let
-        [acc-with-separator : String (string-append-borrowed (& acc) separator)]
-        (string-append acc-with-separator (string-vec-get items index "")))
+        [acc-with-separator : String
+          (string.string-append-borrowed (& acc) separator)]
+        (string.string-append
+          acc-with-separator
+          (vector.string-vec-get items index "")))
       items
       (+ index 1)
       separator)))
 
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-vec-with-separator
-  [items : StringVec]
+  [items : vector.StringVec]
   [separator : (& separator str)]) : String
-  (if (<= (string-vec-len items) 0)
+  (if (<= (vector.string-vec-len items) 0)
     ""
-    (env-path-join-vec-tail (string-vec-get items 0 "") items 1 separator)))
+    (env-path-join-vec-tail
+      (vector.string-vec-get items 0 "")
+      items
+      1
+      separator)))
 
 ;: Join PATH-style items using the current platform separator.
-(define (env-path-join-vec [items : StringVec]) : String
+(define (env-path-join-vec [items : vector.StringVec]) : String
   (let
     [separator : String (env-path-list-separator)]
     (env-path-join-vec-with-separator items (& separator))))
@@ -433,7 +460,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (env-test-assert-true (string-eq actual expected) message))
+  (env-test-assert-true (string.string-eq actual expected) message))
 
 ;: Assert that an environment lookup is missing.
 (define (env-test-assert-none [value : EnvMaybeString] [_message : String]) : unit
@@ -484,7 +511,7 @@
   [message : String]) : unit
   (match value
     [(EnvSomeStringVec items)
-      (env-test-assert-i64-eq (string-vec-len items) 0 message)]
+      (env-test-assert-i64-eq (vector.string-vec-len items) 0 message)]
     [(EnvNoStringVec) (env-test-fail)]))
 
 ;: Assert that an environment string list contains exactly three strings.
@@ -547,29 +574,29 @@
 
 ;: Assert that a string vector contains exactly three strings.
 (define (env-test-assert-vec3
-  [items : StringVec]
+  [items : vector.StringVec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (begin
-    (env-test-assert-i64-eq (string-vec-len items) 3 message)
+    (env-test-assert-i64-eq (vector.string-vec-len items) 3 message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 0 "missing")
+      (vector.string-vec-get items 0 "missing")
       first
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 1 "missing")
+      (vector.string-vec-get items 1 "missing")
       second
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 2 "missing")
+      (vector.string-vec-get items 2 "missing")
       third
       message)))
 
 ;: Assert that a string vector contains exactly five strings.
 (define (env-test-assert-vec5
-  [items : StringVec]
+  [items : vector.StringVec]
   [first : String]
   [second : String]
   [third : String]
@@ -577,25 +604,25 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (env-test-assert-i64-eq (string-vec-len items) 5 message)
+    (env-test-assert-i64-eq (vector.string-vec-len items) 5 message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 0 "missing")
+      (vector.string-vec-get items 0 "missing")
       first
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 1 "missing")
+      (vector.string-vec-get items 1 "missing")
       second
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 2 "missing")
+      (vector.string-vec-get items 2 "missing")
       third
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 3 "missing")
+      (vector.string-vec-get items 3 "missing")
       fourth
       message)
     (env-test-assert-owned-string-eq
-      (string-vec-get items 4 "missing")
+      (vector.string-vec-get items 4 "missing")
       fifth
       message)))
 
@@ -722,3 +749,43 @@
         value
         "env semicolon join vec"))
     unit))
+
+(export
+  (value env-ascii-fold)
+  (value env-var-exists?)
+  (value env-var-value)
+  (value env-path-separator)
+  (value env-string-list-empty)
+  (value env-string-list-cons)
+  (value env-string-list-reverse-onto)
+  (value env-string-list-reverse)
+  (value env-string-list-from-vec-from)
+  (value env-string-list-from-vec)
+  (value env-string-list-to-vec-into)
+  (value env-string-list-to-vec)
+  (value env-path-list-separator)
+  (value env-get)
+  (value env-path-split-with-separator-vec)
+  (value env-path-split-with-separator)
+  (value env-path-split-vec)
+  (value env-path-split)
+  (value env-path-list-vec)
+  (value env-path-list)
+  (value env-path-join-tail)
+  (value env-path-join-vec-tail)
+  (value env-path-join-vec-with-separator)
+  (value env-path-join-vec)
+  (value env-path-join-with-separator)
+  (value env-path-join)
+  (type EnvMaybeString)
+  (type EnvStringList)
+  (type EnvMaybeStringList)
+  (type EnvMaybeStringVec)
+  (variant EnvNoString)
+  (variant EnvSomeString)
+  (variant EnvStringNil)
+  (variant EnvStringCons)
+  (variant EnvNoStringList)
+  (variant EnvSomeStringList)
+  (variant EnvNoStringVec)
+  (variant EnvSomeStringVec))

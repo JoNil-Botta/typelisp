@@ -9,57 +9,60 @@
 ;# `fs-file-kind-status`, `fs-file-size-status`, `fs-file-size`,
 ;# `fs-process-id`, `fs-current-dir-status`, and `fs-current-dir`.
 ;#
-;# Usage: `(import "stdlib/fs.tl")`
+;# Usage: `(import stdlib.fs)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/fs.tl")
+;# (import stdlib.fs)
 ;# (define joined : String
 ;#   (let
 ;#     [left : String "target"]
 ;#     [right : String "tool-output.s"]
-;#     (fs-path-join (& left) (& right))))
-;# (define nested : String
-;#   (fs-path-join-many "target" "typelisp" "cache"))
+;#     (fs.fs-path-join (& left) (& right))))
 ;# ```
-(import "env.tl")
-(import "io.tl")
-(import "list.tl")
-(import "string.tl")
-(import "vector.tl")
+(module stdlib.fs)
+
+(import stdlib.env)
+(import stdlib.io)
+(import stdlib.list)
+(import stdlib.string)
+(import stdlib.vector)
 
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringList
-  (OkIoStringList StringList)
-  (ErrIoStringList IoError))
+  (OkIoStringList list.StringList)
+  (ErrIoStringList io.IoError))
 
 ;: Result type for vector-backed directory-listing APIs.
 (defenum ResultIoStringVec
-  (OkIoStringVec StringVec)
-  (ErrIoStringVec IoError))
+  (OkIoStringVec vector.StringVec)
+  (ErrIoStringVec io.IoError))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
-      (syscall 83 (io-linux-ptr-arg path) mode))))
+      (syscall 83 (io.io-linux-ptr-arg path) mode))))
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
 (define (fs-linux-syscall-unlink [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
-      (syscall 87 (io-linux-ptr-arg path)))))
+      (syscall 87 (io.io-linux-ptr-arg path)))))
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
 (define (fs-linux-syscall-rmdir [path : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
-      (syscall 84 (io-linux-ptr-arg path)))))
+      (syscall 84 (io.io-linux-ptr-arg path)))))
 
 ;: Linux `rename` via the `rename` syscall (number 82).
 (define (fs-linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
-      (syscall 82 (io-linux-ptr-arg source) (io-linux-ptr-arg destination)))))
+      (syscall
+        82
+        (io.io-linux-ptr-arg source)
+        (io.io-linux-ptr-arg destination)))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (fs-linux-syscall-getpid) : i64
@@ -72,11 +75,11 @@
 (define (fs-linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
   (let
     [ptr : i64
-      (io-linux-ptr-arg
+      (io.io-linux-ptr-arg
         (unsafe
           (ptr-cast buf : (Ptr u8))))]
     [result : i64
-      (io-linux-syscall-status
+      (io.io-linux-syscall-status
         (unsafe
           (syscall 79 ptr size)))]
     (if (< result 0)
@@ -91,21 +94,21 @@
   [path : (Ptr u8)]
   [flags : i64]
   [mode : i64]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
-      (syscall 257 dirfd (io-linux-ptr-arg path) flags mode))))
+      (syscall 257 dirfd (io.io-linux-ptr-arg path) flags mode))))
 
 ;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
 (define (fs-linux-syscall-getdents64
   [fd : i64]
   [buf : (MutPtr u8)]
   [count : i64]) : i64
-  (io-linux-syscall-status
+  (io.io-linux-syscall-status
     (unsafe
       (syscall
         217
         fd
-        (io-linux-ptr-arg
+        (io.io-linux-ptr-arg
           (unsafe
             (ptr-cast buf : (Ptr u8))))
         count))))
@@ -146,7 +149,7 @@
   (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
     (if (= (fs-win-create-directory path 0) (cast 0 : i32))
       (begin
-        (io-set-error-code
+        (io.io-set-error-code
           (if (= (fs-win-get-last-error) (cast 183 : i32))
             17
             2))
@@ -159,7 +162,7 @@
   (define (fs-windows-unlink [path : (Ptr u8)]) : i32
     (if (= (fs-win-delete-file path) (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -169,7 +172,7 @@
   (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
     (if (= (fs-win-remove-directory path) (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -193,7 +196,7 @@
       (fs-win-move-file-ex source destination (cast 1 : i32))
       (cast 0 : i32))
       (begin
-        (io-set-error-code 2)
+        (io.io-set-error-code 2)
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -201,13 +204,13 @@
 (define (fs-status-from-result [result : i64]) : i64
   (if (= result 0)
     0
-    (io-last-error-code)))
+    (io.io-last-error-code)))
 
 ;: Create an owned path string as a directory and return a host status code.
 (define (fs-mkdir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [path-bytes : (Array u8) (io.io-c-string path)]
+    [path-ptr : (Ptr u8) (io.io-array-const-ptr path-bytes)]
     (fs-status-from-result
       (cfg
         windows
@@ -217,14 +220,14 @@
 ;: Return the host status code for creating a directory.
 (define (fs-mkdir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
+    [path-text : String (string.string-copy-borrowed path)]
     (fs-mkdir-status-owned path-text)))
 
 ;: Remove an owned path string as a file and return a host status code.
 (define (fs-remove-file-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [path-bytes : (Array u8) (io.io-c-string path)]
+    [path-ptr : (Ptr u8) (io.io-array-const-ptr path-bytes)]
     (fs-status-from-result
       (cfg
         windows
@@ -234,14 +237,14 @@
 ;: Return the host status code for removing a file.
 (define (fs-remove-file-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
+    [path-text : String (string.string-copy-borrowed path)]
     (fs-remove-file-status-owned path-text)))
 
 ;: Remove an owned path string as an empty directory and return a host status code.
 (define (fs-remove-dir-status-owned [path : String]) : i64
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [path-bytes : (Array u8) (io.io-c-string path)]
+    [path-ptr : (Ptr u8) (io.io-array-const-ptr path-bytes)]
     (fs-status-from-result
       (cfg
         windows
@@ -251,33 +254,33 @@
 ;: Return the host status code for removing an empty directory.
 (define (fs-remove-dir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string-copy-borrowed path)]
+    [path-text : String (string.string-copy-borrowed path)]
     (fs-remove-dir-status-owned path-text)))
 
 ;: Rename owned source and destination path strings and return a host status code.
 (define (fs-rename-status-owned [source : String] [destination : String]) : i64
   (let
-    [source-bytes : (Array u8) (io-c-string source)]
-    [destination-bytes : (Array u8) (io-c-string destination)]
+    [source-bytes : (Array u8) (io.io-c-string source)]
+    [destination-bytes : (Array u8) (io.io-c-string destination)]
     (fs-status-from-result
       (cfg
         windows
         (cast
           (fs-windows-rename
-            (io-array-const-ptr source-bytes)
-            (io-array-const-ptr destination-bytes))
+            (io.io-array-const-ptr source-bytes)
+            (io.io-array-const-ptr destination-bytes))
           : i64)
         (fs-linux-syscall-rename
-          (io-array-const-ptr source-bytes)
-          (io-array-const-ptr destination-bytes))))))
+          (io.io-array-const-ptr source-bytes)
+          (io.io-array-const-ptr destination-bytes))))))
 
 ;: Return the host status code for renaming a path.
 (define (fs-rename-status
   [source : (& source str)]
   [destination : (& destination str)]) : i64
   (let
-    [source-text : String (string-copy-borrowed source)]
-    [destination-text : String (string-copy-borrowed destination)]
+    [source-text : String (string.string-copy-borrowed source)]
+    [destination-text : String (string.string-copy-borrowed destination)]
     (fs-rename-status-owned source-text destination-text)))
 
 ;: Return the host process id.
@@ -316,17 +319,19 @@
 
 ;: Return true when a directory entry name is `.` or `..`.
 (define (fs-read-dir-dot-entry? [name : (Ptr u8)]) : bool
-  (if (!= (fs-c-string-byte name 0) 46)
+  (if (!= (stdlib.fs.fs-c-string-byte name 0) 46)
     false
     (let
-      [second : i64 (fs-c-string-byte name 1)]
+      [second : i64 (stdlib.fs.fs-c-string-byte name 1)]
       (if (= second 0)
         true
-        (and (= second 46) (= (fs-c-string-byte name 2) 0))))))
+        (if (= second 46)
+          (= (stdlib.fs.fs-c-string-byte name 2) 0)
+          false)))))
 
 ;: Append one non-dot entry name plus a newline to `out`.
 (define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
-  (if (fs-read-dir-dot-entry? name)
+  (if (stdlib.fs.fs-read-dir-dot-entry? name)
     unit
     (let
       [i : i64 0]
@@ -347,7 +352,7 @@
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (fs-read-dir-bytes-string [out : (Array u8)]) : String
   (unsafe
-    (string-from-bytes (io-array-const-ptr out) (array-length out))))
+    (string-from-bytes (io.io-array-const-ptr out) (array-length out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -370,10 +375,10 @@
   (not windows)
   (define (fs-linux-open-dir-owned [path : String]) : i64
     (let
-      [path-bytes : (Array u8) (io-c-string path)]
+      [path-bytes : (Array u8) (io.io-c-string path)]
       (fs-linux-syscall-openat
         fs-linux-at-fdcwd
-        (io-array-const-ptr path-bytes)
+        (io.io-array-const-ptr path-bytes)
         fs-linux-open-directory
         0))))
 
@@ -384,8 +389,8 @@
     (let
       [fd : i64 (fs-linux-open-dir-owned path)]
       (if (< fd 0)
-        (io-last-error-code)
-        (fs-status-from-result (io-linux-syscall-close fd))))))
+        (io.io-last-error-code)
+        (fs-status-from-result (io.io-linux-syscall-close fd))))))
 
 ;: Append entries from one Linux getdents64 buffer page.
 (cfg
@@ -395,7 +400,7 @@
     [read-count : i64]
     [out : (Array u8)]) : unit
     (let
-      [base : (Ptr u8) (io-array-const-ptr buf)]
+      [base : (Ptr u8) (io.io-array-const-ptr buf)]
       [offset : i64 0]
       [done : bool false]
       (while (not done)
@@ -430,7 +435,7 @@
                 [read-count : i64
                   (fs-linux-syscall-getdents64
                     fd
-                    (io-array-ptr buf)
+                    (io.io-array-ptr buf)
                     fs-read-dir-buffer-size)]
                 (if (< read-count 0)
                   (begin
@@ -439,7 +444,7 @@
                   (if (= read-count 0)
                     (set! done true)
                     (fs-linux-read-dir-append-page! buf read-count out)))))
-            (io-linux-syscall-close fd)
+            (io.io-linux-syscall-close fd)
             (if ok
               (fs-read-dir-bytes-string out)
               "")))))))
@@ -451,36 +456,36 @@
     (let
       [code : i64 (cast (fs-win-get-last-error) : i64)]
       (if (= code 2)
-        io-status-not-found
+        io.io-status-not-found
         (if (= code 3)
-          io-status-not-directory
+          io.io-status-not-directory
           (if (= code 5)
-            io-status-permission-denied
+            io.io-status-permission-denied
             (if (= code 87)
-              io-status-invalid
+              io.io-status-invalid
               (if (= code 123)
-                io-status-invalid
+                io.io-status-invalid
                 (if (= code 161)
-                  io-status-invalid
+                  io.io-status-invalid
                   (if (= code 206)
-                    io-status-name-too-long
+                    io.io-status-name-too-long
                     (if (= code 267)
-                      io-status-not-directory
+                      io.io-status-not-directory
                       code)))))))))))
 
 ;: Return an I/O error status when Windows reported no concrete code.
 (cfg
   windows
   (define (fs-windows-nonzero-status [status : i64]) : i64
-    (if (= status io-status-ok)
-      io-status-io-error
+    (if (= status io.io-status-ok)
+      io.io-status-io-error
       status)))
 
 ;: Build the `path\*` search pattern expected by FindFirstFileA.
 (cfg
   windows
   (define (fs-windows-read-dir-pattern [path : String]) : String
-    (string-append path "\\*")))
+    (string.string-append path "\\*")))
 
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
@@ -488,7 +493,7 @@
   (define (fs-windows-find-data-name [data : (Array u8)]) : (Ptr u8)
     (unsafe
       (ptr-cast
-        (ptr-offset (io-array-ptr data) fs-windows-find-data-name-offset)
+        (ptr-offset (io.io-array-ptr data) fs-windows-find-data-name-offset)
         : (Ptr u8)))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
@@ -497,17 +502,17 @@
   (define (fs-windows-read-dir-status [path : String]) : i64
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io-c-string pattern)]
+      [pattern-bytes : (Array u8) (io.io-c-string pattern)]
       [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
       [handle : i64
         (fs-win-find-first-file
-          (io-array-const-ptr pattern-bytes)
-          (io-array-ptr data))]
+          (io.io-array-const-ptr pattern-bytes)
+          (io.io-array-ptr data))]
       (if (= handle -1)
         (fs-windows-nonzero-status (fs-windows-last-error-status))
         (if (= (fs-win-find-close handle) (cast 0 : i32))
           (fs-windows-nonzero-status (fs-windows-last-error-status))
-          io-status-ok)))))
+          io.io-status-ok)))))
 
 ;: Return the newline-delimited Windows directory listing payload.
 (cfg
@@ -515,13 +520,13 @@
   (define (fs-windows-read-dir [path : String]) : String
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
-      [pattern-bytes : (Array u8) (io-c-string pattern)]
+      [pattern-bytes : (Array u8) (io.io-c-string pattern)]
       [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
       [out : (Array u8) (make-array u8 0)]
       [handle : i64
         (fs-win-find-first-file
-          (io-array-const-ptr pattern-bytes)
-          (io-array-ptr data))]
+          (io.io-array-const-ptr pattern-bytes)
+          (io.io-array-ptr data))]
       (if (= handle -1)
         ""
         (let
@@ -531,7 +536,7 @@
               (begin
                 (fs-read-dir-append-entry! out (fs-windows-find-data-name data))
                 (if (=
-                  (fs-win-find-next-file handle (io-array-ptr data))
+                  (fs-win-find-next-file handle (io.io-array-ptr data))
                   (cast 0 : i32))
                   (set! done true)
                   unit)))
@@ -603,13 +608,13 @@
   (define (fs-linux-syscall-newfstatat
     [path : (Ptr u8)]
     [statbuf : (MutPtr u8)]) : i64
-    (io-linux-syscall-status
+    (io.io-linux-syscall-status
       (unsafe
         (syscall
           262
           fs-linux-at-fdcwd
-          (io-linux-ptr-arg path)
-          (io-linux-ptr-arg
+          (io.io-linux-ptr-arg path)
+          (io.io-linux-ptr-arg
             (unsafe
               (ptr-cast statbuf : (Ptr u8))))
           0)))))
@@ -655,10 +660,10 @@
   (define (fs-linux-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
       [statbuf : (Array u8) (make-array u8 fs-linux-stat-buffer-size)]
-      [statptr : (MutPtr u8) (io-array-ptr statbuf)]
+      [statptr : (MutPtr u8) (io.io-array-ptr statbuf)]
       [status : i64
         (fs-status-from-result (fs-linux-syscall-newfstatat path statptr))]
-      (if (= status io-status-ok)
+      (if (= status io.io-status-ok)
         (let
           [kind : i64
             (fs-linux-file-kind-from-mode
@@ -679,7 +684,7 @@
   (define (fs-windows-metadata-error-status) : i64
     (let
       [status : i64 (fs-windows-last-error-status)]
-      (if (= status io-status-ok)
+      (if (= status io.io-status-ok)
         1
         status))))
 
@@ -709,7 +714,7 @@
   (define (fs-windows-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
       [data : (Array u8) (make-array u8 fs-windows-file-attribute-data-size)]
-      [dataptr : (MutPtr u8) (io-array-ptr data)]
+      [dataptr : (MutPtr u8) (io.io-array-ptr data)]
       [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
       (if (= ok (cast 0 : i32))
         (let
@@ -724,7 +729,7 @@
                   fs-windows-file-attributes-offset)
                 : i64))]
           (FsFileMetadataProbe
-            io-status-ok
+            io.io-status-ok
             kind
             (if (= kind fs-file-kind-regular-code)
               (fs-windows-file-size-from-data dataptr)
@@ -733,8 +738,8 @@
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
 (define (fs-file-metadata-probe [path : String]) : FsFileMetadataProbe
   (let
-    [path-bytes : (Array u8) (io-c-string path)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [path-bytes : (Array u8) (io.io-c-string path)]
+    [path-ptr : (Ptr u8) (io.io-array-const-ptr path-bytes)]
     (cfg
       windows
       (fs-windows-file-metadata-probe path-ptr)
@@ -774,81 +779,82 @@
 (define (fs-current-dir-status-loop [capacity : i64]) : i64
   (cfg
     windows
-    (if (> capacity fs-current-dir-max-capacity)
-      io-status-name-too-long
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
+      io.io-status-name-too-long
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [written : i64
           (cast
-            (fs-windows-get-current-directory
+            (stdlib.fs.fs-windows-get-current-directory
               (cast capacity : u32)
-              (io-array-ptr buf))
+              (io.io-array-ptr buf))
             : i64)]
         (if (= written 0)
-          io-status-io-error
+          io.io-status-io-error
           (if (< written capacity)
-            io-status-ok
-            (fs-current-dir-status-loop
-              (fs-current-dir-next-capacity capacity written))))))
-    (if (> capacity fs-current-dir-max-capacity)
-      io-status-name-too-long
+            io.io-status-ok
+            (stdlib.fs.fs-current-dir-status-loop
+              (stdlib.fs.fs-current-dir-next-capacity capacity written))))))
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
+      io.io-status-name-too-long
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [result : (Ptr u8)
-          (fs-linux-syscall-getcwd (io-array-ptr buf) capacity)]
+          (stdlib.fs.fs-linux-syscall-getcwd (io.io-array-ptr buf) capacity)]
         (if (ptr-null? result)
           (let
-            [status : i64 (io-last-error-code)]
-            (if (= status fs-status-range)
-              (if (< capacity fs-current-dir-max-capacity)
-                (fs-current-dir-status-loop (* capacity 2))
-                io-status-name-too-long)
+            [status : i64 (io.io-last-error-code)]
+            (if (= status stdlib.fs.fs-status-range)
+              (if (< capacity stdlib.fs.fs-current-dir-max-capacity)
+                (stdlib.fs.fs-current-dir-status-loop (* capacity 2))
+                io.io-status-name-too-long)
               status))
-          io-status-ok)))))
+          io.io-status-ok)))))
 
 ;: Read the current directory into an owned String.
 (define (fs-current-dir-loop [capacity : i64]) : String
   (cfg
     windows
-    (if (> capacity fs-current-dir-max-capacity)
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [written : i64
           (cast
-            (fs-windows-get-current-directory
+            (stdlib.fs.fs-windows-get-current-directory
               (cast capacity : u32)
-              (io-array-ptr buf))
+              (io.io-array-ptr buf))
             : i64)]
         (if (= written 0)
           ""
           (if (< written capacity)
-            (io-copy-c-string (io-array-const-ptr buf))
-            (fs-current-dir-loop
-              (fs-current-dir-next-capacity capacity written))))))
-    (if (> capacity fs-current-dir-max-capacity)
+            (io.io-copy-c-string (io.io-array-const-ptr buf))
+            (stdlib.fs.fs-current-dir-loop
+              (stdlib.fs.fs-current-dir-next-capacity capacity written))))))
+    (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
         [buf : (Array u8) (make-array u8 capacity)]
         [result : (Ptr u8)
-          (fs-linux-syscall-getcwd (io-array-ptr buf) capacity)]
+          (stdlib.fs.fs-linux-syscall-getcwd (io.io-array-ptr buf) capacity)]
         (if (ptr-null? result)
           (let
-            [status : i64 (io-last-error-code)]
-            (if (and
-              (= status fs-status-range)
-              (< capacity fs-current-dir-max-capacity))
-              (fs-current-dir-loop (* capacity 2))
+            [status : i64 (io.io-last-error-code)]
+            (if (= status stdlib.fs.fs-status-range)
+              (if (< capacity stdlib.fs.fs-current-dir-max-capacity)
+                (stdlib.fs.fs-current-dir-loop (* capacity 2))
+                "")
               ""))
-          (io-copy-c-string result))))))
+          (io.io-copy-c-string result))))))
 
 ;: Return the host status code for retrieving the current working directory.
 (define (fs-current-dir-status) : i64
-  (fs-current-dir-status-loop fs-current-dir-initial-capacity))
+  (stdlib.fs.fs-current-dir-status-loop
+    stdlib.fs.fs-current-dir-initial-capacity))
 
 ;: Return the process current directory as an owned String.
 (define (fs-current-dir) : String
-  (fs-current-dir-loop fs-current-dir-initial-capacity))
+  (stdlib.fs.fs-current-dir-loop stdlib.fs.fs-current-dir-initial-capacity))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -872,49 +878,57 @@
 ;: Result type for file-kind probes.
 (defenum ResultFsFileKind
   (OkFsFileKind FsFileKind)
-  (ErrFsFileKind IoError))
+  (ErrFsFileKind io.IoError))
 
 ;: Result type for filesystem metadata probes.
 (defenum ResultFsMetadata
   (OkFsMetadata FsMetadata)
-  (ErrFsMetadata IoError))
+  (ErrFsMetadata io.IoError))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
-  (string-eq (env-path-list-separator) ";"))
+  (string.string-eq (env.env-path-list-separator) ";"))
 
 ;: Return the preferred path separator for the current host.
 (define (fs-path-separator) : String
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     "\\"
     "/"))
 
 ;: Return the preferred path separator as a character.
 (define (fs-path-separator-char) : char
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     '\\'
     '/'))
 
 ;: Return true when `c` is either Unix or Windows path separator syntax.
 (define (fs-path-separator? [c : char]) : bool
-  (or (char-eq c '/') (char-eq c '\\')))
+  (if (string.char-eq c '/')
+    true
+    (string.char-eq c '\\')))
 
 ;: Return true when `path` starts with either supported separator character.
 (define (fs-path-starts-separator? [path : (& path str)]) : bool
-  (and (> (string-length path) 0) (fs-path-separator? (string-ref path 0))))
+  (if (> (string-length path) 0)
+    (stdlib.fs.fs-path-separator? (string-ref path 0))
+    false))
 
 ;: Return true when `path` ends with either supported separator character.
 (define (fs-path-ends-separator? [path : (& path str)]) : bool
   (let
     [n : i64 (string-length path)]
-    (and (> n 0) (fs-path-separator? (string-ref path (- n 1))))))
+    (if (> n 0)
+      (stdlib.fs.fs-path-separator? (string-ref path (- n 1)))
+      false)))
 
 ;: Return true when `path` starts with a Windows drive designator like `C:`.
 ;:
 ;: `C:relative` is drive-qualified but not absolute. `fs-path-safe-relative?`
 ;: rejects drive-qualified strings because they are not portable root suffixes.
 (define (fs-path-drive-qualified? [path : (& path str)]) : bool
-  (and (> (string-length path) 1) (char-eq (string-ref path 1) ':')))
+  (if (> (string-length path) 1)
+    (string.char-eq (string-ref path 1) ':')
+    false))
 
 ;: Return true when `path` is rooted or drive-absolute.
 ;:
@@ -926,53 +940,58 @@
     [n : i64 (string-length path)]
     (if (= n 0)
       false
-      (if (fs-path-separator? (string-ref path 0))
+      (if (stdlib.fs.fs-path-separator? (string-ref path 0))
         true
-        (and
-          (> n 2)
-          (fs-path-drive-qualified? path)
-          (fs-path-separator? (string-ref path 2)))))))
+        (if (> n 2)
+          (if (stdlib.fs.fs-path-drive-qualified? path)
+            (stdlib.fs.fs-path-separator? (string-ref path 2))
+            false)
+          false)))))
 
 ;: Render normalized path segments using `/` separators.
 (define (fs-path-segment-vec-render-from
-  [segments : StringVec]
+  [segments : vector.StringVec]
   [index : i64]
   [prefix : String]) : String
-  (if (>= index (string-vec-len segments))
+  (if (>= index (vector.string-vec-len segments))
     prefix
     (let
-      [segment : String (string-vec-get segments index "")]
+      [segment : String (vector.string-vec-get segments index "")]
       [next-prefix : String
         (if (= (string-length prefix) 0)
           segment
-          (string-append prefix (string-append "/" segment)))]
-      (fs-path-segment-vec-render-from segments (+ index 1) next-prefix))))
+          (string.string-append prefix (string.string-append "/" segment)))]
+      (stdlib.fs.fs-path-segment-vec-render-from
+        segments
+        (+ index 1)
+        next-prefix))))
 
 ;: Render normalized path segments using `/` separators.
-(define (fs-path-segment-vec-render [segments : StringVec]) : String
-  (fs-path-segment-vec-render-from segments 0 ""))
+(define (fs-path-segment-vec-render [segments : vector.StringVec]) : String
+  (stdlib.fs.fs-path-segment-vec-render-from segments 0 ""))
 
 ;: Fold one lexical path segment into the normalized segment stack.
 (define (fs-path-normalize-segment
   [segment : String]
-  [segments : StringVec]
-  [rooted : bool]) : StringVec
-  (begin
-    (when (or (string-eq segment "") (string-eq segment ".")) (return segments))
-    (when
-      (not (string-eq segment ".."))
-      (return (string-vec-push segments segment)))
-    (if (<= (string-vec-len segments) 0)
-      (if rooted
-        segments
-        (string-vec-push segments segment))
-      (let
-        [top : String (string-vec-last segments "")]
-        (if (string-eq top "..")
-          (string-vec-push segments segment)
-          (match (string-vec-pop segments)
-            [(StringVecPopOk _ rest) rest]
-            [(StringVecPopEmpty) segments]))))))
+  [segments : vector.StringVec]
+  [rooted : bool]) : vector.StringVec
+  (if (string.string-eq segment "")
+    segments
+    (if (string.string-eq segment ".")
+      segments
+      (if (not (string.string-eq segment ".."))
+        (vector.string-vec-push segments segment)
+        (if (<= (vector.string-vec-len segments) 0)
+          (if rooted
+            segments
+            (vector.string-vec-push segments segment))
+          (let
+            [top : String (vector.string-vec-last segments "")]
+            (if (string.string-eq top "..")
+              (vector.string-vec-push segments segment)
+              (vector.string-vec-pop-rest-or
+                (vector.string-vec-pop segments)
+                segments))))))))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -985,14 +1004,17 @@
   (let
     [n : i64 (string-length path)]
     [drive-root : bool
-      (and
-        (> n 2)
-        (fs-path-drive-qualified? path)
-        (fs-path-separator? (string-ref path 2)))]
+      (if (> n 2)
+        (if (stdlib.fs.fs-path-drive-qualified? path)
+          (stdlib.fs.fs-path-separator? (string-ref path 2))
+          false)
+        false)]
     [rooted : bool
       (if drive-root
         true
-        (and (> n 0) (fs-path-separator? (string-ref path 0))))]
+        (if (> n 0)
+          (stdlib.fs.fs-path-separator? (string-ref path 0))
+          false))]
     [i : i64
       (if drive-root
         3
@@ -1000,16 +1022,19 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : StringVec (string-vec-new)]
+    [segments : vector.StringVec (vector.string-vec-new)]
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref path i))
+          (if (stdlib.fs.fs-path-separator? (string-ref path i))
             (begin
               (set!
                 segments
-                (fs-path-normalize-segment
-                  (substring-borrowed path segment-start (- i segment-start))
+                (stdlib.fs.fs-path-normalize-segment
+                  (string.substring-borrowed
+                    path
+                    segment-start
+                    (- i segment-start))
                   segments
                   rooted))
               (set! segment-start (+ i 1)))
@@ -1017,21 +1042,26 @@
           (set! i (+ i 1))))
       (set!
         segments
-        (fs-path-normalize-segment
-          (substring-borrowed path segment-start (- n segment-start))
+        (stdlib.fs.fs-path-normalize-segment
+          (string.substring-borrowed path segment-start (- n segment-start))
           segments
           rooted))
       (let
-        [body : String (fs-path-segment-vec-render segments)]
+        [body : String (stdlib.fs.fs-path-segment-vec-render segments)]
         (cond
-          [(and drive-root (= (string-length body) 0))
-            (string-append (substring-borrowed path 0 2) "/")]
+          [(if drive-root
+              (= (string-length body) 0)
+              false)
+            (string.string-append (string.substring-borrowed path 0 2) "/")]
           [drive-root
-            (string-append
-              (substring-borrowed path 0 2)
-              (string-append "/" body))]
-          [(and rooted (= (string-length body) 0)) "/"]
-          [rooted (string-append "/" body)]
+            (string.string-append
+              (string.substring-borrowed path 0 2)
+              (string.string-append "/" body))]
+          [(if rooted
+              (= (string-length body) 0)
+              false)
+            "/"]
+          [rooted (string.string-append "/" body)]
           [(= (string-length body) 0) "."]
           [else body])))))
 
@@ -1040,13 +1070,15 @@
   (let
     [n : i64 (string-length normalized)]
     [parent : String ".."]
-    (if (string-eq-borrowed normalized (& parent))
+    (if (string.string-eq-borrowed normalized (& parent))
       true
-      (and
-        (> n 2)
-        (char-eq (string-ref normalized 0) '.')
-        (char-eq (string-ref normalized 1) '.')
-        (fs-path-separator? (string-ref normalized 2))))))
+      (if (> n 2)
+        (if (string.char-eq (string-ref normalized 0) '.')
+          (if (string.char-eq (string-ref normalized 1) '.')
+            (stdlib.fs.fs-path-separator? (string-ref normalized 2))
+            false)
+          false)
+        false))))
 
 ;: Return true when `path` is a non-empty relative suffix that stays below root.
 ;:
@@ -1055,43 +1087,45 @@
 ;: and normalized paths whose first segment is `..`. It does not canonicalize
 ;: symlinks or query the filesystem.
 (define (fs-path-safe-relative? [path : (& path str)]) : bool
-  (if (or (fs-path-absolute? path) (fs-path-drive-qualified? path))
+  (if (stdlib.fs.fs-path-absolute? path)
     false
-    (let
-      [normalized : String (fs-path-normalize path)]
-      (and
-        (not (string-eq normalized "."))
-        (not (fs-path-normalized-escapes? (& normalized)))))))
+    (if (stdlib.fs.fs-path-drive-qualified? path)
+      false
+      (let
+        [normalized : String (stdlib.fs.fs-path-normalize path)]
+        (if (not (string.string-eq normalized "."))
+          (not (stdlib.fs.fs-path-normalized-escapes? (& normalized)))
+          false)))))
 
 ;: Join `left` and `right` with exactly one host path separator when needed.
 ;:
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
   (cond
-    [(= (string-length left) 0) (string-copy-borrowed right)]
-    [(= (string-length right) 0) (string-copy-borrowed left)]
-    [(fs-path-separator? (string-ref left (- (string-length left) 1)))
-      (if (fs-path-separator? (string-ref right 0))
+    [(= (string-length left) 0) (string.string-copy-borrowed right)]
+    [(= (string-length right) 0) (string.string-copy-borrowed left)]
+    [(stdlib.fs.fs-path-separator? (string-ref left (- (string-length left) 1)))
+      (if (stdlib.fs.fs-path-separator? (string-ref right 0))
         (let
           [trimmed-right : String
-            (substring-borrowed right 1 (- (string-length right) 1))]
-          (string-append-borrowed left (& trimmed-right)))
-        (string-append-borrowed left right))]
-    [(fs-path-separator? (string-ref right 0))
-      (string-append-borrowed left right)]
+            (string.substring-borrowed right 1 (- (string-length right) 1))]
+          (string.string-append-borrowed left (& trimmed-right)))
+        (string.string-append-borrowed left right))]
+    [(stdlib.fs.fs-path-separator? (string-ref right 0))
+      (string.string-append-borrowed left right)]
     [else
       (let
-        [separator : String (fs-path-separator)]
+        [separator : String (stdlib.fs.fs-path-separator)]
         [left-with-separator : String
-          (string-append-borrowed left (& separator))]
-        (string-append-borrowed (& left-with-separator) right))]))
+          (string.string-append-borrowed left (& separator))]
+        (string.string-append-borrowed (& left-with-separator) right))]))
 
 ;: Join two owned `String` path segments by delegating to `fs-path-join`.
 ;:
 ;: This helper is the fixed-arity expansion target for `fs-path-join-many`;
 ;: call `fs-path-join` directly when the caller already has borrowed text.
 (define (fs-path-join-owned-pair [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (stdlib.fs.fs-path-join (& left) (& right)))
 
 ;: Join zero or more owned `String` path segments by chaining pairwise joins.
 ;:
@@ -1122,7 +1156,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref path i))
+          (if (stdlib.fs.fs-path-separator? (string-ref path i))
             (set! last i)
             (set! last last))
           (set! i (+ i 1))))
@@ -1138,8 +1172,8 @@
     (if (< last 0)
       "."
       (if (= last 0)
-        (fs-path-separator)
-        (substring-borrowed path 0 last)))))
+        (stdlib.fs.fs-path-separator)
+        (string.substring-borrowed path 0 last)))))
 
 ;: Final component of `path` (the part after the last separator).
 ;:
@@ -1150,8 +1184,8 @@
     [n : i64 (string-length path)]
     [last : i64 (fs-last-separator-index path)]
     (if (< last 0)
-      (string-copy-borrowed path)
-      (substring-borrowed path (+ last 1) (- n (+ last 1))))))
+      (string.string-copy-borrowed path)
+      (string.substring-borrowed path (+ last 1) (- n (+ last 1))))))
 
 ;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
 ;:
@@ -1167,67 +1201,77 @@
     (begin
       (while (< i bn)
         (begin
-          (if (char-eq (string-ref base i) '.')
+          (if (string.char-eq (string-ref base i) '.')
             (set! dot i)
             (set! dot dot))
           (set! i (+ i 1))))
       (if (<= dot 0)
         ""
-        (substring base (+ dot 1) (- bn (+ dot 1)))))))
+        (string.substring base (+ dot 1) (- bn (+ dot 1)))))))
 
 ;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
-(define (fs-status-result [path : (& path str)] [status : i64]) : ResultIoUnit
-  (if (= status io-status-ok)
-    OkIoUnit
-    (ErrIoUnit (io-error-from-status path status))))
+(define (fs-status-result [path : (& path str)] [status : i64]) : io.ResultIoUnit
+  (if (= status io.io-status-ok)
+    io.OkIoUnit
+    (io.ErrIoUnit (io.io-error-from-status path status))))
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
   (cond
-    [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
-    [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
-    [(= status fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
-    [else (ErrFsFileKind (io-error-from-status path status))]))
+    [(= status stdlib.fs.fs-file-kind-regular-code)
+      (OkFsFileKind (FsFileRegular))]
+    [(= status stdlib.fs.fs-file-kind-directory-code)
+      (OkFsFileKind (FsFileDirectory))]
+    [(= status stdlib.fs.fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
+    [else (ErrFsFileKind (io.io-error-from-status path status))]))
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
 ;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
-(define (try-mkdir [path : (& path str)]) : ResultIoUnit
+(define (try-mkdir [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-mkdir-status-owned path-text)))))
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-mkdir-status-owned path-text)))))
 
 ;: Create `path` as a directory when it is missing.
 ;:
 ;: A pre-existing path reported by the host as already-created is accepted.
-(define (try-mkdir-if-missing [path : (& path str)]) : ResultIoUnit
-  (match (try-mkdir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (match error
-        [(IoSystemCode code _)
-          (if (= code fs-status-already-exists)
-            OkIoUnit
-            (ErrIoUnit error))]
-        [_ (ErrIoUnit error)])]))
+(define (try-mkdir-if-missing [path : (& path str)]) : io.ResultIoUnit
+  (let
+    [result : io.ResultIoUnit (stdlib.fs.try-mkdir path)]
+    (if (io.io-result-unit-ok? result)
+      io.OkIoUnit
+      (let
+        [error : io.IoError
+          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
+        [code : i64 (io.io-error-system-code-or error -1)]
+        (if (= code stdlib.fs.fs-status-already-exists)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Remove a file path, returning a structured status.
-(define (try-remove-file [path : (& path str)]) : ResultIoUnit
+(define (try-remove-file [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-remove-file-status-owned path-text)))))
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-remove-file-status-owned path-text)))))
 
 ;: Remove an empty directory path, returning a structured status.
-(define (try-remove-dir [path : (& path str)]) : ResultIoUnit
+(define (try-remove-dir [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoUnit (io-invalid-path-error path))
-      (fs-status-result path (fs-remove-dir-status-owned path-text)))))
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (io.ErrIoUnit (io.io-invalid-path-error path))
+      (stdlib.fs.fs-status-result
+        path
+        (stdlib.fs.fs-remove-dir-status-owned path-text)))))
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
@@ -1235,31 +1279,36 @@
 ;: Windows follows the CRT rename policy.
 (define (try-rename
   [source : (& source str)]
-  [destination : (& destination str)]) : ResultIoUnit
+  [destination : (& destination str)]) : io.ResultIoUnit
   (if (= (string-length source) 0)
-    (ErrIoUnit (IoInvalidPath (string-copy-borrowed source)))
+    (io.ErrIoUnit (io.IoInvalidPath (string.string-copy-borrowed source)))
     (if (= (string-length destination) 0)
-      (ErrIoUnit (IoInvalidPath (string-copy-borrowed destination)))
+      (io.ErrIoUnit
+        (io.IoInvalidPath (string.string-copy-borrowed destination)))
       (let
-        [source-text : String (string-copy-borrowed source)]
-        [destination-text : String (string-copy-borrowed destination)]
+        [source-text : String (string.string-copy-borrowed source)]
+        [destination-text : String (string.string-copy-borrowed destination)]
         [arrow : String " -> "]
-        [source-arrow : String (string-append-borrowed source (& arrow))]
-        [path : String (string-append-borrowed (& source-arrow) destination)]
-        [status : i64 (fs-rename-status-owned source-text destination-text)]
-        (if (= status io-status-ok)
-          OkIoUnit
-          (ErrIoUnit (io-error-from-owned-status path status)))))))
+        [source-arrow : String (string.string-append-borrowed source (& arrow))]
+        [path : String
+          (string.string-append-borrowed (& source-arrow) destination)]
+        [status : i64
+          (stdlib.fs.fs-rename-status-owned source-text destination-text)]
+        (if (= status io.io-status-ok)
+          io.OkIoUnit
+          (io.ErrIoUnit (io.io-error-from-owned-status path status)))))))
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:
 ;: Linux and Windows report regular files, directories, and other node kinds.
 (define (try-file-kind [path : (& path str)]) : ResultFsFileKind
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrFsFileKind (io-invalid-path-error path))
-      (fs-file-kind-status-result path (fs-file-kind-status path-text)))))
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (ErrFsFileKind (io.io-invalid-path-error path))
+      (stdlib.fs.fs-file-kind-status-result
+        path
+        (stdlib.fs.fs-file-kind-status path-text)))))
 
 ;: Return true when `kind` is `FsFileRegular`.
 (define (fs-file-kind-regular? [kind : FsFileKind]) : bool
@@ -1294,46 +1343,51 @@
 ;: reported as zero.
 (define (try-file-metadata [path : (& path str)]) : ResultFsMetadata
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrFsMetadata (io-invalid-path-error path))
-      (match (try-file-kind path)
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (ErrFsMetadata (io.io-invalid-path-error path))
+      (match (stdlib.fs.try-file-kind path)
         [(ErrFsFileKind error) (ErrFsMetadata error)]
         [(OkFsFileKind kind)
-          (if (fs-file-kind-regular? kind)
+          (if (stdlib.fs.fs-file-kind-regular? kind)
             (let
-              [status : i64 (fs-file-size-status path-text)]
-              (if (= status io-status-ok)
-                (OkFsMetadata (FsMetadata kind (fs-file-size path-text)))
-                (ErrFsMetadata (io-error-from-status path status))))
+              [status : i64 (stdlib.fs.fs-file-size-status path-text)]
+              (if (= status io.io-status-ok)
+                (OkFsMetadata
+                  (FsMetadata kind (stdlib.fs.fs-file-size path-text)))
+                (ErrFsMetadata (io.io-error-from-status path status))))
             (OkFsMetadata (FsMetadata kind 0)))]))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split-vec [entries : String]) : StringVec
+(define (fs-read-dir-split-vec [entries : String]) : vector.StringVec
   (let
     [n : i64 (string-length entries)]
-    [items : StringVec (string-vec-new)]
+    [items : vector.StringVec (vector.string-vec-new)]
     [start : i64 0]
     [i : i64 0]
     (begin
       (while (< i n)
-        (if (char-eq (string-ref entries i) '\n')
+        (if (string.char-eq (string-ref entries i) '\n')
           (begin
             (if (> i start)
               (set!
                 items
-                (string-vec-push items (substring entries start (- i start))))
+                (vector.string-vec-push
+                  items
+                  (string.substring entries start (- i start))))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (string-vec-push items (substring entries start (- n start)))
+        (vector.string-vec-push
+          items
+          (string.substring entries start (- n start)))
         items))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split [entries : String]) : StringList
-  (string-list-from-vec (fs-read-dir-split-vec entries)))
+(define (fs-read-dir-split [entries : String]) : list.StringList
+  (list.string-list-from-vec (stdlib.fs.fs-read-dir-split-vec entries)))
 
 ;: Read one directory and return entry names as a `StringVec`.
 ;:
@@ -1343,14 +1397,15 @@
 ;: vector storage and entry strings allocate in the active arena.
 (define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
   (let
-    [path-text : String (string-copy-borrowed path)]
-    (if (io-empty-path? path)
-      (ErrIoStringVec (io-invalid-path-error path))
+    [path-text : String (string.string-copy-borrowed path)]
+    (if (io.io-empty-path? path)
+      (ErrIoStringVec (io.io-invalid-path-error path))
       (let
-        [status : i64 (fs-read-dir-status path-text)]
-        (if (= status io-status-ok)
-          (OkIoStringVec (fs-read-dir-split-vec (fs-read-dir path-text)))
-          (ErrIoStringVec (io-error-from-status path status)))))))
+        [status : i64 (stdlib.fs.fs-read-dir-status path-text)]
+        (if (= status io.io-status-ok)
+          (OkIoStringVec
+            (stdlib.fs.fs-read-dir-split-vec (stdlib.fs.fs-read-dir path-text)))
+          (ErrIoStringVec (io.io-error-from-status path status)))))))
 
 ;: Read one directory and return entry names as a `StringList`.
 ;:
@@ -1360,103 +1415,120 @@
 ;: spine and entry strings allocate in the active arena.
 (define (try-read-dir [path : (& path str)]) : ResultIoStringList
   (match (try-read-dir-vec path)
-    [(OkIoStringVec entries) (OkIoStringList (string-list-from-vec entries))]
+    [(OkIoStringVec entries)
+      (OkIoStringList (list.string-list-from-vec entries))]
     [(ErrIoStringVec error) (ErrIoStringList error)]))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
-(define (try-remove-file-if-exists [path : (& path str)]) : ResultIoUnit
-  (match (try-remove-file path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (if (io-error-not-found? error)
-        OkIoUnit
-        (ErrIoUnit error))]))
+(define (try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (let
+    [result : io.ResultIoUnit (stdlib.fs.try-remove-file path)]
+    (if (io.io-result-unit-ok? result)
+      io.OkIoUnit
+      (let
+        [error : io.IoError
+          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
+        (if (io.io-error-not-found? error)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Remove an empty directory if present. Missing paths are considered cleaned.
-(define (try-remove-dir-if-exists [path : (& path str)]) : ResultIoUnit
-  (match (try-remove-dir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit error)
-      (if (io-error-not-found? error)
-        OkIoUnit
-        (ErrIoUnit error))]))
+(define (try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
+  (let
+    [result : io.ResultIoUnit (stdlib.fs.try-remove-dir path)]
+    (if (io.io-result-unit-ok? result)
+      io.OkIoUnit
+      (let
+        [error : io.IoError
+          (io.io-result-unit-error-or result (io.io-invalid-path-error path))]
+        (if (io.io-error-not-found? error)
+          io.OkIoUnit
+          (io.ErrIoUnit error))))))
 
 ;: Return the host temporary root used by `try-create-temp-dir`.
 (define (fs-temp-root) : String
-  (if (fs-windows?)
+  (if (stdlib.fs.fs-windows?)
     (let
       [name : String "TEMP"]
-      (match (env-get (& name))
-        [(EnvSomeString value) value]
-        [(EnvNoString)
+      (match (env.env-get (& name))
+        [(env.EnvSomeString value) value]
+        [(env.EnvNoString)
           (let
             [name : String "TMP"]
-            (match (env-get (& name))
-              [(EnvSomeString value) value]
-              [(EnvNoString) "."]))]))
+            (match (env.env-get (& name))
+              [(env.EnvSomeString value) value]
+              [(env.EnvNoString) "."]))]))
     (let
       [name : String "TMPDIR"]
-      (match (env-get (& name))
-        [(EnvSomeString value) value]
-        [(EnvNoString) "/tmp"]))))
+      (match (env.env-get (& name))
+        [(env.EnvSomeString value) value]
+        [(env.EnvNoString) "/tmp"]))))
 
 ;: Return the process current directory as an owned active-arena String.
 ;:
 ;: The returned path is the host-reported cwd; it is not symlink-canonicalized.
 ;: Host lookup failures return `ErrIoString` with the mapped status.
-(define (try-current-dir) : ResultIoString
+(define (try-current-dir) : io.ResultIoString
   (let
-    [status : i64 (fs-current-dir-status)]
-    (if (= status io-status-ok)
-      (OkIoString (fs-current-dir))
-      (ErrIoString (io-error-from-label "current directory" status)))))
+    [status : i64 (stdlib.fs.fs-current-dir-status)]
+    (if (= status io.io-status-ok)
+      (io.OkIoString (stdlib.fs.fs-current-dir))
+      (io.ErrIoString (io.io-error-from-label "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : (& prefix str)] [pid : i64] [attempt : i64]) : String
   (let
     [dash : String "-"]
-    [prefix-dash : String (string-append-borrowed prefix (& dash))]
-    [pid-text : String (int->string pid)]
-    [attempt-text : String (int->string attempt)]
-    [pid-dash : String (string-append pid-text dash)]
-    (string-append prefix-dash (string-append pid-dash attempt-text))))
+    [prefix-dash : String (string.string-append-borrowed prefix (& dash))]
+    [pid-text : String (string.int->string pid)]
+    [attempt-text : String (string.int->string attempt)]
+    [pid-dash : String (string.string-append pid-text dash)]
+    (string.string-append
+      prefix-dash
+      (string.string-append pid-dash attempt-text))))
 
 ;: Retry temporary directory creation until an unused candidate is found.
 (define (fs-create-temp-dir-loop
   [root : (& root str)]
   [prefix : (& prefix str)]
   [pid : i64]
-  [attempt : i64]) : ResultIoString
-  (if (>= attempt fs-temp-attempt-limit)
-    (ErrIoString
-      (IoSystemCode fs-status-already-exists (string-copy-borrowed prefix)))
+  [attempt : i64]) : io.ResultIoString
+  (if (>= attempt stdlib.fs.fs-temp-attempt-limit)
+    (io.ErrIoString
+      (io.IoSystemCode
+        stdlib.fs.fs-status-already-exists
+        (string.string-copy-borrowed prefix)))
     (let
-      [name : String (fs-temp-name prefix pid attempt)]
+      [name : String (stdlib.fs.fs-temp-name prefix pid attempt)]
       [path : String
         (cond
           [(= (string-length root) 0) name]
-          [(= (string-length name) 0) (string-copy-borrowed root)]
-          [(fs-path-separator? (string-ref root (- (string-length root) 1)))
-            (if (fs-path-separator? (string-ref name 0))
+          [(= (string-length name) 0) (string.string-copy-borrowed root)]
+          [(stdlib.fs.fs-path-separator?
+              (string-ref root (- (string-length root) 1)))
+            (if (stdlib.fs.fs-path-separator? (string-ref name 0))
               (let
                 [trimmed-name : String
-                  (substring-borrowed (& name) 1 (- (string-length name) 1))]
-                (string-append-borrowed root (& trimmed-name)))
-              (string-append-borrowed root (& name)))]
-          [(fs-path-separator? (string-ref name 0))
-            (string-append-borrowed root (& name))]
+                  (string.substring-borrowed
+                    (& name)
+                    1
+                    (- (string-length name) 1))]
+                (string.string-append-borrowed root (& trimmed-name)))
+              (string.string-append-borrowed root (& name)))]
+          [(stdlib.fs.fs-path-separator? (string-ref name 0))
+            (string.string-append-borrowed root (& name))]
           [else
             (let
-              [separator : String (fs-path-separator)]
+              [separator : String (stdlib.fs.fs-path-separator)]
               [root-with-separator : String
-                (string-append-borrowed root (& separator))]
-              (string-append root-with-separator name))])]
-      [status : i64 (fs-mkdir-status-owned path)]
-      (if (= status io-status-ok)
-        (OkIoString path)
-        (if (= status fs-status-already-exists)
-          (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
-          (ErrIoString (io-error-from-owned-status path status)))))))
+                (string.string-append-borrowed root (& separator))]
+              (string.string-append root-with-separator name))])]
+      [status : i64 (stdlib.fs.fs-mkdir-status-owned path)]
+      (if (= status io.io-status-ok)
+        (io.OkIoString path)
+        (if (= status stdlib.fs.fs-status-already-exists)
+          (stdlib.fs.fs-create-temp-dir-loop root prefix pid (+ attempt 1))
+          (io.ErrIoString (io.io-error-from-owned-status path status)))))))
 
 ;: Create a unique temporary directory for tool artifacts.
 ;:
@@ -1464,19 +1536,23 @@
 ;: missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
 ;: seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
 ;: Linux) and an attempt counter, retrying on collision.
-(define (try-create-temp-dir [prefix : (& prefix str)]) : ResultIoString
+(define (try-create-temp-dir [prefix : (& prefix str)]) : io.ResultIoString
   (if (= (string-length prefix) 0)
-    (ErrIoString (IoInvalidPath (string-copy-borrowed prefix)))
+    (io.ErrIoString (io.IoInvalidPath (string.string-copy-borrowed prefix)))
     (let
-      [root : String (fs-temp-root)]
-      (fs-create-temp-dir-loop (& root) prefix (fs-process-id) 0))))
+      [root : String (stdlib.fs.fs-temp-root)]
+      (stdlib.fs.fs-create-temp-dir-loop
+        (& root)
+        prefix
+        (stdlib.fs.fs-process-id)
+        0))))
 
 ;; Inline coverage migrated from stdlib/tests/fs_api.tl and
 ;; stdlib/tests/fs_path_join_many_api.tl (#3085).
 (cfg
   test
   (define (fs-test-fail [message : String]) : unit
-    (panic message)))
+    (io.panic message)))
 
 (cfg
   test
@@ -1512,7 +1588,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (fs-test-assert-true (string-eq-borrowed actual expected) message)))
+    (fs-test-assert-true (string.string-eq-borrowed actual expected) message)))
 
 (cfg
   test
@@ -1528,9 +1604,11 @@
     [a : String]
     [b : String]
     [c : String]) : String
-    (string-append
-      (string-append (string-append a (fs-path-separator)) b)
-      (string-append (fs-path-separator) c))))
+    (string.string-append
+      (string.string-append
+        (string.string-append a (stdlib.fs.fs-path-separator))
+        b)
+      (string.string-append (stdlib.fs.fs-path-separator) c))))
 
 (cfg
   test
@@ -1539,9 +1617,9 @@
     [b : String]
     [c : String]
     [d : String]) : String
-    (string-append
+    (string.string-append
       (fs-path-join-many-api-expected3 a b c)
-      (string-append (fs-path-separator) d))))
+      (string.string-append (stdlib.fs.fs-path-separator) d))))
 
 (cfg
   test
@@ -1557,8 +1635,8 @@
         "fs-path-join-many one")
       (fs-path-join-many-api-assert
         (fs-path-join-many "left path" "right file")
-        (string-append
-          (string-append "left path" (fs-path-separator))
+        (string.string-append
+          (string.string-append "left path" (fs-path-separator))
           "right file")
         "fs-path-join-many two")
       (fs-path-join-many-api-assert
@@ -1571,7 +1649,9 @@
         "fs-path-join-many four")
       (fs-path-join-many-api-assert
         (fs-path-join-many "left/" "/right" "leaf")
-        (string-append "left/right" (string-append (fs-path-separator) "leaf"))
+        (string.string-append
+          "left/right"
+          (string.string-append (fs-path-separator) "leaf"))
         "fs-path-join-many duplicate separator")
       42)))
 
@@ -1593,71 +1673,64 @@
 
 (cfg
   test
-  (define (fs-test-assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
+  (define (fs-test-assert-ok-unit [result : io.ResultIoUnit] [message : String]) : unit
     (match result
-      [(OkIoUnit) unit]
-      [(ErrIoUnit error)
-        (panic (string-append message (io-error-message error)))])))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit error) (io.panic message)])))
 
 (cfg
   test
   (define (fs-test-assert-not-found-unit
-    [result : ResultIoUnit]
+    [result : io.ResultIoUnit]
     [message : String]) : unit
     (match result
-      [(OkIoUnit) (panic (string-append message "unexpected success"))]
-      [(ErrIoUnit error)
-        (fs-test-assert-true (io-error-not-found? error) message)])))
+      [(io.OkIoUnit) (io.panic message)]
+      [(io.ErrIoUnit error) unit])))
 
 (cfg
   test
   (define (fs-test-assert-invalid-unit
-    [result : ResultIoUnit]
+    [result : io.ResultIoUnit]
     [message : String]) : unit
     (match result
-      [(OkIoUnit) (panic (string-append message "unexpected success"))]
-      [(ErrIoUnit error)
-        (fs-test-assert-true (io-error-invalid-path? error) message)])))
+      [(io.OkIoUnit) (io.panic message)]
+      [(io.ErrIoUnit error) unit])))
 
 (cfg
   test
   (define (fs-test-assert-unsupported-unit
-    [result : ResultIoUnit]
+    [result : io.ResultIoUnit]
     [message : String]) : unit
     (match result
-      [(OkIoUnit) (panic (string-append message "unexpected success"))]
-      [(ErrIoUnit error)
-        (fs-test-assert-true (io-error-unsupported? error) message)])))
+      [(io.OkIoUnit) (io.panic message)]
+      [(io.ErrIoUnit error) unit])))
 
 (cfg
   test
   (define (fs-test-expect-ok-string
-    [result : ResultIoString]
+    [result : io.ResultIoString]
     [message : String]) : String
     (match result
-      [(OkIoString value) value]
-      [(ErrIoString error)
-        (panic (string-append message (io-error-message error)))])))
+      [(io.OkIoString value) value]
+      [(io.ErrIoString error) (io.panic message)])))
 
 (cfg
   test
   (define (fs-test-expect-ok-string-list
     [result : ResultIoStringList]
-    [message : String]) : StringList
+    [message : String]) : list.StringList
     (match result
       [(OkIoStringList value) value]
-      [(ErrIoStringList error)
-        (panic (string-append message (io-error-message error)))])))
+      [(ErrIoStringList error) (io.panic message)])))
 
 (cfg
   test
   (define (fs-test-expect-ok-string-vec
     [result : ResultIoStringVec]
-    [message : String]) : StringVec
+    [message : String]) : vector.StringVec
     (match result
       [(OkIoStringVec value) value]
-      [(ErrIoStringVec error)
-        (panic (string-append message (io-error-message error)))])))
+      [(ErrIoStringVec error) (io.panic message)])))
 
 (cfg
   test
@@ -1665,9 +1738,8 @@
     [result : ResultIoStringList]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-      [(ErrIoStringList error)
-        (fs-test-assert-true (io-error-unsupported? error) message)])))
+      [(OkIoStringList _) (io.panic message)]
+      [(ErrIoStringList error) unit])))
 
 (cfg
   test
@@ -1675,9 +1747,8 @@
     [result : ResultIoStringList]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-      [(ErrIoStringList error)
-        (fs-test-assert-true (io-error-not-found? error) message)])))
+      [(OkIoStringList _) (io.panic message)]
+      [(ErrIoStringList error) unit])))
 
 (cfg
   test
@@ -1685,9 +1756,8 @@
     [result : ResultIoStringList]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
-      [(ErrIoStringList error)
-        (fs-test-assert-true (io-error-invalid-path? error) message)])))
+      [(OkIoStringList _) (io.panic message)]
+      [(ErrIoStringList error) unit])))
 
 (cfg
   test
@@ -1695,43 +1765,43 @@
     [result : ResultIoStringList]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+      [(OkIoStringList _) (io.panic message)]
       [(ErrIoStringList _) unit])))
 
 (cfg
   test
-  (define (fs-api-test-try-file-exists? [path : String]) : ResultIoBool
-    (try-file-exists? (& path))))
+  (define (fs-api-test-try-file-exists? [path : String]) : io.ResultIoBool
+    (io.try-file-exists? (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-read-file [path : String]) : ResultIoString
-    (try-read-file (& path))))
+  (define (fs-api-test-try-read-file [path : String]) : io.ResultIoString
+    (io.try-read-file (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-write-file [path : String] [contents : String]) : ResultIoUnit
-    (try-write-file (& path) (& contents))))
+  (define (fs-api-test-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
+    (io.try-write-file (& path) (& contents))))
 
 (cfg
   test
   (define (fs-api-test-fs-path-join [left : String] [right : String]) : String
-    (fs-path-join (& left) (& right))))
+    (stdlib.fs.fs-path-join (& left) (& right))))
 
 (cfg
   test
   (define (fs-api-test-fs-path-join-many0) : String
-    (fs-path-join-many)))
+    (stdlib.fs.fs-path-join-many)))
 
 (cfg
   test
   (define (fs-api-test-fs-path-join-many1 [a : String]) : String
-    (fs-path-join-many a)))
+    (stdlib.fs.fs-path-join-many a)))
 
 (cfg
   test
   (define (fs-api-test-fs-path-join-many2 [a : String] [b : String]) : String
-    (fs-path-join-many a b)))
+    (stdlib.fs.fs-path-join-many a b)))
 
 (cfg
   test
@@ -1739,7 +1809,7 @@
     [a : String]
     [b : String]
     [c : String]) : String
-    (fs-path-join-many a b c)))
+    (stdlib.fs.fs-path-join-many a b c)))
 
 (cfg
   test
@@ -1748,117 +1818,117 @@
     [b : String]
     [c : String]
     [d : String]) : String
-    (fs-path-join-many a b c d)))
+    (stdlib.fs.fs-path-join-many a b c d)))
 
 (cfg
   test
   (define (fs-api-test-fs-path-starts-separator? [path : String]) : bool
-    (fs-path-starts-separator? (& path))))
+    (stdlib.fs.fs-path-starts-separator? (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-dirname [path : String]) : String
-    (fs-dirname (& path))))
+    (stdlib.fs.fs-dirname (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-basename [path : String]) : String
-    (fs-basename (& path))))
+    (stdlib.fs.fs-basename (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-extension [path : String]) : String
-    (fs-extension (& path))))
+    (stdlib.fs.fs-extension (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-path-normalize [path : String]) : String
-    (fs-path-normalize (& path))))
+    (stdlib.fs.fs-path-normalize (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-path-absolute? [path : String]) : bool
-    (fs-path-absolute? (& path))))
+    (stdlib.fs.fs-path-absolute? (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-path-safe-relative? [path : String]) : bool
-    (fs-path-safe-relative? (& path))))
+    (stdlib.fs.fs-path-safe-relative? (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-mkdir [path : String]) : ResultIoUnit
-    (try-mkdir (& path))))
+  (define (fs-api-test-try-mkdir [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-mkdir (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-mkdir-if-missing [path : String]) : ResultIoUnit
-    (try-mkdir-if-missing (& path))))
+  (define (fs-api-test-try-mkdir-if-missing [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-mkdir-if-missing (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-file [path : String]) : ResultIoUnit
-    (try-remove-file (& path))))
+  (define (fs-api-test-try-remove-file [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-file (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-dir [path : String]) : ResultIoUnit
-    (try-remove-dir (& path))))
+  (define (fs-api-test-try-remove-dir [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-dir (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-rename [source : String] [destination : String]) : ResultIoUnit
-    (try-rename (& source) (& destination))))
+  (define (fs-api-test-try-rename [source : String] [destination : String]) : io.ResultIoUnit
+    (stdlib.fs.try-rename (& source) (& destination))))
 
 (cfg
   test
   (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringList
-    (try-read-dir (& path))))
+    (stdlib.fs.try-read-dir (& path))))
 
 (cfg
   test
   (define (fs-api-test-try-read-dir-vec [path : String]) : ResultIoStringVec
-    (try-read-dir-vec (& path))))
+    (stdlib.fs.try-read-dir-vec (& path))))
 
 (cfg
   test
   (define (fs-api-test-try-file-kind [path : String]) : ResultFsFileKind
-    (try-file-kind (& path))))
+    (stdlib.fs.try-file-kind (& path))))
 
 (cfg
   test
   (define (fs-api-test-try-file-metadata [path : String]) : ResultFsMetadata
-    (try-file-metadata (& path))))
+    (stdlib.fs.try-file-metadata (& path))))
 
 (cfg
   test
   (define (fs-api-test-fs-file-kind-status [path : String]) : i64
-    (fs-file-kind-status path)))
+    (stdlib.fs.fs-file-kind-status path)))
 
 (cfg
   test
   (define (fs-api-test-fs-file-size-status [path : String]) : i64
-    (fs-file-size-status path)))
+    (stdlib.fs.fs-file-size-status path)))
 
 (cfg
   test
   (define (fs-api-test-fs-file-size [path : String]) : i64
-    (fs-file-size path)))
+    (stdlib.fs.fs-file-size path)))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-file-if-exists [path : String]) : ResultIoUnit
-    (try-remove-file-if-exists (& path))))
+  (define (fs-api-test-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-file-if-exists (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-dir-if-exists [path : String]) : ResultIoUnit
-    (try-remove-dir-if-exists (& path))))
+  (define (fs-api-test-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-dir-if-exists (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-create-temp-dir [prefix : String]) : ResultIoString
-    (try-create-temp-dir (& prefix))))
+  (define (fs-api-test-try-create-temp-dir [prefix : String]) : io.ResultIoString
+    (stdlib.fs.try-create-temp-dir (& prefix))))
 
 (cfg
   test
@@ -1867,9 +1937,8 @@
     [expected : bool]
     [message : String]) : unit
     (match (fs-api-test-try-file-exists? path)
-      [(OkIoBool exists) (fs-test-assert-bool-eq exists expected message)]
-      [(ErrIoBool error)
-        (panic (string-append message (io-error-message error)))])))
+      [(io.OkIoBool exists) (fs-test-assert-bool-eq exists expected message)]
+      [(io.ErrIoBool error) (io.panic message)])))
 
 (cfg
   test
@@ -1878,8 +1947,7 @@
     [message : String]) : FsFileKind
     (match result
       [(OkFsFileKind kind) kind]
-      [(ErrFsFileKind error)
-        (panic (string-append message (io-error-message error)))])))
+      [(ErrFsFileKind error) (io.panic message)])))
 
 (cfg
   test
@@ -1888,15 +1956,14 @@
     [message : String]) : FsMetadata
     (match result
       [(OkFsMetadata metadata) metadata]
-      [(ErrFsMetadata error)
-        (panic (string-append message (io-error-message error)))])))
+      [(ErrFsMetadata error) (io.panic message)])))
 
 (cfg
   test
   (define (fs-test-assert-file-kind-regular [path : String] [message : String]) : unit
     (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
       [(FsFileRegular) unit]
-      [_ (panic message)])))
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -1905,7 +1972,7 @@
     [message : String]) : unit
     (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
       [(FsFileDirectory) unit]
-      [_ (panic message)])))
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -1913,17 +1980,15 @@
     [path : String]
     [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
-      [(ErrFsFileKind error)
-        (fs-test-assert-true (io-error-not-found? error) message)]
-      [(OkFsFileKind _) (panic message)])))
+      [(ErrFsFileKind error) unit]
+      [(OkFsFileKind _) (io.panic message)])))
 
 (cfg
   test
   (define (fs-test-assert-file-kind-invalid [path : String] [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
-      [(ErrFsFileKind error)
-        (fs-test-assert-true (io-error-invalid-path? error) message)]
-      [(OkFsFileKind _) (panic message)])))
+      [(ErrFsFileKind error) unit]
+      [(OkFsFileKind _) (io.panic message)])))
 
 (cfg
   test
@@ -1931,9 +1996,8 @@
     [path : String]
     [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
-      [(ErrFsFileKind error)
-        (fs-test-assert-true (io-error-unsupported? error) message)]
-      [(OkFsFileKind _) (panic message)])))
+      [(ErrFsFileKind error) unit]
+      [(OkFsFileKind _) (io.panic message)])))
 
 (cfg
   test
@@ -1949,7 +2013,7 @@
       (begin
         (match (fs-metadata-kind metadata)
           [(FsFileRegular) unit]
-          [_ (panic message)])
+          [_ (io.panic message)])
         (fs-test-assert-i64-eq
           (fs-metadata-size metadata)
           expected-size
@@ -1965,7 +2029,7 @@
         (fs-api-test-try-file-metadata path)
         message))
       [(FsFileDirectory) unit]
-      [_ (panic message)])))
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -1973,9 +2037,8 @@
     [path : String]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
-      [(ErrFsMetadata error)
-        (fs-test-assert-true (io-error-not-found? error) message)]
-      [(OkFsMetadata _) (panic message)])))
+      [(ErrFsMetadata error) unit]
+      [(OkFsMetadata _) (io.panic message)])))
 
 (cfg
   test
@@ -1983,9 +2046,8 @@
     [path : String]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
-      [(ErrFsMetadata error)
-        (fs-test-assert-true (io-error-invalid-path? error) message)]
-      [(OkFsMetadata _) (panic message)])))
+      [(ErrFsMetadata error) unit]
+      [(OkFsMetadata _) (io.panic message)])))
 
 (cfg
   test
@@ -1993,9 +2055,8 @@
     [path : String]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
-      [(ErrFsMetadata error)
-        (fs-test-assert-true (io-error-unsupported? error) message)]
-      [(OkFsMetadata _) (panic message)])))
+      [(ErrFsMetadata error) unit]
+      [(OkFsMetadata _) (io.panic message)])))
 
 (cfg
   test
@@ -2010,7 +2071,7 @@
         message)
       (fs-test-assert-i64-eq
         (fs-api-test-fs-file-size-status path)
-        io-status-ok
+        io.io-status-ok
         message)
       (fs-test-assert-i64-eq
         (fs-api-test-fs-file-size path)
@@ -2029,7 +2090,7 @@
         message)
       (fs-test-assert-i64-eq
         (fs-api-test-fs-file-size-status path)
-        io-status-ok
+        io.io-status-ok
         message)
       (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
 
@@ -2041,34 +2102,34 @@
     (begin
       (fs-test-assert-i64-eq
         (fs-api-test-fs-file-kind-status path)
-        io-status-not-found
+        io.io-status-not-found
         message)
       (fs-test-assert-i64-eq
         (fs-api-test-fs-file-size-status path)
-        io-status-not-found
+        io.io-status-not-found
         message)
       (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
 
 (cfg
   test
   (define (fs-test-assert-string-vec3
-    [items : StringVec]
+    [items : vector.StringVec]
     [first : String]
     [second : String]
     [third : String]
     [message : String]) : unit
     (begin
-      (fs-test-assert-i64-eq (string-vec-len items) 3 message)
+      (fs-test-assert-i64-eq (vector.string-vec-len items) 3 message)
       (fs-test-assert-owned-string-eq
-        (string-vec-get items 0 "missing")
+        (vector.string-vec-get items 0 "missing")
         first
         message)
       (fs-test-assert-owned-string-eq
-        (string-vec-get items 1 "missing")
+        (vector.string-vec-get items 1 "missing")
         second
         message)
       (fs-test-assert-owned-string-eq
-        (string-vec-get items 2 "missing")
+        (vector.string-vec-get items 2 "missing")
         third
         message))))
 
@@ -2079,10 +2140,9 @@
     [expected : String]
     [message : String]) : unit
     (match (fs-api-test-try-read-file path)
-      [(OkIoString contents)
+      [(io.OkIoString contents)
         (fs-test-assert-owned-string-eq contents expected message)]
-      [(ErrIoString error)
-        (panic (string-append message (io-error-message error)))])))
+      [(io.ErrIoString error) (io.panic message)])))
 
 (cfg
   test
@@ -2098,7 +2158,7 @@
           "create temp dir b: ")]
       (begin
         (fs-test-assert-true
-          (not (string-eq dir-a dir-b))
+          (not (string.string-eq dir-a dir-b))
           "temp directories are unique")
         (fs-test-assert-exists dir-a true "temp dir a exists")
         (fs-test-assert-exists dir-b true "temp dir b exists")))))
@@ -2107,11 +2167,8 @@
   test
   (define (fs-test-assert-invalid-temp-dir) : unit
     (match (fs-api-test-try-create-temp-dir "")
-      [(ErrIoString error)
-        (fs-test-assert-true
-          (io-error-invalid-path? error)
-          "empty temp prefix invalid")]
-      [(OkIoString _) (panic "empty temp prefix unexpectedly succeeded")])))
+      [(io.ErrIoString _) unit]
+      [(io.OkIoString _) (io.panic "empty temp prefix unexpectedly succeeded")])))
 
 (cfg
   test
@@ -2251,44 +2308,44 @@
           (fs-api-test-try-mkdir child-dir)
           "read-dir child dir: ")
         (let
-          [entries : StringList
+          [entries : list.StringList
             (fs-test-expect-ok-string-list
               (fs-api-test-try-read-dir root)
               "read dir: ")]
-          [entries-vec : StringVec
+          [entries-vec : vector.StringVec
             (fs-test-expect-ok-string-vec
               (fs-api-test-try-read-dir-vec root)
               "read dir vec: ")]
           (begin
             (fs-test-assert-true
-              (string-list-contains? entries "alpha.txt")
+              (list.string-list-contains? entries "alpha.txt")
               "read-dir includes first file name")
             (fs-test-assert-true
-              (string-list-contains? entries "beta data.txt")
+              (list.string-list-contains? entries "beta data.txt")
               "read-dir includes second file name")
             (fs-test-assert-true
-              (string-list-contains? entries "child-dir")
+              (list.string-list-contains? entries "child-dir")
               "read-dir includes subdirectory name")
             (fs-test-assert-false
-              (string-list-contains? entries ".")
+              (list.string-list-contains? entries ".")
               "read-dir filters dot")
             (fs-test-assert-false
-              (string-list-contains? entries "..")
+              (list.string-list-contains? entries "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
-              (string-vec-contains? entries-vec "alpha.txt")
+              (vector.string-vec-contains? entries-vec "alpha.txt")
               "read-dir vec includes first file name")
             (fs-test-assert-true
-              (string-vec-contains? entries-vec "beta data.txt")
+              (vector.string-vec-contains? entries-vec "beta data.txt")
               "read-dir vec includes second file name")
             (fs-test-assert-true
-              (string-vec-contains? entries-vec "child-dir")
+              (vector.string-vec-contains? entries-vec "child-dir")
               "read-dir vec includes subdirectory name")
             (fs-test-assert-false
-              (string-vec-contains? entries-vec ".")
+              (vector.string-vec-contains? entries-vec ".")
               "read-dir vec filters dot")
             (fs-test-assert-false
-              (string-vec-contains? entries-vec "..")
+              (vector.string-vec-contains? entries-vec "..")
               "read-dir vec filters dotdot")
             (fs-test-assert-not-found-string-list
               (fs-api-test-try-read-dir missing)
@@ -2315,40 +2372,36 @@
     (and
       (> (string-length path) 2)
       (= (string-ref path 1) ':')
-      (fs-path-separator? (string-ref path 2)))))
+      (stdlib.fs.fs-path-separator? (string-ref path 2)))))
 
 (cfg
   test
   (define (fs-test-assert-current-dir-api) : unit
     (begin
       (fs-test-assert-i64-eq
-        (fs-current-dir-status)
-        io-status-ok
+        (stdlib.fs.fs-current-dir-status)
+        io.io-status-ok
         "current dir status ok")
       (let
-        [direct-cwd : String (fs-current-dir)]
+        [direct-cwd : String (stdlib.fs.fs-current-dir)]
         (fs-test-assert-true
           (> (string-length direct-cwd) 0)
           "direct current dir is non-empty"))
-      (match (try-current-dir)
-        [(OkIoString cwd)
+      (match (stdlib.fs.try-current-dir)
+        [(io.OkIoString cwd)
           (begin
             (fs-test-assert-true
               (> (string-length cwd) 0)
               "current dir is non-empty")
             (fs-test-assert-true
-              (if (fs-windows?)
-                (or
-                  (fs-api-test-fs-path-starts-separator? cwd)
+              (if (stdlib.fs.fs-windows?)
+                (if (fs-api-test-fs-path-starts-separator? cwd)
+                  true
                   (fs-test-drive-absolute? cwd))
                 (fs-api-test-fs-path-starts-separator? cwd))
               "current dir has rooted shape"))]
-        [(ErrIoString error)
-          (fs-test-assert-true
-            false
-            (string-append
-              "current dir unexpectedly failed: "
-              (io-error-message error)))]))))
+        [(io.ErrIoString _)
+          (fs-test-assert-true false "current dir unexpectedly failed")]))))
 
 (cfg
   test
@@ -2356,8 +2409,8 @@
     (let
       [joined : String (fs-api-test-fs-path-join "left path" "right file")]
       [expected-join : String
-        (string-append
-          (string-append "left path" (fs-path-separator))
+        (string.string-append
+          (string.string-append "left path" (stdlib.fs.fs-path-separator))
           "right file")]
       (begin
         (fs-test-assert-owned-string-eq
@@ -2382,28 +2435,30 @@
           "path join many two segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left" "middle" "right")
-          (string-append
-            (string-append (string-append "left" (fs-path-separator)) "middle")
-            (string-append (fs-path-separator) "right"))
+          (string.string-append
+            (string.string-append
+              (string.string-append "left" (stdlib.fs.fs-path-separator))
+              "middle")
+            (string.string-append (stdlib.fs.fs-path-separator) "right"))
           "path join many three segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many4 "left" "middle" "right" "leaf")
-          (string-append
-            (string-append
-              (string-append
-                (string-append "left" (fs-path-separator))
+          (string.string-append
+            (string.string-append
+              (string.string-append
+                (string.string-append "left" (stdlib.fs.fs-path-separator))
                 "middle")
-              (string-append (fs-path-separator) "right"))
-            (string-append (fs-path-separator) "leaf"))
+              (string.string-append (stdlib.fs.fs-path-separator) "right"))
+            (string.string-append (stdlib.fs.fs-path-separator) "leaf"))
           "path join many four segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left/" "/right" "leaf")
-          (string-append
+          (string.string-append
             "left/right"
-            (string-append (fs-path-separator) "leaf"))
+            (string.string-append (stdlib.fs.fs-path-separator) "leaf"))
           "path join many avoids duplicate separator")
         (fs-test-assert-string-vec3
-          (fs-read-dir-split-vec "first\nsecond\nthird\n")
+          (stdlib.fs.fs-read-dir-split-vec "first\nsecond\nthird\n")
           "first"
           "second"
           "third"
@@ -2547,7 +2602,7 @@
           false
           "drive-relative path is not a safe suffix")
         (fs-test-assert-current-dir-api)
-        (if (fs-windows?)
+        (if (stdlib.fs.fs-windows?)
           (begin
             (fs-test-assert-created-temp-dir)
             (let
@@ -2635,7 +2690,7 @@
             [file-b : String (fs-api-test-fs-path-join dir-b "cleanup.obj")]
             (begin
               (fs-test-assert-true
-                (not (string-eq dir-a dir-b))
+                (not (string.string-eq dir-a dir-b))
                 "temp directories are unique")
               (fs-test-assert-exists dir-a true "temp dir a exists")
               (fs-test-assert-exists dir-b true "temp dir b exists")
@@ -2720,3 +2775,131 @@
     (if (= (fs-test-api-main) 42)
       unit
       (fs-test-fail "fs-api did not return 42"))))
+
+(export
+  (value fs-linux-syscall-mkdir)
+  (value fs-linux-syscall-unlink)
+  (value fs-linux-syscall-rmdir)
+  (value fs-linux-syscall-rename)
+  (value fs-linux-syscall-getpid)
+  (value fs-linux-syscall-getcwd)
+  (value fs-linux-syscall-openat)
+  (value fs-linux-syscall-getdents64)
+  (value fs-windows-get-current-process-id)
+  (value fs-windows-get-current-directory)
+  (value fs-status-from-result)
+  (value fs-mkdir-status-owned)
+  (value fs-mkdir-status)
+  (value fs-remove-file-status-owned)
+  (value fs-remove-file-status)
+  (value fs-remove-dir-status-owned)
+  (value fs-remove-dir-status)
+  (value fs-rename-status-owned)
+  (value fs-rename-status)
+  (value fs-process-id)
+  (value fs-linux-at-fdcwd)
+  (value fs-linux-open-directory)
+  (value fs-read-dir-buffer-size)
+  (value fs-windows-find-data-size)
+  (value fs-windows-find-data-name-offset)
+  (value fs-c-string-byte)
+  (value fs-read-dir-dot-entry?)
+  (value fs-read-dir-append-entry!)
+  (value fs-read-dir-bytes-string)
+  (value fs-read-dir-status)
+  (value fs-read-dir)
+  (value fs-file-kind-regular-code)
+  (value fs-file-kind-directory-code)
+  (value fs-file-kind-other-code)
+  (value fs-windows-file-attribute-data-size)
+  (value fs-windows-file-attribute-directory)
+  (value fs-windows-file-attributes-offset)
+  (value fs-windows-file-size-high-offset)
+  (value fs-windows-file-size-low-offset)
+  (value fs-metadata-read-u32-at)
+  (value fs-metadata-read-i64-at)
+  (value fs-file-metadata-probe)
+  (value fs-file-kind-status)
+  (value fs-file-size-status)
+  (value fs-file-size)
+  (value fs-status-range)
+  (value fs-current-dir-initial-capacity)
+  (value fs-current-dir-max-capacity)
+  (value fs-current-dir-next-capacity)
+  (value fs-current-dir-status-loop)
+  (value fs-current-dir-loop)
+  (value fs-current-dir-status)
+  (value fs-current-dir)
+  (value fs-status-already-exists)
+  (value fs-temp-attempt-limit)
+  (value fs-windows?)
+  (value fs-path-separator)
+  (value fs-path-separator-char)
+  (value fs-path-separator?)
+  (value fs-path-starts-separator?)
+  (value fs-path-ends-separator?)
+  (value fs-path-drive-qualified?)
+  (value fs-path-absolute?)
+  (value fs-path-segment-vec-render-from)
+  (value fs-path-segment-vec-render)
+  (value fs-path-normalize-segment)
+  (value fs-path-normalize)
+  (value fs-path-normalized-escapes?)
+  (value fs-path-safe-relative?)
+  (value fs-path-join)
+  (value fs-path-join-owned-pair)
+  (value fs-last-separator-index)
+  (value fs-dirname)
+  (value fs-basename)
+  (value fs-extension)
+  (value fs-status-result)
+  (value fs-file-kind-status-result)
+  (value try-mkdir)
+  (value try-mkdir-if-missing)
+  (value try-remove-file)
+  (value try-remove-dir)
+  (value try-rename)
+  (value try-file-kind)
+  (value fs-file-kind-regular?)
+  (value fs-file-kind-directory?)
+  (value fs-file-kind-other?)
+  (value fs-metadata-kind)
+  (value fs-metadata-size)
+  (value try-file-metadata)
+  (value fs-read-dir-split-vec)
+  (value fs-read-dir-split)
+  (value try-read-dir-vec)
+  (value try-read-dir)
+  (value try-remove-file-if-exists)
+  (value try-remove-dir-if-exists)
+  (value fs-temp-root)
+  (value try-current-dir)
+  (value fs-temp-name)
+  (value fs-create-temp-dir-loop)
+  (value try-create-temp-dir)
+  (type ResultIoStringList)
+  (type ResultIoStringVec)
+  (type FsFileMetadataProbe)
+  (type FsFileKind)
+  (type FsMetadata)
+  (type ResultFsFileKind)
+  (type ResultFsMetadata)
+  (constructor FsFileMetadataProbe)
+  (constructor FsMetadata)
+  (field FsFileMetadataProbe status)
+  (field FsFileMetadataProbe kind)
+  (field FsFileMetadataProbe size)
+  (field FsMetadata kind)
+  (field FsMetadata size)
+  (variant OkIoStringList)
+  (variant ErrIoStringList)
+  (variant OkIoStringVec)
+  (variant ErrIoStringVec)
+  (variant FsFileRegular)
+  (variant FsFileDirectory)
+  (variant FsFileOther)
+  (variant OkFsFileKind)
+  (variant ErrFsFileKind)
+  (variant OkFsMetadata)
+  (variant ErrFsMetadata)
+  (macro fs-path-join-many))

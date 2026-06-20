@@ -1,84 +1,31 @@
-(import "stdlib/arena.tl")
-(import "stdlib/sync.tl")
-(import "stdlib/string.tl")
+(import stdlib.arena)
+(import stdlib.sync)
+(import stdlib.string)
 
 (define (sync-api-create-rejects-invalid?) : bool
   (and
-    (match (channel-i64-create 0)
-      [(ChannelI64CreateErr _) true]
-      [(ChannelI64CreateOk ch)
-        (begin
-          (channel-i64-close ch)
-          false)])
-    (match (channel-i64-create (+ channel-i64-max-capacity 1))
-      [(ChannelI64CreateErr _) true]
-      [(ChannelI64CreateOk ch)
-        (begin
-          (channel-i64-close ch)
-          false)])
-    (match (channel-string-create 0)
-      [(ChannelStringCreateErr _) true]
-      [(ChannelStringCreateOk ch)
-        (begin
-          (channel-string-close ch)
-          false)])
-    (match (channel-string-create (+ channel-i64-max-capacity 1))
-      [(ChannelStringCreateErr _) true]
-      [(ChannelStringCreateOk ch)
-        (begin
-          (channel-string-close ch)
-          false)])))
+    (not (sync.channel-i64-create-capacity-ok? 0))
+    (not
+      (sync.channel-i64-create-capacity-ok? (+ sync.channel-i64-max-capacity 1)))
+    (not (sync.channel-string-create-capacity-ok? 0))
+    (not
+      (sync.channel-string-create-capacity-ok?
+        (+ sync.channel-i64-max-capacity 1)))))
 
-(define (sync-api-send-ok? [result : ChannelI64SendResult]) : bool
-  (match result
-    [(ChannelI64SendOk) true]
-    [(ChannelI64SendErr _) false]))
-
-(define (sync-api-recv-value-or
-  [result : ChannelI64RecvResult]
-  [fallback : i64]) : i64
-  (match result
-    [(ChannelI64RecvOk value) value]
-    [(ChannelI64RecvErr _) fallback]))
-
-(define (sync-api-pair-send-ok? [result : ChannelI64PairSendResult]) : bool
-  (match result
-    [(ChannelI64PairSendOk) true]
-    [(ChannelI64PairSendErr _) false]))
-
-(define (sync-api-pair-recv-value-or
-  [result : ChannelI64PairRecvResult]
-  [fallback : ChannelI64Pair]) : ChannelI64Pair
-  (match result
-    [(ChannelI64PairRecvOk value) value]
-    [(ChannelI64PairRecvErr _) fallback]))
-
-(define (sync-api-string-send-ok? [result : ChannelStringSendResult]) : bool
-  (match result
-    [(ChannelStringSendOk) true]
-    [(ChannelStringSendErr _) false]))
-
-(define (sync-api-string-recv-value-or
-  [result : ChannelStringRecvResult]
-  [fallback : String]) : String
-  (match result
-    [(ChannelStringRecvOk value) value]
-    [(ChannelStringRecvErr _) fallback]))
-
-(define (sync-api-run-channel [channel : ChannelI64]) : i64
+(define (sync-api-run-channel [channel : sync.ChannelI64]) : i64
   (let
-    [packed : (Array i64) (make-array i64 channel-i64-raw-field-count)]
+    [packed : (Array i64) (make-array i64 sync.channel-i64-raw-field-count)]
     (begin
-      (channel-i64-store-raw! channel packed 0)
+      (sync.channel-i64-store-raw! channel packed 0)
       (let
-        [loaded : ChannelI64 (channel-i64-load-raw packed 0)]
-        [send-a : bool (sync-api-send-ok? (channel-i64-send loaded 11))]
-        [send-b : bool (sync-api-send-ok? (channel-i64-send loaded 31))]
-        [first : i64 (sync-api-recv-value-or (channel-i64-recv loaded) -1)]
-        [send-c : bool (sync-api-send-ok? (channel-i64-send loaded 43))]
-        [second : i64 (sync-api-recv-value-or (channel-i64-recv loaded) -1)]
-        [third : i64 (sync-api-recv-value-or (channel-i64-recv loaded) -1)]
-        [closed : bool (channel-i64-close loaded)]
+        [loaded : sync.ChannelI64 (sync.channel-i64-load-raw packed 0)]
+        [send-a : bool (sync.channel-i64-send-value-ok? loaded 11)]
+        [send-b : bool (sync.channel-i64-send-value-ok? loaded 31)]
+        [first : i64 (sync.channel-i64-recv-or loaded -1)]
+        [send-c : bool (sync.channel-i64-send-value-ok? loaded 43)]
+        [second : i64 (sync.channel-i64-recv-or loaded -1)]
+        [third : i64 (sync.channel-i64-recv-or loaded -1)]
+        [closed : bool (sync.channel-i64-close loaded)]
         (if (and
           send-a
           send-b
@@ -90,38 +37,31 @@
           42
           2)))))
 
-(define (sync-api-pair-sum [value : ChannelI64Pair]) : i64
+(define (sync-api-pair-sum [value : sync.ChannelI64Pair]) : i64
   (+ (struct-get value left) (struct-get value right)))
 
-(define (sync-api-run-pair-channel [channel : ChannelI64PairChannel]) : i64
+(define (sync-api-run-pair-channel [channel : sync.ChannelI64PairChannel]) : i64
   (let
-    [packed : (Array i64) (make-array i64 channel-i64-pair-raw-field-count)]
+    [packed : (Array i64)
+      (make-array i64 sync.channel-i64-pair-raw-field-count)]
     (begin
-      (channel-i64-pair-store-raw! channel packed 0)
+      (sync.channel-i64-pair-store-raw! channel packed 0)
       (let
-        [loaded : ChannelI64PairChannel (channel-i64-pair-load-raw packed 0)]
-        [first-msg : ChannelI64Pair (ChannelI64Pair 5 7)]
-        [second-msg : ChannelI64Pair (ChannelI64Pair 11 13)]
-        [third-msg : ChannelI64Pair (ChannelI64Pair 17 19)]
-        [send-a : bool
-          (sync-api-pair-send-ok? (channel-i64-pair-send loaded first-msg))]
-        [send-b : bool
-          (sync-api-pair-send-ok? (channel-i64-pair-send loaded second-msg))]
-        [first : ChannelI64Pair
-          (sync-api-pair-recv-value-or
-            (channel-i64-pair-recv loaded)
-            (ChannelI64Pair -1 -1))]
-        [send-c : bool
-          (sync-api-pair-send-ok? (channel-i64-pair-send loaded third-msg))]
-        [second : ChannelI64Pair
-          (sync-api-pair-recv-value-or
-            (channel-i64-pair-recv loaded)
-            (ChannelI64Pair -1 -1))]
-        [third : ChannelI64Pair
-          (sync-api-pair-recv-value-or
-            (channel-i64-pair-recv loaded)
-            (ChannelI64Pair -1 -1))]
-        [closed : bool (channel-i64-pair-close loaded)]
+        [loaded : sync.ChannelI64PairChannel
+          (sync.channel-i64-pair-load-raw packed 0)]
+        [first-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 5 7)]
+        [second-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 11 13)]
+        [third-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 17 19)]
+        [send-a : bool (sync.channel-i64-pair-send-value-ok? loaded first-msg)]
+        [send-b : bool (sync.channel-i64-pair-send-value-ok? loaded second-msg)]
+        [first : sync.ChannelI64Pair
+          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+        [send-c : bool (sync.channel-i64-pair-send-value-ok? loaded third-msg)]
+        [second : sync.ChannelI64Pair
+          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+        [third : sync.ChannelI64Pair
+          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+        [closed : bool (sync.channel-i64-pair-close loaded)]
         (if (and
           send-a
           send-b
@@ -133,70 +73,69 @@
           42
           8)))))
 
-(define (sync-api-run-string-channel [channel : ChannelString]) : i64
+(define (sync-api-run-string-channel [channel : sync.ChannelString]) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
-    [packed : (Array i64) (make-array i64 channel-string-raw-field-count)]
+    [owner : i64 (arena.arena-make-atomic)]
+    [packed : (Array i64) (make-array i64 sync.channel-string-raw-field-count)]
     (begin
-      (channel-string-store-raw! channel packed 0)
+      (sync.channel-string-store-raw! channel packed 0)
       (let
-        [loaded : ChannelString (channel-string-load-raw packed 0)]
+        [loaded : sync.ChannelString (sync.channel-string-load-raw packed 0)]
         [send-a : bool
-          (sync-api-string-send-ok?
-            (channel-string-send
-              loaded
-              (in-arena owner (string-append "alpha" ":one"))))]
+          (sync.channel-string-send-value-ok?
+            loaded
+            (in-arena owner (string.string-append "alpha" ":one")))]
         [send-b : bool
-          (sync-api-string-send-ok?
-            (channel-string-send
-              loaded
-              (in-arena owner (string-append "beta" ":two"))))]
-        [first : String
-          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
+          (sync.channel-string-send-value-ok?
+            loaded
+            (in-arena owner (string.string-append "beta" ":two")))]
+        [first : String (sync.channel-string-recv-or loaded "missing")]
         [send-c : bool
-          (sync-api-string-send-ok?
-            (channel-string-send
-              loaded
-              (in-arena owner (string-append "gamma" ":three"))))]
-        [second : String
-          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
-        [third : String
-          (sync-api-string-recv-value-or (channel-string-recv loaded) "missing")]
-        [closed : bool (channel-string-close loaded)]
+          (sync.channel-string-send-value-ok?
+            loaded
+            (in-arena owner (string.string-append "gamma" ":three")))]
+        [second : String (sync.channel-string-recv-or loaded "missing")]
+        [third : String (sync.channel-string-recv-or loaded "missing")]
+        [closed : bool (sync.channel-string-close loaded)]
         (if (and
           send-a
           send-b
           send-c
           closed
-          (string-eq first "alpha:one")
-          (string-eq second "beta:two")
-          (string-eq third "gamma:three"))
+          (string.string-eq first "alpha:one")
+          (string.string-eq second "beta:two")
+          (string.string-eq third "gamma:three"))
           42
           9)))))
 
-(define (sync-api-run-mutex [mutex : MutexI64]) : i64
+(define (sync-api-unlock-mutex-guard [guard : sync.MutexI64Guard]) : unit
+  (begin
+    (sync.mutex-i64-unlock-handle (sync.mutex-i64-guard-mutex-handle guard))
+    (sync.mutex-i64-untrack-user (sync.mutex-i64-guard-control-addr guard))))
+
+(define (sync-api-run-mutex [mutex : sync.MutexI64]) : i64
   (let
-    [packed : (Array i64) (make-array i64 mutex-i64-raw-field-count)]
+    [packed : (Array i64) (make-array i64 sync.mutex-i64-raw-field-count)]
     (begin
-      (mutex-i64-store-raw! mutex packed 0)
+      (sync.mutex-i64-store-raw! mutex packed 0)
       (let
-        [loaded : MutexI64 (mutex-i64-load-raw packed 0)]
+        [loaded : sync.MutexI64 (sync.mutex-i64-load-raw packed 0)]
         [first : i64
           (with
-            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
             (begin
-              (mutex-i64-set! guard 17)
-              (mutex-i64-add! guard 25)))]
+              (sync.mutex-i64-set! guard 17)
+              (sync.mutex-i64-add! guard 25)))]
         [second : i64
           (with
-            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
-            (mutex-i64-get guard))]
+            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            (sync.mutex-i64-get guard))]
         [live-close-code : i64
           (with
-            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
+            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
             (let
-              [blocked-close : bool (mutex-i64-close loaded)]
-              [after : i64 (mutex-i64-add! guard 1)]
+              [blocked-close : bool (sync.mutex-i64-close loaded)]
+              [after : i64 (sync.mutex-i64-add! guard 1)]
               (if (not blocked-close)
                 (if (= after 43)
                   42
@@ -204,10 +143,10 @@
                 6)))]
         [third : i64
           (with
-            ([guard (mutex-i64-lock loaded) mutex-i64-unlock])
-            (mutex-i64-get guard))]
-        [closed : bool (mutex-i64-close loaded)]
-        [closed-again : bool (mutex-i64-close loaded)]
+            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            (sync.mutex-i64-get guard))]
+        [closed : bool (sync.mutex-i64-close loaded)]
+        [closed-again : bool (sync.mutex-i64-close loaded)]
         (if (and
           closed
           (not closed-again)
@@ -219,48 +158,49 @@
           4)))))
 
 (define (sync-api-close-fresh-mutex?) : bool
-  (match (mutex-i64-create 9)
-    [(MutexI64CreateErr _) false]
-    [(MutexI64CreateOk mutex)
-      (let
-        [closed : bool (mutex-i64-close mutex)]
-        [closed-again : bool (mutex-i64-close mutex)]
-        (and closed (not closed-again)))]))
+  (let
+    [mutex : sync.MutexI64
+      (sync.mutex-i64-create-initial-or 9 (sync.MutexI64 0 0 0))]
+    [closed : bool (sync.mutex-i64-close mutex)]
+    [closed-again : bool (sync.mutex-i64-close mutex)]
+    (and closed (not closed-again))))
 
 (define (sync-api-run-mutex-create) : i64
-  (match (mutex-i64-create 5)
-    [(MutexI64CreateErr _) 5]
-    [(MutexI64CreateOk mutex) (sync-api-run-mutex mutex)]))
+  (let
+    [mutex : sync.MutexI64
+      (sync.mutex-i64-create-initial-or 5 (sync.MutexI64 0 0 0))]
+    (sync-api-run-mutex mutex)))
 
 (define (sync-api-run-pair-create) : i64
-  (match (channel-i64-pair-create 2)
-    [(ChannelI64PairCreateErr _) 8]
-    [(ChannelI64PairCreateOk pair-channel)
-      (let
-        [pair-code : i64 (sync-api-run-pair-channel pair-channel)]
-        (if (not (= pair-code 42))
-          pair-code
-          (sync-api-run-string-create)))]))
+  (let
+    [pair-channel : sync.ChannelI64PairChannel
+      (sync.channel-i64-pair-create-capacity-or
+        2
+        (sync.ChannelI64PairChannel 0 0 0 0 0 0 0))]
+    [pair-code : i64 (sync-api-run-pair-channel pair-channel)]
+    (if (not (= pair-code 42))
+      pair-code
+      (sync-api-run-string-create))))
 
 (define (sync-api-run-string-create) : i64
-  (match (channel-string-create 2)
-    [(ChannelStringCreateErr _) 9]
-    [(ChannelStringCreateOk string-channel)
-      (let
-        [string-code : i64 (sync-api-run-string-channel string-channel)]
-        (if (not (= string-code 42))
-          string-code
-          (sync-api-run-mutex-create)))]))
+  (let
+    [string-channel : sync.ChannelString
+      (sync.channel-string-create-capacity-or
+        2
+        (sync.ChannelString 0 0 0 0 0 0 0))]
+    [string-code : i64 (sync-api-run-string-channel string-channel)]
+    (if (not (= string-code 42))
+      string-code
+      (sync-api-run-mutex-create))))
 
 (define (sync-api-run-channel-create) : i64
-  (match (channel-i64-create 2)
-    [(ChannelI64CreateErr _) 3]
-    [(ChannelI64CreateOk channel)
-      (let
-        [channel-code : i64 (sync-api-run-channel channel)]
-        (if (not (= channel-code 42))
-          channel-code
-          (sync-api-run-pair-create)))]))
+  (let
+    [channel : sync.ChannelI64
+      (sync.channel-i64-create-capacity-or 2 (sync.ChannelI64 0 0 0 0 0 0 0))]
+    [channel-code : i64 (sync-api-run-channel channel)]
+    (if (not (= channel-code 42))
+      channel-code
+      (sync-api-run-pair-create))))
 
 (define (main) : i64
   (cond

@@ -21,6 +21,8 @@
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
+(module stdlib.runtime)
+
 (cfg
   windows
   (extern (runtime-windows-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
@@ -487,3 +489,29 @@
   (begin
     (runtime-abort-write "tl: allocation failed\n")
     (runtime-os-exit 134)))
+
+(export
+  (value runtime-alloc)
+  (value runtime-arena-current)
+  (value runtime-arena-make-atomic)
+  (value runtime-ptr-arg)
+  (value runtime-os-write)
+  (value runtime-os-exit)
+  (value runtime-abort-write)
+  (value tl-runtime-oob-abort)
+  (value tl-runtime-div-abort)
+  (value tl-runtime-shift-abort)
+  (value tl-runtime-abort-string)
+  (value tl-runtime-int-to-string)
+  (value tl-runtime-substring)
+  (value runtime-str-view-arena)
+  (value runtime-str-view-arena-get)
+  (value tl-runtime-str-view)
+  (value tl-runtime-string-concat)
+  (value tl-runtime-string-concat3)
+  (value tl-runtime-string-concat4)
+  (value tl-runtime-string-concat5)
+  (value tl-runtime-array-fill8)
+  (value tl-runtime-array-zero)
+  (value tl-runtime-region-abort)
+  (value tl-runtime-oom-abort))

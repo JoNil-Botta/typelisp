@@ -8,14 +8,14 @@
 ;# Generated sorts use stable insertion sort and mutate only the live prefix
 ;# `[0, len)` of the existing backing array.
 ;#
-;# Usage: `(import "stdlib/sort.tl")`
+;# Usage: `(import stdlib.sort)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector.tl")
-;# (import "stdlib/sort.tl")
+;# (import stdlib.vector)
+;# (import stdlib.sort)
 ;#
-;# (import (vector i64) as ivec)
-;# (import (sort-vec i64) as isort)
+;# (import (stdlib.vector.vector i64) as ivec)
+;# (import (stdlib.sort.sort-vec i64) as isort)
 ;#
 ;# (define (main) : i64
 ;#   (let
@@ -27,7 +27,7 @@
 ;#       (isort.sort! (&mut v))
 ;#       (+ (ivec.get (& v) 0 0) (ivec.get (& v) 2 0)))))
 ;# ```
-(import "vector.tl")
+(module stdlib.sort)
 
 ;: Return the character code at `idx` in borrowed text.
 (define (sort-char-code-at [text : (& text str)] [idx : i64]) : i64
@@ -49,8 +49,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64 (sort-char-code-at left idx)]
-          [rc : i64 (sort-char-code-at right idx)]
+          [lc : i64 (stdlib.sort.sort-char-code-at left idx)]
+          [rc : i64 (stdlib.sort.sort-char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -62,7 +62,7 @@
 
 ;: Owned-string wrapper for `string-less-borrowed?`.
 (define (string-less? [left : String] [right : String]) : bool
-  (string-less-borrowed? (& left) (& right)))
+  (stdlib.sort.string-less-borrowed? (& left) (& right)))
 
 ;: Emit a stable in-place ascending insertion sort module for `(vector T)`.
 ;:
@@ -136,12 +136,12 @@
 (export (macro sort-vec))
 
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).
-(cfg test (import "test.tl"))
-(cfg test (import (vector i64) as i64v))
-(cfg test (import (sort-vec i64) as i64sort))
-(cfg test (import (sort-vec i64) as i64sort_again))
-(cfg test (import (vector String) as strv))
-(cfg test (import (sort-vec String) as strsort))
+(cfg test (import stdlib.test))
+(cfg test (import (stdlib.vector.vector i64) as i64v))
+(cfg test (import (stdlib.sort.sort-vec i64) as i64sort))
+(cfg test (import (stdlib.sort.sort-vec i64) as i64sort_again))
+(cfg test (import (stdlib.vector.vector String) as strv))
+(cfg test (import (stdlib.sort.sort-vec String) as strsort))
 
 (cfg
   test
@@ -149,8 +149,8 @@
     (key i64)
     (seq i64)))
 
-(cfg test (import (vector SortPair) as pairv))
-(cfg test (import (sort-vec SortPair) as pairsort))
+(cfg test (import (stdlib.vector.vector SortPair) as pairv))
+(cfg test (import (stdlib.sort.sort-vec SortPair) as pairsort))
 
 (cfg
   test
@@ -163,7 +163,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -207,8 +207,8 @@
   test
   (define (sort-test-assert-i64-vec1 [v : i64v.Vec] [a : i64]) : unit
     (begin
-      (assert-i64-eq (i64v.len (& v)) 1 "i64 vec1 len")
-      (assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec1 0"))))
+      (test.assert-i64-eq (i64v.len (& v)) 1 "i64 vec1 len")
+      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec1 0"))))
 
 (cfg
   test
@@ -218,10 +218,10 @@
     [b : i64]
     [c : i64]) : unit
     (begin
-      (assert-i64-eq (i64v.len (& v)) 3 "i64 vec3 len")
-      (assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec3 0")
-      (assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec3 1")
-      (assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec3 2"))))
+      (test.assert-i64-eq (i64v.len (& v)) 3 "i64 vec3 len")
+      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec3 0")
+      (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec3 1")
+      (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec3 2"))))
 
 (cfg
   test
@@ -233,12 +233,12 @@
     [d : i64]
     [e : i64]) : unit
     (begin
-      (assert-i64-eq (i64v.len (& v)) 5 "i64 vec5 len")
-      (assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec5 0")
-      (assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec5 1")
-      (assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec5 2")
-      (assert-i64-eq (i64v.get (& v) 3 9999) d "i64 vec5 3")
-      (assert-i64-eq (i64v.get (& v) 4 9999) e "i64 vec5 4"))))
+      (test.assert-i64-eq (i64v.len (& v)) 5 "i64 vec5 len")
+      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec5 0")
+      (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec5 1")
+      (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec5 2")
+      (test.assert-i64-eq (i64v.get (& v) 3 9999) d "i64 vec5 3")
+      (test.assert-i64-eq (i64v.get (& v) 4 9999) e "i64 vec5 4"))))
 
 (cfg
   test
@@ -269,7 +269,7 @@
   test
   (define (sort-test-assert-string-vec1 [v : strv.Vec] [a : String]) : unit
     (begin
-      (assert-i64-eq (strv.len (& v)) 1 "string vec1 len")
+      (test.assert-i64-eq (strv.len (& v)) 1 "string vec1 len")
       (sort-test-assert-owned-string-eq
         (strv.get (& v) 0 "missing")
         a
@@ -284,7 +284,7 @@
     [c : String]
     [d : String]) : unit
     (begin
-      (assert-i64-eq (strv.len (& v)) 4 "string vec4 len")
+      (test.assert-i64-eq (strv.len (& v)) 4 "string vec4 len")
       (sort-test-assert-owned-string-eq
         (strv.get (& v) 0 "missing")
         a
@@ -310,8 +310,8 @@
         [empty : i64v.Vec (i64v.new)]
         (begin
           (i64sort.sort! (&mut empty))
-          (assert-i64-eq (i64v.len (& empty)) 0 "empty i64 sort len")
-          (assert-true
+          (test.assert-i64-eq (i64v.len (& empty)) 0 "empty i64 sort len")
+          (test.assert-true
             (>= (i64v.capacity (& empty)) 1)
             "empty i64 sort growable")))
       (let
@@ -344,11 +344,11 @@
   test
   (define (sort-test-assert-string-less-cases) : unit
     (begin
-      (assert-true (string-less? "" "a") "empty string sorts first")
-      (assert-true (string-less? "a" "aa") "prefix sorts first")
-      (assert-true (string-less? "alpha" "beta") "alpha before beta")
-      (assert-false (string-less? "beta" "alpha") "beta after alpha")
-      (assert-false (string-less? "same" "same") "equal is not less"))))
+      (test.assert-true (string-less? "" "a") "empty string sorts first")
+      (test.assert-true (string-less? "a" "aa") "prefix sorts first")
+      (test.assert-true (string-less? "alpha" "beta") "alpha before beta")
+      (test.assert-false (string-less? "beta" "alpha") "beta after alpha")
+      (test.assert-false (string-less? "same" "same") "equal is not less"))))
 
 (cfg
   test
@@ -358,7 +358,7 @@
         [empty : strv.Vec (strv.new)]
         (begin
           (strsort.sort! (&mut empty) string-less?)
-          (assert-i64-eq (strv.len (& empty)) 0 "empty string sort len")))
+          (test.assert-i64-eq (strv.len (& empty)) 0 "empty string sort len")))
       (let
         [single : strv.Vec (sort-test-make-string-vec1 "solo")]
         (begin
@@ -404,19 +404,19 @@
         (pairv.push (&mut pairs) (SortPair 2 2))
         (pairv.push (&mut pairs) (SortPair 1 3))
         (pairsort.sort! (&mut pairs) sort-test-pair-less?)
-        (assert-i64-eq
+        (test.assert-i64-eq
           (struct-get (pairv.get (& pairs) 0 (SortPair 0 -1)) seq)
           1
           "pair sort first equal keeps order")
-        (assert-i64-eq
+        (test.assert-i64-eq
           (struct-get (pairv.get (& pairs) 1 (SortPair 0 -1)) seq)
           3
           "pair sort second equal keeps order")
-        (assert-i64-eq
+        (test.assert-i64-eq
           (struct-get (pairv.get (& pairs) 2 (SortPair 0 -1)) seq)
           0
           "pair sort third equal keeps order")
-        (assert-i64-eq
+        (test.assert-i64-eq
           (struct-get (pairv.get (& pairs) 3 (SortPair 0 -1)) seq)
           2
           "pair sort fourth equal keeps order")))))
@@ -433,4 +433,6 @@
 
 (cfg
   test
-  (test sort-api (assert-i64-eq (sort-test-main) 42 "sort-api fixture result")))
+  (test
+    sort-api
+    (test.assert-i64-eq (sort-test-main) 42 "sort-api fixture result")))

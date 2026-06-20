@@ -13,17 +13,34 @@
 ;# `*-set-next-occupied set 0`, advancing with `(+ index 1)`, and reading each
 ;# key with `*-set-entry-at`.
 ;#
-;# Usage: `(import "stdlib/set.tl")`
-(import "hashmap.tl")
-(import "string.tl")
+;# Usage: `(import stdlib.set)`
+(module stdlib.set)
+
+(import stdlib.hashmap)
+(import stdlib.string)
+
+;: Local hashmap families used by the current checked-in set-family generator.
+;: The generator still emits unqualified hashmap family references; keeping these
+;: local preserves dotted imports without depending on legacy namespace merging.
+(comptime-decl
+  (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key
+    (type String)) "stdlib/hashmap/string-key-v1")
+  (defstruct StringStringMap
+    (__hashmap_family_request i64)))
+
+(comptime-decl
+  (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key
+    (type i64)) "stdlib/hashmap/i64-key-v1")
+  (defstruct I64I64Map
+    (__hashmap_family_request i64)))
 
 ;: Stable descriptor identity for generated `String`-key set families.
 (define (set-string-key-descriptor-key) : String
-  (hashmap-string-key-descriptor-key))
+  (hashmap.hashmap-string-key-descriptor-key))
 
 ;: Stable descriptor identity for generated `i64`-key set families.
 (define (set-i64-key-descriptor-key) : String
-  (hashmap-i64-key-descriptor-key))
+  (hashmap.hashmap-i64-key-descriptor-key))
 
 ;: Generated `HashSet<String>` family request. The public API is produced by
 ;: the `stdlib/set-family` declaration generator.
@@ -40,7 +57,7 @@
     (__set_family_request i64)))
 
 ;; Inline coverage migrated from stdlib/tests/set_api.tl (#3083).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -48,7 +65,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -130,46 +147,46 @@
         [s1 : StringSet (string-set-insert s0 "alpha")]
         [s2 : StringSet (string-set-insert s1 "alpha")]
         (begin
-          (assert-i64-eq
+          (test.assert-i64-eq
             (string-set-len s2)
             1
             "duplicate String insert is idempotent")
-          (assert-true
+          (test.assert-true
             (string-set-contains-borrowed? s2 (& borrowed-key))
             "borrowed String contains finds owned key")
           (let
             [s3 : StringSet (string-set-insert s2 "a")]
             [s4 : StringSet (string-set-insert s3 "e")]
             (begin
-              (assert-true
+              (test.assert-true
                 (string-set-contains? s4 "e")
                 "String collision chain lookup")
               (let
                 [s5 : StringSet (string-set-remove s4 "a")]
                 (begin
-                  (assert-false
+                  (test.assert-false
                     (string-set-contains? s5 "a")
                     "String remove tombstones key")
-                  (assert-true
+                  (test.assert-true
                     (string-set-contains? s5 "e")
                     "String tombstone preserves later collision")
                   (let
                     [s6 : StringSet (string-set-insert s5 "i")]
                     (begin
-                      (assert-true
+                      (test.assert-true
                         (string-set-contains? s6 "i")
                         "String insert reuses tombstone slot")
                       (let
                         [s7 : StringSet
                           (string-set-remove-borrowed s6 (& borrowed-key))]
                         (begin
-                          (assert-false
+                          (test.assert-false
                             (string-set-contains-borrowed? s7 (& borrowed-key))
                             "borrowed String remove removes key")
                           (let
                             [s8 : StringSet (string-set-remove s7 "missing")]
                             (begin
-                              (assert-i64-eq
+                              (test.assert-i64-eq
                                 (string-set-len s8)
                                 (string-set-len s7)
                                 "missing String remove is no-op")
@@ -181,25 +198,25 @@
                                       "two")
                                     "three")]
                                 (begin
-                                  (assert-true
+                                  (test.assert-true
                                     (> (string-set-capacity s9) 4)
                                     "String set grows and rehashes")
-                                  (assert-true
+                                  (test.assert-true
                                     (string-set-contains? s9 "e")
                                     "String set keeps old key after resize")
-                                  (assert-i64-eq
+                                  (test.assert-i64-eq
                                     (string-set-iter-count
                                       s9
                                       (string-set-next-occupied s9 0)
                                       0)
                                     (string-set-len s9)
                                     "String set iteration visits every key")
-                                  (assert-true
+                                  (test.assert-true
                                     (string-set-iter-monotonic?
                                       s9
                                       (string-set-next-occupied s9 0))
                                     "String set iteration is ascending bucket order")
-                                  (assert-true
+                                  (test.assert-true
                                     (>
                                       (string-set-entry-len-or
                                         (string-set-entry-at
@@ -223,24 +240,24 @@
         [i2 : I64Set (i64-set-insert i1 5)]
         [i3 : I64Set (i64-set-insert i2 1)]
         (begin
-          (assert-i64-eq
+          (test.assert-i64-eq
             (i64-set-len i3)
             2
             "duplicate i64 insert is idempotent")
-          (assert-true (i64-set-contains? i3 5) "i64 collision lookup")
+          (test.assert-true (i64-set-contains? i3 5) "i64 collision lookup")
           (let
             [i4 : I64Set (i64-set-remove i3 1)]
             (begin
-              (assert-false
+              (test.assert-false
                 (i64-set-contains? i4 1)
                 "i64 remove tombstones key")
-              (assert-true
+              (test.assert-true
                 (i64-set-contains? i4 5)
                 "i64 tombstone preserves later collision")
               (let
                 [i5 : I64Set (i64-set-insert i4 9)]
                 (begin
-                  (assert-true
+                  (test.assert-true
                     (i64-set-contains? i5 9)
                     "i64 tombstone slot reused")
                   (let
@@ -248,7 +265,7 @@
                     [i6-sum : i64
                       (i64-set-iter-sum i6 (i64-set-next-occupied i6 0) 0)]
                     (begin
-                      (assert-i64-eq
+                      (test.assert-i64-eq
                         (i64-set-len i6)
                         (i64-set-len i5)
                         "missing i64 remove is no-op")
@@ -258,18 +275,26 @@
                             (i64-set-insert (i64-set-insert i6 10) 11)
                             12)]
                         (begin
-                          (assert-true
+                          (test.assert-true
                             (> (i64-set-capacity i7) 4)
                             "i64 set grows and rehashes")
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             (i64-set-iter-count
                               i7
                               (i64-set-next-occupied i7 0)
                               0)
                             (i64-set-len i7)
                             "i64 set iteration visits every key")
-                          (assert-i64-eq
+                          (test.assert-i64-eq
                             i6-sum
                             14
                             "i64 set iteration exposes live keys")))))))))))
       unit)))
+
+(export
+  (value set-string-key-descriptor-key)
+  (value set-i64-key-descriptor-key)
+  (type StringSet)
+  (type I64Set)
+  (constructor StringSet)
+  (constructor I64Set))

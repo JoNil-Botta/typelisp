@@ -1422,6 +1422,48 @@
           [(AstDeclModule _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
 
+(define (compiler-load-legacy-path-flat-module-import?
+  [kind : AstImportKind]
+  [expected : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [imported-decls : AstDeclList]) : bool
+  (match kind
+    [(AstImportPath)
+      (match expected
+        [(AstNoModuleName)
+          (match alias
+            [(AstNoImportAlias)
+              (compiler-load-decl-list-has-module? imported-decls)]
+            [(AstSomeImportAlias _) false])]
+        [(AstSomeModuleName _) false])]
+    [_ false]))
+
+(define (compiler-load-after-import-expected-module
+  [kind : AstImportKind]
+  [expected : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [imported-decls : AstDeclList]) : AstMaybeModuleName
+  (if (compiler-load-legacy-path-flat-module-import?
+    kind
+    expected
+    alias
+    imported-decls)
+    (AstSomeModuleName (compiler-load-decls-source-module imported-decls))
+    expected))
+
+(define (compiler-load-after-import-alias
+  [kind : AstImportKind]
+  [expected : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [imported-decls : AstDeclList]) : AstMaybeImportAlias
+  (if (compiler-load-legacy-path-flat-module-import?
+    kind
+    expected
+    alias
+    imported-decls)
+    (AstSomeImportAlias "")
+    alias))
+
 (define (compiler-load-dotted-import-alias-key
   [module : String]
   [alias : String]) : String
@@ -1672,32 +1714,45 @@
                             rest-paths
                             rest-modules
                             rest-seen)
-                          (OkCompilerLoadWithPaths
-                            (compiler-load-decl-list-append
-                              imported-decls
-                              (compiler-load-decls-after-import
+                          (let
+                            [after-import-expected : AstMaybeModuleName
+                              (compiler-load-after-import-expected-module
                                 kind
-                                resolved
                                 expected-module
                                 alias
-                                importer-source-module
-                                imported-decls
-                                rest-decls))
-                            (compiler-load-decl-path-list-append
-                              imported-paths
-                              (compiler-load-paths-after-import
-                                importer-path
+                                imported-decls)]
+                            [after-import-alias : AstMaybeImportAlias
+                              (compiler-load-after-import-alias
+                                kind
+                                expected-module
                                 alias
+                                imported-decls)]
+                            (OkCompilerLoadWithPaths
+                              (compiler-load-decl-list-append
                                 imported-decls
-                                rest-paths))
-                            (compiler-load-decl-module-list-append
-                              imported-modules
-                              (compiler-load-modules-after-import
-                                importer-module
-                                alias
-                                imported-decls
-                                rest-modules))
-                            rest-seen)]
+                                (compiler-load-decls-after-import
+                                  kind
+                                  resolved
+                                  after-import-expected
+                                  after-import-alias
+                                  importer-source-module
+                                  imported-decls
+                                  rest-decls))
+                              (compiler-load-decl-path-list-append
+                                imported-paths
+                                (compiler-load-paths-after-import
+                                  importer-path
+                                  after-import-alias
+                                  imported-decls
+                                  rest-paths))
+                              (compiler-load-decl-module-list-append
+                                imported-modules
+                                (compiler-load-modules-after-import
+                                  importer-module
+                                  after-import-alias
+                                  imported-decls
+                                  rest-modules))
+                              rest-seen))]
                         [(ErrCompilerLoadWithPaths diag)
                           (ErrCompilerLoadWithPaths diag)])]
                     [(ErrCompilerLoadWithPaths diag)
@@ -3858,6 +3913,23 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-legacy-path-module-flat-alias-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_legacy_module_dep.tl"
+      "(module legacy.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_legacy_module_entry.tl"
+      "(import \"cl_legacy_module_dep.tl\")
+(define (main) : i64 (get))")
+    (match (compiler-load-file-with-paths
+      "target/cl_legacy_module_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
@@ -6699,6 +6771,13 @@
       (return
         (begin
           (panic "compiler-load: import alias preservation smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-legacy-path-module-flat-alias-ok?)
+      (return
+        (begin
+          (panic "compiler-load: legacy path module flat alias smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

@@ -7045,6 +7045,55 @@
 (define (main) : i64
   (macros.choose-helper false (macro-helper true)))")
 
+(define (compiler-typecheck-macro-qualified-local-alias-source) : String
+  "(module pkg.data)
+(define (get) : i64 41)
+(export (value get))
+(module main)
+(import pkg.data)
+(defmacro (call-get) : i64 `(data.get))
+(define (main) : i64 (+ (call-get) 1))")
+
+(define (compiler-typecheck-macro-qualified-local-full-path-source) : String
+  "(module pkg.data)
+(define (get) : i64 41)
+(export (value get))
+(module main)
+(import pkg.data)
+(defmacro (call-get) : i64 `(pkg.data.get))
+(define (main) : i64 (+ (call-get) 1))")
+
+(define (compiler-typecheck-macro-qualified-imported-own-source) : String
+  "(module pkg.macros)
+(define (helper) : i64 41)
+(defmacro (call-helper) : i64 `(pkg.macros.helper))
+(export (value helper))
+(export (macro call-helper))
+(module main)
+(import pkg.macros)
+(define (main) : i64 (+ (macros.call-helper) 1))")
+
+(define (compiler-typecheck-macro-qualified-imported-other-source) : String
+  "(module pkg.data)
+(define (get) : i64 41)
+(export (value get))
+(module pkg.macros)
+(import pkg.data)
+(defmacro (call-data) : i64 `(data.get))
+(export (macro call-data))
+(module main)
+(import pkg.data)
+(import pkg.macros)
+(define (main) : i64 (+ (macros.call-data) 1))")
+
+(define (compiler-typecheck-macro-qualified-private-source) : String
+  "(module data)
+(define private : i64 1)
+(module main)
+(import data)
+(defmacro (call-private) : i64 `data.private)
+(define (main) : i64 (call-private))")
+
 (define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
   "(module macros)
 (defmacro (dyn-len [items : Expr]) : i64
@@ -7238,6 +7287,17 @@
       (compiler-typecheck-macro-hygiene-imported-definition-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-dotted-import-default-alias-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-local-alias-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-local-full-path-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-imported-own-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-imported-other-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-qualified-private-source)
+      "typecheck: private value data/private from module data")
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))

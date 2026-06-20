@@ -323,6 +323,11 @@
   (BackendTargetLinux)
   (BackendTargetWindows))
 
+(define (compiler-backend-regalloc-abi [target : CompilerBackendTarget]) : CompilerRegTargetAbi
+  (match target
+    [(BackendTargetLinux) CompilerRegAbiLinux]
+    [(BackendTargetWindows) CompilerRegAbiWindows]))
+
 (defenum CompilerBackendMode
   (BackendModeScalar)
   (BackendModeAvx2)
@@ -19746,7 +19751,9 @@
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar walk-func)
+              (compiler-reg-plan-function-scalar-for-abi
+                (compiler-backend-regalloc-abi target)
+                walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
         [reg-type-info : CompilerRegVarTypes

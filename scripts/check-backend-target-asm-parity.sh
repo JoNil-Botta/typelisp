@@ -227,21 +227,50 @@ compare_outputs() {
             left="$LINUX_NORM_DIR/opt${opt_level}_$name.norm"
             right="$WINDOWS_NORM_DIR/opt${opt_level}_$name.norm"
 
-            if ! cmp -s "$left" "$right"; then
-                echo "backend target assembly mismatch: opt$opt_level $name" >&2
-                echo "  linux normalized:   $left" >&2
-                echo "  windows normalized: $right" >&2
-                if command -v diff >/dev/null 2>&1; then
-                    diff -u "$left" "$right" || true
-                else
-                    cmp -l "$left" "$right" | sed -n '1,40p' || true
+            if cmp -s "$left" "$right"; then
+                if expected_target_asm_mismatch "$opt_level" "$name"; then
+                    echo "backend target assembly expected mismatch is stale: opt$opt_level $name" >&2
+                    echo "  remove the expected-target mismatch entry" >&2
+                    : > "$failed_marker"
                 fi
-                : > "$failed_marker"
+                continue
             fi
+
+            if expected_target_asm_mismatch "$opt_level" "$name"; then
+                echo "backend target assembly accepted expected mismatch: opt$opt_level $name" >&2
+                continue
+            fi
+
+            echo "backend target assembly mismatch: opt$opt_level $name" >&2
+            echo "  linux normalized:   $left" >&2
+            echo "  windows normalized: $right" >&2
+            if command -v diff >/dev/null 2>&1; then
+                diff -u "$left" "$right" || true
+            else
+                cmp -l "$left" "$right" | sed -n '1,40p' || true
+            fi
+            : > "$failed_marker"
         done
     done
 
     [ ! -f "$failed_marker" ]
+}
+
+expected_target_asm_mismatch() {
+    opt_level=$1
+    name=$2
+
+    case "$opt_level:$name" in
+        2:functions | 2:lambda_capture_struct_enum | 2:many_args)
+            # Linux opt2 can now keep safe scalar parameter values in incoming
+            # ABI registers. Windows keeps the old stack homes until #3493
+            # resolves the target-specific scratch/register-argument audit.
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 rm -rf "$LINUX_ASM_DIR" "$WINDOWS_ASM_DIR" "$LINUX_NORM_DIR" "$WINDOWS_NORM_DIR"

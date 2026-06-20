@@ -167,6 +167,10 @@ compares helper bodies only after function prologues, and deliberately leaves
 direct C ABI call setup, indirect-call register differences, shadow space,
 sret, stack probing, entry symbols, and runtime shims to the backend smoke and
 native integration layers until the normalizer has an explicit target-ABI model.
+Opt2 helper bodies that intentionally differ because Linux keeps safe scalar
+parameters in incoming ABI registers while Windows still uses stack homes are
+listed in the script as expected mismatches; those entries fail once they become
+stale and should be removed with the Windows parameter-home follow-up (#3493).
 
 ### Assembly size reports
 

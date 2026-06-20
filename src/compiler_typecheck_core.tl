@@ -31600,6 +31600,17 @@
         (macro-decl-generated-key? decl key)
         (macro-decls-contain-generated-key? (box-get rest) key))]))
 
+(define (macro-decls-filter-generated-key [decls : AstDeclList] [key : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (let
+        [filtered-rest : AstDeclList
+          (macro-decls-filter-generated-key (box-get rest) key)]
+        (if (macro-decl-generated-key? decl key)
+          (ast-decl-cons decl filtered-rest)
+          filtered-rest))]))
+
 (define (macro-decl-list-structural-eq? [a : AstDeclList] [b : AstDeclList]) : bool
   (match a
     [(AstDeclNil)
@@ -31618,26 +31629,47 @@
                 (macro-decl-list-structural-eq? a-rest b-rest)))]
           [_ false]))]))
 
-(define (macro-take-module-body-decls [decls : AstDeclList]) : AstDeclList
+(define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule _) AstDeclNil]
-        [_ (ast-decl-cons decl (macro-take-module-body-decls (box-get rest)))])]))
-
-(define (macro-find-module-body-decls
-  [decls : AstDeclList]
-  [target-module : String]) : MacroMaybeDeclList
-  (match decls
-    [(AstDeclNil) (MacroNoDeclList)]
+    [(AstDeclNil) false]
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclModule module-name)
           (if (string-eq (intern-str module-name) target-module)
-            (MacroSomeDeclList (macro-take-module-body-decls (box-get rest)))
-            (macro-find-module-body-decls (box-get rest) target-module))]
-        [_ (macro-find-module-body-decls (box-get rest) target-module)])]))
+            true
+            (macro-module-exists? (box-get rest) target-module))]
+        [_ (macro-module-exists? (box-get rest) target-module)])]))
+
+(define (macro-collect-module-body-decls
+  [decls : AstDeclList]
+  [target-module : String]
+  [current-module : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule module-name)
+          (macro-collect-module-body-decls
+            (box-get rest)
+            target-module
+            (intern-str module-name))]
+        [_
+          (let
+            [collected-rest : AstDeclList
+              (macro-collect-module-body-decls
+                (box-get rest)
+                target-module
+                current-module)]
+            (if (string-eq current-module target-module)
+              (ast-decl-cons decl collected-rest)
+              collected-rest))])]))
+
+(define (macro-find-module-body-decls
+  [decls : AstDeclList]
+  [target-module : String]) : MacroMaybeDeclList
+  (if (macro-module-exists? decls target-module)
+    (MacroSomeDeclList (macro-collect-module-body-decls decls target-module ""))
+    (MacroNoDeclList)))
 
 (define (macro-expr-list-with-head-symbol
   [name : String]
@@ -34900,30 +34932,62 @@
     (match (macro-find-module-body-decls orig-decls target-module)
       [(MacroSomeDeclList existing-body)
         (if (macro-decls-contain-generated-key? existing-body identity)
-          (if (macro-decl-list-structural-eq? existing-body generated-body)
-            (match (macro-check-generated-import-collisions
-              orig-decls
-              generated-body
-              module
-              alias
-              identity)
-              [CompilerNoString
-                (let
-                  [expanded : AstDeclList
-                    (macro-module-import-marker-decls target-module alias span)]
-                  (OkMacroDeclExpansion
-                    expanded
-                    (macro-paths-for-decls expanded decl-path)))]
-              [(CompilerSomeString message)
-                (ErrMacroDeclExpansion
-                  (macro-generated-import-diag span message))])
-            (ErrMacroDeclExpansion
-              (macro-module-incompatible-output-diag call-expr identity)))
-          (ErrMacroDeclExpansion
-            (macro-module-existing-collision-diag
-              call-expr
-              target-module
-              identity)))]
+          (let
+            [same-identity-body : AstDeclList
+              (macro-decls-filter-generated-key existing-body identity)]
+            ;: Exports/imports in generated module bodies are unkeyed scaffolding,
+            ;: so replay compatibility compares only declarations owned by this
+            ;: generated identity. Other identities may share the same module.
+            [generated-key-body : AstDeclList
+              (macro-decls-filter-generated-key generated-body identity)]
+            [same-body? : bool
+              (macro-decl-list-structural-eq?
+                same-identity-body
+                generated-key-body)]
+            (if same-body?
+              (match (macro-check-generated-import-collisions
+                orig-decls
+                generated-body
+                module
+                alias
+                identity)
+                [CompilerNoString
+                  (let
+                    [expanded : AstDeclList
+                      (macro-module-import-marker-decls
+                        target-module
+                        alias
+                        span)]
+                    (OkMacroDeclExpansion
+                      expanded
+                      (macro-paths-for-decls expanded decl-path)))]
+                [(CompilerSomeString message)
+                  (ErrMacroDeclExpansion
+                    (macro-generated-import-diag span message))])
+              (ErrMacroDeclExpansion
+                (macro-module-incompatible-output-diag call-expr identity))))
+          (match (macro-check-generated-import-collisions
+            orig-decls
+            generated-body
+            module
+            alias
+            identity)
+            [CompilerNoString
+              (let
+                [expanded : AstDeclList
+                  (macro-decl-list-append
+                    materialized
+                    (ast-decl-cons
+                      (ast-decl-module module)
+                      (macro-module-import-marker-decls
+                        target-module
+                        alias
+                        span)))]
+                (OkMacroDeclExpansion
+                  expanded
+                  (macro-paths-for-decls expanded decl-path)))]
+            [(CompilerSomeString message)
+              (ErrMacroDeclExpansion (macro-generated-import-diag span message))]))]
       [(MacroNoDeclList)
         (match (macro-check-generated-import-collisions
           orig-decls

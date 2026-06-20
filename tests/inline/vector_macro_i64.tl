@@ -10,6 +10,9 @@
 (define (vector-macro-i64-add [a : i64] [b : i64]) : i64
   (+ a b))
 
+(define (vector-macro-i64-mut-len [v : (&mut v Vec)]) : i64
+  (len-mut v))
+
 (define (vector-macro-i64-fill [n : i64]) : Vec
   (let
     [v : Vec (new)]
@@ -27,6 +30,10 @@
     [v : Vec (vector-macro-i64-fill 9)]
     (begin
       (assert-i64-eq (len (& v)) 9 "i64 vector macro length")
+      (assert-i64-eq
+        (vector-macro-i64-mut-len (&mut v))
+        9
+        "i64 vector macro mutable length")
       (assert-i64-eq (capacity (& v)) 16 "i64 vector macro doubled capacity")
       (assert-i64-eq (get (& v) 0 -1) 0 "i64 vector macro keeps first element")
       (assert-i64-eq (get (& v) 7 -1) 21 "i64 vector macro keeps grown element")

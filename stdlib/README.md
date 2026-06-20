@@ -128,11 +128,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   when only key membership matters; use a map when each key carries a meaningful
   value rather than modeling membership with dummy map values. Import it with
   `(import "stdlib/set.tl")`.
-- `sort.tl`: stable deterministic in-place insertion sort helpers for concrete
-  stdlib vectors. `i64-vec-sort!` orders `I64Vec` values ascending by numeric
-  value, and `string-vec-sort!` orders `StringVec` values lexicographically by
-  character code. The module also exposes borrowed and owned string less-than
-  helpers used by the string-vector sort. Import it with
+- `sort.tl`: generated stable deterministic in-place insertion sort helpers for
+  `(vector T)` modules. `(sort-vec T)` extends the matching generated vector
+  module with `sort!`; scalar element types use built-in `<`, while String and
+  aggregate element types pass an explicit less-than function. The module also
+  exposes borrowed and owned string less-than helpers. Import it with
   `(import "stdlib/sort.tl")`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
   `ChannelI64` is a concrete bounded channel whose queued scalar messages live
@@ -245,8 +245,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   import-time instantiations such as `(import (vector i64))` or
   `(import (vector String) as svec)`. Each instantiation provides a generated
   module namespace with `Vec`, `Pop`, `new`, `with-capacity`, immutable-ref
-  reads, mutable-ref `push` / `set` / `pop` updates, conversion helpers, and
-  fold/map/contains helpers. The family metadata is not scalar-only: checked
+  reads, mutable-ref `push` / `set` / `pop` updates, mutable `len-mut` /
+  `slots-mut` accessors for generated in-place algorithms, conversion helpers,
+  and fold/map/contains helpers. The family metadata is not scalar-only: checked
   fixtures cover
   nominal enum and struct element types, with `push`/`set!` moving values into
   array slots, `pop` moving the last element out, and growth/snapshot helpers
@@ -409,7 +410,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path. |
 | `string-set-*`, `i64-set-*` helpers in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
-| `i64-vec-sort!`, `string-vec-sort!`, and `sort-string-less*` helpers in `sort.tl` | Stable insertion sort helpers mutate the existing vector backing array in place and do not allocate. `i64-vec-sort!` compares numeric values directly. `string-vec-sort!` uses non-allocating lexicographic string inspection and shifts only strictly-less values, preserving the relative order of equal elements. |
+| `(sort-vec T)` generated `sort!` helpers and `string-less*` comparators in `sort.tl` | Stable insertion sort helpers extend the matching generated `(vector T)` module, mutate the existing vector backing array in place through a mutable reference, and do not allocate. Scalar instantiations compare values directly with `<`; String and aggregate instantiations use the caller-supplied less-than function and shift only strictly-less values, preserving the relative order of equal elements. |
 | `ChannelI64`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel-i64-close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |

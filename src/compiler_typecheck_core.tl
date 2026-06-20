@@ -5675,6 +5675,54 @@
       (ast-ty-struct-args (intern name) lifetimes)
       (ast-ty-var-args (intern name) lifetimes))))
 
+(define (tc-current-module-owner-name-matches?
+  [lookup-name : String]
+  [owner-name : String]) : bool
+  (or
+    (string-eq owner-name lookup-name)
+    (and
+      (tc-name-qualified? lookup-name)
+      (not (tc-name-qualified? owner-name))
+      (string-eq owner-name (tc-qualified-name-base lookup-name)))))
+
+(define (tc-current-module-enum? [ctx : TcContext] [name : String]) : bool
+  (match (tc-program-enum-variants (tc-context-program ctx) name)
+    [(OkAstVariantDefList _) true]
+    [(ErrAstVariantDefList _) false]))
+
+(define (tc-resolved-current-module-nominal-type
+  [ctx : TcContext]
+  [name : String]
+  [handle : i64]) : AstType
+  (match (tc-nominal-owner-name ctx handle)
+    [(OkTcString owner-name)
+      (if (tc-current-module-owner-name-matches? name owner-name)
+        (tc-resolved-nominal-type name handle)
+        (if (tc-current-module-enum? ctx name)
+          (AstTyEnum (intern name))
+          (tc-resolved-nominal-type name handle)))]
+    [(ErrTcString _)
+      (if (tc-current-module-enum? ctx name)
+        (AstTyEnum (intern name))
+        (tc-resolved-nominal-type name handle))]))
+
+(define (tc-resolved-current-module-nominal-type-with-args
+  [ctx : TcContext]
+  [name : String]
+  [handle : i64]
+  [lifetimes : AstLifetimeList]) : AstType
+  (match (tc-nominal-owner-name ctx handle)
+    [(OkTcString owner-name)
+      (if (tc-current-module-owner-name-matches? name owner-name)
+        (tc-resolved-nominal-type-with-args name handle lifetimes)
+        (if (tc-current-module-enum? ctx name)
+          (ast-ty-enum-args (intern name) lifetimes)
+          (tc-resolved-nominal-type-with-args name handle lifetimes)))]
+    [(ErrTcString _)
+      (if (tc-current-module-enum? ctx name)
+        (ast-ty-enum-args (intern name) lifetimes)
+        (tc-resolved-nominal-type-with-args name handle lifetimes))]))
+
 (define tc-nominal-owner-cache-handle : i64
   0)
 (define tc-nominal-owner-cache-name : String
@@ -6008,15 +6056,26 @@
             source-name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
-            (match (tc-nominal-owner-name ctx handle)
-              [(OkTcString canonical-name)
-                (match (tc-stdlib-comptime-syntax-type canonical-name)
-                  [(AstSomeType syntax-ty) syntax-ty]
-                  [(AstNoType) (tc-resolved-nominal-type canonical-name handle)])]
-              [(ErrTcString _)
-                (match (tc-stdlib-comptime-syntax-type lookup-name)
-                  [(AstSomeType syntax-ty) syntax-ty]
-                  [(AstNoType) (tc-resolved-nominal-type lookup-name handle)])])]
+            (if (and
+              (tc-name-qualified? lookup-name)
+              (string-eq (tc-qualified-name-module lookup-name) module))
+              (match (tc-stdlib-comptime-syntax-type lookup-name)
+                [(AstSomeType syntax-ty) syntax-ty]
+                [(AstNoType)
+                  (tc-resolved-current-module-nominal-type
+                    ctx
+                    lookup-name
+                    handle)])
+              (match (tc-nominal-owner-name ctx handle)
+                [(OkTcString canonical-name)
+                  (match (tc-stdlib-comptime-syntax-type canonical-name)
+                    [(AstSomeType syntax-ty) syntax-ty]
+                    [(AstNoType)
+                      (tc-resolved-nominal-type canonical-name handle)])]
+                [(ErrTcString _)
+                  (match (tc-stdlib-comptime-syntax-type lookup-name)
+                    [(AstSomeType syntax-ty) syntax-ty]
+                    [(AstNoType) (tc-resolved-nominal-type lookup-name handle)])]))]
           [(NoneI64)
             (cond
               [(string-eq name "Expr") (AstTyExpr)]
@@ -6077,23 +6136,34 @@
             source-name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
           [(SomeI64 handle)
-            (match (tc-nominal-owner-name ctx handle)
-              [(OkTcString canonical-name)
-                (match (tc-stdlib-comptime-syntax-type canonical-name)
-                  [(AstSomeType syntax-ty) syntax-ty]
-                  [(AstNoType)
-                    (tc-resolved-nominal-type-with-args
-                      canonical-name
-                      handle
-                      lifetimes)])]
-              [(ErrTcString _)
-                (match (tc-stdlib-comptime-syntax-type lookup-name)
-                  [(AstSomeType syntax-ty) syntax-ty]
-                  [(AstNoType)
-                    (tc-resolved-nominal-type-with-args
-                      lookup-name
-                      handle
-                      lifetimes)])])]
+            (if (and
+              (tc-name-qualified? lookup-name)
+              (string-eq (tc-qualified-name-module lookup-name) module))
+              (match (tc-stdlib-comptime-syntax-type lookup-name)
+                [(AstSomeType syntax-ty) syntax-ty]
+                [(AstNoType)
+                  (tc-resolved-current-module-nominal-type-with-args
+                    ctx
+                    lookup-name
+                    handle
+                    lifetimes)])
+              (match (tc-nominal-owner-name ctx handle)
+                [(OkTcString canonical-name)
+                  (match (tc-stdlib-comptime-syntax-type canonical-name)
+                    [(AstSomeType syntax-ty) syntax-ty]
+                    [(AstNoType)
+                      (tc-resolved-nominal-type-with-args
+                        canonical-name
+                        handle
+                        lifetimes)])]
+                [(ErrTcString _)
+                  (match (tc-stdlib-comptime-syntax-type lookup-name)
+                    [(AstSomeType syntax-ty) syntax-ty]
+                    [(AstNoType)
+                      (tc-resolved-nominal-type-with-args
+                        lookup-name
+                        handle
+                        lifetimes)])]))]
           [(NoneI64) (ast-ty-var-args (intern name) lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String

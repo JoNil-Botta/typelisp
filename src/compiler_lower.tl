@@ -19358,7 +19358,7 @@
             (tc-context-module ctx)))
           (tc-source-variant-name-for-enum ctx enum-name-str name)
           (lower-module-lookup-name ctx name)))]
-    [_ (lower-module-lookup-name ctx name)]))
+    [_ ""]))
 
 (define (lower-call-non-builtin
   [ctx : TcContext]

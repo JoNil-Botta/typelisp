@@ -1043,6 +1043,14 @@
   (+ (match left [Left.Same 1] [_ 0])
      (match right [Right.Same 2] [_ 0])))")
 
+(define (compiler-typecheck-module-local-variant-shadows-prior-flat-source) : String
+  "(module prior)
+(defenum List (Nil))
+(module current)
+(defenum List (Nil))
+(define (make) : List (Nil))
+(define (main) : i64 (match (make) [Nil 1]))")
+
 (define (compiler-typecheck-enum-qualified-variant-source) : String
   "(defenum Json (Null) (Bool bool))
 (defstruct Holder (Null i64))
@@ -2269,6 +2277,10 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-cross-enum-qualified-variant-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-module-local-variant-shadows-prior-flat-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

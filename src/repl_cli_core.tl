@@ -203,14 +203,14 @@
       (string-append
         "(->"
         (string-append
-          (repl-type-list-render-spaced args)
+          (repl-type-list-render-spaced (box-get args))
           (string-append
             " "
             (string-append (repl-type-render (ty-node-get ret)) ")"))))]
     [(AstTyTuple elems)
       (string-append
         "(Tuple"
-        (string-append (repl-type-list-render-spaced elems) ")"))]
+        (string-append (repl-type-list-render-spaced (box-get elems)) ")"))]
     [(AstTyArray elem count)
       (string-append
         "(Array "
@@ -263,21 +263,27 @@
         "("
         (string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
+          (string-append
+            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            ")")))]
     [(AstTyStruct name) (intern-str name)]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "("
         (string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
+          (string-append
+            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            ")")))]
     [(AstTyVar name) (string-append "'" (string-append (intern-str name) "'"))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "("
         (string-append
           (intern-str name)
-          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]))
+          (string-append
+            (repl-lifetime-list-render-spaced (box-get lifetimes))
+            ")")))]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))

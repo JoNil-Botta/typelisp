@@ -450,9 +450,10 @@
       (string-append
         "fn_"
         (string-append
-          (spec-type-list-key args)
+          (spec-type-list-key (box-get args))
           (string-append "_to_" (spec-type-key (ty-node-get ret)))))]
-    [(AstTyTuple elems) (string-append "tuple_" (spec-type-list-key elems))]
+    [(AstTyTuple elems)
+      (string-append "tuple_" (spec-type-list-key (box-get elems)))]
     [(AstTyArray elem count)
       (string-append
         "array_"
@@ -489,21 +490,21 @@
         "enumargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]
+          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
     [(AstTyStruct name) (string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
       (string-append
         "structargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]
+          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
     [(AstTyVar name) (string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
       (string-append
         "varargs_"
         (string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key lifetimes))))]))
+          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
@@ -6610,9 +6611,10 @@
   (match ty
     [(AstTyFunc args ret)
       (ast-ty-func
-        (spec-substitute-type-list args subs)
+        (spec-substitute-type-list (box-get args) subs)
         (spec-substitute-type (ty-node-get ret) subs))]
-    [(AstTyTuple elems) (AstTyTuple (spec-substitute-type-list elems subs))]
+    [(AstTyTuple elems)
+      (ast-ty-tuple (spec-substitute-type-list (box-get elems) subs))]
     [(AstTyArray elem count)
       (ast-ty-array (spec-substitute-type (ty-node-get elem) subs) count)]
     [(AstTyDynArray elem)
@@ -6629,12 +6631,13 @@
       (ast-ty-mut-ref region (spec-substitute-type (ty-node-get inner) subs))]
     [(AstTyRegion region inner)
       (ast-ty-region region (spec-substitute-type (ty-node-get inner) subs))]
-    [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
-    [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
+    [(AstTyEnumArgs name lifetimes) (ast-ty-enum-args name (box-get lifetimes))]
+    [(AstTyStructArgs name lifetimes)
+      (ast-ty-struct-args name (box-get lifetimes))]
     [(AstTyVarArgs name lifetimes)
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]
-        [(SpecNoString) (AstTyVarArgs name lifetimes)])]
+        [(SpecNoString) (ast-ty-var-args name (box-get lifetimes))])]
     [(AstTyVar name)
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]

@@ -9383,7 +9383,7 @@
         [(IrExtern extern-name ty _ _ _ _)
           (if (string-eq extern-name name)
             (match ty
-              [(AstTyFunc args _) args]
+              [(AstTyFunc args _) (box-get args)]
               [_ AstTypeNil])
             (compiler-backend-extern-param-types (box-get rest) name))])]))
 
@@ -9416,7 +9416,9 @@
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
-                (CompilerBackendSomeSignature args (ty-node-get ret-ty))]
+                (CompilerBackendSomeSignature
+                  (box-get args)
+                  (ty-node-get ret-ty))]
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
@@ -9485,7 +9487,7 @@
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
     [(AstTyFunc args ret-ty)
-      (CompilerBackendSomeSignature args (ty-node-get ret-ty))]
+      (CompilerBackendSomeSignature (box-get args) (ty-node-get ret-ty))]
     [_ (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-program-index-extern-signatures-into
@@ -10236,7 +10238,7 @@
 
 (define (compiler-backend-extern-fixed-param-count [ty : AstType]) : i64
   (match ty
-    [(AstTyFunc args _) (compiler-backend-type-list-count args)]
+    [(AstTyFunc args _) (compiler-backend-type-list-count (box-get args))]
     [_ -1]))
 
 (define (compiler-backend-extern-varargs-fixed-param-count
@@ -10535,7 +10537,7 @@
             (if (ast-extern-abi-c? abi)
               (match ty
                 [(AstTyFunc args _)
-                  (compiler-backend-type-list-has-aggregate? args)]
+                  (compiler-backend-type-list-has-aggregate? (box-get args))]
                 [_ false])
               false)
             (compiler-backend-c-aggregate-extern-call? (box-get rest) name))])]))
@@ -16282,7 +16284,7 @@
         func)
         [(CompilerRegSomeType ty)
           (match ty
-            [(AstTyFunc param-types _) param-types]
+            [(AstTyFunc param-types _) (box-get param-types)]
             [_ AstTypeNil])]
         [(CompilerRegNoType) AstTypeNil])]))
 

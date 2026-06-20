@@ -2686,7 +2686,7 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyTuple elems)
-        (lower-clone-root-add-type-list ctx decls able roots elems)]
+        (lower-clone-root-add-type-list ctx decls able roots (box-get elems))]
       [(AstTyArray elem _)
         (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
       [(AstTyDynArray elem)
@@ -6097,11 +6097,11 @@
     (lower-gep-byte state base offset)))
 
 ;; #2386 / lever #1: inline the hottest by-value aggregate copies. The flip to
-;; inline-by-value aggregates (#1867) made 24/40/48 B copies (AstTypeList=24,
-;; AstType=40, ResultTcType/OkTcType=48) the dynamically dominant copy sizes, but
-;; the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88 dynamic
-;; instructions each). Inline they cost only `size/8` load+store pairs. Raising
-;; the ceiling to 64 B turns that whole 17-64 B band into straight movs (a few
+;; inline-by-value aggregates (#1867) made the 17-64 B band, especially
+;; AstTypeList/AstType and ResultTcType/OkTcType copies, dynamically dominant,
+;; but the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88
+;; dynamic instructions each). Inline they cost only `size/8` load+store pairs.
+;; Raising the ceiling to 64 B turns that band into straight movs (a few
 ;; instructions) while still routing genuinely large copies through tl_memcpy so
 ;; the emitted code does not blow up. Must stay a multiple of 8 so the inline
 ;; chunk loop (lower-copy-chunk-size: 8/4/2/1) terminates cleanly for any size.
@@ -7403,7 +7403,10 @@
     [(AstTyStr) true]
     [(AstTyBytes) true]
     [(AstTyTuple elems)
-      (lower-supported-reference-type-list-with-stack? ctx elems LowerStringNil)]
+      (lower-supported-reference-type-list-with-stack?
+        ctx
+        (box-get elems)
+        LowerStringNil)]
     [(AstTyArray elem-ty _)
       (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
     [(AstTyDynArray elem-ty)
@@ -7418,7 +7421,7 @@
       (lower-supported-reference-struct-args-with-stack?
         ctx
         (intern-str name)
-        lifetimes
+        (box-get lifetimes)
         LowerStringNil)]
     [(AstTyEnum name)
       (lower-supported-reference-enum-args-with-stack?
@@ -7430,7 +7433,7 @@
       (lower-supported-reference-enum-args-with-stack?
         ctx
         (intern-str name)
-        lifetimes
+        (box-get lifetimes)
         LowerStringNil)]
     [_ false]))
 
@@ -7586,7 +7589,10 @@
         [(AstTyMutRef _ inner)
           (lower-supported-reference-referent-type? ctx (ty-node-get inner))]
         [(AstTyTuple elems)
-          (lower-supported-reference-type-list-with-stack? ctx elems stack)]
+          (lower-supported-reference-type-list-with-stack?
+            ctx
+            (box-get elems)
+            stack)]
         [(AstTyArray elem _)
           (lower-supported-reference-type-with-stack?
             ctx
@@ -7599,7 +7605,10 @@
             stack)]
         [(AstTyFunc params ret)
           (and
-            (lower-supported-reference-type-list-with-stack? ctx params stack)
+            (lower-supported-reference-type-list-with-stack?
+              ctx
+              (box-get params)
+              stack)
             (lower-supported-reference-type-with-stack?
               ctx
               (ty-node-get ret)
@@ -7608,13 +7617,13 @@
           (lower-supported-reference-struct-args-with-stack?
             ctx
             (intern-str name)
-            lifetimes
+            (box-get lifetimes)
             stack)]
         [(AstTyEnumArgs name lifetimes)
           (lower-supported-reference-enum-args-with-stack?
             ctx
             (intern-str name)
-            lifetimes
+            (box-get lifetimes)
             stack)]
         [(AstTyRegion _ inner)
           (lower-supported-reference-type-with-stack?
@@ -7979,7 +7988,7 @@
         [(LowerExpr tuple-state tuple-value tuple-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
             [(AstTyTuple elem-tys)
-              (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+              (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
                 [(OkLowerFieldInfo info)
                   (match info
                     [(LowerFieldInfo offset _)
@@ -7991,7 +8000,12 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyTuple elem-tys)
-                  (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                  (match (lower-tuple-elem-info
+                    ctx
+                    (box-get elem-tys)
+                    index
+                    0
+                    0)
                     [(OkLowerFieldInfo info)
                       (match info
                         [(LowerFieldInfo offset _)
@@ -8008,7 +8022,12 @@
               (match (tc-type-strip-region
                 (tc-resolve-type ctx (ty-node-get referent-ty)))
                 [(AstTyTuple elem-tys)
-                  (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                  (match (lower-tuple-elem-info
+                    ctx
+                    (box-get elem-tys)
+                    index
+                    0
+                    0)
                     [(OkLowerFieldInfo info)
                       (match info
                         [(LowerFieldInfo offset _)
@@ -9725,7 +9744,7 @@
         env
         type-env
         value
-        elem-tys
+        (box-get elem-tys)
         ty)]
     [(AstTyArray elem-ty count)
       (lower-capture-snapshot-fixed-array-value
@@ -10793,7 +10812,7 @@
 (define (lower-cleanup-metadata-type
   [hidden-name : String]
   [cleanup-name : String]) : AstType
-  (AstTyTuple
+  (ast-ty-tuple
     (ast-type-cons
       (AstTyVar (intern hidden-name))
       (ast-type-cons (AstTyVar (intern cleanup-name)) AstTypeNil))))
@@ -10802,7 +10821,7 @@
   (AstTyVar (intern hidden-name)))
 
 (define (lower-arena-restore-metadata-type [hidden-name : String]) : AstType
-  (AstTyTuple (ast-type-cons (AstTyVar (intern hidden-name)) AstTypeNil)))
+  (ast-ty-tuple (ast-type-cons (AstTyVar (intern hidden-name)) AstTypeNil)))
 
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
@@ -10990,7 +11009,7 @@
               (if (= key cleanup-marker-id)
                 (match ty
                   [(AstTyTuple types)
-                    (match types
+                    (match (box-get types)
                       [(AstTypeCons hidden-ty type-rest)
                         (let
                           [hidden-ty : AstType (ty-node-get hidden-ty)]
@@ -11039,7 +11058,7 @@
                             (set! result (ErrLowerState message))
                             (set! done true))])]
                     [(AstTyTuple types)
-                      (match types
+                      (match (box-get types)
                         [(AstTypeCons hidden-ty end)
                           (let
                             [hidden-ty : AstType (ty-node-get hidden-ty)]
@@ -11096,7 +11115,7 @@
       (if (= key cleanup-marker-id)
         (match ty
           [(AstTyTuple types)
-            (match types
+            (match (box-get types)
               [(AstTypeCons hidden-ty type-rest)
                 (let
                   [hidden-ty : AstType (ty-node-get hidden-ty)]
@@ -12149,7 +12168,14 @@
     (match clone-ty
       [(AstTyString) (lower-capture-snapshot-string-value state value)]
       [(AstTyTuple elem-tys)
-        (lower-clone-tuple-value ctx state env type-env value elem-tys clone-ty)]
+        (lower-clone-tuple-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (box-get elem-tys)
+          clone-ty)]
       [(AstTyArray elem-ty count)
         (lower-clone-fixed-array-value
           ctx
@@ -12724,11 +12750,17 @@
   [fields : AstTypeList]) : AstTypeList
   (match enum-ty
     [(AstTyEnumArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args
+        ctx
+        enum-name
+        (box-get lifetimes))
         [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
         [(ErrTcLifetimeSubst _) fields])]
     [(AstTyVarArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args ctx enum-name lifetimes)
+      (match (tc-lifetime-subst-from-nominal-args
+        ctx
+        enum-name
+        (box-get lifetimes))
         [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
         [(ErrTcLifetimeSubst _) fields])]
     [_ fields]))
@@ -12953,12 +12985,18 @@
     [field-types : AstTypeList (tc-field-type-list ctx fields)]
     (match struct-ty
       [(AstTyStructArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
           [(OkTcLifetimeSubst subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ErrTcLifetimeSubst _) field-types])]
       [(AstTyVarArgs _ lifetimes)
-        (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
           [(OkTcLifetimeSubst subst)
             (tc-lifetime-subst-type-list subst field-types)]
           [(ErrTcLifetimeSubst _) field-types])]
@@ -13390,7 +13428,7 @@
             state
             env
             type-env
-            (lower-init-expr-list-from-types elems)
+            (lower-init-expr-list-from-types (box-get elems))
             expr-ty
             origin)]
         [(AstTyArray elem count)
@@ -13977,7 +14015,7 @@
     [(OkTcType tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(AstTyTuple elem-tys)
-          (match (tc-type-list-ref elem-tys index)
+          (match (tc-type-list-ref (box-get elem-tys) index)
             [(OkTcType elem-ty)
               (OkTcType (lower-projected-result-type-fast ctx tuple-ty elem-ty))]
             [(ErrTcType message) (ErrTcType message)])]
@@ -14054,7 +14092,7 @@
           (match (tc-struct-field-type-with-args
             ctx
             (intern-str struct-name)
-            lifetimes
+            (box-get lifetimes)
             field)
             [(OkTcType field-ty)
               (OkTcType
@@ -16069,7 +16107,7 @@
     [(AstTyTuple elem-tys)
       (match (lower-reserve-heap-storage
         state
-        (lower-type-list-storage-size ctx elem-tys)
+        (lower-type-list-storage-size ctx (box-get elem-tys))
         result-ty)
         [(LowerExpr base-state base _)
           (match (lower-tuple-store-elems
@@ -16079,7 +16117,7 @@
             type-env
             base
             values
-            elem-tys
+            (box-get elem-tys)
             0)
             [(OkLowerState final-state)
               (OkLowerExpr (LowerExpr final-state base result-ty))]
@@ -16246,7 +16284,7 @@
         [(LowerExpr tuple-state tuple-value tuple-ty)
           (match (tc-resolve-type ctx tuple-ty)
             [(AstTyTuple elem-tys)
-              (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+              (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
                 [(OkLowerFieldInfo info)
                   (match info
                     [(LowerFieldInfo offset elem-ty)
@@ -17975,7 +18013,7 @@
               type-env
               name
               args
-              (tc-resolve-type-list ctx param-types))
+              (tc-resolve-type-list ctx (box-get param-types)))
               [(OkTcTypeList call-param-types)
                 (if (lower-c-abi-extern-call? ctx state env name)
                   (lower-direct-c-abi-call
@@ -18074,7 +18112,7 @@
         env
         type-env
         args
-        (tc-resolve-type-list ctx param-types))]
+        (tc-resolve-type-list ctx (box-get param-types)))]
     [_ (lower-args ctx state env type-env args)]))
 
 (define (lower-indirect-call-args-with-writebacks
@@ -18092,7 +18130,7 @@
         env
         type-env
         args
-        (tc-resolve-type-list ctx param-types))]
+        (tc-resolve-type-list ctx (box-get param-types)))]
     [_
       (match (lower-args ctx state env type-env args)
         [(OkLowerArgs args-state values)
@@ -18153,7 +18191,7 @@
         env
         type-env
         args
-        (tc-resolve-type-list ctx param-types))
+        (tc-resolve-type-list ctx (box-get param-types)))
         [(OkLowerArgs args-state values)
           (lower-indirect-c-abi-call-values
             ctx
@@ -20117,7 +20155,7 @@
     [(AstTyTuple elem-tys)
       (match (lower-reserve-heap-storage
         state
-        (lower-type-list-storage-size ctx elem-tys)
+        (lower-type-list-storage-size ctx (box-get elem-tys))
         result-ty)
         [(LowerExpr base-state base _)
           (let
@@ -21091,7 +21129,7 @@
         [(AstTyPtr _) true]
         [(AstTyMutPtr _) true]
         [(AstTyTuple elems)
-          (lower-init-default-share-safe-type-list? ctx elems)]
+          (lower-init-default-share-safe-type-list? ctx (box-get elems))]
         [(AstTyStruct name)
           (lower-init-default-share-safe-struct? ctx (intern-str name) resolved)]
         [(AstTyStructArgs name _)
@@ -22065,7 +22103,7 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
     [(AstTyTuple elem-tys)
-      (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+      (match (lower-tuple-elem-info ctx (box-get elem-tys) index 0 0)
         [(OkLowerFieldInfo info)
           (match info
             [(LowerFieldInfo offset elem-ty)
@@ -31163,7 +31201,7 @@
             env
             type-env
             args
-            (tc-resolve-type-list ctx param-types))]
+            (tc-resolve-type-list ctx (box-get param-types)))]
         [_ (lower-args ctx state env type-env args)])]
     [(ErrTcType _) (lower-args ctx state env type-env args)]))
 
@@ -32678,7 +32716,8 @@
     [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
     [(AstTyEnumArgs _ _) true]
-    [(AstTyTuple elems) (lower-type-list-contains-inline-aggregate? ctx elems)]
+    [(AstTyTuple elems)
+      (lower-type-list-contains-inline-aggregate? ctx (box-get elems))]
     [(AstTyArray elem _)
       (lower-type-contains-inline-aggregate? ctx (ty-node-get elem))]
     [(AstTyRegion _ inner)
@@ -33644,7 +33683,7 @@
       (let
         [ret-ty : AstType (tc-type-without-regions (ty-node-get ret-box))]
         [clean-param-types : AstTypeList
-          (lower-dispatch-type-list-without-regions param-types)]
+          (lower-dispatch-type-list-without-regions (box-get param-types))]
         [param-count : i64 (lower-dispatch-param-type-count clean-param-types)]
         [cache-name : String (lower-dispatch-cache-name logical-name)]
         [args : CompilerIrCallArgs
@@ -34311,7 +34350,7 @@
                             cur-module
                             (intern-str cleanup-name))])]
                     [struct-ty : AstType
-                      (AstTyStructArgs
+                      (ast-ty-struct-args
                         (intern
                           (compiler-symbol-module-key
                             cur-module

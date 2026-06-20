@@ -102,7 +102,7 @@
     [(AstTyUnit) true]
     [(AstTyNever) true]
     [(AstTyString) true]
-    [(AstTyTuple elems) (clone-field-type-list-able? elems names)]
+    [(AstTyTuple elems) (clone-field-type-list-able? (box-get elems) names)]
     [(AstTyArray elem _) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyDynArray elem) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyBox elem) (clone-field-type-able? (ty-node-get elem) names)]
@@ -703,7 +703,8 @@
   [roots : CloneNameList]
   [ty : AstType]) : CloneNameList
   (match ty
-    [(AstTyTuple elems) (clone-root-add-type-list decls able roots elems)]
+    [(AstTyTuple elems)
+      (clone-root-add-type-list decls able roots (box-get elems))]
     [(AstTyArray elem _)
       (clone-root-add-type decls able roots (ty-node-get elem))]
     [(AstTyDynArray elem)

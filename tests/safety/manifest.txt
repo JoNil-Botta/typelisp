@@ -140,6 +140,10 @@ box_pattern_wrong_arity_reject|check-fail|tests/safety/box_pattern_wrong_arity_r
 box_pattern_non_box_reject|check-fail|tests/safety/box_pattern_non_box_reject.tl|-|box pattern requires Box scrutinee
 box_pattern_refutable_inner_reject|check-fail|tests/safety/box_pattern_refutable_inner_reject.tl|-|box pattern only supports irrefutable binding, wildcard, or nested box patterns
 box_pattern_borrowed_reject|check-fail|tests/safety/box_pattern_borrowed_reject.tl|-|borrowed box patterns are not supported
+struct_match_pattern_arity_reject|check-fail|tests/safety/struct_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+struct_match_pattern_wrong_head_reject|check-fail|tests/safety/struct_match_pattern_wrong_head_reject.tl|-|struct pattern head Size does not match struct Point
+struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match_pattern_refutable_field_reject.tl|-|struct field pattern only supports binding, wildcard, or nested struct patterns
+struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch

@@ -9150,6 +9150,19 @@
           (tc-tag-region region head)
           (tc-tag-type-list-region region tail)))]))
 
+(define (tc-project-type-list-from-region-container
+  [container-ty : AstType]
+  [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head tail)
+      (let
+        [head : AstType (ty-node-get head)]
+        [tail : AstTypeList (box-get tail)]
+        (ast-type-cons
+          (tc-project-from-region-container container-ty head)
+          (tc-project-type-list-from-region-container container-ty tail)))]))
+
 (define (tc-enum-variant-constructor-type
   [ctx : TcContext]
   [enum-name : String]
@@ -21084,6 +21097,188 @@
               "typecheck: box pattern expects exactly one inner pattern")]))]
     [_ (ErrTcEnv "typecheck: box pattern expects exactly one inner pattern")]))
 
+(define (tc-struct-pattern-name-in-scrut-module
+  [ctx : TcContext]
+  [struct-name : String]
+  [name : String]) : String
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [base : String (tc-qualified-name-base name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (compiler-symbol-module-key target-module base))
+    (let
+      [module : String (tc-qualified-name-module struct-name)]
+      (if (string-eq module "")
+        name
+        (compiler-symbol-module-key module name)))))
+
+(define (tc-source-struct-name-for-pattern
+  [ctx : TcContext]
+  [struct-name : String]
+  [pattern-name : String]) : ResultTcString
+  (if (tc-name-qualified? pattern-name)
+    (match (tc-qualified-type-visible-ok ctx pattern-name)
+      [(OkTcUnit)
+        (let
+          [qualifier : String (tc-qualified-name-module pattern-name)]
+          [base : String (tc-qualified-name-base pattern-name)]
+          [target-module : String
+            (tc-qualified-access-target-module ctx qualifier)]
+          (OkTcString (compiler-symbol-module-key target-module base)))]
+      [(ErrTcUnit message) (ErrTcString message)])
+    (match (tc-source-type-name-lookup-key ctx pattern-name)
+      [(OkTcString lookup-name)
+        (OkTcString
+          (tc-struct-pattern-name-in-scrut-module ctx struct-name lookup-name))]
+      [(ErrTcString message) (ErrTcString message)])))
+
+(define (tc-struct-pattern-name-matches?
+  [ctx : TcContext]
+  [struct-name : String]
+  [pattern-name : String]) : bool
+  (match (tc-source-struct-name-for-pattern ctx struct-name pattern-name)
+    [(OkTcString lookup-name) (string-eq lookup-name struct-name)]
+    [(ErrTcString _) false]))
+
+(define (tc-struct-pattern-head-message
+  [pattern-name : String]
+  [struct-name : String]) : String
+  (str-cat
+    "typecheck: struct pattern head "
+    pattern-name
+    " does not match struct "
+    struct-name))
+
+(define (tc-struct-pattern-field-types-for-scrut
+  [ctx : TcContext]
+  [struct-name : String]
+  [scrut-ty : AstType]
+  [fields : AstFieldDefList]) : ResultTcTypeList
+  (let
+    [field-types : AstTypeList (tc-field-type-list ctx fields)]
+    [resolved-scrut-ty : AstType
+      (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
+    (match resolved-scrut-ty
+      [(AstTyStructArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (OkTcTypeList
+              (tc-project-type-list-from-region-container
+                scrut-ty
+                (tc-lifetime-subst-type-list subst field-types)))]
+          [(ErrTcLifetimeSubst message) (ErrTcTypeList message)])]
+      [(AstTyVarArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          struct-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (OkTcTypeList
+              (tc-project-type-list-from-region-container
+                scrut-ty
+                (tc-lifetime-subst-type-list subst field-types)))]
+          [(ErrTcLifetimeSubst message) (ErrTcTypeList message)])]
+      [_
+        (OkTcTypeList
+          (tc-project-type-list-from-region-container scrut-ty field-types))])))
+
+(define (tc-bind-struct-field-pattern-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [patterns : AstPatternList]
+  [types : AstTypeList]) : ResultTcEnv
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) (OkTcEnv env)]
+        [_ (ErrTcEnv "typecheck: pattern arity mismatch")])]
+    [(AstPatternCons pattern rest-patterns)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest-patterns : AstPatternList (box-get rest-patterns)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-bind-struct-field-pattern ctx env pattern ty)
+                [(OkTcEnv next-env)
+                  (tc-bind-struct-field-pattern-list
+                    ctx
+                    next-env
+                    rest-patterns
+                    rest-types)]
+                [(ErrTcEnv message) (ErrTcEnv message)]))]
+          [(AstTypeNil) (ErrTcEnv "typecheck: pattern arity mismatch")]))]))
+
+(define (tc-bind-struct-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [scrut-ty : AstType]
+  [pattern-name : String]
+  [args : AstPatternList]) : ResultTcEnv
+  (match (tc-source-struct-name-for-pattern ctx struct-name pattern-name)
+    [(OkTcString lookup-name)
+      (if (string-eq lookup-name struct-name)
+        (match (tc-struct-decl ctx struct-name)
+          [(OkTcStructDecl decl)
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (match (tc-struct-pattern-field-types-for-scrut
+                  ctx
+                  struct-name
+                  scrut-ty
+                  fields)
+                  [(OkTcTypeList field-types)
+                    (tc-bind-struct-field-pattern-list ctx env args field-types)]
+                  [(ErrTcTypeList message) (ErrTcEnv message)])])]
+          [(ErrTcStructDecl message) (ErrTcEnv message)])
+        (ErrTcEnv (tc-struct-pattern-head-message pattern-name struct-name)))]
+    [(ErrTcString message) (ErrTcEnv message)]))
+
+(define (tc-bind-struct-field-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [pattern : AstPattern]
+  [field-ty : AstType]) : ResultTcEnv
+  (let
+    [ty : AstType (tc-resolve-type ctx field-ty)]
+    (match pattern
+      [(AstPatVar name _) (OkTcEnv (tc-bind-id env name ty))]
+      [(AstPatBinding name) (OkTcEnv (tc-bind-id env name ty))]
+      [(AstPatWildcard) (OkTcEnv env)]
+      [(AstPatVariant name args-box)
+        (let
+          [args : AstPatternList (box-get args-box)]
+          (match (tc-type-strip-region ty)
+            [(AstTyStruct struct-name)
+              (tc-bind-struct-pattern
+                ctx
+                env
+                (intern-str struct-name)
+                ty
+                (intern-str name)
+                args)]
+            [(AstTyStructArgs struct-name _)
+              (tc-bind-struct-pattern
+                ctx
+                env
+                (intern-str struct-name)
+                ty
+                (intern-str name)
+                args)]
+            [_
+              (ErrTcEnv
+                "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns")]))]
+      [_
+        (ErrTcEnv
+          "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns")])))
+
 (define (tc-bind-sub-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21119,6 +21314,22 @@
                 (box-get lifetimes)
                 args
                 (tc-type-outer-region ty))]
+            [(AstTyStruct struct-name)
+              (tc-bind-struct-pattern
+                ctx
+                env
+                (intern-str struct-name)
+                ty
+                (intern-str name)
+                args)]
+            [(AstTyStructArgs struct-name _)
+              (tc-bind-struct-pattern
+                ctx
+                env
+                (intern-str struct-name)
+                ty
+                (intern-str name)
+                args)]
             [(AstTyBox inner-ty)
               (if (tc-box-pattern-name? name)
                 (tc-bind-box-pattern ctx env args (ty-node-get inner-ty))
@@ -21409,6 +21620,36 @@
               args
               (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
+    [(AstTyStruct struct-name)
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+        [(AstPatVariant pattern-name args-box)
+          (tc-bind-struct-pattern
+            ctx
+            env
+            (intern-str struct-name)
+            scrut-ty
+            (intern-str pattern-name)
+            (box-get args-box))]
+        [_
+          (ErrTcEnv
+            "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
+    [(AstTyStructArgs struct-name _)
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+        [(AstPatVariant pattern-name args-box)
+          (tc-bind-struct-pattern
+            ctx
+            env
+            (intern-str struct-name)
+            scrut-ty
+            (intern-str pattern-name)
+            (box-get args-box))]
+        [_
+          (ErrTcEnv
+            "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
     [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(AstTyBox inner-ty)
       (match pattern
@@ -21750,12 +21991,35 @@
           [(ErrAstTypeList _) false])]
       [(NoneI64) false])))
 
+(define (tc-struct-pattern-irrefutable?
+  [ctx : TcContext]
+  [struct-name : String]
+  [scrut-ty : AstType]
+  [pattern-name : String]
+  [args : AstPatternList]) : bool
+  (if (tc-struct-pattern-name-matches? ctx struct-name pattern-name)
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl _ _ fields)
+            (match (tc-struct-pattern-field-types-for-scrut
+              ctx
+              struct-name
+              scrut-ty
+              fields)
+              [(OkTcTypeList field-types)
+                (tc-pattern-list-irrefutable? ctx args field-types)]
+              [(ErrTcTypeList _) false])])]
+      [(ErrTcStructDecl _) false])
+    false))
+
 (define (tc-sub-pattern-irrefutable?
   [ctx : TcContext]
   [pattern : AstPattern]
   [field-ty : AstType]) : bool
   (match pattern
     [(AstPatWildcard) true]
+    [(AstPatVar _ _) true]
     [(AstPatBinding _) true]
     [(AstPatLiteral _) false]
     [(AstPatVariant name args-box)
@@ -21798,6 +22062,20 @@
                       args)
                     false)]
                 [(ErrAstVariantDefList _) false]))]
+          [(AstTyStruct struct-name)
+            (tc-struct-pattern-irrefutable?
+              ctx
+              (intern-str struct-name)
+              field-ty
+              (intern-str name)
+              args)]
+          [(AstTyStructArgs struct-name _)
+            (tc-struct-pattern-irrefutable?
+              ctx
+              (intern-str struct-name)
+              field-ty
+              (intern-str name)
+              args)]
           [(AstTyBox inner-ty)
             (if (tc-box-pattern-name? name)
               (tc-box-pattern-args-supported? ctx args (ty-node-get inner-ty))
@@ -21991,6 +22269,30 @@
               (box-get args-box)
               (ty-node-get inner-ty))
             false)]
+        [_ false])]
+    [(AstTyStruct struct-name)
+      (match pattern
+        [(AstPatWildcard) true]
+        [(AstPatBinding _) true]
+        [(AstPatVariant name args-box)
+          (tc-struct-pattern-irrefutable?
+            ctx
+            (intern-str struct-name)
+            scrut-ty
+            (intern-str name)
+            (box-get args-box))]
+        [_ false])]
+    [(AstTyStructArgs struct-name _)
+      (match pattern
+        [(AstPatWildcard) true]
+        [(AstPatBinding _) true]
+        [(AstPatVariant name args-box)
+          (tc-struct-pattern-irrefutable?
+            ctx
+            (intern-str struct-name)
+            scrut-ty
+            (intern-str name)
+            (box-get args-box))]
         [_ false])]
     [_
       (match pattern

@@ -36218,6 +36218,24 @@
         [Nil 0]
         [(Cons head _) (+ head 1)]))))")
 
+(define (compiler-lower-inline-imported-enum-payload-source) : String
+  "(module stdlib.list)
+(defenum StringList (StringNil) (StringCons String (Box StringList)))
+(define (string-list-cons [value : String] [rest : StringList]) : StringList
+  (StringCons value (box rest)))
+(export
+  (type StringList)
+  (variant StringNil)
+  (variant StringCons)
+  (value string-list-cons))
+(module main)
+(import stdlib.list)
+(define (main) : i64
+  (string-length
+    (match (list.string-list-cons \"a\" (list.StringNil))
+      [(list.StringNil) \"\"]
+      [(list.StringCons head _) head])))")
+
 (define (compiler-lower-inline-recursive-error-source) : String
   "(defenum BadList (BadNil) (BadCons i64 BadList))
 (define (main) : i64
@@ -36394,6 +36412,19 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-imported-enum-payload-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-inline-imported-enum-payload-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (>
+            (lower-test-functions-call-count
+              functions
+              "stdlib.list/string-list-cons")
+            0)])]
+    [(ErrCompilerLower _) false]))
+
 ;; #2386: `id-pair` is the identity on a 16-byte all-integer struct, which is now
 ;; register-resident -- it is carried in a register pair end-to-end, so the
 ;; passthrough needs NO memory traffic at all: zero byte-copies and zero stores
@@ -36540,6 +36571,7 @@
     (compiler-lower-inline-struct-shape-ok?)
     (compiler-lower-inline-enum-shape-ok?)
     (compiler-lower-inline-boxed-recursive-shape-ok?)
+    (compiler-lower-inline-imported-enum-payload-ok?)
     (compiler-lower-inline-aggregate-copy-shape-ok?)
     (compiler-lower-inline-sret-constructor-copy-shape-ok?)
     (compiler-lower-inline-sret-enum-match-shape-ok?)

@@ -18608,7 +18608,36 @@
   (match variant
     [(TcInlineVariantLayout _ _ _ payloads) payloads]))
 
-(define (tc-inline-variant-layout-list-size
+(define (tc-inline-variant-layout-member-name [name : String]) : String
+  (let
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string-length source)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref source i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (if (and (>= last-dot 0) (< last-dot (- n 1)))
+        (substring source (+ last-dot 1) (- n (+ last-dot 1)))
+        source))))
+
+(define (tc-inline-variant-layout-name-matches?
+  [stored : String]
+  [name : String]) : bool
+  (or
+    (string-eq stored name)
+    (string-eq
+      (tc-inline-variant-layout-member-name stored)
+      (tc-inline-variant-layout-member-name name))))
+
+(define (tc-inline-variant-layout-list-size-exact
   [variants : TcInlineVariantLayoutList]
   [name : String]) : i64
   (match variants
@@ -18616,9 +18645,30 @@
     [(TcInlineVariantLayoutCons variant rest)
       (if (string-eq (tc-inline-variant-layout-name variant) name)
         (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size (box-get rest) name))]))
+        (tc-inline-variant-layout-list-size-exact (box-get rest) name))]))
 
-(define (tc-inline-variant-layout-list-payload-offset
+(define (tc-inline-variant-layout-list-size-fallback
+  [variants : TcInlineVariantLayoutList]
+  [name : String]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (tc-inline-variant-layout-name-matches?
+        (tc-inline-variant-layout-name variant)
+        name)
+        (tc-inline-variant-layout-size variant)
+        (tc-inline-variant-layout-list-size-fallback (box-get rest) name))]))
+
+(define (tc-inline-variant-layout-list-size
+  [variants : TcInlineVariantLayoutList]
+  [name : String]) : i64
+  (let
+    [exact : i64 (tc-inline-variant-layout-list-size-exact variants name)]
+    (if (>= exact 0)
+      exact
+      (tc-inline-variant-layout-list-size-fallback variants name))))
+
+(define (tc-inline-variant-layout-list-payload-offset-exact
   [variants : TcInlineVariantLayoutList]
   [name : String]
   [index : i64]) : i64
@@ -18629,7 +18679,42 @@
         (tc-inline-payload-layout-list-offset
           (tc-inline-variant-layout-payloads variant)
           index)
-        (tc-inline-variant-layout-list-payload-offset (box-get rest) name index))]))
+        (tc-inline-variant-layout-list-payload-offset-exact
+          (box-get rest)
+          name
+          index))]))
+
+(define (tc-inline-variant-layout-list-payload-offset-fallback
+  [variants : TcInlineVariantLayoutList]
+  [name : String]
+  [index : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (tc-inline-variant-layout-name-matches?
+        (tc-inline-variant-layout-name variant)
+        name)
+        (tc-inline-payload-layout-list-offset
+          (tc-inline-variant-layout-payloads variant)
+          index)
+        (tc-inline-variant-layout-list-payload-offset-fallback
+          (box-get rest)
+          name
+          index))]))
+
+(define (tc-inline-variant-layout-list-payload-offset
+  [variants : TcInlineVariantLayoutList]
+  [name : String]
+  [index : i64]) : i64
+  (let
+    [exact : i64
+      (tc-inline-variant-layout-list-payload-offset-exact variants name index)]
+    (if (>= exact 0)
+      exact
+      (tc-inline-variant-layout-list-payload-offset-fallback
+        variants
+        name
+        index))))
 
 (define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
   (match layout

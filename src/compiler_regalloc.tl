@@ -108,10 +108,20 @@
   (CompilerRegCallSaveAssignState CompilerRegAssignmentTable CompilerLiveI64Set))
 
 (defenum CompilerRegCallSaveRewrite
-  (CompilerRegCallSaveRewrite CompilerIrBlockList i64))
+  (CompilerRegCallSaveRewrite
+    CompilerIrBlockList
+    i64
+    i64
+    CompilerRegAssignmentList
+    CompilerRegVarTypeList))
 
 (defenum CompilerRegCallSaveInstrRewrite
-  (CompilerRegCallSaveInstrRewrite CompilerIrInstrList i64))
+  (CompilerRegCallSaveInstrRewrite
+    CompilerIrInstrList
+    i64
+    i64
+    CompilerRegAssignmentList
+    CompilerRegVarTypeList))
 
 (defenum CompilerRegMaybeCallSaveActive
   (CompilerRegNoCallSaveActive)
@@ -3622,10 +3632,10 @@
 (define (compiler-reg-call-spanning-caller-saved-benefit?
   [ref-count : i64]
   [calls : i64]) : bool
-  ;; Static gate for the first wrapped caller-saved slice: a register home must
-  ;; save more spilled-value memory traffic than the wrapper adds. Each normal
-  ;; call crossed costs one spill and one reload, and the shadow slot carries a
-  ;; one-op frame-overhead budget. This intentionally rejects marginal ranges.
+  ;; Static gate for the first split caller-saved slice: register segments must
+  ;; save more spilled-value memory traffic than the call-boundary materializing
+  ;; moves add. Each normal call crossed costs one spill and one reload, plus a
+  ;; small frame-overhead budget. This intentionally rejects marginal ranges.
   (> ref-count (+ (* 2 calls) 1)))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
@@ -3719,22 +3729,59 @@
               clobber-vars
               shadows))])]))
 
+(define (compiler-reg-restore-call-split-spills-from
+  [assignments : CompilerRegAssignmentTable]
+  [splits : CompilerLiveI64Set]
+  [index : i64]) : CompilerRegAssignmentTable
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    (if (>= index (array-length present))
+      assignments
+      (begin
+        (if (compiler-live-set-contains? splits index)
+          (begin
+            (compiler-reg-assignment-table-insert
+              assignments
+              index
+              (CompilerRegSpill (compiler-reg-stack-slot-offset index)))
+            unit)
+          unit)
+        (compiler-reg-restore-call-split-spills-from
+          assignments
+          splits
+          (+ index 1))))))
+
+(define (compiler-reg-restore-call-split-spills
+  [assignments : CompilerRegAssignmentTable]
+  [splits : CompilerLiveI64Set]) : CompilerRegAssignmentTable
+  (compiler-reg-restore-call-split-spills-from assignments splits 0))
+
+(define (compiler-reg-function-single-block? [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks) (= (compiler-ir-block-list-count blocks) 1)]))
+
 (define (compiler-reg-assign-caller-saved-call-spanning
   [func : CompilerIrFunction]
   [candidates : CompilerRegIntervalList]
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]) : CompilerRegCallSaveAssignState
-  (compiler-reg-assign-caller-saved-call-spanning-candidates
-    candidates
-    assignments
-    interval-index
-    (compiler-reg-function-ref-counts func)
-    group-vars
-    (compiler-reg-direct-call-points func)
-    (compiler-reg-backend-caller-clobber-points func)
-    (compiler-reg-backend-caller-clobber-vars func)
-    (compiler-live-set-empty)))
+  (if (compiler-reg-function-single-block? func)
+    (match (compiler-reg-assign-caller-saved-call-spanning-candidates
+      candidates
+      assignments
+      interval-index
+      (compiler-reg-function-ref-counts func)
+      group-vars
+      (compiler-reg-direct-call-points func)
+      (compiler-reg-backend-caller-clobber-points func)
+      (compiler-reg-backend-caller-clobber-vars func)
+      (compiler-live-set-empty))
+      [(CompilerRegCallSaveAssignState reserved split-vars)
+        (CompilerRegCallSaveAssignState
+          (compiler-reg-restore-call-split-spills reserved split-vars)
+          split-vars)])
+    (CompilerRegCallSaveAssignState assignments (compiler-live-set-empty))))
 
 (cfg
   (any regalloc-census test)
@@ -3823,13 +3870,16 @@
   (any regalloc-census test)
   (define (compiler-reg-call-span-assignment-outcome
     [assignments : CompilerRegAssignmentList]
+    [split-vars : CompilerLiveI64Set]
     [var : i64]) : i64
-    (match (compiler-reg-assignment-lookup assignments var)
-      [(CompilerRegNoLocation) (compiler-reg-call-span-outcome-unassigned)]
-      [(CompilerRegSomeLocation location)
-        (match location
-          [(CompilerRegSpill _) (compiler-reg-call-span-outcome-spill)]
-          [_ (compiler-reg-call-span-outcome-register)])])))
+    (if (compiler-live-set-contains? split-vars var)
+      (compiler-reg-call-span-outcome-register)
+      (match (compiler-reg-assignment-lookup assignments var)
+        [(CompilerRegNoLocation) (compiler-reg-call-span-outcome-unassigned)]
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegSpill _) (compiler-reg-call-span-outcome-spill)]
+            [_ (compiler-reg-call-span-outcome-register)])]))))
 
 (cfg
   (any regalloc-census test)
@@ -3837,7 +3887,8 @@
     [census : CompilerRegCallSpanCensus]
     [intervals : CompilerRegIntervalList]
     [assignments : CompilerRegAssignmentList]
-    [call-points : CompilerLiveI64Set]) : unit
+    [call-points : CompilerLiveI64Set]
+    [split-vars : CompilerLiveI64Set]) : unit
     (match intervals
       [(CompilerRegIntervalNil) unit]
       [(CompilerRegIntervalCons interval rest)
@@ -3847,19 +3898,22 @@
               (compiler-reg-call-span-census-add!
                 census
                 (compiler-reg-call-set-count-in-range call-points start end)
-                (compiler-reg-call-span-assignment-outcome assignments var))
+                (compiler-reg-call-span-assignment-outcome
+                  assignments
+                  split-vars
+                  var))
               (compiler-reg-call-span-census-intervals!
                 census
                 (box-get rest)
                 assignments
-                call-points))])])))
+                call-points
+                split-vars))])])))
 
 ;; Caller-saved integer homes must clear this measured gate before they can be
 ;; enabled for call-spanning ranges: the register-home benefit must exceed
 ;; 2*calls_spanned memory ops (spill+reload per normal call) plus the spill-slot
-;; and frame overhead. This census intentionally records current outcomes only;
-;; until backend spill/reload wrappers and internal clobber modeling exist, the
-;; allocator rejects caller-saved homes for ranges with calls_spanned > 0.
+;; and frame overhead. Split-selected originals count as register-covered even
+;; though the canonical original var remains stack-homed across the call.
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-plan-call-span-census
@@ -3870,12 +3924,13 @@
       [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
       (begin
         (match plan
-          [(CompilerRegPlan assignments ineligible intervals _ _)
+          [(CompilerRegPlan assignments ineligible intervals _ split-vars)
             (compiler-reg-call-span-census-intervals!
               census
               (compiler-reg-candidates intervals type-info ineligible false)
               assignments
-              (compiler-reg-call-points func))])
+              (compiler-reg-call-points func)
+              split-vars)])
         census))))
 
 (cfg
@@ -6159,6 +6214,44 @@
   (match plan
     [(CompilerRegPlan _ _ _ _ shadows) shadows]))
 
+(define (compiler-reg-assignment-list-merge
+  [extra : CompilerRegAssignmentList]
+  [base : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (match extra
+    [(CompilerRegAssignmentNil) base]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment var location)
+          (compiler-reg-assignment-list-merge
+            (box-get rest)
+            (compiler-reg-assignment-insert base var location))])]))
+
+(define (compiler-reg-var-type-list-merge
+  [extra : CompilerRegVarTypeList]
+  [base : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  (match extra
+    [(CompilerRegVarTypeNil) base]
+    [(CompilerRegVarTypeCons item rest)
+      (match item
+        [(CompilerRegVarType var ty)
+          (compiler-reg-var-type-list-merge
+            (box-get rest)
+            (compiler-reg-var-type-insert base var ty))])]))
+
+(define (compiler-reg-plan-with-call-save-rewrite
+  [plan : CompilerRegPlan]
+  [rewrite : CompilerRegCallSaveRewrite]) : CompilerRegPlan
+  (match plan
+    [(CompilerRegPlan assignments ineligible intervals types shadows)
+      (match rewrite
+        [(CompilerRegCallSaveRewrite _ _ _ extra-assignments extra-types)
+          (CompilerRegPlan
+            (compiler-reg-assignment-list-merge extra-assignments assignments)
+            ineligible
+            intervals
+            (compiler-reg-var-type-list-merge extra-types types)
+            shadows)])]))
+
 (define (compiler-reg-caller-save-shadow-count-from
   [shadows : CompilerLiveI64Set]
   [vars : i64]
@@ -6179,44 +6272,64 @@
   [vars : i64]) : i64
   (compiler-reg-caller-save-shadow-count-from shadows vars 0 0))
 
-(define (compiler-reg-caller-save-shadow-map-fill!
-  [shadows : CompilerLiveI64Set]
-  [map : (Array i64)]
-  [vars : i64]
-  [index : i64]
-  [next-shadow : i64]) : unit
-  (if (>= index vars)
+(define (compiler-reg-caller-save-remap-fill!
+  [remap : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length remap))
     unit
-    (let
-      [is-shadow : bool (compiler-live-set-contains? shadows index)]
-      (begin
-        (if is-shadow
-          (array-set! map index next-shadow)
-          unit)
-        (compiler-reg-caller-save-shadow-map-fill!
-          shadows
-          map
-          vars
-          (+ index 1)
-          (if is-shadow
-            (+ next-shadow 1)
-            next-shadow))))))
-
-(define (compiler-reg-caller-save-shadow-map
-  [shadows : CompilerLiveI64Set]
-  [vars : i64]) : (Array i64)
-  (let
-    [map : (Array i64) (make-array i64 vars)]
     (begin
-      (compiler-reg-fill-i64-array map (- 0 1))
-      (compiler-reg-caller-save-shadow-map-fill! shadows map vars 0 vars)
-      map)))
+      (array-set! remap index index)
+      (compiler-reg-caller-save-remap-fill! remap (+ index 1)))))
+
+(define (compiler-reg-caller-save-remap [vars : i64]) : (Array i64)
+  (let
+    [remap : (Array i64) (make-array i64 vars)]
+    (begin
+      (compiler-reg-caller-save-remap-fill! remap 0)
+      remap)))
+
+(define (compiler-reg-caller-save-selected-var-in-set-from
+  [set : CompilerLiveI64Set]
+  [splits : CompilerLiveI64Set]
+  [index : i64]
+  [vars : i64]) : i64
+  (if (>= index vars)
+    (- 0 1)
+    (if (and
+      (compiler-live-set-contains? set index)
+      (compiler-live-set-contains? splits index))
+      index
+      (compiler-reg-caller-save-selected-var-in-set-from
+        set
+        splits
+        (+ index 1)
+        vars))))
+
+(define (compiler-reg-caller-save-selected-var-in-set
+  [set : CompilerLiveI64Set]
+  [splits : CompilerLiveI64Set]
+  [vars : i64]) : i64
+  (compiler-reg-caller-save-selected-var-in-set-from set splits 0 vars))
+
+(define (compiler-reg-caller-save-var-type
+  [type-info : CompilerRegVarTypes]
+  [var : i64]) : AstType
+  (match (compiler-reg-var-types-lookup type-info var)
+    [(CompilerRegSomeType ty) ty]
+    [(CompilerRegNoType) (AstTyI64)]))
+
+(define (compiler-reg-caller-save-segment-assignment
+  [var : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment var (CompilerRegRegister "%r9"))
+    assignments))
 
 (define (compiler-reg-caller-save-active-at
   [intervals : CompilerRegIntervalList]
   [type-info : CompilerRegVarTypes]
-  [shadows : CompilerLiveI64Set]
-  [shadow-map : (Array i64)]
+  [splits : CompilerLiveI64Set]
+  [current : (Array i64)]
   [point : i64]) : CompilerRegMaybeCallSaveActive
   (match intervals
     [(CompilerRegIntervalNil) (CompilerRegNoCallSaveActive)]
@@ -6224,125 +6337,238 @@
       (match interval
         [(CompilerRegInterval var start end)
           (if (and
-            (compiler-live-set-contains? shadows var)
+            (compiler-live-set-contains? splits var)
             (< start point)
             (< point end)
             (>= var 0)
-            (< var (array-length shadow-map))
-            (>= (array-ref shadow-map var) 0))
-            (match (compiler-reg-var-types-lookup type-info var)
-              [(CompilerRegSomeType ty)
-                (CompilerRegSomeCallSaveActive
-                  var
-                  (array-ref shadow-map var)
-                  ty)]
-              [(CompilerRegNoType)
-                (CompilerRegSomeCallSaveActive
-                  var
-                  (array-ref shadow-map var)
-                  (AstTyI64))])
+            (< var (array-length current))
+            (>= (array-ref current var) 0))
+            (CompilerRegSomeCallSaveActive
+              var
+              (array-ref current var)
+              (compiler-reg-caller-save-var-type type-info var))
             (compiler-reg-caller-save-active-at
               (box-get rest)
               type-info
-              shadows
-              shadow-map
+              splits
+              current
               point))])]))
-
-(define (compiler-reg-caller-save-wrap-direct-call
-  [instr : CompilerIrInstr]
-  [active : CompilerRegMaybeCallSaveActive]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
-  (match active
-    [(CompilerRegNoCallSaveActive) (compiler-ir-instr-cons instr acc)]
-    [(CompilerRegSomeCallSaveActive var shadow ty)
-      (compiler-ir-instr-cons
-        (IrInstrMov var (IrValueVar shadow) ty)
-        (compiler-ir-instr-cons
-          instr
-          (compiler-ir-instr-cons (IrInstrMov shadow (IrValueVar var) ty) acc)))]))
 
 (define (compiler-reg-caller-save-rewrite-instrs-rev
   [instrs : CompilerIrInstrList]
   [point : i64]
+  [vars : i64]
+  [next-var : i64]
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
-  [shadows : CompilerLiveI64Set]
-  [shadow-map : (Array i64)]
+  [splits : CompilerLiveI64Set]
+  [current : (Array i64)]
+  [remap : (Array i64)]
+  [extra-assignments : CompilerRegAssignmentList]
+  [extra-types : CompilerRegVarTypeList]
   [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
   (match instrs
-    [(IrInstrNil) (CompilerRegCallSaveInstrRewrite acc point)]
+    [(IrInstrNil)
+      (CompilerRegCallSaveInstrRewrite
+        acc
+        point
+        next-var
+        extra-assignments
+        extra-types)]
     [(IrInstrCons instr rest)
-      (let
-        [next-acc : CompilerIrInstrList
-          (match instr
-            [(IrInstrCall _ _ _ _)
-              (compiler-reg-caller-save-wrap-direct-call
-                instr
-                (compiler-reg-caller-save-active-at
-                  intervals
-                  type-info
-                  shadows
-                  shadow-map
-                  point)
-                acc)]
-            [_ (compiler-ir-instr-cons instr acc)])]
-        (compiler-reg-caller-save-rewrite-instrs-rev
-          (box-get rest)
-          (+ point 2)
-          type-info
-          intervals
-          shadows
-          shadow-map
-          next-acc))]))
+      (match instr
+        [(IrInstrCall _ _ _ _)
+          (match (compiler-reg-caller-save-active-at
+            intervals
+            type-info
+            splits
+            current
+            point)
+            [(CompilerRegNoCallSaveActive)
+              (compiler-reg-caller-save-rewrite-instrs-rev
+                (box-get rest)
+                (+ point 2)
+                vars
+                next-var
+                type-info
+                intervals
+                splits
+                current
+                remap
+                extra-assignments
+                extra-types
+                (compiler-ir-instr-cons instr acc))]
+            [(CompilerRegSomeCallSaveActive var segment ty)
+              (let
+                [after-var : i64 next-var]
+                [next-extra-assignments : CompilerRegAssignmentList
+                  (compiler-reg-caller-save-segment-assignment
+                    after-var
+                    extra-assignments)]
+                [next-extra-types : CompilerRegVarTypeList
+                  (compiler-reg-var-type-insert extra-types after-var ty)]
+                (begin
+                  (array-set! current var after-var)
+                  (array-set! remap var after-var)
+                  (compiler-reg-caller-save-rewrite-instrs-rev
+                    (box-get rest)
+                    (+ point 2)
+                    vars
+                    (+ next-var 1)
+                    type-info
+                    intervals
+                    splits
+                    current
+                    remap
+                    next-extra-assignments
+                    next-extra-types
+                    (compiler-ir-instr-cons
+                      (IrInstrMov after-var (IrValueVar var) ty)
+                      (compiler-ir-instr-cons
+                        instr
+                        (compiler-ir-instr-cons
+                          (IrInstrMov var (IrValueVar segment) ty)
+                          acc))))))])]
+        [_
+          (let
+            [split-def : i64
+              (compiler-reg-caller-save-selected-var-in-set
+                (compiler-live-instr-defs instr)
+                splits
+                vars)]
+            [out-next-var : i64 next-var]
+            [out-extra-assignments : CompilerRegAssignmentList
+              extra-assignments]
+            [out-extra-types : CompilerRegVarTypeList extra-types]
+            (begin
+              (if (>= split-def 0)
+                (let
+                  [ty : AstType
+                    (compiler-reg-caller-save-var-type type-info split-def)]
+                  (begin
+                    (array-set! current split-def out-next-var)
+                    (array-set! remap split-def out-next-var)
+                    (set!
+                      out-extra-assignments
+                      (compiler-reg-caller-save-segment-assignment
+                        out-next-var
+                        out-extra-assignments))
+                    (set!
+                      out-extra-types
+                      (compiler-reg-var-type-insert
+                        out-extra-types
+                        out-next-var
+                        ty))
+                    (set! out-next-var (+ out-next-var 1))))
+                unit)
+              (compiler-reg-caller-save-rewrite-instrs-rev
+                (box-get rest)
+                (+ point 2)
+                vars
+                out-next-var
+                type-info
+                intervals
+                splits
+                current
+                remap
+                out-extra-assignments
+                out-extra-types
+                (compiler-ir-instr-cons
+                  (compiler-reg-remap-instr remap instr)
+                  acc))))])]))
 
 (define (compiler-reg-caller-save-rewrite-instrs
   [instrs : CompilerIrInstrSeq]
   [point : i64]
+  [vars : i64]
+  [next-var : i64]
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
-  [shadows : CompilerLiveI64Set]
-  [shadow-map : (Array i64)]) : CompilerRegCallSaveInstrRewrite
+  [splits : CompilerLiveI64Set]
+  [current : (Array i64)]
+  [remap : (Array i64)]
+  [extra-assignments : CompilerRegAssignmentList]
+  [extra-types : CompilerRegVarTypeList]) : CompilerRegCallSaveInstrRewrite
   (match (compiler-reg-caller-save-rewrite-instrs-rev
     (compiler-ir-instr-seq-to-list instrs)
     point
+    vars
+    next-var
     type-info
     intervals
-    shadows
-    shadow-map
+    splits
+    current
+    remap
+    extra-assignments
+    extra-types
     IrInstrNil)
-    [(CompilerRegCallSaveInstrRewrite rev next-point)
+    [(CompilerRegCallSaveInstrRewrite
+        rev
+        next-point
+        out-next-var
+        out-extra-assignments
+        out-extra-types)
       (CompilerRegCallSaveInstrRewrite
         (compiler-ir-instr-list-reverse-onto rev IrInstrNil)
-        next-point)]))
+        next-point
+        out-next-var
+        out-extra-assignments
+        out-extra-types)]))
 
 (define (compiler-reg-caller-save-rewrite-blocks-rev
   [blocks : CompilerIrBlockList]
   [point : i64]
+  [vars : i64]
+  [next-var : i64]
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
-  [shadows : CompilerLiveI64Set]
-  [shadow-map : (Array i64)]
+  [splits : CompilerLiveI64Set]
+  [current : (Array i64)]
+  [remap : (Array i64)]
+  [extra-assignments : CompilerRegAssignmentList]
+  [extra-types : CompilerRegVarTypeList]
   [acc : CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (match blocks
-    [(IrBlockNil) (CompilerRegCallSaveRewrite acc point)]
+    [(IrBlockNil)
+      (CompilerRegCallSaveRewrite
+        acc
+        point
+        next-var
+        extra-assignments
+        extra-types)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
           (match (compiler-reg-caller-save-rewrite-instrs
             instrs
             point
+            vars
+            next-var
             type-info
             intervals
-            shadows
-            shadow-map)
-            [(CompilerRegCallSaveInstrRewrite rewritten next-point)
+            splits
+            current
+            remap
+            extra-assignments
+            extra-types)
+            [(CompilerRegCallSaveInstrRewrite
+                rewritten
+                next-point
+                next-var2
+                extra-assignments2
+                extra-types2)
               (compiler-reg-caller-save-rewrite-blocks-rev
                 (box-get rest)
                 next-point
+                vars
+                next-var2
                 type-info
                 intervals
-                shadows
-                shadow-map
+                splits
+                current
+                remap
+                extra-assignments2
+                extra-types2
                 (compiler-ir-block-cons
                   (IrBlock label (compiler-ir-instr-seq-from-list rewritten))
                   acc))])])]
@@ -6350,10 +6576,15 @@
       (compiler-reg-caller-save-rewrite-blocks-rev
         (compiler-ir-block-seq-to-list seq)
         point
+        vars
+        next-var
         type-info
         intervals
-        shadows
-        shadow-map
+        splits
+        current
+        remap
+        extra-assignments
+        extra-types
         acc)]))
 
 (define (compiler-reg-caller-save-rewrite-blocks
@@ -6362,25 +6593,44 @@
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (let
-    [shadows : CompilerLiveI64Set (compiler-reg-plan-caller-save-shadows plan)]
-    [shadow-count : i64 (compiler-reg-caller-save-shadow-count shadows vars)]
-    (if (= shadow-count 0)
-      (CompilerRegCallSaveRewrite blocks vars)
+    [splits : CompilerLiveI64Set (compiler-reg-plan-caller-save-shadows plan)]
+    [split-count : i64 (compiler-reg-caller-save-shadow-count splits vars)]
+    (if (= split-count 0)
+      (CompilerRegCallSaveRewrite
+        blocks
+        vars
+        vars
+        CompilerRegAssignmentNil
+        CompilerRegVarTypeNil)
       (let
-        [shadow-map : (Array i64)
-          (compiler-reg-caller-save-shadow-map shadows vars)]
+        [current : (Array i64) (make-array i64 vars)]
+        [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
+        [_current-init : unit (compiler-reg-fill-i64-array current (- 0 1))]
         (match (compiler-reg-caller-save-rewrite-blocks-rev
           blocks
           0
+          vars
+          vars
           type-info
           (compiler-reg-plan-intervals plan)
-          shadows
-          shadow-map
+          splits
+          current
+          remap
+          CompilerRegAssignmentNil
+          CompilerRegVarTypeNil
           IrBlockNil)
-          [(CompilerRegCallSaveRewrite rev _)
+          [(CompilerRegCallSaveRewrite
+              rev
+              _
+              out-vars
+              extra-assignments
+              extra-types)
             (CompilerRegCallSaveRewrite
               (compiler-ir-block-list-reverse-onto rev IrBlockNil)
-              (+ vars shadow-count))])))))
+              vars
+              out-vars
+              extra-assignments
+              extra-types)])))))
 
 (define (compiler-reg-location-register?
   [maybe-location : CompilerRegMaybeLocation]
@@ -7535,19 +7785,146 @@
           (compiler-reg-location-any-register?
             (compiler-reg-assignment-lookup assignments 5)))])))
 
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-mov-i64?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [value : i64]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrMov found-dst found-value _)
+            (match found-value
+              [(IrValueI64 found)
+                (if (and (= found-dst dst) (= found value))
+                  true
+                  (compiler-reg-instr-list-has-mov-i64?
+                    (box-get rest)
+                    dst
+                    value))]
+              [_
+                (compiler-reg-instr-list-has-mov-i64? (box-get rest) dst value)])]
+          [_ (compiler-reg-instr-list-has-mov-i64? (box-get rest) dst value)])])))
+
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-mov-var?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [src : i64]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrMov found-dst found-value _)
+            (match found-value
+              [(IrValueVar found-src)
+                (if (and (= found-dst dst) (= found-src src))
+                  true
+                  (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src))]
+              [_ (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src)])]
+          [_ (compiler-reg-instr-list-has-mov-var? (box-get rest) dst src)])])))
+
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-store-var?
+    [instrs : CompilerIrInstrList]
+    [name : String]
+    [src : i64]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrStore found-name found-value _)
+            (match found-value
+              [(IrValueVar found-src)
+                (if (and (string-eq found-name name) (= found-src src))
+                  true
+                  (compiler-reg-instr-list-has-store-var?
+                    (box-get rest)
+                    name
+                    src))]
+              [_
+                (compiler-reg-instr-list-has-store-var? (box-get rest) name src)])]
+          [_ (compiler-reg-instr-list-has-store-var? (box-get rest) name src)])])))
+
+(cfg
+  test
+  (define (compiler-reg-first-block-instr-list [blocks : CompilerIrBlockList]) : CompilerIrInstrList
+    (match blocks
+      [(IrBlockCons block _)
+        (match block
+          [(IrBlock _ instrs) (compiler-ir-instr-seq-to-list instrs)])]
+      [(IrBlockArray seq)
+        (compiler-reg-first-block-instr-list
+          (compiler-ir-block-seq-to-list seq))]
+      [_ IrInstrNil])))
+
+(cfg
+  test
+  (define (compiler-reg-call-spanning-rewrite-shape-ok?
+    [func : CompilerIrFunction]
+    [plan : CompilerRegPlan]) : bool
+    (match func
+      [(IrFunction _ _ _ vars blocks)
+        (let
+          [type-info : CompilerRegVarTypes
+            (compiler-reg-function-var-types func)]
+          [rewrite : CompilerRegCallSaveRewrite
+            (compiler-reg-caller-save-rewrite-blocks blocks vars type-info plan)]
+          (match rewrite
+            [(CompilerRegCallSaveRewrite
+                rewritten-blocks
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-first-block-instr-list rewritten-blocks)]
+                [rewritten-plan : CompilerRegPlan
+                  (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
+                [rewritten-assignments : CompilerRegAssignmentList
+                  (compiler-reg-plan-assignments rewritten-plan)]
+                (and
+                  (= out-vars (+ vars 2))
+                  (= (compiler-reg-assignment-count extra-assignments) 2)
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup rewritten-assignments vars)
+                    "%r9")
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup
+                      rewritten-assignments
+                      (+ vars 1))
+                    "%r9")
+                  (compiler-reg-instr-list-has-mov-i64? items vars 5)
+                  (compiler-reg-instr-list-has-mov-var? items 5 vars)
+                  (compiler-reg-instr-list-has-mov-var? items (+ vars 1) 5)
+                  (compiler-reg-instr-list-has-store-var? items "g5" (+ vars 1))
+                  (not (compiler-reg-instr-list-has-store-var? items "g5" 5))))]))])))
+
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
-  (match (compiler-reg-plan-function-scalar
-    (compiler-reg-call-spanning-caller-saved-function))
-    [(CompilerRegPlan assignments _ _ _ shadows)
-      (and
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 5)
-          "%r9")
-        (compiler-live-set-contains? shadows 5)
-        (not (compiler-live-set-contains? shadows 6))
-        (compiler-reg-location-spill-offset?
-          (compiler-reg-assignment-lookup assignments 6)
-          (compiler-reg-stack-slot-offset 6)))]))
+  (let
+    [func : CompilerIrFunction
+      (compiler-reg-call-spanning-caller-saved-function)]
+    [plan : CompilerRegPlan (compiler-reg-plan-function-scalar func)]
+    (match plan
+      [(CompilerRegPlan assignments _ _ _ split-vars)
+        (and
+          (compiler-reg-location-spill-offset?
+            (compiler-reg-assignment-lookup assignments 5)
+            (compiler-reg-stack-slot-offset 5))
+          (compiler-live-set-contains? split-vars 5)
+          (not (compiler-live-set-contains? split-vars 6))
+          (compiler-reg-location-spill-offset?
+            (compiler-reg-assignment-lookup assignments 6)
+            (compiler-reg-stack-slot-offset 6))
+          (cfg
+            test
+            (compiler-reg-call-spanning-rewrite-shape-ok? func plan)
+            true))])))
 
 (cfg
   test

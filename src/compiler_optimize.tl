@@ -27123,7 +27123,7 @@
       (if argc-return
         (string-i64-map-put (string-i64-map-with-capacity 8) "argc" 1)
         (string-i64-map-with-capacity 8))]
-    (OptLoopBceSummaries true clean argc)))
+    (OptLoopBceSummaries true clean argc (string-i64-map-with-capacity 8))))
 
 (define (opt-loop-bce-test-entry-tail [init : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons

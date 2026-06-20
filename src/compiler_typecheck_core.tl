@@ -47,7 +47,12 @@
     (Box TcTypeEnv)))
 
 (defenum TcContext
-  (TcContext AstProgram CompilerSymbols CompilerRegistries String))
+  (TcContext
+    AstProgram
+    CompilerSymbols
+    CompilerRegistries
+    String
+    AstNodePoolContext))
 
 (defenum ResultTcType
   (OkTcType AstType)
@@ -516,12 +521,16 @@
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _)
-      (TcContext program symbols registries module)]))
+    [(TcContext program symbols registries _ pools)
+      (TcContext program symbols registries module pools)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module) module]))
+    [(TcContext _ _ _ module _) module]))
+
+(define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
+  (match ctx
+    [(TcContext _ _ _ _ pools) pools]))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
@@ -5338,7 +5347,7 @@
 
 (define (tc-imported-module-identity? [ctx : TcContext] [module-name : String]) : bool
   (match ctx
-    [(TcContext program _ _ current-module)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (tc-imported-module-identity-ids?
@@ -5360,7 +5369,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ current-module)
+          [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (match (macro-import-alias-target-ids
@@ -5462,7 +5471,7 @@
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
     (match ctx
-      [(TcContext _ _ registries module)
+      [(TcContext _ _ registries module _)
         (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
           (let
             [module-key : String (compiler-symbol-module-key module name)]
@@ -5535,7 +5544,7 @@
   [ctx : TcContext]
   [qualifier : String]) : String
   (match ctx
-    [(TcContext program _ _ current-module)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -6026,7 +6035,7 @@
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx
-        [(TcContext program symbols _ _)
+        [(TcContext program symbols _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -6042,7 +6051,7 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6122,7 +6131,7 @@
   [name : String]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6206,7 +6215,7 @@
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols name)
         [(SomeI64 handle)
           (match (compiler-symbols-decl-at-index
@@ -10778,7 +10787,7 @@
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols registries module)
+    [(TcContext _ symbols registries module _)
       (let
         [lookup-name : String
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -13388,7 +13397,9 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [pools : AstNodePoolContext (tc-context-pools ctx)]
         (clone-fixpoint
+          pools
           decls
           (clone-all-type-names decls (clone-name-set-empty))))]))
 
@@ -13404,6 +13415,7 @@
 
 (define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
   (clone-field-type-able?
+    (tc-context-pools ctx)
     (tc-type-without-regions (tc-resolve-type ctx ty))
     (tc-clone-able-set ctx)))
 
@@ -14707,7 +14719,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -18287,15 +18299,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _) program]))
+    [(TcContext program _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _) symbols]))
+    [(TcContext _ symbols _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _) registries]))
+    [(TcContext _ _ registries _ _) registries]))
 
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
@@ -18846,7 +18858,7 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -18873,7 +18885,7 @@
 
 (define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols enum-name)
         [(SomeI64 handle)
           (if (=
@@ -20092,7 +20104,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -36571,7 +36583,12 @@
                                   "unless")))
                             (let
                               [ctx : TcContext
-                                (TcContext program symbols registries "")]
+                                (TcContext
+                                  program
+                                  symbols
+                                  registries
+                                  ""
+                                  (ast-node-pool-context-capture-active))]
                               (match (tc-stdlib-comptime-surface-ok ctx)
                                 [(OkTcUnit)
                                   (match (tc-build-top-env ctx program)
@@ -37863,7 +37880,13 @@
           (match (build-compiler-exports-with program symbols registries)
             [(OkCompilerExports _)
               (let
-                [ctx : TcContext (TcContext program symbols registries "")]
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
                 (match (tc-stdlib-comptime-surface-ok ctx)
                   [(OkTcUnit)
                     (match (tc-program-source-types-policy-ok ctx program)

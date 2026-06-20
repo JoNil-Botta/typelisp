@@ -1,4 +1,5 @@
 (import "../compiler_driver_core.tl")
+(import "../compiler_clone.tl")
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
@@ -342,6 +343,86 @@
             (set! ok false))
           ok)))))
 
+(define (compiler-driver-state-smoke-clone-program
+  [pools : AstNodePoolContext]
+  [name : String]) : AstProgram
+  (let
+    [elem : i64 (ast-node-pool-context-type-push pools (AstTyI64))]
+    [field : AstFieldDef
+      (ast-field-def "items" (AstTyArray elem 2) (AstFieldNoCleanup))]
+    [decl : AstDecl
+      (ast-decl-def-struct
+        name
+        (AstStructReprDefault)
+        (AstStructNoCleanup)
+        (ast-field-def-cons field AstFieldDefNil))]
+    (ast-program (ast-decl-cons decl AstDeclNil))))
+
+(define (compiler-driver-state-smoke-clone-generated-ctor?
+  [pools : AstNodePoolContext]
+  [program : AstProgram]
+  [name : String]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (match (box-get decls-box)
+        [(AstDeclCons _ rest)
+          (match (box-get rest)
+            [(AstDeclCons decl tail)
+              (match (box-get tail)
+                [(AstDeclNil)
+                  (match decl
+                    [(AstDeclDefFn fn-name _ _ body _)
+                      (and
+                        (string-eq
+                          (intern-str fn-name)
+                          (clone-helper-name name))
+                        (match (ast-node-pool-context-expr-get pools body)
+                          [(AstExprCall callee _)
+                            (match (ast-node-pool-context-expr-get pools callee)
+                              [(AstExprVar ctor)
+                                (string-eq (intern-str ctor) name)]
+                              [_ false])]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]))
+
+(define (compiler-driver-state-smoke-clone-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [program-a : AstProgram
+          (compiler-driver-state-smoke-clone-program pools-a "CloneA")]
+        [program-b : AstProgram
+          (compiler-driver-state-smoke-clone-program pools-b "CloneB")]
+        [augmented-a : AstProgram
+          (clone-augment-program-with-pools pools-a program-a)]
+        [augmented-b : AstProgram
+          (clone-augment-program-with-pools pools-b program-b)]
+        [generated-b-ok : bool
+          (compiler-driver-state-smoke-clone-generated-ctor?
+            pools-b
+            augmented-b
+            "CloneB")]
+        (begin
+          (compiler-driver-state-reset-file-state! state-b)
+          (and
+            (> (ast-node-pool-context-expr-len pools-a) 0)
+            generated-b-ok
+            (compiler-driver-state-smoke-clone-generated-ctor?
+              pools-a
+              augmented-a
+              "CloneA")))))))
+
 (define (compiler-driver-state-smoke-active-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -602,6 +683,7 @@
     (unless (compiler-driver-state-smoke-pools-isolated?) (return 4))
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     (unless (compiler-driver-state-smoke-parse-pools-isolated?) (return 12))
+    (unless (compiler-driver-state-smoke-clone-pools-isolated?) (return 14))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
     (unless

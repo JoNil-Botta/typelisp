@@ -3753,6 +3753,7 @@
           decls
           decls
           (clone-fixpoint
+            (tc-context-pools ctx)
             decls
             (clone-all-type-names decls (clone-name-set-empty)))
           (CloneNameNil)
@@ -3760,6 +3761,7 @@
           ""))]))
 
 (define (lower-reachable-clone-roots
+  [pools : AstNodePoolContext]
   [program : AstProgram]
   [_paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
@@ -3768,7 +3770,7 @@
       (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
           (let
-            [ctx : TcContext (TcContext program symbols registries "")]
+            [ctx : TcContext (TcContext program symbols registries "" pools)]
             (match (tc-build-top-env ctx program)
               [(OkTcEnv top-env)
                 (OkLowerCloneRoots
@@ -5968,7 +5970,7 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -9021,7 +9023,7 @@
                             fail-label
                             scrut-reg-group?)
                           (match ctx
-                            [(TcContext _ symbols registries _)
+                            [(TcContext _ symbols registries _ _)
                               (match (compiler-registries-lookup-variant-id
                                 registries
                                 nested-name)
@@ -9080,7 +9082,7 @@
                                                           (compiler-registry-handle-child-index
                                                             handle))
                                                         (AstTyI64)))
-                                                    "payload_ok")
+                                                      "payload_ok")
                                                     [(LowerLabel
                                                         ok-state
                                                         ok-label)
@@ -9314,7 +9316,7 @@
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       [nested-name-str : String (intern-str nested-name)]
                       (match ctx
-                        [(TcContext _ symbols registries _)
+                        [(TcContext _ symbols registries _ _)
                           (match (compiler-registries-lookup-variant-id
                             registries
                             nested-name)
@@ -9765,7 +9767,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -10527,7 +10529,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match (tc-program-enum-variants program enum-name)
         [(OkAstVariantDefList variants)
           (match (lower-reserve-heap-storage
@@ -11583,7 +11585,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _)
+    [(TcContext _ _ registries _ _)
       (let
         [enum-name : String (tc-result-info-enum-name return-info)]
         [err-name : String (tc-result-info-err-name return-info)]
@@ -11715,7 +11717,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _)
+    [(TcContext _ _ registries _ _)
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         (match (compiler-registries-lookup-variant registries ok-name)
@@ -11816,7 +11818,7 @@
 
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ module)
+    [(TcContext _ symbols _ module _)
       (let
         [lookup-name : String
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -13104,7 +13106,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -13228,7 +13230,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -31312,7 +31314,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -31495,7 +31497,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -32926,7 +32928,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -33065,7 +33067,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -35247,102 +35249,108 @@
                       compile-profile
                       (compiler-lower-profile-finish "prune"))
                     (cfg compile-profile (compiler-lower-profile-start))
-                    (match (lower-reachable-clone-roots
-                      base-program
-                      base-paths
-                      prune-names)
-                      [(OkLowerCloneRoots clone-roots)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-finish "clone_roots"))
-                          (cfg compile-profile (compiler-lower-profile-start))
-                          (let
-                            [checked-program : AstProgram
-                              (clone-augment-program-with-roots
-                                base-program
-                                clone-roots)]
-                            [checked-paths : AstDeclPathList base-paths]
-                            [checked-names : LowerNameEnv
-                              (match checked-program
-                                [(AstProgram decls-box)
-                                  (let
-                                    [decls : AstDeclList (box-get decls-box)]
-                                    (lower-name-env-from-decls
-                                      decls
-                                      checked-paths
-                                      entry-path
-                                      LowerNameNil))])]
-                            [lower-names : LowerNameEnv
-                              (if needs-specialization
+                    (let
+                      [pools : AstNodePoolContext
+                        (ast-node-pool-context-capture-active)]
+                      (match (lower-reachable-clone-roots
+                        pools
+                        base-program
+                        base-paths
+                        prune-names)
+                        [(OkLowerCloneRoots clone-roots)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-lower-profile-finish "clone_roots"))
+                            (cfg compile-profile (compiler-lower-profile-start))
+                            (let
+                              [checked-program : AstProgram
+                                (clone-augment-program-with-roots-and-pools
+                                  pools
+                                  base-program
+                                  clone-roots)]
+                              [checked-paths : AstDeclPathList base-paths]
+                              [checked-names : LowerNameEnv
                                 (match checked-program
                                   [(AstProgram decls-box)
                                     (let
                                       [decls : AstDeclList (box-get decls-box)]
-                                      (lower-name-env-add-clone-decls
+                                      (lower-name-env-from-decls
                                         decls
                                         checked-paths
                                         entry-path
-                                        names))])
-                                checked-names)]
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-finish
-                                  "clone_augment_names"))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-start))
-                              (match (typecheck-compiler-specialized-program-with-paths-checked-cache
-                                checked-program
-                                checked-paths
-                                stdlib-roots
-                                cache-scope)
-                                [(OkCompilerTypecheckChecked _ ctx top-env)
-                                  (begin
-                                    (cfg
-                                      compile-profile
-                                      (compiler-lower-profile-finish
-                                        "typecheck"))
-                                    (cfg
-                                      compile-profile
-                                      (compiler-lower-profile-start))
-                                    (match (lower-compiler-program-checked-with-names-mode
-                                      ctx
-                                      top-env
-                                      checked-program
-                                      lower-names
-                                      mode)
-                                      [(OkCompilerLower ir spans)
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-lower-profile-finish
-                                              "decls"))
-                                          (OkCompilerLower ir spans))]
-                                      [(ErrCompilerLower diag)
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-lower-profile-finish
-                                              "decls"))
-                                          (ErrCompilerLower
-                                            (lower-diagnostic-with-path
-                                              diag
-                                              entry-path)))]))]
-                                [(ErrCompilerTypecheckChecked diag)
-                                  (begin
-                                    (cfg
-                                      compile-profile
-                                      (compiler-lower-profile-finish
-                                        "typecheck"))
-                                    (ErrCompilerLower diag))]))))]
-                      [(ErrLowerCloneRoots diag)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-lower-profile-finish "clone_roots"))
-                          (ErrCompilerLower diag))]))])))]
+                                        LowerNameNil))])]
+                              [lower-names : LowerNameEnv
+                                (if needs-specialization
+                                  (match checked-program
+                                    [(AstProgram decls-box)
+                                      (let
+                                        [decls : AstDeclList
+                                          (box-get decls-box)]
+                                        (lower-name-env-add-clone-decls
+                                          decls
+                                          checked-paths
+                                          entry-path
+                                          names))])
+                                  checked-names)]
+                              (begin
+                                (cfg
+                                  compile-profile
+                                  (compiler-lower-profile-finish
+                                    "clone_augment_names"))
+                                (cfg
+                                  compile-profile
+                                  (compiler-lower-profile-start))
+                                (match (typecheck-compiler-specialized-program-with-paths-checked-cache
+                                  checked-program
+                                  checked-paths
+                                  stdlib-roots
+                                  cache-scope)
+                                  [(OkCompilerTypecheckChecked _ ctx top-env)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-lower-profile-finish
+                                          "typecheck"))
+                                      (cfg
+                                        compile-profile
+                                        (compiler-lower-profile-start))
+                                      (match (lower-compiler-program-checked-with-names-mode
+                                        ctx
+                                        top-env
+                                        checked-program
+                                        lower-names
+                                        mode)
+                                        [(OkCompilerLower ir spans)
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-lower-profile-finish
+                                                "decls"))
+                                            (OkCompilerLower ir spans))]
+                                        [(ErrCompilerLower diag)
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-lower-profile-finish
+                                                "decls"))
+                                            (ErrCompilerLower
+                                              (lower-diagnostic-with-path
+                                                diag
+                                                entry-path)))]))]
+                                  [(ErrCompilerTypecheckChecked diag)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-lower-profile-finish
+                                          "typecheck"))
+                                      (ErrCompilerLower diag))]))))]
+                        [(ErrLowerCloneRoots diag)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-lower-profile-finish "clone_roots"))
+                            (ErrCompilerLower diag))])))])))]
         [(ErrSpecProgram diag)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))

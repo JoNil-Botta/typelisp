@@ -26,7 +26,11 @@
   (ErrCompilerDriverObject CompilerDiagnostic))
 
 (defenum ResultCompilerDriverLowered
-  (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
+  (OkCompilerDriverLowered
+    CompilerIrProgram
+    CompilerSourceSpans
+    AstExprNodePoolState
+    AstTypeNodePoolState)
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
 (defstruct CompilerDriverState
@@ -156,6 +160,20 @@
     (compiler-driver-state-capture-active-pools! state)
     (compiler-driver-state-capture-active-transients! state)
     (compiler-load-session-state-use! (struct-get state load-session))))
+
+(define (compiler-driver-lowered-from-active-pools
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]) : ResultCompilerDriverLowered
+  (OkCompilerDriverLowered
+    program
+    spans
+    (ast-node-pool-state-capture)
+    (ty-node-pool-state-capture)))
+
+(define (compiler-driver-install-lowered-pools!
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]) : unit
+  (ast-node-pools-state-install! expr-pool type-pool))
 
 (define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
   (compiler-load-runtime-prelude-cache-lookup key))
@@ -667,6 +685,104 @@
                       (ErrCompilerDriverPic
                         (compiler-diagnostic-with-path diag input-path)))]))))]))))
 
+(define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriver
+  (match lowered
+    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+      (begin
+        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          emit-entry
+          crt-entry))]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+
+(define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]) : ResultCompilerDriverBuffer
+  (match lowered
+    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+      (begin
+        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          emit-entry))]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverBuffer diag)]))
+
+(define (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverObject
+  (match lowered
+    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+      (begin
+        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          emit-entry
+          crt-entry))]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)]))
+
+(define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverPic
+  (match lowered
+    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+      (begin
+        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          emit-entry
+          crt-entry))]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverPic diag)]))
+
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
 ;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives (#2142 / #2150),
@@ -868,7 +984,7 @@
               (if (ty-node-pool-exhausted?)
                 (ErrCompilerDriverLowered
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
-                (OkCompilerDriverLowered program spans)))]
+                (compiler-driver-lowered-from-active-pools program spans)))]
           [(ErrCompilerLower diag)
             (begin
               (cfg
@@ -909,7 +1025,7 @@
               (if (ty-node-pool-exhausted?)
                 (ErrCompilerDriverLowered
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
-                (OkCompilerDriverLowered program spans)))]
+                (compiler-driver-lowered-from-active-pools program spans)))]
           [(ErrCompilerLower diag)
             (begin
               (cfg
@@ -1021,27 +1137,23 @@
   [crt-entry : bool]) : ResultCompilerDriver
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-driver-load-and-lower-escaping
+    ;; The lowering provenance side table (#605/#761) is remapped after
+    ;; optimization so backend diagnostics report surviving instruction
+    ;; locations when a rewrite can preserve them.
+    (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
       input-path
+      (compiler-driver-load-and-lower-escaping
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
       target
-      stdlib-roots
+      has-target
       mode
-      (compiler-driver-target-cfgs target cfgs))
-      [(OkCompilerDriverLowered program spans)
-        ;; The lowering provenance side table (#605/#761) is remapped after
-        ;; optimization so backend diagnostics report surviving instruction
-        ;; locations when a rewrite can preserve them.
-        (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          true
-          crt-entry)]
-      [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)])))
+      opt-level
+      true
+      crt-entry)))
 
 (define (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
   [input-path : String]
@@ -1053,23 +1165,19 @@
   [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-driver-load-and-lower-escaping
+    (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
       input-path
+      (compiler-driver-load-and-lower-escaping
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
       target
-      stdlib-roots
+      has-target
       mode
-      (compiler-driver-target-cfgs target cfgs))
-      [(OkCompilerDriverLowered program spans)
-        (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          true)]
-      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverBuffer diag)])))
+      opt-level
+      true)))
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
@@ -1082,24 +1190,20 @@
   [crt-entry : bool]) : ResultCompilerDriverObject
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-driver-load-and-lower-escaping
+    (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
       input-path
+      (compiler-driver-load-and-lower-escaping
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
       target
-      stdlib-roots
+      has-target
       mode
-      (compiler-driver-target-cfgs target cfgs))
-      [(OkCompilerDriverLowered program spans)
-        (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          true
-          crt-entry)]
-      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)])))
+      opt-level
+      true
+      crt-entry)))
 
 (define (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
   [input-path : String]
@@ -1111,24 +1215,20 @@
   [cfgs : SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-driver-load-and-lower-pic-image
+    (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
       input-path
+      (compiler-driver-load-and-lower-pic-image
+        input-path
+        target
+        stdlib-roots
+        mode
+        (compiler-driver-target-cfgs target cfgs))
       target
-      stdlib-roots
+      has-target
       mode
-      (compiler-driver-target-cfgs target cfgs))
-      [(OkCompilerDriverLowered program spans)
-        (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          false
-          false)]
-      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverPic diag)])))
+      opt-level
+      false
+      false)))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]
@@ -1186,24 +1286,15 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriver
-  (match (compiler-driver-lower-package-loaded
+  (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     input-path
+    (compiler-driver-lower-package-loaded input-path target mode decls paths)
     target
+    has-target
     mode
-    decls
-    paths)
-    [(OkCompilerDriverLowered program spans)
-      (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-        input-path
-        program
-        spans
-        target
-        has-target
-        mode
-        opt-level
-        emit-entry
-        crt-entry)]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+    opt-level
+    emit-entry
+    crt-entry))
 
 (define (compiler-driver-lower-package-loaded
   [input-path : String]
@@ -1216,7 +1307,8 @@
     (ast-program decls)
     paths
     (compiler-driver-lower-mode-for-target target mode))
-    [(OkCompilerLower program spans) (OkCompilerDriverLowered program spans)]
+    [(OkCompilerLower program spans)
+      (compiler-driver-lowered-from-active-pools program spans)]
     [(ErrCompilerLower diag) (ErrCompilerDriverLowered diag)]))
 
 (define (compiler-driver-emit-package-loaded-object-image
@@ -1229,24 +1321,15 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriverObject
-  (match (compiler-driver-lower-package-loaded
+  (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
     input-path
+    (compiler-driver-lower-package-loaded input-path target mode decls paths)
     target
+    has-target
     mode
-    decls
-    paths)
-    [(OkCompilerDriverLowered program spans)
-      (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-        input-path
-        program
-        spans
-        target
-        has-target
-        mode
-        opt-level
-        emit-entry
-        crt-entry)]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)]))
+    opt-level
+    emit-entry
+    crt-entry))
 
 (define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
   [input-path : String]
@@ -1280,10 +1363,9 @@
           stdlib-roots
           (compiler-driver-target-cfgs target (compiler-cfg-empty))))
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+          (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
             input-path
-            program
-            spans
+            (compiler-driver-lowered-from-active-pools program spans)
             target
             has-target
             mode
@@ -1490,6 +1572,19 @@
               (compiler-driver-ir-summary-render
                 (compiler-ir-program-summary optimized)))))])))
 
+(define (compiler-driver-emit-ir-summary-lowered-result-with-level
+  [lowered : ResultCompilerDriverLowered]
+  [opt-level : i64]) : ResultCompilerDriver
+  (match lowered
+    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+      (begin
+        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-emit-ir-summary-lowered-with-level
+          program
+          spans
+          opt-level))]
+    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
   [stdlib-roots : StringVec]
@@ -1524,9 +1619,8 @@
           stdlib-roots
           (compiler-driver-target-cfgs target cfgs)))
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-ir-summary-lowered-with-level
-            program
-            spans
+          (compiler-driver-emit-ir-summary-lowered-result-with-level
+            (compiler-driver-lowered-from-active-pools program spans)
             opt-level)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))

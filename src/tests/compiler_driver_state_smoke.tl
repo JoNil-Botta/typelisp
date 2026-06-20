@@ -410,6 +410,44 @@
                   (compiler-driver-state-reset-file-state! state-a)
                   ok)))))))))
 
+(define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (match (lower-compiler-source (compiler-lower-make-array-source))
+        [(OkCompilerLower program spans)
+          (let
+            [lowered : ResultCompilerDriverLowered
+              (compiler-driver-lowered-from-active-pools program spans)]
+            (begin
+              (compiler-driver-state-capture-session-floors! state-a)
+              (compiler-driver-state-reset-file-state! state-b)
+              (ty-node-push (AstTyBool))
+              (ty-node-push (AstTyChar))
+              (compiler-driver-state-capture-session-floors! state-b)
+              (let
+                [emitted-ok : bool
+                  (match (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+                    "<state-smoke>"
+                    lowered
+                    (BackendTargetLinux)
+                    true
+                    (BackendModeScalar)
+                    0
+                    true
+                    false)
+                    [(OkCompilerDriver asm)
+                      (and
+                        (compiler-backend-string-contains? asm "tl_alloc")
+                        (compiler-backend-string-contains? asm "main"))]
+                    [(ErrCompilerDriver _) false])]
+                (begin
+                  (compiler-driver-state-reset-file-state! state-a)
+                  emitted-ok))))]
+        [(ErrCompilerLower _) false]))))
+
 (define (main) : i64
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
@@ -425,4 +463,7 @@
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
+    (unless
+      (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
+      (return 11))
     42))

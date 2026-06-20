@@ -315,6 +315,7 @@ decision|src/inspect_cli_core.tl|inspect command logic (#2655): parse and render
 decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by src/main.tl; main-less and exercised through the selfhost_main case
 decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/lsp_vector_families.tl|generated LSP vector-family helpers (#3305): document and declaration vector families split out of lsp_frame_core.tl; main-less, imported by src/lsp_frame_core.tl and exercised through the selfhost_main case
 decision|src/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|src/build_run_core.tl|assembly|skip|direct

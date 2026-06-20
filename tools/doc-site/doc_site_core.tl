@@ -44,7 +44,7 @@
 (define doc-site-status-ok : i64
   0)
 (define doc-site-stdlib-manifest-size : i64
-  19)
+  20)
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -346,6 +346,11 @@
         (doc-site-module-list-push
           modules
           (DocSiteModule "stdlib/vector.tl" "stdlib-vector.html")))
+      (set!
+        modules
+        (doc-site-module-list-push
+          modules
+          (DocSiteModule "stdlib/vector_family.tl" "stdlib-vector-family.html")))
       modules)))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList

@@ -55,6 +55,26 @@
 ;#     [v : Vec (push (push (new) 10) 32)]
 ;#     (+ (get v 0 0) (get v 1 0))))
 ;# ```
+;#
+;# Use `(vector-family T VecName prefix)` when a module needs multiple concrete
+;# vector families with stable names:
+;#
+;# ```typelisp
+;# (import "stdlib/vector_family.tl")
+;#
+;# (defstruct Point
+;#   (x i64))
+;#
+;# (defstruct Token
+;#   (id i64))
+;#
+;# (vector-family Point PointVec point-vec)
+;# (vector-family Token TokenVec token-vec)
+;#
+;# (define (main) : i64
+;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
+;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
+;# ```
 ;: Emit a local growable vector family for element type `T`.
 ;:
 ;: The generated declarations are intended for one vector instantiation per

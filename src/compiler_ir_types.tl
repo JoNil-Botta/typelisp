@@ -87,6 +87,73 @@
   (IrPhiInputNil)
   (IrPhiInputCons CompilerIrValue String (Box CompilerIrPhiInputList)))
 
+(defenum CompilerIrInstrVectorBinOpPayload
+  (CompilerIrInstrVectorBinOpPayload
+    i64
+    CompilerIrBinOp
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrVectorComparePayload
+  (CompilerIrInstrVectorComparePayload
+    i64
+    CompilerIrBinOp
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrSelectPayload
+  (CompilerIrInstrSelectPayload
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrVectorStorePayload
+  (CompilerIrInstrVectorStorePayload
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrPredicatedStorePayload
+  (CompilerIrInstrPredicatedStorePayload
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrPredicatedLoadPayload
+  (CompilerIrInstrPredicatedLoadPayload
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
+(defenum CompilerIrInstrCallCAbiStoreResultPayload
+  (CompilerIrInstrCallCAbiStoreResultPayload
+    CompilerIrValue
+    String
+    CompilerIrCallArgs
+    CompilerIrCAbiReturnSlotList))
+
+(defenum CompilerIrInstrCallIndirectCAbiStoreResultPayload
+  (CompilerIrInstrCallIndirectCAbiStoreResultPayload
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrCallArgs
+    CompilerIrCAbiReturnSlotList))
+
 (defenum CompilerIrInstr
   (IrInstrMov i64 CompilerIrValue AstType)
   (IrInstrAlloc i64 AstType)
@@ -102,52 +169,17 @@
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)
   (IrInstrLaneId i64 i64 AstType)
   (IrInstrSplat i64 CompilerIrValue i64 AstType)
-  (IrInstrVectorBinOp
-    i64
-    CompilerIrBinOp
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
+  (IrInstrVectorBinOp (Box CompilerIrInstrVectorBinOpPayload))
   (IrInstrVectorReduce i64 CompilerIrVectorReduceOp CompilerIrValue i64 AstType)
-  (IrInstrVectorCompare
-    i64
-    CompilerIrBinOp
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
+  (IrInstrVectorCompare (Box CompilerIrInstrVectorComparePayload))
   (IrInstrMaskBinOp i64 CompilerIrMaskBinOp CompilerIrValue CompilerIrValue i64)
   (IrInstrMaskNot i64 CompilerIrValue i64)
   (IrInstrMaskReduce i64 CompilerIrMaskReduceOp CompilerIrValue i64)
-  (IrInstrSelect
-    i64
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
+  (IrInstrSelect (Box CompilerIrInstrSelectPayload))
   (IrInstrVectorLoad i64 CompilerIrValue CompilerIrValue i64 AstType)
-  (IrInstrVectorStore
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
-  (IrInstrPredicatedStore
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
-  (IrInstrPredicatedLoad
-    i64
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrValue
-    i64
-    AstType)
+  (IrInstrVectorStore (Box CompilerIrInstrVectorStorePayload))
+  (IrInstrPredicatedStore (Box CompilerIrInstrPredicatedStorePayload))
+  (IrInstrPredicatedLoad (Box CompilerIrInstrPredicatedLoadPayload))
   (IrInstrTailMask i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrEntryArgc i64)
   (IrInstrEntryArgv i64)
@@ -163,16 +195,9 @@
   ;; System V C aggregate returns can arrive in two ABI result registers. These
   ;; instructions emit the call and immediately store those result slots into the
   ;; provided aggregate buffer, preserving the classifier's slot offsets.
-  (IrInstrCallCAbiStoreResult
-    CompilerIrValue
-    String
-    CompilerIrCallArgs
-    CompilerIrCAbiReturnSlotList)
+  (IrInstrCallCAbiStoreResult (Box CompilerIrInstrCallCAbiStoreResultPayload))
   (IrInstrCallIndirectCAbiStoreResult
-    CompilerIrValue
-    CompilerIrValue
-    CompilerIrCallArgs
-    CompilerIrCAbiReturnSlotList)
+    (Box CompilerIrInstrCallIndirectCAbiStoreResultPayload))
   (IrInstrTailCall String CompilerIrCallArgs AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
@@ -191,6 +216,82 @@
   (IrInstrPack i64 CompilerIrValueList AstType)
   (IrInstrWord i64 CompilerIrValue i64 AstType)
   (IrInstrTailCallIndirect CompilerIrValue CompilerIrCallArgs AstType))
+
+(define (ir-instr-vector-bin-op
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrVectorBinOp
+    (box (CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty))))
+
+(define (ir-instr-vector-compare
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrVectorCompare
+    (box (CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty))))
+
+(define (ir-instr-select
+  [dst : i64]
+  [mask : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrSelect
+    (box (CompilerIrInstrSelectPayload dst mask on-true on-false lanes ty))))
+
+(define (ir-instr-vector-store
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrVectorStore
+    (box (CompilerIrInstrVectorStorePayload base index value lanes ty))))
+
+(define (ir-instr-predicated-store
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrPredicatedStore
+    (box (CompilerIrInstrPredicatedStorePayload base index value mask lanes ty))))
+
+(define (ir-instr-predicated-load
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (IrInstrPredicatedLoad
+    (box (CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty))))
+
+(define (ir-instr-call-cabi-store-result
+  [base : CompilerIrValue]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrInstr
+  (IrInstrCallCAbiStoreResult
+    (box (CompilerIrInstrCallCAbiStoreResultPayload base name args slots))))
+
+(define (ir-instr-call-indirect-cabi-store-result
+  [base : CompilerIrValue]
+  [callee : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrInstr
+  (IrInstrCallIndirectCAbiStoreResult
+    (box
+      (CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args slots))))
 
 (defenum CompilerIrInstrList
   (IrInstrNil)
@@ -720,14 +821,16 @@
         (compiler-ir-clone-value value)
         lanes
         (compiler-ir-clone-type ty))]
-    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
-      (IrInstrVectorBinOp
-        dst
-        op
-        (compiler-ir-clone-value lhs)
-        (compiler-ir-clone-value rhs)
-        lanes
-        (compiler-ir-clone-type ty))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-bin-op
+            dst
+            op
+            (compiler-ir-clone-value lhs)
+            (compiler-ir-clone-value rhs)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(IrInstrVectorReduce dst op src lanes ty)
       (IrInstrVectorReduce
         dst
@@ -735,14 +838,16 @@
         (compiler-ir-clone-value src)
         lanes
         (compiler-ir-clone-type ty))]
-    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
-      (IrInstrVectorCompare
-        dst
-        op
-        (compiler-ir-clone-value lhs)
-        (compiler-ir-clone-value rhs)
-        lanes
-        (compiler-ir-clone-type ty))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-compare
+            dst
+            op
+            (compiler-ir-clone-value lhs)
+            (compiler-ir-clone-value rhs)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         dst
@@ -754,14 +859,16 @@
       (IrInstrMaskNot dst (compiler-ir-clone-value src) lanes)]
     [(IrInstrMaskReduce dst op src lanes)
       (IrInstrMaskReduce dst op (compiler-ir-clone-value src) lanes)]
-    [(IrInstrSelect dst cond then-value else-value lanes ty)
-      (IrInstrSelect
-        dst
-        (compiler-ir-clone-value cond)
-        (compiler-ir-clone-value then-value)
-        (compiler-ir-clone-value else-value)
-        lanes
-        (compiler-ir-clone-type ty))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst cond then-value else-value lanes ty)
+          (ir-instr-select
+            dst
+            (compiler-ir-clone-value cond)
+            (compiler-ir-clone-value then-value)
+            (compiler-ir-clone-value else-value)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(IrInstrVectorLoad dst base index lanes ty)
       (IrInstrVectorLoad
         dst
@@ -769,29 +876,35 @@
         (compiler-ir-clone-value index)
         lanes
         (compiler-ir-clone-type ty))]
-    [(IrInstrVectorStore base index value lanes ty)
-      (IrInstrVectorStore
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value index)
-        (compiler-ir-clone-value value)
-        lanes
-        (compiler-ir-clone-type ty))]
-    [(IrInstrPredicatedStore base index value mask lanes ty)
-      (IrInstrPredicatedStore
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value index)
-        (compiler-ir-clone-value value)
-        (compiler-ir-clone-value mask)
-        lanes
-        (compiler-ir-clone-type ty))]
-    [(IrInstrPredicatedLoad dst base index mask lanes ty)
-      (IrInstrPredicatedLoad
-        dst
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value index)
-        (compiler-ir-clone-value mask)
-        lanes
-        (compiler-ir-clone-type ty))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value lanes ty)
+          (ir-instr-vector-store
+            (compiler-ir-clone-value base)
+            (compiler-ir-clone-value index)
+            (compiler-ir-clone-value value)
+            lanes
+            (compiler-ir-clone-type ty))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask lanes ty)
+          (ir-instr-predicated-store
+            (compiler-ir-clone-value base)
+            (compiler-ir-clone-value index)
+            (compiler-ir-clone-value value)
+            (compiler-ir-clone-value mask)
+            lanes
+            (compiler-ir-clone-type ty))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty)
+          (ir-instr-predicated-load
+            dst
+            (compiler-ir-clone-value base)
+            (compiler-ir-clone-value index)
+            (compiler-ir-clone-value mask)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(IrInstrTailMask dst index len lanes)
       (IrInstrTailMask
         dst
@@ -829,18 +942,26 @@
         (compiler-ir-clone-value callee)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (IrInstrCallCAbiStoreResult
-        (compiler-ir-clone-value base)
-        (clone name)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-c-abi-return-slots slots))]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (compiler-ir-clone-value base)
-        (compiler-ir-clone-value callee)
-        (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-c-abi-return-slots slots))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (ir-instr-call-cabi-store-result
+            (compiler-ir-clone-value base)
+            (clone name)
+            (compiler-ir-clone-call-args args)
+            (compiler-ir-clone-c-abi-return-slots slots))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            callee
+            args
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (compiler-ir-clone-value base)
+            (compiler-ir-clone-value callee)
+            (compiler-ir-clone-call-args args)
+            (compiler-ir-clone-c-abi-return-slots slots))])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         (clone name)
@@ -1448,17 +1569,25 @@
     [(IrInstrPhi _ _ _) IrEffectPure]
     [(IrInstrLaneId _ _ _) IrEffectPure]
     [(IrInstrSplat _ _ _ _) IrEffectPure]
-    [(IrInstrVectorBinOp _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ _ _ _ _) IrEffectPure])]
     [(IrInstrVectorReduce _ _ _ _ _) IrEffectPure]
-    [(IrInstrVectorCompare _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ _ _ _ _) IrEffectPure])]
     [(IrInstrMaskBinOp _ _ _ _ _) IrEffectPure]
     [(IrInstrMaskNot _ _ _) IrEffectPure]
     [(IrInstrMaskReduce _ _ _ _) IrEffectPure]
-    [(IrInstrSelect _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ _ _ _ _ _) IrEffectPure])]
     [(IrInstrTailMask _ _ _ _) IrEffectPure]
     [(IrInstrLoad _ _ _) IrEffectMemoryRead]
     [(IrInstrVectorLoad _ _ _ _ _) IrEffectMemoryRead]
-    [(IrInstrPredicatedLoad _ _ _ _ _ _) IrEffectMemoryRead]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ _ _ _ _ _) IrEffectMemoryRead])]
     [(IrInstrEntryArgc _) IrEffectMemoryRead]
     [(IrInstrEntryArgv _) IrEffectMemoryRead]
     [(IrInstrEntryEnvp _) IrEffectMemoryRead]
@@ -1469,13 +1598,23 @@
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
     [(IrInstrCopyBytes _ _ _) IrEffectMemoryWrite]
     [(IrInstrStore _ _ _) IrEffectMemoryWrite]
-    [(IrInstrVectorStore _ _ _ _ _) IrEffectMemoryWrite]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) IrEffectMemoryWrite]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) IrEffectMemoryWrite])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _)
+          IrEffectMemoryWrite])]
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
     [(IrInstrCallIndirect _ _ _ _) IrEffectUnknown]
     [(IrInstrCallIndirectC _ _ _ _) IrEffectUnknown]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) IrEffectUnknown]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) IrEffectUnknown]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) IrEffectUnknown])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+          IrEffectUnknown])]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
@@ -1663,21 +1802,25 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1693,21 +1836,25 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (compiler-source-spans-insert-instr-entry
-        spans
-        (compiler-source-spans-value-key function dst)
-        span)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(IrInstrTailMask dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1758,8 +1905,12 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) spans]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) spans]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) spans])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) spans])]
     [(IrInstrPack dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -1835,18 +1986,22 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [(IrInstrVectorBinOp dst _ _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
-            instr-entries
-            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorBinOp payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
         [(IrInstrVectorReduce dst _ _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [(IrInstrVectorCompare dst _ _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
-            instr-entries
-            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorCompare payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
         [(IrInstrMaskBinOp dst _ _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -1859,18 +2014,22 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [(IrInstrSelect dst _ _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
-            instr-entries
-            (compiler-source-spans-value-key function dst))]
+        [(IrInstrSelect payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
         [(IrInstrVectorLoad dst _ _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [(IrInstrPredicatedLoad dst _ _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
-            instr-entries
-            (compiler-source-spans-value-key function dst))]
+        [(IrInstrPredicatedLoad payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
         [(IrInstrTailMask dst _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -1911,8 +2070,14 @@
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
-        [(IrInstrCallCAbiStoreResult _ _ _ _) (CompilerNoSourceSpan)]
-        [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrCallCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+              (CompilerNoSourceSpan)])]
+        [(IrInstrCallIndirectCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+              (CompilerNoSourceSpan)])]
         [(IrInstrPack dst _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -2058,9 +2223,14 @@
     [(IrInstrCall _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrCallIndirectC _ _ args _) (compiler-ir-call-args-count args)]
-    [(IrInstrCallCAbiStoreResult _ _ args _) (compiler-ir-call-args-count args)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ args _)
-      (compiler-ir-call-args-count args)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)
+          (compiler-ir-call-args-count args)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+          (compiler-ir-call-args-count args)])]
     [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
     [(IrInstrTailCallIndirect _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))
@@ -2692,17 +2862,19 @@
         (compiler-ir-value-describe value)
         (compiler-ir-vector-suffix lanes ty)
         "")]
-    [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
-      (str-cat
-        "  "
-        (compiler-ir-value-describe (IrValueVar dst))
-        " = vector_"
-        (compiler-ir-binop-name op)
-        " "
-        (compiler-ir-value-describe lhs)
-        ", "
-        (compiler-ir-value-describe rhs)
-        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes elem-ty)
+          (str-cat
+            "  "
+            (compiler-ir-value-describe (IrValueVar dst))
+            " = vector_"
+            (compiler-ir-binop-name op)
+            " "
+            (compiler-ir-value-describe lhs)
+            ", "
+            (compiler-ir-value-describe rhs)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrVectorReduce dst op src lanes elem-ty)
       (str-cat
         "  "
@@ -2712,17 +2884,19 @@
         " "
         (compiler-ir-value-describe src)
         (compiler-ir-vector-suffix lanes elem-ty))]
-    [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
-      (str-cat
-        "  "
-        (compiler-ir-value-describe (IrValueVar dst))
-        " = vector_cmp_"
-        (compiler-ir-binop-name op)
-        " "
-        (compiler-ir-value-describe lhs)
-        ", "
-        (compiler-ir-value-describe rhs)
-        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes elem-ty)
+          (str-cat
+            "  "
+            (compiler-ir-value-describe (IrValueVar dst))
+            " = vector_cmp_"
+            (compiler-ir-binop-name op)
+            " "
+            (compiler-ir-value-describe lhs)
+            ", "
+            (compiler-ir-value-describe rhs)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (str-cat
         "  "
@@ -2753,17 +2927,19 @@
         (compiler-ir-value-describe src)
         " : "
         (int->string lanes))]
-    [(IrInstrSelect dst mask on-true on-false lanes ty)
-      (str-cat
-        "  "
-        (compiler-ir-value-describe (IrValueVar dst))
-        " = select "
-        (compiler-ir-value-describe mask)
-        ", "
-        (compiler-ir-value-describe on-true)
-        ", "
-        (compiler-ir-value-describe on-false)
-        (compiler-ir-vector-suffix lanes ty))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst mask on-true on-false lanes ty)
+          (str-cat
+            "  "
+            (compiler-ir-value-describe (IrValueVar dst))
+            " = select "
+            (compiler-ir-value-describe mask)
+            ", "
+            (compiler-ir-value-describe on-true)
+            ", "
+            (compiler-ir-value-describe on-false)
+            (compiler-ir-vector-suffix lanes ty))])]
     [(IrInstrVectorLoad dst base index lanes elem-ty)
       (str-cat
         "  "
@@ -2773,37 +2949,55 @@
         ", "
         (compiler-ir-value-describe index)
         (compiler-ir-vector-suffix lanes elem-ty))]
-    [(IrInstrVectorStore base index value lanes elem-ty)
-      (str-cat
-        "  vector_store "
-        (compiler-ir-value-describe base)
-        ", "
-        (compiler-ir-value-describe index)
-        ", "
-        (compiler-ir-value-describe value)
-        (compiler-ir-vector-suffix lanes elem-ty))]
-    [(IrInstrPredicatedStore base index value mask lanes elem-ty)
-      (str-cat
-        "  predicated_store "
-        (compiler-ir-value-describe base)
-        ", "
-        (compiler-ir-value-describe index)
-        ", "
-        (compiler-ir-value-describe value)
-        ", "
-        (compiler-ir-value-describe mask)
-        (compiler-ir-vector-suffix lanes elem-ty))]
-    [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
-      (str-cat
-        "  "
-        (compiler-ir-value-describe (IrValueVar dst))
-        " = predicated_load "
-        (compiler-ir-value-describe base)
-        ", "
-        (compiler-ir-value-describe index)
-        ", "
-        (compiler-ir-value-describe mask)
-        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value lanes elem-ty)
+          (str-cat
+            "  vector_store "
+            (compiler-ir-value-describe base)
+            ", "
+            (compiler-ir-value-describe index)
+            ", "
+            (compiler-ir-value-describe value)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload
+            base
+            index
+            value
+            mask
+            lanes
+            elem-ty)
+          (str-cat
+            "  predicated_store "
+            (compiler-ir-value-describe base)
+            ", "
+            (compiler-ir-value-describe index)
+            ", "
+            (compiler-ir-value-describe value)
+            ", "
+            (compiler-ir-value-describe mask)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload
+            dst
+            base
+            index
+            mask
+            lanes
+            elem-ty)
+          (str-cat
+            "  "
+            (compiler-ir-value-describe (IrValueVar dst))
+            " = predicated_load "
+            (compiler-ir-value-describe base)
+            ", "
+            (compiler-ir-value-describe index)
+            ", "
+            (compiler-ir-value-describe mask)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrTailMask dst index len lanes)
       (str-cat
         "  "
@@ -2894,7 +3088,7 @@
       (IrInstrSplat 21 (IrValueVar 0) 4 (AstTyI64))
       IrEffectPure)
     (compiler-ir-effect-is?
-      (IrInstrVectorBinOp
+      (ir-instr-vector-bin-op
         22
         (IrBinAdd)
         (IrValueVar 20)
@@ -2906,7 +3100,7 @@
       (IrInstrVectorReduce 23 (IrVectorReduceSum) (IrValueVar 22) 4 (AstTyI64))
       IrEffectPure)
     (compiler-ir-effect-is?
-      (IrInstrVectorCompare
+      (ir-instr-vector-compare
         24
         (IrBinLt)
         (IrValueVar 20)
@@ -2922,7 +3116,7 @@
       (IrInstrMaskReduce 27 (IrMaskReduceAny) (IrValueVar 26) 4)
       IrEffectPure)
     (compiler-ir-effect-is?
-      (IrInstrSelect
+      (ir-instr-select
         28
         (IrValueVar 24)
         (IrValueVar 20)
@@ -2937,7 +3131,7 @@
       (IrInstrVectorLoad 30 (IrValueVar 2) (IrValueVar 0) 4 (AstTyI64))
       IrEffectMemoryRead)
     (compiler-ir-effect-is?
-      (IrInstrPredicatedLoad
+      (ir-instr-predicated-load
         31
         (IrValueVar 2)
         (IrValueVar 0)
@@ -2946,7 +3140,7 @@
         (AstTyI64))
       IrEffectMemoryRead)
     (compiler-ir-effect-is?
-      (IrInstrVectorStore
+      (ir-instr-vector-store
         (IrValueVar 2)
         (IrValueVar 0)
         (IrValueVar 22)
@@ -2954,7 +3148,7 @@
         (AstTyI64))
       IrEffectMemoryWrite)
     (compiler-ir-effect-is?
-      (IrInstrPredicatedStore
+      (ir-instr-predicated-store
         (IrValueVar 2)
         (IrValueVar 0)
         (IrValueVar 22)
@@ -3037,7 +3231,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrVectorBinOp
+          (ir-instr-vector-bin-op
             2
             (IrBinAdd)
             (IrValueVar 0)
@@ -3060,7 +3254,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrVectorCompare
+          (ir-instr-vector-compare
             3
             (IrBinLt)
             (IrValueVar 0)
@@ -3089,7 +3283,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrSelect
+          (ir-instr-select
             6
             (IrValueVar 5)
             (IrValueVar 2)
@@ -3107,7 +3301,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrVectorStore
+          (ir-instr-vector-store
             (IrValueVar 12)
             (IrValueVar 11)
             (IrValueVar 6)
@@ -3118,7 +3312,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrPredicatedStore
+          (ir-instr-predicated-store
             (IrValueVar 12)
             (IrValueVar 11)
             (IrValueVar 6)
@@ -3130,7 +3324,7 @@
         (set! ok false))
       (if (string-eq
         (compiler-ir-instr-describe
-          (IrInstrPredicatedLoad
+          (ir-instr-predicated-load
             10
             (IrValueVar 12)
             (IrValueVar 11)

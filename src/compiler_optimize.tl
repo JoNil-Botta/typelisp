@@ -1074,18 +1074,30 @@
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (OptInstrResult
         (opt-const-unbind env dst)
         (IrInstrMaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrEntryArgc dst) (opt-invalidate-def env dst instr)]
     [(IrInstrEntryArgv dst) (opt-invalidate-def env dst instr)]
@@ -1160,18 +1172,30 @@
     [(IrInstrUnOp dst op v ty) (opt-invalidate-def env dst instr)]
     [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (OptInstrResult
         (opt-const-unbind env dst)
         (IrInstrMaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
     [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrEntryArgc dst) (opt-invalidate-def env dst instr)]
     [(IrInstrEntryArgv dst) (opt-invalidate-def env dst instr)]
@@ -1270,12 +1294,16 @@
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
     [(IrInstrCallIndirectC _ func args _)
       (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (opt-collect-call-args-uses (opt-collect-value-uses set base) args)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (opt-collect-call-args-uses
-        (opt-collect-value-uses (opt-collect-value-uses set base) func)
-        args)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (opt-collect-call-args-uses (opt-collect-value-uses set base) args)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (opt-collect-call-args-uses
+            (opt-collect-value-uses (opt-collect-value-uses set base) func)
+            args)])]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
@@ -1293,35 +1321,47 @@
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
     [(IrInstrBitcast _ src _ _) (opt-collect-value-uses set src)]
     [(IrInstrSplat _ value _ _) (opt-collect-value-uses set value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)])]
     [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses set src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
     [(IrInstrMaskNot _ src _) (opt-collect-value-uses set src)]
     [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses set src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (opt-collect-value-uses
-        (opt-collect-value-uses (opt-collect-value-uses set mask) on-true)
-        on-false)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (opt-collect-value-uses
+            (opt-collect-value-uses (opt-collect-value-uses set mask) on-true)
+            on-false)])]
     [(IrInstrVectorLoad _ base index _ _)
       (opt-collect-value-uses (opt-collect-value-uses set base) index)]
-    [(IrInstrVectorStore base index value _ _)
-      (opt-collect-value-uses
-        (opt-collect-value-uses (opt-collect-value-uses set base) index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (opt-collect-value-uses
-        (opt-collect-value-uses
-          (opt-collect-value-uses (opt-collect-value-uses set base) index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (opt-collect-value-uses
-        (opt-collect-value-uses (opt-collect-value-uses set base) index)
-        mask)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
+          (opt-collect-value-uses
+            (opt-collect-value-uses (opt-collect-value-uses set base) index)
+            value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (opt-collect-value-uses
+            (opt-collect-value-uses
+              (opt-collect-value-uses (opt-collect-value-uses set base) index)
+              value)
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (opt-collect-value-uses
+            (opt-collect-value-uses (opt-collect-value-uses set base) index)
+            mask)])]
     [(IrInstrTailMask _ index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrEntryArgc _) set]
@@ -1459,13 +1499,22 @@
     [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrLaneId dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrSplat dst _ _ _) (not (opt-used-contains set dst))]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (not (opt-used-contains set dst))])]
     [(IrInstrVectorReduce dst _ _ _ _) (not (opt-used-contains set dst))]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (not (opt-used-contains set dst))])]
     [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrMaskNot dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrMaskReduce dst _ _ _) (not (opt-used-contains set dst))]
-    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (not (opt-used-contains set dst))])]
     [(IrInstrTailMask dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrPack dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrWord dst _ _ _) (not (opt-used-contains set dst))]
@@ -1666,15 +1715,19 @@
       (begin
         (opt-collect-value-uses-array items func)
         (opt-collect-call-args-uses-array items args))]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-call-args-uses-array items args))]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items func)
-        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-call-args-uses-array items args))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-value-uses-array items func)
+            (opt-collect-call-args-uses-array items args))])]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
     [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
@@ -1698,46 +1751,58 @@
     [(IrInstrCast _ src _ _) (opt-collect-value-uses-array items src)]
     [(IrInstrBitcast _ src _ _) (opt-collect-value-uses-array items src)]
     [(IrInstrSplat _ value _ _) (opt-collect-value-uses-array items value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (begin
-        (opt-collect-value-uses-array items lhs)
-        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (begin
+            (opt-collect-value-uses-array items lhs)
+            (opt-collect-value-uses-array items rhs))])]
     [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses-array items src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (begin
-        (opt-collect-value-uses-array items lhs)
-        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (begin
+            (opt-collect-value-uses-array items lhs)
+            (opt-collect-value-uses-array items rhs))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (begin
         (opt-collect-value-uses-array items lhs)
         (opt-collect-value-uses-array items rhs))]
     [(IrInstrMaskNot _ src _) (opt-collect-value-uses-array items src)]
     [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses-array items src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (begin
-        (opt-collect-value-uses-array items mask)
-        (opt-collect-value-uses-array items on-true)
-        (opt-collect-value-uses-array items on-false))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (begin
+            (opt-collect-value-uses-array items mask)
+            (opt-collect-value-uses-array items on-true)
+            (opt-collect-value-uses-array items on-false))])]
     [(IrInstrVectorLoad _ base index _ _)
       (begin
         (opt-collect-value-uses-array items base)
         (opt-collect-value-uses-array items index))]
-    [(IrInstrVectorStore base index value _ _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items index)
-        (opt-collect-value-uses-array items value))]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items index)
-        (opt-collect-value-uses-array items value)
-        (opt-collect-value-uses-array items mask))]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (begin
-        (opt-collect-value-uses-array items base)
-        (opt-collect-value-uses-array items index)
-        (opt-collect-value-uses-array items mask))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-value-uses-array items index)
+            (opt-collect-value-uses-array items value))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-value-uses-array items index)
+            (opt-collect-value-uses-array items value)
+            (opt-collect-value-uses-array items mask))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-value-uses-array items index)
+            (opt-collect-value-uses-array items mask))])]
     [(IrInstrTailMask _ index length _)
       (begin
         (opt-collect-value-uses-array items index)
@@ -1816,26 +1881,32 @@
     [(IrInstrUnOp _ _ src _) (opt-uncount-value-uses-array items src)]
     [(IrInstrPhi _ inputs _) (opt-uncount-phi-uses-array items inputs)]
     [(IrInstrSplat _ value _ _) (opt-uncount-value-uses-array items value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (begin
-        (opt-uncount-value-uses-array items lhs)
-        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (begin
+            (opt-uncount-value-uses-array items lhs)
+            (opt-uncount-value-uses-array items rhs))])]
     [(IrInstrVectorReduce _ _ src _ _) (opt-uncount-value-uses-array items src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (begin
-        (opt-uncount-value-uses-array items lhs)
-        (opt-uncount-value-uses-array items rhs))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (begin
+            (opt-uncount-value-uses-array items lhs)
+            (opt-uncount-value-uses-array items rhs))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (begin
         (opt-uncount-value-uses-array items lhs)
         (opt-uncount-value-uses-array items rhs))]
     [(IrInstrMaskNot _ src _) (opt-uncount-value-uses-array items src)]
     [(IrInstrMaskReduce _ _ src _) (opt-uncount-value-uses-array items src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (begin
-        (opt-uncount-value-uses-array items mask)
-        (opt-uncount-value-uses-array items on-true)
-        (opt-uncount-value-uses-array items on-false))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (begin
+            (opt-uncount-value-uses-array items mask)
+            (opt-uncount-value-uses-array items on-true)
+            (opt-uncount-value-uses-array items on-false))])]
     [(IrInstrTailMask _ index length _)
       (begin
         (opt-uncount-value-uses-array items index)
@@ -1914,16 +1985,23 @@
     [(IrInstrPhi dst _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrLaneId dst _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrSplat dst _ _ _) (not (opt-used-array-contains items dst))]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (not (opt-used-array-contains items dst))])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (not (opt-used-array-contains items dst))]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (not (opt-used-array-contains items dst))])]
     [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrMaskNot dst _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrMaskReduce dst _ _ _) (not (opt-used-array-contains items dst))]
-    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (not (opt-used-array-contains items dst))])]
     [(IrInstrTailMask dst _ _ _) (not (opt-used-array-contains items dst))]
     [_ false]))
 
@@ -2277,16 +2355,20 @@
         (opt-aggregate-value-has-pointer? base ptrs rhs))]
     [(IrInstrUnOp _ _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
     [(IrInstrSplat _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs lhs)
-        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs lhs)
+            (opt-aggregate-value-has-pointer? base ptrs rhs))])]
     [(IrInstrVectorReduce _ _ src _ _)
       (opt-aggregate-value-has-pointer? base ptrs src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs lhs)
-        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs lhs)
+            (opt-aggregate-value-has-pointer? base ptrs rhs))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs lhs)
@@ -2294,31 +2376,39 @@
     [(IrInstrMaskNot _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
     [(IrInstrMaskReduce _ _ src _)
       (opt-aggregate-value-has-pointer? base ptrs src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs mask)
-        (opt-aggregate-value-has-pointer? base ptrs on-true)
-        (opt-aggregate-value-has-pointer? base ptrs on-false))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs mask)
+            (opt-aggregate-value-has-pointer? base ptrs on-true)
+            (opt-aggregate-value-has-pointer? base ptrs on-false))])]
     [(IrInstrVectorLoad _ vector-base index _ _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs vector-base)
         (opt-aggregate-value-has-pointer? base ptrs index))]
-    [(IrInstrVectorStore vector-base index value _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs vector-base)
-        (opt-aggregate-value-has-pointer? base ptrs index)
-        (opt-aggregate-value-has-pointer? base ptrs value))]
-    [(IrInstrPredicatedStore store-base index value mask _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs store-base)
-        (opt-aggregate-value-has-pointer? base ptrs index)
-        (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-value-has-pointer? base ptrs mask))]
-    [(IrInstrPredicatedLoad _ load-base index mask _ _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs load-base)
-        (opt-aggregate-value-has-pointer? base ptrs index)
-        (opt-aggregate-value-has-pointer? base ptrs mask))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload vector-base index value _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs vector-base)
+            (opt-aggregate-value-has-pointer? base ptrs index)
+            (opt-aggregate-value-has-pointer? base ptrs value))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload store-base index value mask _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs store-base)
+            (opt-aggregate-value-has-pointer? base ptrs index)
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-value-has-pointer? base ptrs mask))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ load-base index mask _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs load-base)
+            (opt-aggregate-value-has-pointer? base ptrs index)
+            (opt-aggregate-value-has-pointer? base ptrs mask))])]
     [(IrInstrTailMask _ index length _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs index)
@@ -2335,15 +2425,23 @@
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrCall _ _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
-    [(IrInstrCallCAbiStoreResult store-base _ args _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs store-base)
-        (opt-aggregate-call-args-has-pointer? base ptrs args))]
-    [(IrInstrCallIndirectCAbiStoreResult store-base func args _)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs store-base)
-        (opt-aggregate-value-has-pointer? base ptrs func)
-        (opt-aggregate-call-args-has-pointer? base ptrs args))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload store-base _ args _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs store-base)
+            (opt-aggregate-call-args-has-pointer? base ptrs args))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            store-base
+            func
+            args
+            _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs store-base)
+            (opt-aggregate-value-has-pointer? base ptrs func)
+            (opt-aggregate-call-args-has-pointer? base ptrs args))])]
     [(IrInstrTailCall _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrStore _ value _)
@@ -3000,24 +3098,32 @@
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrSplat dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrMaskNot dst _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrMaskReduce dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-aggregate-field-facts-invalidate-var facts dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(IrInstrTailMask dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(IrInstrEntryArgc dst)
@@ -3853,17 +3959,21 @@
             (= alanes blanes)
             (opt-type-eq aty bty))]
         [_ false])]
-    [(IrInstrVectorBinOp ad aop al ar alanes aty)
-      (match b
-        [(IrInstrVectorBinOp bd bop bl br blanes bty)
-          (and
-            (= ad bd)
-            (opt-binop-eq aop bop)
-            (opt-value-eq al bl)
-            (opt-value-eq ar br)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload ad aop al ar alanes aty)
+          (match b
+            [(IrInstrVectorBinOp other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrVectorBinOpPayload bd bop bl br blanes bty)
+                  (and
+                    (= ad bd)
+                    (opt-binop-eq aop bop)
+                    (opt-value-eq al bl)
+                    (opt-value-eq ar br)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(IrInstrVectorReduce ad aop av alanes aty)
       (match b
         [(IrInstrVectorReduce bd bop bv blanes bty)
@@ -3874,17 +3984,21 @@
             (= alanes blanes)
             (opt-type-eq aty bty))]
         [_ false])]
-    [(IrInstrVectorCompare ad aop al ar alanes aty)
-      (match b
-        [(IrInstrVectorCompare bd bop bl br blanes bty)
-          (and
-            (= ad bd)
-            (opt-binop-eq aop bop)
-            (opt-value-eq al bl)
-            (opt-value-eq ar br)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload ad aop al ar alanes aty)
+          (match b
+            [(IrInstrVectorCompare other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrVectorComparePayload bd bop bl br blanes bty)
+                  (and
+                    (= ad bd)
+                    (opt-binop-eq aop bop)
+                    (opt-value-eq al bl)
+                    (opt-value-eq ar br)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(IrInstrMaskBinOp ad aop al ar alanes)
       (match b
         [(IrInstrMaskBinOp bd bop bl br blanes)
@@ -3909,17 +4023,21 @@
             (opt-value-eq av bv)
             (= alanes blanes))]
         [_ false])]
-    [(IrInstrSelect ad amask at af alanes aty)
-      (match b
-        [(IrInstrSelect bd bmask bt bf blanes bty)
-          (and
-            (= ad bd)
-            (opt-value-eq amask bmask)
-            (opt-value-eq at bt)
-            (opt-value-eq af bf)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload ad amask at af alanes aty)
+          (match b
+            [(IrInstrSelect other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrSelectPayload bd bmask bt bf blanes bty)
+                  (and
+                    (= ad bd)
+                    (opt-value-eq amask bmask)
+                    (opt-value-eq at bt)
+                    (opt-value-eq af bf)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(IrInstrVectorLoad ad abase aindex alanes aty)
       (match b
         [(IrInstrVectorLoad bd bbase bindex blanes bty)
@@ -3930,38 +4048,68 @@
             (= alanes blanes)
             (opt-type-eq aty bty))]
         [_ false])]
-    [(IrInstrVectorStore abase aindex av alanes aty)
-      (match b
-        [(IrInstrVectorStore bbase bindex bv blanes bty)
-          (and
-            (opt-value-eq abase bbase)
-            (opt-value-eq aindex bindex)
-            (opt-value-eq av bv)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
-    [(IrInstrPredicatedStore abase aindex av amask alanes aty)
-      (match b
-        [(IrInstrPredicatedStore bbase bindex bv bmask blanes bty)
-          (and
-            (opt-value-eq abase bbase)
-            (opt-value-eq aindex bindex)
-            (opt-value-eq av bv)
-            (opt-value-eq amask bmask)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
-    [(IrInstrPredicatedLoad ad abase aindex amask alanes aty)
-      (match b
-        [(IrInstrPredicatedLoad bd bbase bindex bmask blanes bty)
-          (and
-            (= ad bd)
-            (opt-value-eq abase bbase)
-            (opt-value-eq aindex bindex)
-            (opt-value-eq amask bmask)
-            (= alanes blanes)
-            (opt-type-eq aty bty))]
-        [_ false])]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload abase aindex av alanes aty)
+          (match b
+            [(IrInstrVectorStore other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrVectorStorePayload bbase bindex bv blanes bty)
+                  (and
+                    (opt-value-eq abase bbase)
+                    (opt-value-eq aindex bindex)
+                    (opt-value-eq av bv)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload
+            abase
+            aindex
+            av
+            amask
+            alanes
+            aty)
+          (match b
+            [(IrInstrPredicatedStore other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrPredicatedStorePayload
+                    bbase
+                    bindex
+                    bv
+                    bmask
+                    blanes
+                    bty)
+                  (and
+                    (opt-value-eq abase bbase)
+                    (opt-value-eq aindex bindex)
+                    (opt-value-eq av bv)
+                    (opt-value-eq amask bmask)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload ad abase aindex amask alanes aty)
+          (match b
+            [(IrInstrPredicatedLoad other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrPredicatedLoadPayload
+                    bd
+                    bbase
+                    bindex
+                    bmask
+                    blanes
+                    bty)
+                  (and
+                    (= ad bd)
+                    (opt-value-eq abase bbase)
+                    (opt-value-eq aindex bindex)
+                    (opt-value-eq amask bmask)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(IrInstrTailMask ad aindex alength alanes)
       (match b
         [(IrInstrTailMask bd bindex blength blanes)
@@ -4028,24 +4176,44 @@
             (opt-call-args-eq aargs bargs)
             (opt-type-eq aty bty))]
         [_ false])]
-    [(IrInstrCallCAbiStoreResult abase aname aargs aslots)
-      (match b
-        [(IrInstrCallCAbiStoreResult bbase bname bargs bslots)
-          (and
-            (opt-value-eq abase bbase)
-            (string-eq aname bname)
-            (opt-call-args-eq aargs bargs)
-            (opt-c-abi-return-slot-list-eq aslots bslots))]
-        [_ false])]
-    [(IrInstrCallIndirectCAbiStoreResult abase afunc aargs aslots)
-      (match b
-        [(IrInstrCallIndirectCAbiStoreResult bbase bfunc bargs bslots)
-          (and
-            (opt-value-eq abase bbase)
-            (opt-value-eq afunc bfunc)
-            (opt-call-args-eq aargs bargs)
-            (opt-c-abi-return-slot-list-eq aslots bslots))]
-        [_ false])]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload abase aname aargs aslots)
+          (match b
+            [(IrInstrCallCAbiStoreResult other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrCallCAbiStoreResultPayload
+                    bbase
+                    bname
+                    bargs
+                    bslots)
+                  (and
+                    (opt-value-eq abase bbase)
+                    (string-eq aname bname)
+                    (opt-call-args-eq aargs bargs)
+                    (opt-c-abi-return-slot-list-eq aslots bslots))])]
+            [_ false])])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            abase
+            afunc
+            aargs
+            aslots)
+          (match b
+            [(IrInstrCallIndirectCAbiStoreResult other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                    bbase
+                    bfunc
+                    bargs
+                    bslots)
+                  (and
+                    (opt-value-eq abase bbase)
+                    (opt-value-eq afunc bfunc)
+                    (opt-call-args-eq aargs bargs)
+                    (opt-c-abi-return-slot-list-eq aslots bslots))])]
+            [_ false])])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
@@ -4399,24 +4567,32 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrSplat dst _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (OptCseResult (opt-expr-invalidate-var table dst) instr)])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (OptCseResult (opt-expr-invalidate-var table dst) instr)])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrMaskNot dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrMaskReduce dst _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (OptCseResult (opt-expr-invalidate-var table dst) instr)])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (OptCseResult (opt-expr-invalidate-var table dst) instr)])]
     [(IrInstrTailMask dst _ _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrEntryArgc dst)
@@ -4430,15 +4606,26 @@
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCallIndirectC _ _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-      (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+          (OptCseResult (OptExprNil) instr)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+          (OptCseResult (OptExprNil) instr)])]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCopyBytes _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrVectorStore _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _)
+          (OptCseResult (OptExprNil) instr)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _)
+          (OptCseResult (OptExprNil) instr)])]
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -4657,9 +4844,13 @@
     ;; type-check yet, so leave those operands untouched until a vector-aware
     ;; propagation pass exists. Mask operands are private too, so only var-to-var
     ;; mask copies are substituted; scalar bool literals are not mask constants.
-    [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ _ _ _ _) instr])]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
-    [(IrInstrVectorCompare _ _ _ _ _ _) instr]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ _ _ _ _) instr])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         dst
@@ -4671,11 +4862,19 @@
       (IrInstrMaskNot dst (opt-copy-resolve-mask env src) lanes)]
     [(IrInstrMaskReduce dst op src lanes)
       (IrInstrMaskReduce dst op (opt-copy-resolve-mask env src) lanes)]
-    [(IrInstrSelect _ _ _ _ _ _) instr]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ _ _ _ _ _) instr])]
     [(IrInstrVectorLoad _ _ _ _ _) instr]
-    [(IrInstrVectorStore _ _ _ _ _) instr]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) instr]
-    [(IrInstrPredicatedLoad _ _ _ _ _ _) instr]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) instr])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) instr])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ _ _ _ _ _) instr])]
     [(IrInstrTailMask _ _ _ _) instr]
     [(IrInstrEntryArgc _) instr]
     [(IrInstrEntryArgv _) instr]
@@ -4703,18 +4902,26 @@
         (opt-copy-resolve env func)
         (opt-copy-subst-call-args env args)
         ty)]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (IrInstrCallCAbiStoreResult
-        (opt-copy-resolve env base)
-        name
-        (opt-copy-subst-call-args env args)
-        slots)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (opt-copy-resolve env base)
-        (opt-copy-resolve env func)
-        (opt-copy-subst-call-args env args)
-        slots)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (ir-instr-call-cabi-store-result
+            (opt-copy-resolve env base)
+            name
+            (opt-copy-subst-call-args env args)
+            slots)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            func
+            args
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (opt-copy-resolve env base)
+            (opt-copy-resolve env func)
+            (opt-copy-subst-call-args env args)
+            slots)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -4781,9 +4988,15 @@
     [(IrInstrUnOp dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrLaneId dst _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrSplat dst _ _ _) (opt-copy-invalidate-var env dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-copy-invalidate-var env dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
     [(IrInstrMaskBinOp dst _ lhs rhs _)
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
@@ -4792,9 +5005,15 @@
           e1))]
     [(IrInstrMaskNot dst _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrMaskReduce dst _ _ _) (opt-copy-invalidate-var env dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (opt-copy-invalidate-var env dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
     [(IrInstrTailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrEntryArgc dst) (opt-copy-invalidate-var env dst)]
     [(IrInstrEntryArgv dst) (opt-copy-invalidate-var env dst)]
@@ -4977,16 +5196,27 @@
     [(IrInstrUnOp dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrLaneId dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrSplat dst _ _ _) (opt-bounds-invalidate-var facts dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrMaskNot dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrMaskReduce dst _ _ _) (opt-bounds-invalidate-var facts dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
     [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrEntryArgc dst) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrEntryArgv dst) (opt-bounds-invalidate-var facts dst)]
@@ -4997,14 +5227,23 @@
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
     [(IrInstrCallIndirectC _ _ _ _) (OptBoundsNil)]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) (OptBoundsNil)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) (OptBoundsNil)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+          (OptBoundsNil)])]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
     [(IrInstrCopyBytes _ _ _) (OptBoundsNil)]
-    [(IrInstrVectorStore _ _ _ _ _) (OptBoundsNil)]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptBoundsNil)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) (OptBoundsNil)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) (OptBoundsNil)])]
     [(IrInstrJump _) (OptBoundsNil)]
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
@@ -6856,15 +7095,23 @@
     [(IrInstrUnOp dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrLaneId dst _ _) (OptSomeI64 dst)]
     [(IrInstrSplat dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
     [(IrInstrVectorReduce dst _ _ _ _) (OptSomeI64 dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) (OptSomeI64 dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _) (OptSomeI64 dst)]
     [(IrInstrMaskNot dst _ _) (OptSomeI64 dst)]
     [(IrInstrMaskReduce dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (OptSomeI64 dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
     [(IrInstrTailMask dst _ _ _) (OptSomeI64 dst)]
     [(IrInstrEntryArgc dst) (OptSomeI64 dst)]
     [(IrInstrEntryArgv dst) (OptSomeI64 dst)]
@@ -7262,16 +7509,20 @@
       (opt-verify-value-use defs doms src block-label pos)]
     [(IrInstrSplat _ src _ _)
       (opt-verify-value-use defs doms src block-label pos)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms lhs block-label pos)
-        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms lhs block-label pos)
+            (opt-verify-value-use defs doms rhs block-label pos))])]
     [(IrInstrVectorReduce _ _ src _ _)
       (opt-verify-value-use defs doms src block-label pos)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms lhs block-label pos)
-        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms lhs block-label pos)
+            (opt-verify-value-use defs doms rhs block-label pos))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (opt-verify-two
         (opt-verify-value-use defs doms lhs block-label pos)
@@ -7280,36 +7531,44 @@
       (opt-verify-value-use defs doms src block-label pos)]
     [(IrInstrMaskReduce _ _ src _)
       (opt-verify-value-use defs doms src block-label pos)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms mask block-label pos)
-        (opt-verify-two
-          (opt-verify-value-use defs doms on-true block-label pos)
-          (opt-verify-value-use defs doms on-false block-label pos)))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms mask block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms on-true block-label pos)
+              (opt-verify-value-use defs doms on-false block-label pos)))])]
     [(IrInstrVectorLoad _ base index _ _)
       (opt-verify-two
         (opt-verify-value-use defs doms base block-label pos)
         (opt-verify-value-use defs doms index block-label pos))]
-    [(IrInstrVectorStore base index value _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-two
-          (opt-verify-value-use defs doms index block-label pos)
-          (opt-verify-value-use defs doms value block-label pos)))]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-two
-          (opt-verify-value-use defs doms index block-label pos)
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
           (opt-verify-two
-            (opt-verify-value-use defs doms value block-label pos)
-            (opt-verify-value-use defs doms mask block-label pos))))]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-two
-          (opt-verify-value-use defs doms index block-label pos)
-          (opt-verify-value-use defs doms mask block-label pos)))]
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms index block-label pos)
+              (opt-verify-value-use defs doms value block-label pos)))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms index block-label pos)
+              (opt-verify-two
+                (opt-verify-value-use defs doms value block-label pos)
+                (opt-verify-value-use defs doms mask block-label pos))))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms index block-label pos)
+              (opt-verify-value-use defs doms mask block-label pos)))])]
     [(IrInstrTailMask _ index length _)
       (opt-verify-two
         (opt-verify-value-use defs doms index block-label pos)
@@ -7335,16 +7594,20 @@
       (opt-verify-two
         (opt-verify-value-use defs doms func block-label pos)
         (opt-verify-call-args-uses defs doms args block-label pos))]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-call-args-uses defs doms args block-label pos))]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (opt-verify-two
-        (opt-verify-value-use defs doms base block-label pos)
-        (opt-verify-two
-          (opt-verify-value-use defs doms func block-label pos)
-          (opt-verify-call-args-uses defs doms args block-label pos)))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-call-args-uses defs doms args block-label pos))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms func block-label pos)
+              (opt-verify-call-args-uses defs doms args block-label pos)))])]
     [(IrInstrTailCall _ args _)
       (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -7756,16 +8019,27 @@
     [(IrInstrGep dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrLaneId dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrSplat dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
     [(IrInstrVectorReduce dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrMaskNot dst _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrMaskReduce dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-ssa-facts-add-def-bad facts dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
     [(IrInstrTailMask dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrEntryArgv dst) (opt-ssa-facts-add-def-bad facts dst)]
     [(IrInstrEntryEnvp dst) (opt-ssa-facts-add-def-bad facts dst)]
@@ -8362,24 +8636,32 @@
               ty)
             next-env
             out-next)])]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (OptSsaInstrResult
-        (IrInstrCallCAbiStoreResult
-          (opt-ssa-rewrite-value env base)
-          name
-          (opt-ssa-rewrite-call-args env args)
-          slots)
-        env
-        next-var)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
-      (OptSsaInstrResult
-        (IrInstrCallIndirectCAbiStoreResult
-          (opt-ssa-rewrite-value env base)
-          (opt-ssa-rewrite-value env func)
-          (opt-ssa-rewrite-call-args env args)
-          slots)
-        env
-        next-var)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (OptSsaInstrResult
+            (ir-instr-call-cabi-store-result
+              (opt-ssa-rewrite-value env base)
+              name
+              (opt-ssa-rewrite-call-args env args)
+              slots)
+            env
+            next-var)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            func
+            args
+            slots)
+          (OptSsaInstrResult
+            (ir-instr-call-indirect-cabi-store-result
+              (opt-ssa-rewrite-value env base)
+              (opt-ssa-rewrite-value env func)
+              (opt-ssa-rewrite-call-args env args)
+              slots)
+            env
+            next-var)])]
     [(IrInstrEntryArgc dst)
       (match (opt-ssa-rename-dst facts env next-var dst)
         [(OptSsaDstResult out-dst next-env out-next)
@@ -8422,33 +8704,37 @@
         (IrInstrSplat dst (opt-ssa-rewrite-value env value) lanes ty)
         env
         next-var)]
-    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
-      (OptSsaInstrResult
-        (IrInstrVectorBinOp
-          dst
-          op
-          (opt-ssa-rewrite-value env lhs)
-          (opt-ssa-rewrite-value env rhs)
-          lanes
-          ty)
-        env
-        next-var)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-vector-bin-op
+              dst
+              op
+              (opt-ssa-rewrite-value env lhs)
+              (opt-ssa-rewrite-value env rhs)
+              lanes
+              ty)
+            env
+            next-var)])]
     [(IrInstrVectorReduce dst op src lanes ty)
       (OptSsaInstrResult
         (IrInstrVectorReduce dst op (opt-ssa-rewrite-value env src) lanes ty)
         env
         next-var)]
-    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
-      (OptSsaInstrResult
-        (IrInstrVectorCompare
-          dst
-          op
-          (opt-ssa-rewrite-value env lhs)
-          (opt-ssa-rewrite-value env rhs)
-          lanes
-          ty)
-        env
-        next-var)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-vector-compare
+              dst
+              op
+              (opt-ssa-rewrite-value env lhs)
+              (opt-ssa-rewrite-value env rhs)
+              lanes
+              ty)
+            env
+            next-var)])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (OptSsaInstrResult
         (IrInstrMaskBinOp
@@ -8469,17 +8755,19 @@
         (IrInstrMaskReduce dst op (opt-ssa-rewrite-value env src) lanes)
         env
         next-var)]
-    [(IrInstrSelect dst mask on-true on-false lanes ty)
-      (OptSsaInstrResult
-        (IrInstrSelect
-          dst
-          (opt-ssa-rewrite-value env mask)
-          (opt-ssa-rewrite-value env on-true)
-          (opt-ssa-rewrite-value env on-false)
-          lanes
-          ty)
-        env
-        next-var)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst mask on-true on-false lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-select
+              dst
+              (opt-ssa-rewrite-value env mask)
+              (opt-ssa-rewrite-value env on-true)
+              (opt-ssa-rewrite-value env on-false)
+              lanes
+              ty)
+            env
+            next-var)])]
     [(IrInstrVectorLoad dst base index lanes ty)
       (OptSsaInstrResult
         (IrInstrVectorLoad
@@ -8490,38 +8778,44 @@
           ty)
         env
         next-var)]
-    [(IrInstrVectorStore base index value lanes ty)
-      (OptSsaInstrResult
-        (IrInstrVectorStore
-          (opt-ssa-rewrite-value env base)
-          (opt-ssa-rewrite-value env index)
-          (opt-ssa-rewrite-value env value)
-          lanes
-          ty)
-        env
-        next-var)]
-    [(IrInstrPredicatedStore base index value mask lanes ty)
-      (OptSsaInstrResult
-        (IrInstrPredicatedStore
-          (opt-ssa-rewrite-value env base)
-          (opt-ssa-rewrite-value env index)
-          (opt-ssa-rewrite-value env value)
-          (opt-ssa-rewrite-value env mask)
-          lanes
-          ty)
-        env
-        next-var)]
-    [(IrInstrPredicatedLoad dst base index mask lanes ty)
-      (OptSsaInstrResult
-        (IrInstrPredicatedLoad
-          dst
-          (opt-ssa-rewrite-value env base)
-          (opt-ssa-rewrite-value env index)
-          (opt-ssa-rewrite-value env mask)
-          lanes
-          ty)
-        env
-        next-var)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-vector-store
+              (opt-ssa-rewrite-value env base)
+              (opt-ssa-rewrite-value env index)
+              (opt-ssa-rewrite-value env value)
+              lanes
+              ty)
+            env
+            next-var)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-predicated-store
+              (opt-ssa-rewrite-value env base)
+              (opt-ssa-rewrite-value env index)
+              (opt-ssa-rewrite-value env value)
+              (opt-ssa-rewrite-value env mask)
+              lanes
+              ty)
+            env
+            next-var)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty)
+          (OptSsaInstrResult
+            (ir-instr-predicated-load
+              dst
+              (opt-ssa-rewrite-value env base)
+              (opt-ssa-rewrite-value env index)
+              (opt-ssa-rewrite-value env mask)
+              lanes
+              ty)
+            env
+            next-var)])]
     [(IrInstrTailMask dst index length lanes)
       (OptSsaInstrResult
         (IrInstrTailMask
@@ -9674,18 +9968,26 @@
         (opt-global-copy-resolve facts doms block-id pos func)
         (opt-global-copy-subst-call-args facts doms block-id pos args)
         ty)]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (IrInstrCallCAbiStoreResult
-        (opt-global-copy-resolve facts doms block-id pos base)
-        name
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        slots)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (opt-global-copy-resolve facts doms block-id pos base)
-        (opt-global-copy-resolve facts doms block-id pos func)
-        (opt-global-copy-subst-call-args facts doms block-id pos args)
-        slots)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (ir-instr-call-cabi-store-result
+            (opt-global-copy-resolve facts doms block-id pos base)
+            name
+            (opt-global-copy-subst-call-args facts doms block-id pos args)
+            slots)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            func
+            args
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (opt-global-copy-resolve facts doms block-id pos base)
+            (opt-global-copy-resolve facts doms block-id pos func)
+            (opt-global-copy-subst-call-args facts doms block-id pos args)
+            slots)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
@@ -9725,9 +10027,13 @@
       (IrInstrSyscall
         dst
         (opt-global-copy-subst-call-args facts doms block-id pos args))]
-    [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ _ _ _ _) instr])]
     [(IrInstrVectorReduce _ _ _ _ _) instr]
-    [(IrInstrVectorCompare _ _ _ _ _ _) instr]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ _ _ _ _) instr])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         dst
@@ -9746,11 +10052,19 @@
         op
         (opt-global-copy-resolve-mask facts doms block-id pos src)
         lanes)]
-    [(IrInstrSelect _ _ _ _ _ _) instr]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ _ _ _ _ _) instr])]
     [(IrInstrVectorLoad _ _ _ _ _) instr]
-    [(IrInstrVectorStore _ _ _ _ _) instr]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) instr]
-    [(IrInstrPredicatedLoad _ _ _ _ _ _) instr]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) instr])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) instr])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ _ _ _ _ _) instr])]
     [(IrInstrTailMask _ _ _ _) instr]
     [(IrInstrAddrOf _ _) instr]
     [(IrInstrAlloc _ _) instr]
@@ -12348,16 +12662,24 @@
     [(IrInstrAlloc _ _) true]
     [(IrInstrStorePtr _ _ _) true]
     [(IrInstrCopyBytes _ _ _) true]
-    [(IrInstrVectorStore _ _ _ _ _) true]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) true]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) true])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) true])]
     [(IrInstrCpuId _ _ _ _) true]
     [(IrInstrXgetbv _ _) true]
     [(IrInstrSyscall _ _) true]
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrStore _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
@@ -13072,15 +13394,23 @@
     [(IrInstrSyscall dst _) dst]
     [(IrInstrLaneId dst _ _) dst]
     [(IrInstrSplat dst _ _ _) dst]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) dst]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) dst])]
     [(IrInstrVectorReduce dst _ _ _ _) dst]
-    [(IrInstrVectorCompare dst _ _ _ _ _) dst]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) dst])]
     [(IrInstrMaskBinOp dst _ _ _ _) dst]
     [(IrInstrMaskNot dst _ _) dst]
     [(IrInstrMaskReduce dst _ _ _) dst]
-    [(IrInstrSelect dst _ _ _ _ _) dst]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) dst])]
     [(IrInstrVectorLoad dst _ _ _ _) dst]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) dst]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) dst])]
     [(IrInstrTailMask dst _ _ _) dst]
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
@@ -13388,24 +13718,32 @@
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrSplat dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpOverdefined))])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpOverdefined))])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrMaskNot dst _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrMaskReduce dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpOverdefined))])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpOverdefined))])]
     [(IrInstrTailMask dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCall dst _ _ _)
@@ -13732,18 +14070,26 @@
         (opt-sccp-rewrite-value env callee)
         (opt-sccp-rewrite-call-args env args)
         ty)]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (IrInstrCallCAbiStoreResult
-        (opt-sccp-rewrite-value env base)
-        name
-        (opt-sccp-rewrite-call-args env args)
-        slots)]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (opt-sccp-rewrite-value env base)
-        (opt-sccp-rewrite-value env callee)
-        (opt-sccp-rewrite-call-args env args)
-        slots)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (ir-instr-call-cabi-store-result
+            (opt-sccp-rewrite-value env base)
+            name
+            (opt-sccp-rewrite-call-args env args)
+            slots)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            callee
+            args
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (opt-sccp-rewrite-value env base)
+            (opt-sccp-rewrite-value env callee)
+            (opt-sccp-rewrite-call-args env args)
+            slots)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -13783,24 +14129,28 @@
         dst
         ty
         (IrInstrPhi dst (opt-sccp-rewrite-phi-inputs env inputs) ty))]
-    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
-      (IrInstrVectorBinOp
-        dst
-        op
-        (opt-sccp-rewrite-value env lhs)
-        (opt-sccp-rewrite-value env rhs)
-        lanes
-        ty)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-bin-op
+            dst
+            op
+            (opt-sccp-rewrite-value env lhs)
+            (opt-sccp-rewrite-value env rhs)
+            lanes
+            ty)])]
     [(IrInstrVectorReduce dst op src lanes ty)
       (IrInstrVectorReduce dst op (opt-sccp-rewrite-value env src) lanes ty)]
-    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
-      (IrInstrVectorCompare
-        dst
-        op
-        (opt-sccp-rewrite-value env lhs)
-        (opt-sccp-rewrite-value env rhs)
-        lanes
-        ty)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-compare
+            dst
+            op
+            (opt-sccp-rewrite-value env lhs)
+            (opt-sccp-rewrite-value env rhs)
+            lanes
+            ty)])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         dst
@@ -13812,14 +14162,16 @@
       (IrInstrMaskNot dst (opt-sccp-rewrite-value env src) lanes)]
     [(IrInstrMaskReduce dst op src lanes)
       (IrInstrMaskReduce dst op (opt-sccp-rewrite-value env src) lanes)]
-    [(IrInstrSelect dst mask true-value false-value lanes ty)
-      (IrInstrSelect
-        dst
-        (opt-sccp-rewrite-value env mask)
-        (opt-sccp-rewrite-value env true-value)
-        (opt-sccp-rewrite-value env false-value)
-        lanes
-        ty)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst mask true-value false-value lanes ty)
+          (ir-instr-select
+            dst
+            (opt-sccp-rewrite-value env mask)
+            (opt-sccp-rewrite-value env true-value)
+            (opt-sccp-rewrite-value env false-value)
+            lanes
+            ty)])]
     [(IrInstrVectorLoad dst base index lanes ty)
       (IrInstrVectorLoad
         dst
@@ -13827,29 +14179,35 @@
         (opt-sccp-rewrite-value env index)
         lanes
         ty)]
-    [(IrInstrVectorStore base index value lanes ty)
-      (IrInstrVectorStore
-        (opt-sccp-rewrite-value env base)
-        (opt-sccp-rewrite-value env index)
-        (opt-sccp-rewrite-value env value)
-        lanes
-        ty)]
-    [(IrInstrPredicatedStore base index value mask lanes ty)
-      (IrInstrPredicatedStore
-        (opt-sccp-rewrite-value env base)
-        (opt-sccp-rewrite-value env index)
-        (opt-sccp-rewrite-value env value)
-        (opt-sccp-rewrite-value env mask)
-        lanes
-        ty)]
-    [(IrInstrPredicatedLoad dst base index mask lanes ty)
-      (IrInstrPredicatedLoad
-        dst
-        (opt-sccp-rewrite-value env base)
-        (opt-sccp-rewrite-value env index)
-        (opt-sccp-rewrite-value env mask)
-        lanes
-        ty)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value lanes ty)
+          (ir-instr-vector-store
+            (opt-sccp-rewrite-value env base)
+            (opt-sccp-rewrite-value env index)
+            (opt-sccp-rewrite-value env value)
+            lanes
+            ty)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask lanes ty)
+          (ir-instr-predicated-store
+            (opt-sccp-rewrite-value env base)
+            (opt-sccp-rewrite-value env index)
+            (opt-sccp-rewrite-value env value)
+            (opt-sccp-rewrite-value env mask)
+            lanes
+            ty)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty)
+          (ir-instr-predicated-load
+            dst
+            (opt-sccp-rewrite-value env base)
+            (opt-sccp-rewrite-value env index)
+            (opt-sccp-rewrite-value env mask)
+            lanes
+            ty)])]
     [(IrInstrTailMask dst index length lanes)
       (IrInstrTailMask
         dst
@@ -14047,15 +14405,23 @@
     [(IrInstrUnOp dst _ _ _) dst]
     [(IrInstrLaneId dst _ _) dst]
     [(IrInstrSplat dst _ _ _) dst]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) dst]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) dst])]
     [(IrInstrVectorReduce dst _ _ _ _) dst]
-    [(IrInstrVectorCompare dst _ _ _ _ _) dst]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) dst])]
     [(IrInstrMaskBinOp dst _ _ _ _) dst]
     [(IrInstrMaskNot dst _ _) dst]
     [(IrInstrMaskReduce dst _ _ _) dst]
-    [(IrInstrSelect dst _ _ _ _ _) dst]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) dst])]
     [(IrInstrVectorLoad dst _ _ _ _) dst]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) dst]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) dst])]
     [(IrInstrTailMask dst _ _ _) dst]
     [(IrInstrEntryArgc dst) dst]
     [(IrInstrEntryArgv dst) dst]
@@ -14066,14 +14432,22 @@
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrCallIndirectC dst _ _ _) dst]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) (- 0 1)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) (- 0 1)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) (- 0 1)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) (- 0 1)])]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrStorePtr _ _ _) (- 0 1)]
     [(IrInstrCopyBytes _ _ _) (- 0 1)]
     [(IrInstrBoundsCheck _ _ _) (- 0 1)]
-    [(IrInstrVectorStore _ _ _ _ _) (- 0 1)]
-    [(IrInstrPredicatedStore _ _ _ _ _ _) (- 0 1)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) (- 0 1)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) (- 0 1)])]
     [(IrInstrTailCall _ _ _) (- 0 1)]
     [(IrInstrStore _ _ _) (- 0 1)]
     [(IrInstrJump _) (- 0 1)]
@@ -16604,23 +16978,31 @@
     [(IrInstrUnOp dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrLaneId dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrSplat dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (opt-loop-bce-state-invalidate-def state dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (opt-loop-bce-state-invalidate-def state dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrMaskNot dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrMaskReduce dst _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (opt-loop-bce-state-invalidate-def state dst)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (opt-loop-bce-state-invalidate-def state dst)]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
     [(IrInstrTailMask dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrEntryArgc dst)
       (opt-loop-bce-state-bind-expr state sources dst (OptLoopBceArgc))]
@@ -16639,17 +17021,26 @@
     [(IrInstrCallIndirectC dst _ _ _)
       (opt-loop-bce-state-clear-lengths
         (opt-loop-bce-state-invalidate-def state dst))]
-    [(IrInstrCallCAbiStoreResult _ _ _ _)
-      (opt-loop-bce-state-clear-lengths state)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-      (opt-loop-bce-state-clear-lengths state)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+          (opt-loop-bce-state-clear-lengths state)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+          (opt-loop-bce-state-clear-lengths state)])]
     [(IrInstrStorePtr ptr value _)
       (opt-loop-bce-update-storeptr state sources ptr value)]
     [(IrInstrCopyBytes _ _ _) (opt-loop-bce-state-clear-lengths state)]
     [(IrInstrBoundsCheck _ _ _) state]
-    [(IrInstrVectorStore _ _ _ _ _) (opt-loop-bce-state-clear-lengths state)]
-    [(IrInstrPredicatedStore _ _ _ _ _ _)
-      (opt-loop-bce-state-clear-lengths state)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _)
+          (opt-loop-bce-state-clear-lengths state)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _)
+          (opt-loop-bce-state-clear-lengths state)])]
     [(IrInstrStore _ _ _) state]
     [(IrInstrBranch cond true-label false-label)
       (opt-loop-bce-branch-state
@@ -18299,8 +18690,10 @@
   [instr : CompilerIrInstr]) : OptSlotList
   (match instr
     [(IrInstrCall _ name _ _) (opt-callgraph-add-callee index callees name)]
-    [(IrInstrCallCAbiStoreResult _ name _ _)
-      (opt-callgraph-add-callee index callees name)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ name _ _)
+          (opt-callgraph-add-callee index callees name)])]
     [(IrInstrTailCall name _ _) (opt-callgraph-add-callee index callees name)]
     [_ callees]))
 
@@ -18519,18 +18912,22 @@
     [(IrInstrUnOp _ _ src _) (opt-inline-census-value index census src)]
     [(IrInstrLaneId _ _ _) census]
     [(IrInstrSplat _ value _ _) (opt-inline-census-value index census value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value index census lhs)
-        rhs)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value index census lhs)
+            rhs)])]
     [(IrInstrVectorReduce _ _ src _ _)
       (opt-inline-census-value index census src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value index census lhs)
-        rhs)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value index census lhs)
+            rhs)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (opt-inline-census-value
         index
@@ -18538,46 +18935,54 @@
         rhs)]
     [(IrInstrMaskNot _ src _) (opt-inline-census-value index census src)]
     [(IrInstrMaskReduce _ _ src _) (opt-inline-census-value index census src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value
-          index
-          (opt-inline-census-value index census mask)
-          on-true)
-        on-false)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value index census mask)
+              on-true)
+            on-false)])]
     [(IrInstrVectorLoad _ base idx _ _)
       (opt-inline-census-value
         index
         (opt-inline-census-value index census base)
         idx)]
-    [(IrInstrVectorStore base idx value _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value
-          index
-          (opt-inline-census-value index census base)
-          idx)
-        value)]
-    [(IrInstrPredicatedStore base idx value mask _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value
-          index
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base idx value _ _)
           (opt-inline-census-value
             index
-            (opt-inline-census-value index census base)
-            idx)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base idx mask _ _)
-      (opt-inline-census-value
-        index
-        (opt-inline-census-value
-          index
-          (opt-inline-census-value index census base)
-          idx)
-        mask)]
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value index census base)
+              idx)
+            value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base idx value mask _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value
+                index
+                (opt-inline-census-value index census base)
+                idx)
+              value)
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base idx mask _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value index census base)
+              idx)
+            mask)])]
     [(IrInstrTailMask _ idx length _)
       (opt-inline-census-value
         index
@@ -18598,14 +19003,16 @@
         index
         (opt-inline-census-args index census args)
         name)]
-    [(IrInstrCallCAbiStoreResult base name args _)
-      (opt-inline-census-add-ref
-        index
-        (opt-inline-census-args
-          index
-          (opt-inline-census-value index census base)
-          args)
-        name)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
+          (opt-inline-census-add-ref
+            index
+            (opt-inline-census-args
+              index
+              (opt-inline-census-value index census base)
+              args)
+            name)])]
     [(IrInstrCallIndirect _ func args _)
       (opt-inline-census-args
         index
@@ -18616,14 +19023,16 @@
         index
         (opt-inline-census-value index census func)
         args)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (opt-inline-census-args
-        index
-        (opt-inline-census-value
-          index
-          (opt-inline-census-value index census base)
-          func)
-        args)]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (opt-inline-census-args
+            index
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value index census base)
+              func)
+            args)])]
     [(IrInstrTailCall name args _)
       (opt-inline-census-add-ref
         index
@@ -19777,18 +20186,26 @@
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
         (clone ty))]
-    [(IrInstrCallCAbiStoreResult call-base name a slots)
-      (IrInstrCallCAbiStoreResult
-        (opt-inline-remap-value call-base sa np base)
-        (clone name)
-        (opt-inline-remap-args a sa np base)
-        slots)]
-    [(IrInstrCallIndirectCAbiStoreResult call-base callee a slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (opt-inline-remap-value call-base sa np base)
-        (opt-inline-remap-value callee sa np base)
-        (opt-inline-remap-args a sa np base)
-        slots)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload call-base name a slots)
+          (ir-instr-call-cabi-store-result
+            (opt-inline-remap-value call-base sa np base)
+            (clone name)
+            (opt-inline-remap-args a sa np base)
+            slots)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            call-base
+            callee
+            a
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (opt-inline-remap-value call-base sa np base)
+            (opt-inline-remap-value callee sa np base)
+            (opt-inline-remap-args a sa np base)
+            slots)])]
     [_ instr]))
 
 (define (opt-inline-return->mov
@@ -21944,40 +22361,52 @@
     [(IrInstrUnOp _ _ src _) (opt-reach-value index state src)]
     [(IrInstrLaneId _ _ _) state]
     [(IrInstrSplat _ value _ _) (opt-reach-value index state value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (opt-reach-value index (opt-reach-value index state lhs) rhs)])]
     [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value index state src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-reach-value index (opt-reach-value index state lhs) rhs)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (opt-reach-value index (opt-reach-value index state lhs) rhs)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (opt-reach-value index (opt-reach-value index state lhs) rhs)]
     [(IrInstrMaskNot _ src _) (opt-reach-value index state src)]
     [(IrInstrMaskReduce _ _ src _) (opt-reach-value index state src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (opt-reach-value
-        index
-        (opt-reach-value index (opt-reach-value index state mask) on-true)
-        on-false)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (opt-reach-value
+            index
+            (opt-reach-value index (opt-reach-value index state mask) on-true)
+            on-false)])]
     [(IrInstrVectorLoad _ base idx _ _)
       (opt-reach-value index (opt-reach-value index state base) idx)]
-    [(IrInstrVectorStore base idx value _ _)
-      (opt-reach-value
-        index
-        (opt-reach-value index (opt-reach-value index state base) idx)
-        value)]
-    [(IrInstrPredicatedStore base idx value mask _ _)
-      (opt-reach-value
-        index
-        (opt-reach-value
-          index
-          (opt-reach-value index (opt-reach-value index state base) idx)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base idx mask _ _)
-      (opt-reach-value
-        index
-        (opt-reach-value index (opt-reach-value index state base) idx)
-        mask)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base idx value _ _)
+          (opt-reach-value
+            index
+            (opt-reach-value index (opt-reach-value index state base) idx)
+            value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base idx value mask _ _)
+          (opt-reach-value
+            index
+            (opt-reach-value
+              index
+              (opt-reach-value index (opt-reach-value index state base) idx)
+              value)
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base idx mask _ _)
+          (opt-reach-value
+            index
+            (opt-reach-value index (opt-reach-value index state base) idx)
+            mask)])]
     [(IrInstrTailMask _ idx length _)
       (opt-reach-value index (opt-reach-value index state idx) length)]
     [(IrInstrEntryArgc _) state]
@@ -21992,20 +22421,24 @@
         index
         (opt-reach-call-args index state args)
         name)]
-    [(IrInstrCallCAbiStoreResult base name args _)
-      (opt-reach-add-call-target
-        index
-        (opt-reach-call-args index (opt-reach-value index state base) args)
-        name)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
+          (opt-reach-add-call-target
+            index
+            (opt-reach-call-args index (opt-reach-value index state base) args)
+            name)])]
     [(IrInstrCallIndirect _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(IrInstrCallIndirectC _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (opt-reach-call-args
-        index
-        (opt-reach-value index (opt-reach-value index state base) func)
-        args)]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (opt-reach-call-args
+            index
+            (opt-reach-value index (opt-reach-value index state base) func)
+            args)])]
     [(IrInstrTailCall name args _)
       (opt-reach-add-call-target
         index
@@ -22419,19 +22852,28 @@
             (OptLoopBceCleanScan
               (opt-loop-bce-state-invalidate-def state dst)
               false)]
-          [(IrInstrCallCAbiStoreResult _ _ _ _)
-            (OptLoopBceCleanScan state false)]
-          [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-            (OptLoopBceCleanScan state false)]
+          [(IrInstrCallCAbiStoreResult payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+                (OptLoopBceCleanScan state false)])]
+          [(IrInstrCallIndirectCAbiStoreResult payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+                (OptLoopBceCleanScan state false)])]
           [(IrInstrTailCallIndirect _ _ _) (OptLoopBceCleanScan state false)]
           [(IrInstrSyscall dst _)
             (OptLoopBceCleanScan
               (opt-loop-bce-state-invalidate-def state dst)
               false)]
           [(IrInstrCopyBytes _ _ _) (OptLoopBceCleanScan state false)]
-          [(IrInstrVectorStore _ _ _ _ _) (OptLoopBceCleanScan state false)]
-          [(IrInstrPredicatedStore _ _ _ _ _ _)
-            (OptLoopBceCleanScan state false)]
+          [(IrInstrVectorStore payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrVectorStorePayload _ _ _ _ _)
+                (OptLoopBceCleanScan state false)])]
+          [(IrInstrPredicatedStore payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _)
+                (OptLoopBceCleanScan state false)])]
           [_
             (let
               [dst : i64 (opt-gvn-instr-dst instr)]
@@ -22649,24 +23091,32 @@
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrSplat dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(IrInstrVectorReduce dst _ _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(IrInstrMaskBinOp dst _ _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrMaskNot dst _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrMaskReduce dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
-    [(IrInstrSelect dst _ _ _ _ _)
-      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(IrInstrVectorLoad dst _ _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(IrInstrTailMask dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrEntryArgc dst)
@@ -23655,7 +24105,7 @@
       (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
         (compiler-ir-instr-cons
-          (IrInstrPredicatedLoad
+          (ir-instr-predicated-load
             8
             (IrValueVar 99)
             (IrValueI64 0)
@@ -24158,7 +24608,7 @@
           (compiler-ir-instr-cons
             (IrInstrTailMask 4 (IrValueVar 0) (IrValueVar 1) 4)
             (compiler-ir-instr-cons
-              (IrInstrVectorBinOp
+              (ir-instr-vector-bin-op
                 5
                 (IrBinAdd)
                 (IrValueVar 2)
@@ -24166,7 +24616,7 @@
                 4
                 (AstTyI64))
               (compiler-ir-instr-cons
-                (IrInstrSelect
+                (ir-instr-select
                   6
                   (IrValueVar 4)
                   (IrValueVar 5)
@@ -24174,7 +24624,7 @@
                   4
                   (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrPredicatedStore
+                  (ir-instr-predicated-store
                     (IrValueVar 8)
                     (IrValueVar 0)
                     (IrValueVar 6)
@@ -24185,9 +24635,15 @@
 
 (define (opt-vector-cse-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (IrInstrVectorBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) 4 (AstTyI64))
+    (ir-instr-vector-bin-op
+      2
+      (IrBinAdd)
+      (IrValueVar 0)
+      (IrValueVar 1)
+      4
+      (AstTyI64))
     (compiler-ir-instr-cons
-      (IrInstrVectorBinOp
+      (ir-instr-vector-bin-op
         3
         (IrBinAdd)
         (IrValueVar 0)
@@ -24216,7 +24672,7 @@
   (compiler-ir-instr-cons
     (IrInstrMov 2 (IrValueVar 0) (AstTyI64))
     (compiler-ir-instr-cons
-      (IrInstrVectorBinOp
+      (ir-instr-vector-bin-op
         3
         (IrBinAdd)
         (IrValueVar 2)
@@ -24267,7 +24723,9 @@
     [(IrInstrCons instr rest)
       (+
         (match instr
-          [(IrInstrVectorBinOp _ _ _ _ _ _) 1]
+          [(IrInstrVectorBinOp payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrVectorBinOpPayload _ _ _ _ _ _) 1])]
           [_ 0])
         (opt-count-vector-binop-instrs (box-get rest)))]))
 
@@ -24286,12 +24744,14 @@
     [(IrInstrNil) (- 0 1)]
     [(IrInstrCons instr rest)
       (match instr
-        [(IrInstrVectorBinOp d _ lhs _ _ _)
-          (if (= d dst)
-            (match lhs
-              [(IrValueVar id) id]
-              [_ (- 0 1)])
-            (opt-vector-binop-lhs-var (box-get rest) dst))]
+        [(IrInstrVectorBinOp payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorBinOpPayload d _ lhs _ _ _)
+              (if (= d dst)
+                (match lhs
+                  [(IrValueVar id) id]
+                  [_ (- 0 1)])
+                (opt-vector-binop-lhs-var (box-get rest) dst))])]
         [_ (opt-vector-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-mask-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
@@ -32001,8 +32461,12 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
@@ -32043,8 +32507,10 @@
       [(IrInstrEntryEnvp dst) (opt-alias-mark-may-alias facts dst)]
       [(IrInstrAddrOf dst _) (opt-alias-mark-may-alias facts dst)]
       [(IrInstrVectorLoad dst _ _ _ _) (opt-alias-mark-may-alias facts dst)]
-      [(IrInstrPredicatedLoad dst _ _ _ _ _)
-        (opt-alias-mark-may-alias facts dst)]
+      [(IrInstrPredicatedLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+            (opt-alias-mark-may-alias facts dst)])]
       [_ facts])))
 
 (define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
@@ -32210,9 +32676,14 @@
             (OptScratchBlocked "call"))]
         [(IrInstrCallIndirect _ _ _ _) (OptScratchBlocked "call")]
         [(IrInstrCallIndirectC _ _ _ _) (OptScratchBlocked "extern_call")]
-        [(IrInstrCallCAbiStoreResult _ _ _ _) (OptScratchBlocked "extern_call")]
-        [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-          (OptScratchBlocked "extern_call")]
+        [(IrInstrCallCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+              (OptScratchBlocked "extern_call")])]
+        [(IrInstrCallIndirectCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+              (OptScratchBlocked "extern_call")])]
         [(IrInstrSyscall _ _) (OptScratchBlocked "extern_call")]
         [(IrInstrTailCall _ _ _) (OptScratchBlocked "tail_call")]
         [(IrInstrTailCallIndirect _ _ _) (OptScratchBlocked "tail_call")]
@@ -32253,42 +32724,48 @@
               (opt-scratch-value-derived? roots facts src))
               (OptScratchBlocked "raw_pointer")
               (OptScratchNoBlocker)))]
-        [(IrInstrVectorStore base index value _ _)
-          (if (and
-            (opt-scratch-value-derived? roots facts value)
-            (not (opt-scratch-value-derived? roots facts base)))
-            (OptScratchBlocked "store_outer")
-            (if (or
-              (opt-scratch-value-derived? roots facts base)
-              (opt-scratch-value-derived? roots facts index)
-              (opt-scratch-value-derived? roots facts value))
-              (OptScratchBlocked "raw_pointer")
-              (OptScratchNoBlocker)))]
-        [(IrInstrPredicatedStore base index value mask _ _)
-          (if (and
-            (opt-scratch-value-derived? roots facts value)
-            (not (opt-scratch-value-derived? roots facts base)))
-            (OptScratchBlocked "store_outer")
-            (if (or
-              (opt-scratch-value-derived? roots facts base)
-              (opt-scratch-value-derived? roots facts index)
-              (opt-scratch-value-derived? roots facts value)
-              (opt-scratch-value-derived? roots facts mask))
-              (OptScratchBlocked "raw_pointer")
-              (OptScratchNoBlocker)))]
+        [(IrInstrVectorStore payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorStorePayload base index value _ _)
+              (if (and
+                (opt-scratch-value-derived? roots facts value)
+                (not (opt-scratch-value-derived? roots facts base)))
+                (OptScratchBlocked "store_outer")
+                (if (or
+                  (opt-scratch-value-derived? roots facts base)
+                  (opt-scratch-value-derived? roots facts index)
+                  (opt-scratch-value-derived? roots facts value))
+                  (OptScratchBlocked "raw_pointer")
+                  (OptScratchNoBlocker)))])]
+        [(IrInstrPredicatedStore payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+              (if (and
+                (opt-scratch-value-derived? roots facts value)
+                (not (opt-scratch-value-derived? roots facts base)))
+                (OptScratchBlocked "store_outer")
+                (if (or
+                  (opt-scratch-value-derived? roots facts base)
+                  (opt-scratch-value-derived? roots facts index)
+                  (opt-scratch-value-derived? roots facts value)
+                  (opt-scratch-value-derived? roots facts mask))
+                  (OptScratchBlocked "raw_pointer")
+                  (OptScratchNoBlocker)))])]
         [(IrInstrVectorLoad _ base index _ _)
           (if (or
             (opt-scratch-value-derived? roots facts base)
             (opt-scratch-value-derived? roots facts index))
             (OptScratchBlocked "raw_pointer")
             (OptScratchNoBlocker))]
-        [(IrInstrPredicatedLoad _ base index mask _ _)
-          (if (or
-            (opt-scratch-value-derived? roots facts base)
-            (opt-scratch-value-derived? roots facts index)
-            (opt-scratch-value-derived? roots facts mask))
-            (OptScratchBlocked "raw_pointer")
-            (OptScratchNoBlocker))]
+        [(IrInstrPredicatedLoad payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+              (if (or
+                (opt-scratch-value-derived? roots facts base)
+                (opt-scratch-value-derived? roots facts index)
+                (opt-scratch-value-derived? roots facts mask))
+                (OptScratchBlocked "raw_pointer")
+                (OptScratchNoBlocker))])]
         [(IrInstrReturn maybe)
           (if (opt-scratch-maybe-value-derived? roots facts maybe)
             (OptScratchBlocked "return_escape")
@@ -33416,7 +33893,7 @@
         (IrInstrStore "g" (IrValueI64 9) (AstTyI64)))]
     [vector-store : bool
       (opt-load-cse-barrier-blocked?
-        (IrInstrVectorStore
+        (ir-instr-vector-store
           (IrValueVar 1)
           (IrValueI64 0)
           (IrValueI64 9)
@@ -33424,7 +33901,7 @@
           (AstTyI64)))]
     [pred-store : bool
       (opt-load-cse-barrier-blocked?
-        (IrInstrPredicatedStore
+        (ir-instr-predicated-store
           (IrValueVar 1)
           (IrValueI64 0)
           (IrValueI64 9)

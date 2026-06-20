@@ -1371,6 +1371,19 @@ Extern C ABI calls remain out of scope while safe reference types are not legal
 C ABI parameter values. Arbitrary rvalues and temporaries are still rejected
 because they have no stable lexical owner:
 
+**Two-phase mutable call borrows.** For a typed TypeLisp call argument, an
+explicit top-level `(&mut place)` passed to a mutable-reference formal reserves
+exclusive access while later arguments are checked, then activates at the call
+boundary. During the reservation, later arguments may perform non-mutating reads
+and shared borrows of the same place when those shared borrows do not escape the
+argument expression. This covers collection update idioms such as passing
+`(&mut items)` and computing `array-length items` or a scalar helper call from
+`(& items)` in a later argument. The reservation still rejects a second mutable
+borrow of an overlapping path, moving or mutating the owner, and any shared
+borrow that is returned, stored, or otherwise live across activation. The rule
+is intentionally scoped to typed call argument evaluation; it is not general
+non-lexical lifetime inference or delayed activation outside call arguments.
+
 ```lisp test=ignore name=auto-borrow-reject-temporary reason="negative example for immutable call-site auto-borrowing"
 (define (takes-ref [n : (& value i64)]) : i64
   (read-ref n))

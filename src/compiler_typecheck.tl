@@ -8451,7 +8451,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-call-duplicate-source)
-        "typecheck: cannot read mutably borrowed place `n`")
+        "typecheck: cannot mutably borrow borrowed place `n`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

@@ -509,6 +509,60 @@
       (array-set! borrowed 0 41)
       (array-length items))))")
 
+(define (compiler-typecheck-two-phase-mut-call-shared-read-source) : String
+  "(define (read-len [items : (& items (Array i64))]) : i64
+  (array-length items))
+(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+  (array-push! items value))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (begin
+      (push-with-len (&mut items) (read-len (& items)))
+      (array-length items))))")
+
+(define (compiler-typecheck-two-phase-mut-call-direct-read-source) : String
+  "(define (push-with-len [items : (&mut items (Array i64))] [value : i64]) : unit
+  (array-push! items value))
+(define (main) : i64
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (begin
+      (push-with-len (&mut items) (array-length items))
+      (array-length items))))")
+
+(define (compiler-typecheck-two-phase-mut-call-second-mut-source) : String
+  "(define (take-two
+  [left : (&mut left (Array i64))]
+  [right : (&mut right (Array i64))]) : unit
+  unit)
+(define (main) : unit
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (take-two (&mut items) (&mut items))))")
+
+(define (compiler-typecheck-two-phase-mut-call-escaping-shared-source) : String
+  "(define (borrow-items [items : (& items (Array i64))]) : (& items (Array i64))
+  items)
+(define (take-mut-and-view
+  [items : (&mut items (Array i64))]
+  [view : (& items (Array i64))]) : unit
+  unit)
+(define (main) : unit
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (take-mut-and-view (&mut items) (borrow-items (& items)))))")
+
+(define (compiler-typecheck-two-phase-mut-call-mutate-owner-source) : String
+  "(define (take-mut-and-value
+  [items : (&mut items (Array i64))]
+  [value : i64]) : unit
+  unit)
+(define (main) : unit
+  (let
+    [items : (Array i64) (make-array i64 1)]
+    (take-mut-and-value (&mut items) (begin (array-push! items 1) 0))))")
+
 (define (compiler-typecheck-borrow-if-conservative-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
 (define (main [n : i64] [flag : bool]) : i64
@@ -719,6 +773,19 @@
       (compiler-typecheck-mut-borrow-read-through-ref-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-mut-borrow-owner-read-after-last-use-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-two-phase-mut-call-shared-read-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-two-phase-mut-call-direct-read-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-two-phase-mut-call-second-mut-source)
+      "typecheck: cannot mutably borrow borrowed place `items`")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-two-phase-mut-call-escaping-shared-source)
+      "typecheck: cannot mutably borrow borrowed place `items`")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-two-phase-mut-call-mutate-owner-source)
+      "typecheck: cannot assign to borrowed place `items`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-if-conservative-source)
       "typecheck: cannot assign to borrowed place `n`")

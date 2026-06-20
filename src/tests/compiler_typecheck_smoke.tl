@@ -681,6 +681,28 @@
       (while (< n 3) (set! n 2))
       (take borrowed))))")
 
+(define (compiler-typecheck-borrow-while-body-after-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [limit : i64]) : i64
+  (let [i : i64 0]
+    (begin
+      (while (< i limit)
+        (let [borrowed : (& n i64) (& n)]
+          (begin
+            (take borrowed)
+            (set! n (+ n 1))
+            (set! i (+ i 1)))))
+      n)))")
+
+(define (compiler-typecheck-borrow-foreach-body-after-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [out : (Array i64)] [limit : i64]) : unit
+  (foreach ([i : i64 0 limit])
+    (let [borrowed : (& n i64) (& n)]
+      (begin
+        (take borrowed)
+        (array-set! out i n)))))")
+
 (define (compiler-typecheck-secondary-label-contains?
   [labels : CompilerDiagnosticLabelList]
   [needle : String]) : bool
@@ -810,7 +832,11 @@
       (compiler-typecheck-borrow-if-aggregate-result-after-last-use-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-while-conservative-source)
-      "typecheck: cannot assign to borrowed place `n`")))
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-while-body-after-last-use-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-foreach-body-after-last-use-source))))
 
 (define (compiler-typecheck-labeled-move-error-ok?
   [src : String]

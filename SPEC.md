@@ -1284,10 +1284,9 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
   they are the same path or one is an ancestor of the other, so mutable borrows
   of disjoint sibling fields may coexist while overlapping whole-field,
   same-field, and field-element borrows are rejected. Non-lexical last-use
-  shortening is implemented for local expression sequences and path-sensitive
-  `if`/`match` joins; loop-carried shortening, reference-capturing closure
-  relaxation, and general dereference/update operations remain follow-up
-  borrow-checker work.
+  shortening is implemented for local expression sequences, path-sensitive
+  `if`/`match` joins, and loop bodies with conservative loop-carried facts;
+  general dereference/update operations remain follow-up borrow-checker work.
 - Lowering supports reference values for scalar referents, borrowed `str`, and
   array referents used by `array-ref`, `array-set!`, and `array-push!`.
   Borrowed `str` source semantics are specified in section 3.11.
@@ -1559,13 +1558,13 @@ possible:
 - Attempts to use type parameters, type expressions, or generic type
   constructors where only lifetime names are allowed.
 
-V1 exclusions: loop-carried non-lexical lifetimes, runtime generics/type
-parameters, trait-like bounds, lifetime elision syntax, lifetime
-subtyping/coercion, and Rust compiler product-surface changes are out of scope.
-The selfhost parser, AST, typechecker, and lowerer support for this specified
-syntax is implemented (#1722/#804), as are mutable-reference creation and
-exclusivity (#806), straight-line and path-sensitive branch last-use shortening
-for borrows (#810 first slices), and non-escaping reference-capturing closures
+V1 exclusions: runtime generics/type parameters, trait-like bounds, lifetime
+elision syntax, lifetime subtyping/coercion, and Rust compiler product-surface
+changes are out of scope. The selfhost parser, AST, typechecker, and lowerer
+support for this specified syntax is implemented (#1722/#804), as are
+mutable-reference creation and exclusivity (#806), straight-line,
+path-sensitive branch, and conservative loop-body last-use shortening for
+borrows (#3380/#3381/#3382), and non-escaping reference-capturing closures
 (#808/#2280).
 
 **Non-lexical v1 lifetime rule.** A borrow created in v1 lives until the last
@@ -1576,17 +1575,22 @@ path-sensitive `if`/`match` joins. Branch-local borrows that do not escape the
 taken branch end at their last in-branch reference use; borrows that escape
 through the branch result, an outer assignment, or a lifetime-parameterized
 aggregate result remain live after the join until the escaping value's last
-use. A plain auto-borrowed call argument whose callee does not return or store a
-reference tied to the argument lifetime ends after the call expression. If the
-reference result is bound, stored in a lifetime-parameterized aggregate,
-returned, or otherwise remains available as a reference value, the owner remains
-borrowed until that value's last proven use.
+use. Loop bodies use the same local shortening for borrows created and killed
+within one iteration. Facts that may be carried by an outer lifetime-bearing
+local or aggregate stay live across later iterations and the loop exit until the
+carried value's last proven use; when the checker cannot prove otherwise it
+keeps the fact live conservatively. A plain auto-borrowed call argument whose
+callee does not return or store a reference tied to the argument lifetime ends
+after the call expression. If the reference result is bound, stored in a
+lifetime-parameterized aggregate, returned, or otherwise remains available as a
+reference value, the owner remains borrowed until that value's last proven use.
 
 Lexical scopes are still the conservative boundary for flows this slice does
-not prove: function/lambda bodies, `let` bodies, `with-arena` bodies, resource
-`with` bodies, loops, `foreach`, and SPMD control flow. When a borrow crosses
-one of those boundaries and a later reference use remains possible, it is kept
-live for the conservative scope instead of being shortened through the join.
+not prove: function/lambda bodies, `with-arena` bodies, resource `with` bodies,
+and broader SPMD/control-flow surfaces outside the checked loop-body summaries.
+When a borrow crosses one of those boundaries and a later reference use remains
+possible, it is kept live for the conservative scope instead of being shortened
+through the join.
 
 While an immutable borrow is live, later move-only by-value moves, `set!`
 assignment to the borrowed place, and mutable borrows/mutations of the same
@@ -1605,7 +1609,8 @@ reference becomes usable again after that nested scope ends. Using or mutating
 through the outer reference while the inner reborrow is still live remains
 rejected. Straight-line `begin` sequences and path-sensitive `if`/`match` joins
 can shorten immutable and storage-backed mutable borrow conflicts after the last
-use, but loop joins remain conservative.
+use, and loop bodies can shorten body-local facts while keeping loop-carried
+facts conservative.
 
 **Invalid escapes in v1.** The checker rejects references that would outlive
 their owner or arena:
@@ -1626,8 +1631,8 @@ returned/stored lifetime parameter syntax is specified in section 3.10.1 and
 implemented by #1722/#804. Non-escaping reference-capturing closures are
 implemented (#808/#2280); mutation of captured names remains rejected (#2552).
 Straight-line non-lexical lifetime shortening and path-sensitive branch joins
-are implemented as the first #810 slices; loop-carried liveness and broader
-control-flow shortening remain later #810 slices.
+are implemented by #3380/#3381, and conservative loop-body liveness is
+implemented by #3382. Broader control-flow shortening remains future work.
 
 ```lisp test=ignore name=borrow-local-param-ok reason="illustrative borrow-expression example; not a standalone program"
 (define (takes-i64 [x : (& n i64)]) : i64
@@ -5366,7 +5371,8 @@ owners introduced in nested scopes. A nested stack slot or scoped arena does
 not outlive its enclosing owner, so references and region-tagged handles tied
 to the nested owner cannot be returned, stored into longer-lived bindings or
 aggregates, or captured by closures that may escape. Non-lexical lifetime
-shortening is deferred to #810.
+shortening is implemented for expression sequences, branches, and conservative
+loop-body summaries; broader precision remains future work.
 
 `with-escape` is not a lexical lifetime binder and does not introduce a written
 lifetime name. Its scratch arena is a first-class arena handle. The only

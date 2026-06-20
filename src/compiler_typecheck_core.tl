@@ -29215,6 +29215,588 @@
         exprs)]
     [_ (tc-borrow-check-expr ctx env locals borrowed expr)]))
 
+(define (tc-borrow-check-expr-type-contains-lifetime?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [lifetime : String]) : bool
+  (match (tc-expr ctx env expr)
+    [(OkTcType ty) (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
+    [(ErrTcType _) false]))
+
+(define (tc-borrow-check-expr-list-stores-lifetime?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [lifetime : String]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (if (tc-borrow-check-expr-stores-lifetime?
+        ctx
+        env
+        (ast-node-get head)
+        lifetime)
+        true
+        (tc-borrow-check-expr-list-stores-lifetime?
+          ctx
+          env
+          (box-get rest)
+          lifetime))]))
+
+(define (tc-borrow-check-let-bindings-store-lifetime?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : AstLetBindingList]
+  [lifetime : String]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init-box)
+          (if (tc-borrow-check-expr-stores-lifetime?
+            ctx
+            env
+            (ast-node-get init-box)
+            lifetime)
+            true
+            (tc-borrow-check-let-bindings-store-lifetime?
+              ctx
+              env
+              (box-get rest)
+              lifetime))])]))
+
+(define (tc-borrow-check-match-arms-store-lifetime?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arms : AstMatchArmList]
+  [lifetime : String]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (if (tc-borrow-check-expr-stores-lifetime?
+            ctx
+            env
+            (ast-node-get body-box)
+            lifetime)
+            true
+            (tc-borrow-check-match-arms-store-lifetime?
+              ctx
+              env
+              (box-get rest)
+              lifetime))])]))
+
+(define (tc-borrow-check-expr-stores-lifetime?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [lifetime : String]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (tc-borrow-check-expr-stores-lifetime?
+        ctx
+        env
+        (ast-node-get inner-box)
+        lifetime)]
+    [(AstExprAnn inner-box _)
+      (tc-borrow-check-expr-stores-lifetime?
+        ctx
+        env
+        (ast-node-get inner-box)
+        lifetime)]
+    [(AstExprCast inner-box _)
+      (tc-borrow-check-expr-stores-lifetime?
+        ctx
+        env
+        (ast-node-get inner-box)
+        lifetime)]
+    [(AstExprBegin exprs)
+      (tc-borrow-check-expr-list-stores-lifetime? ctx env exprs lifetime)]
+    [(AstExprUnsafe exprs)
+      (tc-borrow-check-expr-list-stores-lifetime? ctx env exprs lifetime)]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (tc-borrow-check-expr-stores-lifetime?
+          ctx
+          env
+          (ast-node-get cond-box)
+          lifetime)
+        (tc-borrow-check-expr-stores-lifetime?
+          ctx
+          env
+          (ast-node-get then-box)
+          lifetime)
+        (tc-borrow-check-expr-stores-lifetime?
+          ctx
+          env
+          (ast-node-get else-box)
+          lifetime))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (tc-borrow-check-let-bindings-store-lifetime?
+              ctx
+              env
+              bindings
+              lifetime)
+            (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              env
+              (ast-node-get body-box)
+              lifetime))])]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (or
+            (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              env
+              (ast-node-get scrut-box)
+              lifetime)
+            (tc-borrow-check-match-arms-store-lifetime? ctx env arms lifetime))])]
+    [(AstExprSet name _)
+      (match (tc-lookup env (intern-str name))
+        [(OkTcType ty)
+          (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
+        [(ErrTcType _) false])]
+    [(AstExprArraySet array-box _ _)
+      (tc-borrow-check-expr-type-contains-lifetime?
+        ctx
+        env
+        (ast-node-get array-box)
+        lifetime)]
+    [(AstExprArrayPush array-box _)
+      (tc-borrow-check-expr-type-contains-lifetime?
+        ctx
+        env
+        (ast-node-get array-box)
+        lifetime)]
+    [(AstExprStructSet receiver-box _ _)
+      (tc-borrow-check-expr-type-contains-lifetime?
+        ctx
+        env
+        (ast-node-get receiver-box)
+        lifetime)]
+    [_ false]))
+
+(define (tc-borrow-check-loop-protect-carried-facts-loop
+  [ctx : TcContext]
+  [loop-env : TcTypeEnv]
+  [before : TcMovedSet]
+  [after-map : StringI64Map]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (string-i64-map-capacity after-map))
+    out
+    (match (string-i64-map-entry-at after-map index)
+      [(StringI64MapEntrySome key value)
+        (let
+          [next : i64 (string-i64-map-next-occupied after-map (+ index 1))]
+          [out2 : TcMovedSet
+            (if (or
+              (not (tc-moved-path-key? key))
+              (tc-moved-contains? before key)
+              (tc-moved-contains? out key))
+              out
+              (tc-moved-add-value out key value))]
+          (tc-borrow-check-loop-protect-carried-facts-loop
+            ctx
+            loop-env
+            before
+            after-map
+            next
+            out2))]
+      [(StringI64MapEntryNone)
+        (tc-borrow-check-loop-protect-carried-facts-loop
+          ctx
+          loop-env
+          before
+          after-map
+          (string-i64-map-next-occupied after-map (+ index 1))
+          out)])))
+
+(define (tc-borrow-check-loop-protect-carried-facts
+  [ctx : TcContext]
+  [loop-env : TcTypeEnv]
+  [before : TcMovedSet]
+  [after : TcMovedSet]
+  [protected : TcMovedSet]) : TcMovedSet
+  (tc-borrow-check-loop-protect-carried-facts-loop
+    ctx
+    loop-env
+    before
+    (tc-moved-map after)
+    (string-i64-map-next-occupied (tc-moved-map after) 0)
+    protected))
+
+(define (tc-borrow-check-loop-protect-stored-facts-loop
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [map : StringI64Map]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (string-i64-map-capacity map))
+    out
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key value)
+        (let
+          [next : i64 (string-i64-map-next-occupied map (+ index 1))]
+          [out2 : TcMovedSet
+            (if (or (not (tc-moved-path-key? key)) (tc-moved-contains? out key))
+              out
+              (let
+                [path : String (tc-moved-conflict-display-path key)]
+                [lifetime : String (tc-borrow-check-path-lifetime ctx env path)]
+                (if (tc-borrow-check-expr-stores-lifetime?
+                  ctx
+                  env
+                  expr
+                  lifetime)
+                  (tc-moved-add-value out key value)
+                  out)))]
+          (tc-borrow-check-loop-protect-stored-facts-loop
+            ctx
+            env
+            expr
+            map
+            next
+            out2))]
+      [(StringI64MapEntryNone)
+        (tc-borrow-check-loop-protect-stored-facts-loop
+          ctx
+          env
+          expr
+          map
+          (string-i64-map-next-occupied map (+ index 1))
+          out)])))
+
+(define (tc-borrow-check-loop-protect-stored-facts
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]) : TcMovedSet
+  (tc-borrow-check-loop-protect-stored-facts-loop
+    ctx
+    env
+    expr
+    (tc-moved-map borrowed)
+    (string-i64-map-next-occupied (tc-moved-map borrowed) 0)
+    protected))
+
+(define (tc-borrow-check-loop-visible-body-borrows
+  [ctx : TcContext]
+  [loop-env : TcTypeEnv]
+  [entry : TcMovedSet]
+  [body-borrowed : TcMovedSet]) : TcMovedSet
+  (tc-moved-union
+    (tc-borrow-check-loop-protect-carried-facts
+      ctx
+      loop-env
+      entry
+      body-borrowed
+      (tc-moved-empty))
+    entry))
+
+(define (tc-borrow-check-exprs-loop-retry-after-prune
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [exprs : AstExprList]
+  [head : AstExpr]
+  [rest : AstExprList]
+  [message : String]) : TcBorrowCheckResult
+  (if (= (tc-moved-len borrowed) 0)
+    (ErrTcBorrowCheck message)
+    (let
+      [borrowed0 : TcMovedSet
+        (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
+      (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
+        (ErrTcBorrowCheck message)
+        (match (tc-borrow-check-expr-loop
+          ctx
+          env
+          loop-env
+          locals
+          borrowed0
+          protected
+          head)
+          [(OkTcBorrowCheck borrowed1)
+            (let
+              [protected1 : TcMovedSet
+                (tc-borrow-check-loop-protect-stored-facts
+                  ctx
+                  env
+                  head
+                  borrowed1
+                  (tc-borrow-check-loop-protect-carried-facts
+                    ctx
+                    loop-env
+                    borrowed0
+                    borrowed1
+                    protected))]
+              (tc-borrow-check-exprs-loop
+                ctx
+                env
+                loop-env
+                locals
+                borrowed1
+                protected1
+                rest))]
+          [(ErrTcBorrowCheck retry-message) (ErrTcBorrowCheck retry-message)])))))
+
+(define (tc-borrow-check-exprs-loop
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [exprs : AstExprList]) : TcBorrowCheckResult
+  (match exprs
+    [(AstExprNil) (OkTcBorrowCheck borrowed)]
+    [(AstExprCons head rest)
+      (let
+        [head : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (tc-borrow-check-expr-loop
+          ctx
+          env
+          loop-env
+          locals
+          borrowed
+          protected
+          head)
+          [(OkTcBorrowCheck borrowed1)
+            (let
+              [protected1 : TcMovedSet
+                (tc-borrow-check-loop-protect-stored-facts
+                  ctx
+                  env
+                  head
+                  borrowed1
+                  (tc-borrow-check-loop-protect-carried-facts
+                    ctx
+                    loop-env
+                    borrowed
+                    borrowed1
+                    protected))]
+              (tc-borrow-check-exprs-loop
+                ctx
+                env
+                loop-env
+                locals
+                borrowed1
+                protected1
+                rest))]
+          [(ErrTcBorrowCheck message)
+            (tc-borrow-check-exprs-loop-retry-after-prune
+              ctx
+              env
+              loop-env
+              locals
+              borrowed
+              protected
+              exprs
+              head
+              rest
+              message)]))]))
+
+(define (tc-borrow-check-arms-loop-join
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [joined : TcMovedSet]) : TcBorrowCheckResult
+  (match arms
+    [(AstMatchArmNil) (OkTcBorrowCheck joined)]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-borrow-check-expr-loop
+                    ctx
+                    arm-env
+                    loop-env
+                    (tc-borrow-check-pattern-locals
+                      ctx
+                      scrut-ty
+                      pattern
+                      (tc-moved-clone locals))
+                    (tc-moved-clone borrowed)
+                    borrowed
+                    body)
+                    [(OkTcBorrowCheck arm-borrowed)
+                      (let
+                        [visible-arm-borrowed : TcMovedSet
+                          (tc-borrow-check-remove-root-states
+                            arm-borrowed
+                            (tc-borrow-check-pattern-bound-names
+                              ctx
+                              scrut-ty
+                              pattern))]
+                        (tc-borrow-check-arms-loop-join
+                          ctx
+                          env
+                          loop-env
+                          locals
+                          borrowed
+                          scrut-ty
+                          rest
+                          (tc-moved-union joined visible-arm-borrowed)))]
+                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                [(ErrTcEnv message) (ErrTcBorrowCheck message)]))]))]))
+
+(define (tc-borrow-check-arms-loop
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : TcBorrowCheckResult
+  (tc-borrow-check-arms-loop-join
+    ctx
+    env
+    loop-env
+    locals
+    borrowed
+    scrut-ty
+    arms
+    borrowed))
+
+(define (tc-borrow-check-expr-loop
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [expr : AstExpr]) : TcBorrowCheckResult
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (tc-borrow-check-expr-loop
+          ctx
+          env
+          loop-env
+          locals
+          borrowed
+          protected
+          inner))]
+    [(AstExprBegin exprs)
+      (tc-borrow-check-exprs-loop
+        ctx
+        env
+        loop-env
+        locals
+        borrowed
+        protected
+        exprs)]
+    [(AstExprUnsafe exprs)
+      (tc-borrow-check-exprs-loop
+        ctx
+        env
+        loop-env
+        locals
+        borrowed
+        protected
+        exprs)]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-branch-box)]
+        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed cond)
+          [(OkTcBorrowCheck borrowedc)
+            (match (tc-borrow-check-expr-loop
+              ctx
+              env
+              loop-env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowedc)
+              borrowedc
+              then-branch)
+              [(OkTcBorrowCheck borrowedt)
+                (match (tc-borrow-check-expr-loop
+                  ctx
+                  env
+                  loop-env
+                  (tc-moved-clone locals)
+                  (tc-moved-clone borrowedc)
+                  borrowedc
+                  else-branch)
+                  [(OkTcBorrowCheck borrowede)
+                    (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (match (tc-borrow-check-let-bindings
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowed)
+              bindings)
+              [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
+                (match (tc-borrow-check-expr-loop
+                  ctx
+                  env2
+                  loop-env
+                  locals2
+                  borrowed2
+                  borrowed
+                  body)
+                  [(OkTcBorrowCheck body-borrowed)
+                    (OkTcBorrowCheck
+                      (tc-borrow-check-loop-visible-body-borrows
+                        ctx
+                        loop-env
+                        borrowed
+                        body-borrowed))]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)]))])]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (let
+            [scrut : AstExpr (ast-node-get scrut-box)]
+            (match (tc-borrow-check-expr ctx env locals borrowed scrut)
+              [(OkTcBorrowCheck borroweds)
+                (match (tc-expr ctx env scrut)
+                  [(OkTcType scrut-ty)
+                    (tc-borrow-check-arms-loop
+                      ctx
+                      env
+                      loop-env
+                      locals
+                      borroweds
+                      scrut-ty
+                      arms)]
+                  [(ErrTcType message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+    [_ (tc-borrow-check-expr ctx env locals borrowed expr)]))
+
 (define (tc-borrow-check-read-exprs
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -29779,13 +30361,21 @@
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed cond)
           [(OkTcBorrowCheck borrowedc)
-            (match (tc-borrow-check-expr
+            (match (tc-borrow-check-expr-loop
               ctx
+              env
               env
               (tc-moved-clone locals)
               (tc-moved-clone borrowedc)
+              borrowedc
               body)
-              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowedc)]
+              [(OkTcBorrowCheck body-borrowed)
+                (OkTcBorrowCheck
+                  (tc-borrow-check-loop-visible-body-borrows
+                    ctx
+                    env
+                    borrowedc
+                    body-borrowed))]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprBegin exprs) (tc-borrow-check-exprs ctx env locals borrowed exprs)]
@@ -29890,16 +30480,34 @@
               [(OkTcBorrowCheck borrowed1)
                 (match (tc-borrow-check-expr ctx env locals borrowed1 end)
                   [(OkTcBorrowCheck borrowed2)
-                    (match (tc-borrow-check-expr
-                      ctx
-                      (tc-bind-id env index (tc-resolve-type ctx index-ty))
-                      (tc-moved-add (tc-moved-clone locals) (intern-str index))
-                      (tc-borrow-check-remove-root-state
-                        (tc-moved-clone borrowed2)
-                        (intern-str index))
-                      body)
-                      [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed2)]
-                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                    (let
+                      [index-name : String (intern-str index)]
+                      [body-env : TcTypeEnv
+                        (tc-bind-id env index (tc-resolve-type ctx index-ty))]
+                      [body-locals : TcMovedSet
+                        (tc-moved-add (tc-moved-clone locals) index-name)]
+                      [body-entry : TcMovedSet
+                        (tc-borrow-check-remove-root-state
+                          (tc-moved-clone borrowed2)
+                          index-name)]
+                      (match (tc-borrow-check-expr-loop
+                        ctx
+                        body-env
+                        env
+                        body-locals
+                        body-entry
+                        body-entry
+                        body)
+                        [(OkTcBorrowCheck body-borrowed)
+                          (OkTcBorrowCheck
+                            (tc-borrow-check-loop-visible-body-borrows
+                              ctx
+                              env
+                              body-entry
+                              (tc-borrow-check-remove-root-state
+                                body-borrowed
+                                index-name)))]
+                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
     [(AstExprSpmdReduce reduce-box)
@@ -29955,28 +30563,47 @@
                   [(OkTcBorrowCheck borrowed2)
                     (match (tc-borrow-check-expr ctx env locals borrowed2 init)
                       [(OkTcBorrowCheck borrowed3)
-                        (match (tc-borrow-check-expr
+                        (match (tc-borrow-check-expr-loop
                           ctx
                           value-env
+                          env
                           value-locals
+                          (tc-borrow-check-remove-root-state
+                            (tc-moved-clone borrowed3)
+                            index-name)
                           (tc-borrow-check-remove-root-state
                             (tc-moved-clone borrowed3)
                             index-name)
                           value)
                           [(OkTcBorrowCheck borrowed4)
-                            (match (tc-borrow-check-expr
-                              ctx
-                              body-env
-                              body-locals
-                              (tc-borrow-check-remove-root-state
+                            (let
+                              [body-entry : TcMovedSet
                                 (tc-borrow-check-remove-root-state
-                                  (tc-moved-clone borrowed4)
-                                  index-name)
-                                prefix-name)
-                              body)
-                              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed4)]
-                              [(ErrTcBorrowCheck message)
-                                (ErrTcBorrowCheck message)])]
+                                  (tc-borrow-check-remove-root-state
+                                    (tc-moved-clone borrowed4)
+                                    index-name)
+                                  prefix-name)]
+                              (match (tc-borrow-check-expr-loop
+                                ctx
+                                body-env
+                                env
+                                body-locals
+                                body-entry
+                                body-entry
+                                body)
+                                [(OkTcBorrowCheck body-borrowed)
+                                  (OkTcBorrowCheck
+                                    (tc-borrow-check-loop-visible-body-borrows
+                                      ctx
+                                      env
+                                      borrowed4
+                                      (tc-borrow-check-remove-root-state
+                                        (tc-borrow-check-remove-root-state
+                                          body-borrowed
+                                          index-name)
+                                        prefix-name)))]
+                                [(ErrTcBorrowCheck message)
+                                  (ErrTcBorrowCheck message)]))]
                           [(ErrTcBorrowCheck message)
                             (ErrTcBorrowCheck message)])]
                       [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]

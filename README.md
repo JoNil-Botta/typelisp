@@ -22,8 +22,8 @@ Language direction:
 - Pursue Rust-style safety for ownership, borrowing, move semantics, and arena
   lifetimes. Safe TypeLisp should not have undefined behavior. Move-only
   aggregates, lexical immutable/mutable borrow checking, lifetime-parameterized
-  aggregates, and scoped arenas are implemented; #182 remains the umbrella map,
-  with non-lexical lifetimes (#810) as the main open slice. Struct field-place
+  aggregates, scoped arenas, and conservative non-lexical lifetime shortening
+  are implemented; #182 remains the umbrella map. Struct field-place
   mutation through `(set! (struct-get place field) value)` is implemented by
   #1521; local dotted field syntax such as `(set! place.field value)` uses the
   same machinery.
@@ -637,8 +637,8 @@ while the remaining in-tree migrations land.
 ### Memory and aliasing
 
 TypeLisp implements v1 move-only aggregate semantics and lexical
-immutable/mutable borrow checking; it does not implement destructors, `free`,
-or a garbage collector, and non-lexical lifetimes remain future work (#810).
+immutable/mutable borrow checking with conservative non-lexical lifetime
+shortening; it does not implement destructors, `free`, or a garbage collector.
 Scalars, raw pointers, and non-capturing function values are copyable, while
 `String`, arrays, tuples, structs, enums, and capturing closures move in
 by-value positions. Aggregate values are implemented as

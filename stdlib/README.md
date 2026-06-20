@@ -273,35 +273,53 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 The backend runtime plan is a compatibility boundary, not a place for new
 stdlib APIs by default. The checked inventory in
 `src/compiler_backend.tl` (`compiler-backend-runtime-helper-owner`) is the
-authoritative ownership table for symbols accepted by
-`compiler-backend-plan-provides?`; that function rejects unclassified helper
-names so runtime-plan additions must be assigned an owner first.
+authoritative ownership table for runtime symbols. `compiler-backend-plan-provides?`
+rejects unclassified plan helper names, and the backend self-test also checks
+the exact global-symbol allowlist emitted by the full runtime-helper assembly.
 
 - **Core runtime:** the backend-owned allocator/arena substrate:
   `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`,
   `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`,
-  `tl_arena_poison_enable`. These helpers are irreducible backend runtime
-  because they bootstrap ordinary TypeLisp allocation, own the single
-  `tl_current_arena` slot, and must stay import-free and allocation-free on
-  allocation/reclaim paths. Their checked OS-call inventory is Linux
-  `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`, `tl_arena_make_atomic`,
-  `tl_arena_destroy`, and `tl_region_reset(0)`, plus the current arena make
-  fatal-exit syscalls;
+  `tl_arena_poison_enable`, `tl_thread_init`, and `tl_thread_entry_ptr`. These
+  helpers are irreducible backend runtime because they bootstrap ordinary
+  TypeLisp allocation, own the single `tl_current_arena` slot, touch
+  target-specific TLS (`%fs:tl_current_arena@tpoff` on Linux and `%gs:0x28` on
+  Windows), and must stay import-free and allocation-free on allocation/reclaim
+  paths. Their checked OS-call inventory is Linux `mmap`/`munmap` in
+  `tl_alloc`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_destroy`, and
+  `tl_region_reset(0)`, plus the current arena make fatal-exit syscalls;
   Windows uses kernel32 `VirtualAlloc`/`VirtualFree` in the corresponding page
   acquisition/release paths. Nonzero `tl_region_reset(mark)` retires overflow
   chunks on the arena root instead of releasing them immediately, and reset-all
-  or destroy releases those retained chunks. `tl_region_mark`,
-  `tl_arena_current`, `tl_arena_set`, and `tl_arena_poison_enable` only read or
-  update backend runtime state.
+  or destroy releases those retained chunks. Revisit this classification after
+  #3290 provides an allocation-free TLS access design.
+- **Core ABI / entry / primitive helpers:** `tl_memcpy` is the backend block-copy
+  primitive itself and remains core until source code can express an equal or
+  better overlap-safe copy primitive. Windows `__chkstk` is required by the
+  MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start` are
+  the freestanding entry bootstrap: they build the initial argv block from
+  `GetCommandLineA`, clear the TEB current-arena slot, call `main`, and exit via
+  `ExitProcess`.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/profile surfaces: `tl_profile_alloc_total`,
   `tl_profile_alloc_live`, `tl_profile_alloc_peak`,
-  `tl_profile_alloc_reset_peak`.
+  `tl_profile_alloc_reset_peak`. The accessors are simple global reads/writes,
+  but their counters are maintained inside the backend allocator core, so the
+  accessor boundary travels with that allocator ownership for now.
 - **Stdlib TypeLisp migration target:** compatibility runtime helpers whose
   preferred long-term owner is TypeLisp stdlib code or a narrower stdlib FFI
   boundary: `tl_substring`, `tl_string_concat`, `tl_string_concat3`,
-  `tl_string_concat4`, `tl_string_concat5`, `tl_int_to_string`. String equality,
-  string parsing, and string hashing are implemented by TypeLisp stdlib code in
+  `tl_string_concat4`, `tl_string_concat5`, `tl_int_to_string`,
+  `tl_atomic_i64_load_ptr`, `tl_atomic_i64_store_ptr`,
+  `tl_atomic_i64_add_ptr`, `tl_atomic_i64_fetch_add_ptr`,
+  `tl_atomic_i64_cas_ptr`, `tl_atomic_i32_load_ptr`,
+  `tl_atomic_i32_store_ptr`, `tl_atomic_i32_add_ptr`,
+  `tl_atomic_i32_fetch_add_ptr`, and `tl_atomic_i32_cas_ptr`. The string
+  construction helpers are already exported from TypeLisp by #3291 while the
+  runtime-plan names remain recognized for compatibility call-site tracking.
+  Atomic helper migration is tracked by #3292 now that #3289 supplies the
+  underlying atomic memory-operation intrinsics. String equality, string
+  parsing, and string hashing are implemented by TypeLisp stdlib code in
   `string.tl` and `hash.tl`. Bounds/division/shift/general/OOM abort handlers,
   file/IO/process/fs helpers, primary env implementations, random seed,
   profile time, and CPU feature helpers have moved to TypeLisp

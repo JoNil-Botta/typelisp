@@ -4799,28 +4799,20 @@ entry `argc`/`argv`/`envp`, raw string/array storage, and CPU instructions when
 stdlib code needs capabilities that are not expressible as ordinary FFI calls.
 `stdlib/msvc.tl` owns Windows MSVC/link.exe and SDK discovery through stdlib
 environment, filesystem, and process helpers rather than backend runtime
-symbols. The backend-owned core runtime subset is limited to the allocator and
-arena control symbols: `tl_alloc`, `tl_region_mark`, `tl_region_reset`,
-`tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`,
-`tl_arena_destroy`, and `tl_arena_poison_enable`.
+symbols. The backend-owned core runtime subset is limited to helpers that
+cannot yet be expressed as allocation-free, import-free TypeLisp with equivalent
+codegen:
 
-| Symbol | Purpose |
-|--------|---------|
-| `tl_alloc` | Allocate bump-allocator memory |
-| `tl_arena_current` | Return the current arena header |
-| `tl_arena_set` | Install a current arena header |
-| `tl_arena_make` | Allocate an independent arena chain |
-| `tl_arena_make_atomic` | Allocate an independent atomic arena chain |
-| `tl_arena_destroy` | Release an independent arena chain |
-| `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
-| `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
-| `tl_string_concat` | String concatenation |
-| `tl_substring` | String slicing |
-| `tl_str_view` | Borrowed string slice view metadata construction |
-| `tl_int_to_string` | Format integer |
-| `tl_oob_abort` | Bounds-check trap |
-| `tl_div_abort` | Integer division/remainder trap |
-| `tl_shift_abort` | Shift-count trap |
+| Symbol(s) | Disposition |
+|-----------|-------------|
+| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Revisit after #3290 provides a suitable TLS access design. |
+| `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
+| `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
+| `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
+| `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`, `tl_profile_alloc_reset_peak` | Stdlib profile accessors backed by counters maintained inside the allocator core. |
+| `tl_substring`, `tl_str_view`, `tl_string_concat`, `tl_string_concat3`, `tl_string_concat4`, `tl_string_concat5`, `tl_int_to_string` | Runtime-plan compatibility names; implementations are TypeLisp exports after #3291. |
+| `tl_atomic_i64_load_ptr`, `tl_atomic_i64_store_ptr`, `tl_atomic_i64_add_ptr`, `tl_atomic_i64_fetch_add_ptr`, `tl_atomic_i64_cas_ptr`, `tl_atomic_i32_load_ptr`, `tl_atomic_i32_store_ptr`, `tl_atomic_i32_add_ptr`, `tl_atomic_i32_fetch_add_ptr`, `tl_atomic_i32_cas_ptr` | Migration target tracked by #3292 now that #3289 supplies atomic memory-operation intrinsics. |
+| `tl_oob_abort`, `tl_div_abort`, `tl_shift_abort`, general panic/OOM aborts, file/IO/process/fs helpers, env lookup, random seed, profile time, and CPU feature helpers | Not backend-owned helpers; these are TypeLisp runtime-prelude exports, stdlib implementations, or direct platform bindings. |
 
 Allocator/arena page acquisition and release are explicitly backend-owned core
 runtime (#2314): Linux emits `mmap`/`munmap` in `tl_alloc`, `tl_arena_make`,
@@ -4831,15 +4823,13 @@ current `tl_arena_make` fatal-exit syscall), while Windows emits kernel32
 the arena root so stale scratch pointers cannot observe later unrelated
 allocations at reused virtual addresses; the retained chunks are released by
 full reset or arena destroy. `tl_region_mark`, `tl_arena_current`,
-`tl_arena_set`, and `tl_arena_poison_enable` only read or update backend runtime
-state. The current-arena state is thread-local: Linux
+`tl_arena_set`, `tl_arena_poison_enable`, and the thread entry helpers only read
+or update backend runtime state. The current-arena state is thread-local: Linux
 uses local-exec TLS and the freestanding entry installs an FS base before global
 initializers run; Windows x64 stores the current arena in the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
 current-arena slot before calling user code, so the worker's first allocation
-creates an independent default arena chain. The string and trap symbols in the
-table are stdlib/runtime-prelude exports or migration targets, not backend-owned
-core helpers.
+creates an independent default arena chain.
 
 `tl_arena_make` creates an ordinary first-class arena whose bump cursor is
 single-threaded. `tl_arena_make_atomic` creates an arena handle with the same

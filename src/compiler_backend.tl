@@ -21436,15 +21436,15 @@
       (compiler-backend-runtime-name-id name))))
 
 (define (compiler-backend-runtime-helper-core-id? [name-id : i64]) : bool
-  ;; The allocator/arena substrate is irreducible backend core runtime (#2314).
-  ;; It bootstraps ordinary TypeLisp allocation, owns the single
+  ;; The allocator/arena/TLS substrate is irreducible backend core runtime
+  ;; (#2314/#3290). It bootstraps ordinary TypeLisp allocation, owns the
   ;; `tl_current_arena` slot, and must remain import-free/allocation-free while
-  ;; acquiring and releasing arena pages. Linux page ownership is the mmap/munmap
-  ;; sequence in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`, and
-  ;; `tl_region_reset`; Windows uses kernel32 VirtualAlloc/VirtualFree in the
-  ;; same allocation/release paths. `tl_region_mark`, `tl_arena_current`,
-  ;; `tl_arena_set`, and `tl_arena_poison_enable` only read or update this
-  ;; backend runtime state.
+  ;; acquiring and releasing arena pages. Linux page ownership is the
+  ;; mmap/munmap sequence in `tl_alloc`, `tl_arena_make`, `tl_arena_destroy`,
+  ;; and `tl_region_reset`; Windows uses kernel32 VirtualAlloc/VirtualFree in
+  ;; the same allocation/release paths. `tl_region_mark`, `tl_arena_current`,
+  ;; `tl_arena_set`, `tl_arena_poison_enable`, and the thread entry helpers
+  ;; read or update backend runtime TLS state.
   ;; tl_oob_abort / tl_div_abort / tl_shift_abort moved to the runtime prelude
   ;; (stdlib/runtime.tl) and are now provided by #2143 export-symbol, so they are
   ;; no longer backend-owned runtime helpers (keeping them here would make the
@@ -21468,11 +21468,12 @@
       (>= name-id 0)
       (compiler-backend-runtime-helper-stdlib-ffi-id? name-id))))
 
-;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib:
-;; string equality/parsing moved in #2036 and allocating string helpers moved in
-;; #2037. Migrated IO/stdin/file/argv/print/env helpers are deliberately absent
-;; here: those names are stdlib-owned and must remain external from the backend
-;; runtime plan for normal source builds.
+;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib.
+;; String equality/parsing moved in #2036, allocating string helpers moved in
+;; #3291, and atomic pointer helpers are tracked for migration by #3292. Migrated
+;; IO/stdin/file/argv/print/env helpers are deliberately absent here: those names
+;; are stdlib-owned and must remain external from the backend runtime plan for
+;; normal source builds.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp-id? [name-id : i64]) : bool
   (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id))
 
@@ -21500,6 +21501,14 @@
 (define (compiler-backend-runtime-helper-deprecated? [_name : String]) : bool
   false)
 
+(define (compiler-backend-runtime-helper-static-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+  (cond
+    [(string-eq name "tl_memcpy") (BackendRuntimeOwnerCore)]
+    [(string-eq name "__chkstk") (BackendRuntimeOwnerCore)]
+    [(string-eq name "tl_setup_argv") (BackendRuntimeOwnerCore)]
+    [(string-eq name "_tl_start") (BackendRuntimeOwnerCore)]
+    [else (BackendRuntimeOwnerUnknown)]))
+
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (cond
     [(compiler-backend-runtime-helper-core-id? name-id)
@@ -21516,10 +21525,16 @@
 
 (define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
   (let
-    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (if (>= name-id 0)
-      (compiler-backend-runtime-helper-owner-id name-id)
-      (BackendRuntimeOwnerUnknown))))
+    [owner : CompilerBackendRuntimeHelperOwner
+      (compiler-backend-runtime-helper-static-owner name)]
+    (match owner
+      [(BackendRuntimeOwnerUnknown)
+        (let
+          [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+          (if (>= name-id 0)
+            (compiler-backend-runtime-helper-owner-id name-id)
+            (BackendRuntimeOwnerUnknown)))]
+      [_ owner])))
 
 (define (compiler-backend-runtime-helper-known-id? [name-id : i64]) : bool
   (match (compiler-backend-runtime-helper-owner-id name-id)
@@ -21527,9 +21542,9 @@
     [_ true]))
 
 (define (compiler-backend-runtime-helper-known? [name : String]) : bool
-  (let
-    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (and (>= name-id 0) (compiler-backend-runtime-helper-known-id? name-id))))
+  (match (compiler-backend-runtime-helper-owner name)
+    [(BackendRuntimeOwnerUnknown) false]
+    [_ true]))
 
 (define (compiler-backend-provides-runtime-name?
   [name : String]

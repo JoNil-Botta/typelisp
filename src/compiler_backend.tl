@@ -382,6 +382,24 @@
 (define compiler-backend-addr-of-forwarding-src : (Array i64)
   (make-array i64 0))
 
+;; Compare->branch fusion state. A comparison result may be fused to `cmp`/`jcc`
+;; (never materialized as a boolean) when EVERY use of it is a branch fed by its
+;; own adjacent compare. Equivalently: its total use count equals its count of
+;; such "free branch" uses. This is strictly more permissive than a global
+;; single-use gate: opt2 loop rotation duplicates a guard into an entry check
+;; and a latch check that share one var id (two defs, two adjacent-branch uses),
+;; which the single-use gate rejected even though each pair is locally fusable.
+;;
+;; To stay nearly free at compile time, this reuses the use-count array the
+;; backend already computes (held by reference, not copied) and only adds a
+;; cheap per-instruction scan that tallies free-branch uses.
+(define compiler-backend-fuse-need-ready : bool
+  false)
+(define compiler-backend-fuse-use-counts : (Array i64)
+  (make-array i64 0))
+(define compiler-backend-fuse-free-counts : (Array i64)
+  (make-array i64 0))
+
 (defenum CompilerBackendEmitInstrsMode
   (CompilerBackendEmitInstrsModeNormal)
   (CompilerBackendEmitInstrsModeRax i64 AstType))
@@ -14799,6 +14817,92 @@
       false
       (= (array-ref counts var) 1))))
 
+;; True when every use of `var` is a branch fed by its own adjacent compare, so
+;; the boolean is never needed as a materialized value and a compare->branch on
+;; it may fuse. Holds when the var's total use count equals its free-branch
+;; count. Reads the per-function arrays installed by
+;; compiler-backend-fuse-need-enable!; conservatively false when unset.
+(define (compiler-backend-var-fuse-safe? [var : i64]) : bool
+  (cond
+    [(not compiler-backend-fuse-need-ready) false]
+    [(< var 0) false]
+    [(>= var (array-length compiler-backend-fuse-free-counts)) false]
+    [(>= var (array-length compiler-backend-fuse-use-counts)) false]
+    [else
+      (=
+        (array-ref compiler-backend-fuse-use-counts var)
+        (array-ref compiler-backend-fuse-free-counts var))]))
+
+;; The branch condition var at slot `j` when that branch is fed by the
+;; immediately preceding compare (a "free branch" that reads flags, not a
+;; materialized boolean); otherwise -1.
+(define (compiler-backend-fuse-free-branch-var
+  [slots : (Array CompilerIrInstr)]
+  [j : i64]) : i64
+  (if (<= j 0)
+    (- 0 1)
+    (match (array-ref slots j)
+      [(IrInstrBranch cond _ _)
+        (match cond
+          [(IrValueVar v)
+            (match (array-ref slots (- j 1))
+              [(IrInstrBinOp dst op _ _ _)
+                (if (and (compiler-backend-compare-op? op) (= dst v))
+                  v
+                  (- 0 1))]
+              [_ (- 0 1)])]
+          [_ (- 0 1)])]
+      [_ (- 0 1)])))
+
+(define (compiler-backend-fuse-free-seq
+  [free : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [n : i64 (struct-get instrs len)]
+    [j : i64 0]
+    (while (< j n)
+      (begin
+        (let
+          [v : i64 (compiler-backend-fuse-free-branch-var slots j)]
+          (if (and (>= v 0) (< v (array-length free)))
+            (array-set! free v (+ (array-ref free v) 1))
+            unit))
+        (set! j (+ j 1))))))
+
+(define (compiler-backend-fuse-free-blocks
+  [free : (Array i64)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs) (compiler-backend-fuse-free-seq free instrs)])
+        (compiler-backend-fuse-free-blocks free (box-get rest)))]
+    [(IrBlockArray seq)
+      (compiler-backend-fuse-free-blocks
+        free
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-backend-fuse-need-enable!
+  [vars : i64]
+  [use-counts : (Array i64)]
+  [blocks : CompilerIrBlockList]) : unit
+  (let
+    [free : (Array i64) (make-array i64 vars)]
+    (begin
+      (compiler-backend-fuse-free-blocks free blocks)
+      (set! compiler-backend-fuse-use-counts use-counts)
+      (set! compiler-backend-fuse-free-counts free)
+      (set! compiler-backend-fuse-need-ready true))))
+
+(define (compiler-backend-fuse-need-disable!) : unit
+  (begin
+    (set! compiler-backend-fuse-need-ready false)
+    (set! compiler-backend-fuse-use-counts (make-array i64 0))
+    (set! compiler-backend-fuse-free-counts (make-array i64 0))))
+
 (define (compiler-backend-addr-of-forwarding-fill!
   [items : (Array i64)]
   [index : i64]) : unit
@@ -18750,7 +18854,9 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])
             (if (and
               (compiler-backend-compare-op? op)
-              (compiler-backend-var-single-use? use-counts dst)
+              (or
+                (compiler-backend-var-single-use? use-counts dst)
+                (compiler-backend-var-fuse-safe? dst))
               (not (compiler-backend-binop-f64? types global-types lhs rhs ty)))
               (match (box-get rest)
                 [(IrInstrCons next after-branch)
@@ -19745,6 +19851,11 @@
                       rewritten-vars
                       emit-blocks-list
                       use-counts)]
+                  [_fuse-need : unit
+                    (compiler-backend-fuse-need-enable!
+                      rewritten-vars
+                      use-counts
+                      emit-blocks-list)]
                   (match (compiler-backend-emit-blocks
                     target
                     label-scope
@@ -19777,7 +19888,9 @@
                               emit-blocks-list
                               program-index))]
                         [_addr-forward-done : unit
-                          (compiler-backend-addr-of-forwarding-disable!)]
+                          (begin
+                            (compiler-backend-addr-of-forwarding-disable!)
+                            (compiler-backend-fuse-need-disable!))]
                         (OkCompilerBackend
                           (str-cat
                             (compiler-backend-function-symbol-map-comment
@@ -19829,7 +19942,9 @@
                     [(ErrCompilerBackend message)
                       (let
                         [_addr-forward-done : unit
-                          (compiler-backend-addr-of-forwarding-disable!)]
+                          (begin
+                            (compiler-backend-addr-of-forwarding-disable!)
+                            (compiler-backend-fuse-need-disable!))]
                         (ErrCompilerBackend message))]))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
 

@@ -21406,10 +21406,10 @@
   [name : String]
   [helper : String]) : bool
   (and
-    (string-eq (compiler-backend-symbol-leaf name) helper)
     (or
       (compiler-backend-string-contains? name "stdlib/runtime.tl::")
-      (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))))
+      (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
+    (string-eq (compiler-backend-symbol-leaf name) helper)))
 
 (define (compiler-backend-function-list-defines-runtime-prelude-helper?
   [functions : CompilerIrFunctionList]

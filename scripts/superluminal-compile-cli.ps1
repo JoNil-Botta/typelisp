@@ -153,19 +153,27 @@ function Find-WindowsSdkLibRoot {
 
 function Invoke-Benchmark {
     param(
-        [int]$OptLevel
+        [int]$OptLevel,
+        [string]$BenchmarkDir
     )
 
     $bash = Resolve-BenchmarkBash
     Write-Host "[superluminal] running scripts/benchmark-compile-cli.sh"
+    $oldOut = ${env:TYPELISP_COMPILE_BENCH_OUT}
     $oldOptLevels = ${env:TYPELISP_COMPILE_BENCH_OPT_LEVELS}
     try {
+        $env:TYPELISP_COMPILE_BENCH_OUT = $BenchmarkDir
         $env:TYPELISP_COMPILE_BENCH_OPT_LEVELS = "$OptLevel"
         & $bash "scripts/benchmark-compile-cli.sh"
         if ($LASTEXITCODE -ne 0) {
             throw "benchmark-compile-cli.sh failed with exit code $LASTEXITCODE"
         }
     } finally {
+        if ($null -eq $oldOut) {
+            Remove-Item Env:TYPELISP_COMPILE_BENCH_OUT -ErrorAction SilentlyContinue
+        } else {
+            $env:TYPELISP_COMPILE_BENCH_OUT = $oldOut
+        }
         if ($null -eq $oldOptLevels) {
             Remove-Item Env:TYPELISP_COMPILE_BENCH_OPT_LEVELS -ErrorAction SilentlyContinue
         } else {
@@ -263,7 +271,9 @@ function Invoke-DebugRelink {
     $stackReserve = if ($env:TYPELISP_WINDOWS_STACK_RESERVE) {
         [int64]$env:TYPELISP_WINDOWS_STACK_RESERVE
     } else {
-        268435456
+        # Keep the profiled selfhost compiler's stack headroom in sync with
+        # scripts/lib-native-link.sh.
+        1073741824
     }
 
     Write-Host "[superluminal] relinking stage2 with /DEBUG:FULL"
@@ -816,7 +826,7 @@ if ($CaptureOnly) {
 }
 
 if (-not $SkipBenchmark) {
-    Invoke-Benchmark $OptLevel
+    Invoke-Benchmark $OptLevel $BenchmarkDir
     $BenchmarkOutputDir = Resolve-BenchmarkOutputDir $BenchmarkDir $OptLevel
     $stage2Asm = Join-Path $BenchmarkOutputDir "stage2.s"
 }

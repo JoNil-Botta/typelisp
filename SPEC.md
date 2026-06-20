@@ -3489,6 +3489,11 @@ specified.
 
 - Enum scrutinees support variant patterns such as `Red`, `Color.Red`,
   `(Some value)`, and `(Option.Some value)`.
+- Struct scrutinees support constructor-shaped patterns such as
+  `(Point x y)` and `(geometry.Point x y)`. Fields are matched by declaration
+  order, mirroring constructor calls. This slice supports field bindings,
+  `_`, and nested irrefutable struct patterns; refutable field subpatterns such
+  as literals or enum variants are rejected until fallthrough lowering is wired.
 - Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
   the same variant, wildcard, literal payload, and nested variant pattern forms,
   but inspect the enum without moving the owner. Payload bindings are immutable
@@ -3503,7 +3508,8 @@ specified.
   resolve as an enum variant pattern when the expected enum has such a variant.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
-- Bindings in enum patterns introduce variables for payload fields.
+- Bindings in enum and struct patterns introduce variables for payload fields
+  or struct fields.
 - A bare identifier at the top level of an enum `match` arm is resolved as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
@@ -6406,7 +6412,7 @@ match-arm     ::= "[" pattern expr "]"
 pattern       ::= "_"
                 | literal
                 | ident
-                | "(" ident ident* ")"
+                | "(" ident pattern* ")"
 
 literal       ::= integer | float | bool | char | string | "unit"
 

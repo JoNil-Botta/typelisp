@@ -200,6 +200,7 @@ register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-
+struct_match_pattern|tests/integration/struct_match_pattern.tl|42|-|-|struct_match_pattern_geom.tl
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

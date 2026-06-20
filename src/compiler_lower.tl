@@ -8498,6 +8498,13 @@
     [(AstTyVarArgs enum-name _) (intern-str enum-name)]
     [_ ""]))
 
+(define (lower-struct-type-name-or-empty [ty : AstType]) : String
+  (match (tc-type-strip-region ty)
+    [(AstTyStruct struct-name) (intern-str struct-name)]
+    [(AstTyStructArgs struct-name _) (intern-str struct-name)]
+    [(AstTyVarArgs struct-name _) (intern-str struct-name)]
+    [_ ""]))
+
 (define (lower-variant-lookup-name-for-scrut
   [ctx : TcContext]
   [scrut-ty : AstType]
@@ -8739,6 +8746,62 @@
     [_
       (ErrLowerEnv (lower-diagnostic "lower: box pattern requires Box payload"))]))
 
+(define (lower-bind-struct-variant-payload
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [nested-args : AstPatternList]
+  [resolved : AstType]
+  [mode : CompilerLowerMode]
+  [enum-name : String]
+  [variant-name : String]
+  [rest-patterns : AstPatternList]
+  [rest-types : AstTypeList]
+  [offset : i64]
+  [next-index : i64]
+  [next-cursor : i64]
+  [fail-label : String]
+  [scrut-reg-group? : bool]) : ResultLowerEnv
+  (match (if scrut-reg-group?
+    (lower-read-register-group-payload
+      ctx
+      state
+      base
+      (AstTyEnum (intern enum-name))
+      offset
+      resolved)
+    (lower-load-inline-value-at-offset ctx state base offset resolved mode))
+    [(LowerExpr field-state field-value _)
+      (match (lower-bind-struct-pattern
+        ctx
+        field-state
+        env
+        type-env
+        field-value
+        resolved
+        (lower-struct-type-name-or-empty
+          (tc-type-strip-region (tc-resolve-type ctx resolved)))
+        nested-args)
+        [(OkLowerEnv struct-state struct-env struct-type-env)
+          (lower-bind-variant-payloads
+            ctx
+            struct-state
+            struct-env
+            struct-type-env
+            base
+            rest-patterns
+            rest-types
+            mode
+            enum-name
+            variant-name
+            next-index
+            next-cursor
+            fail-label
+            scrut-reg-group?)]
+        [(ErrLowerEnv message) (ErrLowerEnv message)])]))
+
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
 ;; binding) just load/bind; a refutable literal subpattern (#651) loads the
 ;; field, compares it to the literal, and on mismatch branches to `fail-label`
@@ -8935,119 +8998,142 @@
                           next-cursor
                           fail-label
                           scrut-reg-group?)
-                        (match ctx
-                          [(TcContext _ symbols registries _)
-                            (match (compiler-registries-lookup-variant-id
-                              registries
-                              nested-name)
-                              [(NoneI64)
-                                (ErrLowerEnv
-                                  (lower-diagnostic
-                                    (string-append
-                                      "lower: unknown nested variant "
-                                      nested-name-str)))]
-                              [(SomeI64 handle)
-                                (match (compiler-registries-variant-fields-indexed
-                                  symbols
-                                  handle)
-                                  [(ErrAstTypeList message)
-                                    (ErrLowerEnv (lower-diagnostic message))]
-                                  [(OkAstTypeList nested-fields)
-                                    (match (lower-load-inline-value-at-offset
-                                      ctx
-                                      state
-                                      base
-                                      offset
-                                      resolved
-                                      mode)
-                                      [(LowerExpr field-state field-value _)
-                                        ;; #2386: for a register-resident enum field
-                                        ;; the loaded value IS the tag word; for a
-                                        ;; memory enum it is a pointer to the field,
-                                        ;; so the tag is loaded from offset 0.
-                                        ;; Dereferencing a register-resident tag word
-                                        ;; would fault (it is a small integer, not an
-                                        ;; address).
-                                        (match (if (lower-type-register-resident?
-                                          ctx
-                                          resolved)
-                                          (LowerExpr
-                                            field-state
-                                            field-value
-                                            (AstTyI64))
-                                          (lower-load-at-offset
-                                            field-state
-                                            field-value
-                                            0
-                                            (AstTyI64)))
-                                          [(LowerExpr tag-state tag-value _)
-                                            (match (lower-state-alloc-var
-                                              tag-state)
-                                              [(LowerAlloc eq-alloc eq-var)
-                                                (match (lower-state-fresh-label
-                                                  (lower-state-emit
-                                                    eq-alloc
-                                                    (IrInstrBinOp
-                                                      eq-var
-                                                      IrBinEq
-                                                      tag-value
-                                                      (IrValueI64
-                                                        (compiler-registry-handle-child-index
-                                                          handle))
-                                                      (AstTyI64)))
-                                                  "payload_ok")
-                                                  [(LowerLabel
-                                                      ok-state
-                                                      ok-label)
-                                                    (match (lower-bind-variant-payloads
-                                                      ctx
-                                                      (lower-state-finish-block
-                                                        (lower-state-emit
-                                                          ok-state
-                                                          (IrInstrBranch
-                                                            (IrValueVar eq-var)
-                                                            ok-label
-                                                            fail-label))
+                        (if (lower-struct-pattern-for-type?
+                          ctx
+                          resolved
+                          nested-name)
+                          (lower-bind-struct-variant-payload
+                            ctx
+                            state
+                            env
+                            type-env
+                            base
+                            nested-args
+                            resolved
+                            mode
+                            enum-name
+                            variant-name
+                            rest-patterns
+                            rest-types
+                            offset
+                            next-index
+                            next-cursor
+                            fail-label
+                            scrut-reg-group?)
+                          (match ctx
+                            [(TcContext _ symbols registries _)
+                              (match (compiler-registries-lookup-variant-id
+                                registries
+                                nested-name)
+                                [(NoneI64)
+                                  (ErrLowerEnv
+                                    (lower-diagnostic
+                                      (string-append
+                                        "lower: unknown nested variant "
+                                        nested-name-str)))]
+                                [(SomeI64 handle)
+                                  (match (compiler-registries-variant-fields-indexed
+                                    symbols
+                                    handle)
+                                    [(ErrAstTypeList message)
+                                      (ErrLowerEnv (lower-diagnostic message))]
+                                    [(OkAstTypeList nested-fields)
+                                      (match (lower-load-inline-value-at-offset
+                                        ctx
+                                        state
+                                        base
+                                        offset
+                                        resolved
+                                        mode)
+                                        [(LowerExpr field-state field-value _)
+                                          ;; #2386: for a register-resident enum field
+                                          ;; the loaded value IS the tag word; for a
+                                          ;; memory enum it is a pointer to the field,
+                                          ;; so the tag is loaded from offset 0.
+                                          ;; Dereferencing a register-resident tag word
+                                          ;; would fault (it is a small integer, not an
+                                          ;; address).
+                                          (match (if (lower-type-register-resident?
+                                            ctx
+                                            resolved)
+                                            (LowerExpr
+                                              field-state
+                                              field-value
+                                              (AstTyI64))
+                                            (lower-load-at-offset
+                                              field-state
+                                              field-value
+                                              0
+                                              (AstTyI64)))
+                                            [(LowerExpr tag-state tag-value _)
+                                              (match (lower-state-alloc-var
+                                                tag-state)
+                                                [(LowerAlloc eq-alloc eq-var)
+                                                  (match (lower-state-fresh-label
+                                                    (lower-state-emit
+                                                      eq-alloc
+                                                      (IrInstrBinOp
+                                                        eq-var
+                                                        IrBinEq
+                                                        tag-value
+                                                        (IrValueI64
+                                                          (compiler-registry-handle-child-index
+                                                            handle))
+                                                        (AstTyI64)))
+                                                    "payload_ok")
+                                                    [(LowerLabel
+                                                        ok-state
                                                         ok-label)
-                                                      env
-                                                      type-env
-                                                      field-value
-                                                      nested-args
-                                                      nested-fields
-                                                      mode
-                                                      (lower-enum-type-name-or-empty
-                                                        resolved)
-                                                      nested-name-str
-                                                      0
-                                                      8
-                                                      fail-label
-                                                      ;; nested enum: rare path, so
-                                                      ;; computing its group-ness once
-                                                      ;; here is cheap.
-                                                      (lower-type-register-group?
+                                                      (match (lower-bind-variant-payloads
                                                         ctx
-                                                        resolved))
-                                                      [(OkLowerEnv
-                                                          nested-state
-                                                          nested-env
-                                                          nested-type-env)
-                                                        (lower-bind-variant-payloads
+                                                        (lower-state-finish-block
+                                                          (lower-state-emit
+                                                            ok-state
+                                                            (IrInstrBranch
+                                                              (IrValueVar
+                                                                eq-var)
+                                                              ok-label
+                                                              fail-label))
+                                                          ok-label)
+                                                        env
+                                                        type-env
+                                                        field-value
+                                                        nested-args
+                                                        nested-fields
+                                                        mode
+                                                        (lower-enum-type-name-or-empty
+                                                          resolved)
+                                                        nested-name-str
+                                                        0
+                                                        8
+                                                        fail-label
+                                                        ;; nested enum: rare path, so
+                                                        ;; computing its group-ness once
+                                                        ;; here is cheap.
+                                                        (lower-type-register-group?
                                                           ctx
-                                                          nested-state
-                                                          nested-env
-                                                          nested-type-env
-                                                          base
-                                                          rest-patterns
-                                                          rest-types
-                                                          mode
-                                                          enum-name
-                                                          variant-name
-                                                          next-index
-                                                          next-cursor
-                                                          fail-label
-                                                          scrut-reg-group?)]
-                                                      [(ErrLowerEnv message)
-                                                        (ErrLowerEnv message)])])])])])])])])))]
+                                                          resolved))
+                                                        [(OkLowerEnv
+                                                            nested-state
+                                                            nested-env
+                                                            nested-type-env)
+                                                          (lower-bind-variant-payloads
+                                                            ctx
+                                                            nested-state
+                                                            nested-env
+                                                            nested-type-env
+                                                            base
+                                                            rest-patterns
+                                                            rest-types
+                                                            mode
+                                                            enum-name
+                                                            variant-name
+                                                            next-index
+                                                            next-cursor
+                                                            fail-label
+                                                            scrut-reg-group?)]
+                                                        [(ErrLowerEnv message)
+                                                          (ErrLowerEnv message)])])])])])])])]))))]
                   [_
                     (ErrLowerEnv
                       (lower-diagnostic
@@ -9400,6 +9486,63 @@
         (if (lower-pattern-refutable? pattern)
           true
           (lower-pattern-list-refutable? rest)))]))
+
+(define (lower-pattern-refutable-for-type?
+  [ctx : TcContext]
+  [pattern : AstPattern]
+  [ty : AstType]) : bool
+  (match pattern
+    [(AstPatWildcard) false]
+    [(AstPatVar _ _) false]
+    [(AstPatBinding _) false]
+    [(AstPatTuple _) false]
+    [(AstPatLiteral _) true]
+    [(AstPatVariant name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (if (lower-box-pattern-name? name)
+          (lower-pattern-list-refutable? args)
+          (match (tc-type-strip-region (tc-resolve-type ctx ty))
+            [(AstTyStruct struct-name)
+              (not
+                (tc-struct-pattern-irrefutable?
+                  ctx
+                  (intern-str struct-name)
+                  ty
+                  (intern-str name)
+                  args))]
+            [(AstTyStructArgs struct-name _)
+              (not
+                (tc-struct-pattern-irrefutable?
+                  ctx
+                  (intern-str struct-name)
+                  ty
+                  (intern-str name)
+                  args))]
+            [_ true])))]))
+
+(define (lower-pattern-list-refutable-for-types?
+  [ctx : TcContext]
+  [patterns : AstPatternList]
+  [types : AstTypeList]) : bool
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) false]
+        [_ true])]
+    [(AstPatternCons pattern rest)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest : AstPatternList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (if (lower-pattern-refutable-for-type? ctx pattern ty)
+                true
+                (lower-pattern-list-refutable-for-types? ctx rest rest-types)))]
+          [(AstTypeNil) true]))]))
 
 (define (lower-field-info-from-list
   [ctx : TcContext]
@@ -30674,6 +30817,201 @@
       [_ false])
     false))
 
+(define (lower-struct-pattern-for-type?
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [name : i64]) : bool
+  (let
+    [pattern-name : String (intern-str name)]
+    (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+      [(AstTyStruct struct-name)
+        (tc-struct-pattern-name-matches?
+          ctx
+          (intern-str struct-name)
+          pattern-name)]
+      [(AstTyStructArgs struct-name _)
+        (tc-struct-pattern-name-matches?
+          ctx
+          (intern-str struct-name)
+          pattern-name)]
+      [_ false])))
+
+(define (lower-bind-struct-field-pattern
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [struct-name : String]
+  [field-name : String]
+  [pattern : AstPattern]
+  [field-ty : AstType]) : ResultLowerEnv
+  (match pattern
+    [(AstPatWildcard) (OkLowerEnv state env type-env)]
+    [(AstPatVar name _)
+      (match (lower-struct-get-named
+        ctx
+        state
+        base
+        struct-name
+        field-name
+        field-ty)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr field-state field-value _)
+              (match field-value
+                [(IrValueVar field-var)
+                  (OkLowerEnv
+                    field-state
+                    (sym-i64-bind-id env name field-var)
+                    (tc-bind-id type-env name field-ty))]
+                [_
+                  (ErrLowerEnv
+                    (lower-diagnostic
+                      "lower: internal struct field pattern load failed"))])])]
+        [(ErrLowerExpr message) (ErrLowerEnv message)])]
+    [(AstPatBinding name)
+      (match (lower-struct-get-named
+        ctx
+        state
+        base
+        struct-name
+        field-name
+        field-ty)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr field-state field-value _)
+              (match field-value
+                [(IrValueVar field-var)
+                  (OkLowerEnv
+                    field-state
+                    (sym-i64-bind-id env name field-var)
+                    (tc-bind-id type-env name field-ty))]
+                [_
+                  (ErrLowerEnv
+                    (lower-diagnostic
+                      "lower: internal struct field pattern load failed"))])])]
+        [(ErrLowerExpr message) (ErrLowerEnv message)])]
+    [(AstPatVariant name args-box)
+      (if (lower-struct-pattern-for-type? ctx field-ty name)
+        (match (lower-struct-get-named
+          ctx
+          state
+          base
+          struct-name
+          field-name
+          field-ty)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr field-state field-value _)
+                (lower-bind-struct-pattern
+                  ctx
+                  field-state
+                  env
+                  type-env
+                  field-value
+                  field-ty
+                  (lower-struct-type-name-or-empty
+                    (tc-type-strip-region (tc-resolve-type ctx field-ty)))
+                  (box-get args-box))])]
+          [(ErrLowerExpr message) (ErrLowerEnv message)])
+        (ErrLowerEnv
+          (lower-diagnostic "lower: unsupported struct field pattern")))]
+    [_
+      (ErrLowerEnv (lower-diagnostic "lower: unsupported struct field pattern"))]))
+
+(define (lower-bind-struct-pattern-fields
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [struct-name : String]
+  [patterns : AstPatternList]
+  [fields : AstFieldDefList]
+  [types : AstTypeList]) : ResultLowerEnv
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) (OkLowerEnv state env type-env)]
+        [_
+          (ErrLowerEnv
+            (lower-diagnostic "lower: struct pattern arity mismatch"))])]
+    [(AstPatternCons pattern rest-patterns)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest-patterns : AstPatternList (box-get rest-patterns)]
+        (match fields
+          [(AstFieldDefCons field rest-fields)
+            (let
+              [rest-fields : AstFieldDefList (box-get rest-fields)]
+              (match field
+                [(AstFieldDef field-name _ _)
+                  (match types
+                    [(AstTypeCons ty rest-types)
+                      (let
+                        [ty : AstType (ty-node-get ty)]
+                        [rest-types : AstTypeList (box-get rest-types)]
+                        (match (lower-bind-struct-field-pattern
+                          ctx
+                          state
+                          env
+                          type-env
+                          base
+                          struct-name
+                          (intern-str field-name)
+                          pattern
+                          ty)
+                          [(OkLowerEnv next-state next-env next-type-env)
+                            (lower-bind-struct-pattern-fields
+                              ctx
+                              next-state
+                              next-env
+                              next-type-env
+                              base
+                              struct-name
+                              rest-patterns
+                              rest-fields
+                              rest-types)]
+                          [(ErrLowerEnv message) (ErrLowerEnv message)]))]
+                    [(AstTypeNil)
+                      (ErrLowerEnv
+                        (lower-diagnostic
+                          "lower: struct pattern arity mismatch"))])]))]
+          [(AstFieldDefNil)
+            (ErrLowerEnv
+              (lower-diagnostic "lower: struct pattern arity mismatch"))]))]))
+
+(define (lower-bind-struct-pattern
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [scrut-ty : AstType]
+  [struct-name : String]
+  [args : AstPatternList]) : ResultLowerEnv
+  (match (lower-struct-fields ctx struct-name)
+    [(OkAstFieldDefList fields)
+      (match (tc-struct-pattern-field-types-for-scrut
+        ctx
+        struct-name
+        scrut-ty
+        fields)
+        [(OkTcTypeList field-types)
+          (lower-bind-struct-pattern-fields
+            ctx
+            state
+            env
+            type-env
+            base
+            struct-name
+            args
+            fields
+            field-types)]
+        [(ErrTcTypeList message) (ErrLowerEnv (lower-diagnostic message))])]
+    [(ErrAstFieldDefList message) (ErrLowerEnv (lower-diagnostic message))]))
+
 (define (lower-bind-match-catch-all-pattern
   [ctx : TcContext]
   [state : LowerState]
@@ -30698,7 +31036,18 @@
           (IrValueVar scrut-var)
           scrut-ty
           (box-get args-box))
-        (ErrLowerEnv (lower-diagnostic "lower: unsupported match pattern")))]
+        (if (lower-struct-pattern-for-type? ctx scrut-ty name)
+          (lower-bind-struct-pattern
+            ctx
+            state
+            env
+            type-env
+            (IrValueVar scrut-var)
+            scrut-ty
+            (lower-struct-type-name-or-empty
+              (tc-type-strip-region (tc-resolve-type ctx scrut-ty)))
+            (box-get args-box))
+          (ErrLowerEnv (lower-diagnostic "lower: unsupported match pattern"))))]
     [_ (OkLowerEnv state env type-env)]))
 
 (define (lower-match-arms
@@ -30791,8 +31140,24 @@
                           merge-label
                           expr-ty
                           phi-inputs)
-                        (ErrLowerExpr
-                          (lower-diagnostic "lower: unsupported match pattern")))]
+                        (if (lower-struct-pattern-for-type?
+                          ctx
+                          scrut-ty
+                          variant-name)
+                          (lower-match-catch-all
+                            ctx
+                            state
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            arm
+                            merge-label
+                            expr-ty
+                            phi-inputs)
+                          (ErrLowerExpr
+                            (lower-diagnostic
+                              "lower: unsupported match pattern"))))]
                     [_
                       (ErrLowerExpr
                         (lower-diagnostic "lower: unsupported match pattern"))]))])]))]))
@@ -30972,7 +31337,10 @@
                   ;; The final arm has no next-arm continuation, so a refutable
                   ;; payload subpattern here would have nowhere to fall through to;
                   ;; require a trailing catch-all instead (#651).
-                  (if (lower-pattern-list-refutable? args)
+                  (if (lower-pattern-list-refutable-for-types?
+                    ctx
+                    args
+                    resolved-fields)
                     (ErrLowerExpr
                       (lower-diagnostic
                         "lower: refutable payload pattern in final match arm requires a trailing catch-all"))
@@ -32234,8 +32602,23 @@
                           arm
                           ret-ty
                           sret-var)
-                        (ErrLowerState
-                          (lower-diagnostic "lower: unsupported match pattern")))]
+                        (if (lower-struct-pattern-for-type?
+                          ctx
+                          scrut-ty
+                          variant-name)
+                          (lower-tail-match-catch-all
+                            ctx
+                            state
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            arm
+                            ret-ty
+                            sret-var)
+                          (ErrLowerState
+                            (lower-diagnostic
+                              "lower: unsupported match pattern"))))]
                     [_
                       (ErrLowerState
                         (lower-diagnostic "lower: unsupported match pattern"))]))])]))]))
@@ -32565,7 +32948,10 @@
                         (lower-enum-type-name-or-empty resolved-scrut-ty)
                         resolved-scrut-ty
                         fields))]
-                  (if (lower-pattern-list-refutable? args)
+                  (if (lower-pattern-list-refutable-for-types?
+                    ctx
+                    args
+                    resolved-fields)
                     (ErrLowerState
                       (lower-diagnostic
                         "lower: refutable payload pattern in final match arm requires a trailing catch-all"))

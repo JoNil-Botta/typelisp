@@ -573,7 +573,8 @@ same local value or type name without colliding.
 ### Expression forms
 
 `if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
-nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`,
+nested/recursive enum patterns, constructor-shaped struct patterns, and `_`),
+`ann`, `cast`, `foreach`,
 `spmd-reduce`, `spmd-scan`, plus
 arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift

@@ -3172,10 +3172,11 @@
 ;; --- block-local common subexpression elimination (#546) --------------------
 ;;
 ;; Within a single basic block, track an available-expression table mapping a
-;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) to the var
-;; that first computed it. A later identical expression is rewritten to an
-;; `IrInstrMov` from that earlier var. Scope is intentionally block-local and
-;; only covers pure scalar arithmetic; memory ops are not CSE'd.
+;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) or a
+;; repeatable CPU feature probe to the var that first computed it. A later
+;; identical expression is rewritten to an `IrInstrMov` from that earlier var.
+;; Scope is intentionally block-local and only covers pure scalar arithmetic
+;; plus process-stable `cpuid`/`xgetbv` results; memory ops are not CSE'd.
 ;;
 ;; Invalidation keeps this correct even though the IR is not strictly SSA: when
 ;; an instruction (re)defines a var, every table entry whose key references that
@@ -3185,7 +3186,9 @@
 ;; in this slice.
 (defenum OptExprKey
   (OptBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
-  (OptUnKey CompilerIrUnOp CompilerIrValue AstType))
+  (OptUnKey CompilerIrUnOp CompilerIrValue AstType)
+  (OptCpuIdKey CompilerIrValue CompilerIrValue i64)
+  (OptXgetbvKey CompilerIrValue))
 
 (defenum OptExprTable
   (OptExprNil)
@@ -3535,7 +3538,14 @@
         2
         (hash-combine
           (opt-type-hash ty)
-          (hash-combine (hash-i64 (opt-unop-tag op)) (opt-value-hash value))))]))
+          (hash-combine (hash-i64 (opt-unop-tag op)) (opt-value-hash value))))]
+    [(OptCpuIdKey leaf subleaf reg-index)
+      (hash-combine
+        3
+        (hash-combine
+          (hash-i64 reg-index)
+          (hash-combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
+    [(OptXgetbvKey index) (hash-combine 4 (opt-value-hash index))]))
 
 (define (opt-type-list-hash [types : AstTypeList]) : i64
   (match types
@@ -4265,12 +4275,24 @@
             (opt-type-eq ta tb)
             (opt-value-eq la lb)
             (opt-value-eq ra rb))]
-        [(OptUnKey _ _ _) false])]
+        [_ false])]
     [(OptUnKey opa va ta)
       (match b
         [(OptUnKey opb vb tb)
           (and (opt-unop-eq opa opb) (opt-type-eq ta tb) (opt-value-eq va vb))]
-        [(OptBinKey _ _ _ _) false])]))
+        [_ false])]
+    [(OptCpuIdKey aleaf asubleaf areg)
+      (match b
+        [(OptCpuIdKey bleaf bsubleaf breg)
+          (and
+            (= areg breg)
+            (opt-value-eq aleaf bleaf)
+            (opt-value-eq asubleaf bsubleaf))]
+        [_ false])]
+    [(OptXgetbvKey aindex)
+      (match b
+        [(OptXgetbvKey bindex) (opt-value-eq aindex bindex)]
+        [_ false])]))
 
 (define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
   (match table
@@ -4291,7 +4313,10 @@
   (match key
     [(OptBinKey _ l r _)
       (or (opt-value-is-var? l var) (opt-value-is-var? r var))]
-    [(OptUnKey _ v _) (opt-value-is-var? v var)]))
+    [(OptUnKey _ v _) (opt-value-is-var? v var)]
+    [(OptCpuIdKey leaf subleaf _)
+      (or (opt-value-is-var? leaf var) (opt-value-is-var? subleaf var))]
+    [(OptXgetbvKey index) (opt-value-is-var? index var)]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
@@ -4323,6 +4348,22 @@
         [key : OptExprKey (OptUnKey op v ty)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
+    [(IrInstrCpuId dst leaf subleaf reg-index)
+      (let
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptCpuIdKey leaf subleaf reg-index)]
+        (match (opt-expr-lookup t1 key)
+          [(IrSomeValue earlier)
+            (OptCseResult t1 (IrInstrMov dst earlier (AstTyI64)))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
+    [(IrInstrXgetbv dst index)
+      (let
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptXgetbvKey index)]
+        (match (opt-expr-lookup t1 key)
+          [(IrSomeValue earlier)
+            (OptCseResult t1 (IrInstrMov dst earlier (AstTyI64)))]
           [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(IrInstrMov dst _ _)
@@ -4371,10 +4412,6 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrEntryEnvp dst)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
-    [(IrInstrCpuId dst _ _ _)
-      (OptCseResult (opt-expr-invalidate-var (OptExprNil) dst) instr)]
-    [(IrInstrXgetbv dst _)
-      (OptCseResult (opt-expr-invalidate-var (OptExprNil) dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrSyscall _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -13901,9 +13938,10 @@
 ;;
 ;; Block-local CSE (`opt-cse-instr`) and copy propagation already collapse
 ;; redundant pure scalar expressions within a single basic block. This pass
-;; lifts that to dominated blocks: a pure `BinOp`/`UnOp` is replaced by a `Mov`
-;; from an equal expression computed in a strictly dominating block, after which
-;; the existing copy propagation/DCE remove the dead intermediate. The IR is
+;; lifts that to dominated blocks: a pure `BinOp`/`UnOp`, or an identical CPU
+;; feature probe, is replaced by a `Mov` from an equal expression computed in a
+;; strictly dominating block, after which the existing copy propagation/DCE
+;; remove the dead intermediate. The IR is
 ;; non-SSA, so a value computed in a dominating block is only reusable at a use
 ;; if neither the result nor any operand can be reassigned between the two
 ;; points. The conservative-but-sound v1 condition is "exactly one value source"
@@ -13911,9 +13949,10 @@
 ;; is a function parameter. A var with exactly one source has a single,
 ;; unchanging value throughout the function, so dominance alone authorizes the
 ;; reuse. Vars with two or more sources (a reassigned local, or a parameter that
-;; is later overwritten) are excluded. Only `BinOp`/`UnOp` over single-source
-;; operands and a single-source result are numbered; loads, stores, allocations,
-;; calls, and other effectful or many-sourced instructions are left untouched.
+;; is later overwritten) are excluded. Only `BinOp`/`UnOp` and CPU probes over
+;; single-source operands and a single-source result are numbered; loads,
+;; stores, allocations, calls, and other effectful or many-sourced instructions
+;; are left untouched.
 ;; Phi inputs belong to predecessor edges and are never rewritten. Sibling
 ;; expressions never global-CSE because a join block is not strictly dominated by
 ;; either arm.
@@ -14101,6 +14140,15 @@
         (opt-gvn-value-stable? sources r))]
     [(IrInstrUnOp dst _ v _)
       (and (opt-gvn-stable-var? sources dst) (opt-gvn-value-stable? sources v))]
+    [(IrInstrCpuId dst leaf subleaf _)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources leaf)
+        (opt-gvn-value-stable? sources subleaf))]
+    [(IrInstrXgetbv dst index)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources index))]
     [_ false]))
 
 (define (opt-gvn-record-count-instr-seq-from
@@ -14198,8 +14246,9 @@
               (array-set! buckets bucket old-head)
               (opt-gvn-table-restore! table (box-get rest))))])]))
 
-;; Record a `BinOp`/`UnOp` whose result and operands are all single-source as an
-;; available value keyed by its expression and tagged with its defining block.
+;; Record a `BinOp`/`UnOp`/CPU probe whose result and operands are all
+;; single-source as an available value keyed by its expression and tagged with
+;; its defining block.
 (define (opt-gvn-record
   [instr : CompilerIrInstr]
   [def-block-id : i64]
@@ -14219,6 +14268,20 @@
         (opt-gvn-table-push!
           table
           (OptGvnEntry (OptUnKey op v ty) dst def-block-id)
+          changes)
+        changes)]
+    [(IrInstrCpuId dst leaf subleaf reg-index)
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-push!
+          table
+          (OptGvnEntry (OptCpuIdKey leaf subleaf reg-index) dst def-block-id)
+          changes)
+        changes)]
+    [(IrInstrXgetbv dst index)
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-push!
+          table
+          (OptGvnEntry (OptXgetbvKey index) dst def-block-id)
           changes)
         changes)]
     [_ changes]))
@@ -14286,6 +14349,25 @@
           [earlier : i64 (opt-gvn-lookup table (OptUnKey op v ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (IrInstrMov dst (IrValueVar earlier) ty)
+            instr))
+        instr)]
+    [(IrInstrCpuId dst leaf subleaf reg-index)
+      (if (and
+        (opt-gvn-value-stable? sources leaf)
+        (opt-gvn-value-stable? sources subleaf))
+        (let
+          [earlier : i64
+            (opt-gvn-lookup table (OptCpuIdKey leaf subleaf reg-index))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (IrInstrMov dst (IrValueVar earlier) (AstTyI64))
+            instr))
+        instr)]
+    [(IrInstrXgetbv dst index)
+      (if (opt-gvn-value-stable? sources index)
+        (let
+          [earlier : i64 (opt-gvn-lookup table (OptXgetbvKey index))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (IrInstrMov dst (IrValueVar earlier) (AstTyI64))
             instr))
         instr)]
     [_ instr]))
@@ -22819,6 +22901,94 @@
     (struct-get instrs len)
     0))
 
+(define (opt-cpuid-instr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCpuId _ _ _ _) 1]
+    [_ 0]))
+
+(define (opt-xgetbv-instr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrXgetbv _ _) 1]
+    [_ 0]))
+
+(define (opt-count-cpuid-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+ (opt-cpuid-instr-count instr) (opt-count-cpuid-instrs (box-get rest)))]))
+
+(define (opt-count-xgetbv-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (opt-xgetbv-instr-count instr)
+        (opt-count-xgetbv-instrs (box-get rest)))]))
+
+(define (opt-count-cpuid-instr-seq-from
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-cpuid-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+ acc (opt-cpuid-instr-count (array-ref slots index))))))
+
+(define (opt-count-cpuid-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-cpuid-instr-seq-from
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)
+    0))
+
+(define (opt-count-xgetbv-instr-seq-from
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-xgetbv-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+ acc (opt-xgetbv-instr-count (array-ref slots index))))))
+
+(define (opt-count-xgetbv-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-xgetbv-instr-seq-from
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)
+    0))
+
+(define (opt-count-cpuid-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-cpuid-instr-seq instrs)
+            (opt-count-cpuid-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-cpuid-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-count-xgetbv-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-xgetbv-instr-seq instrs)
+            (opt-count-xgetbv-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-xgetbv-blocks (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-sum-mov-i64 [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -25165,9 +25335,31 @@
         (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
+(define (opt-cse-probe-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCpuId 2 (IrValueVar 0) (IrValueI64 0) 1)
+    (compiler-ir-instr-cons
+      (IrInstrCpuId 3 (IrValueVar 0) (IrValueI64 0) 1)
+      (compiler-ir-instr-cons
+        (IrInstrXgetbv 4 (IrValueI64 0))
+        (compiler-ir-instr-cons (IrInstrXgetbv 5 (IrValueI64 0)) (IrInstrNil))))))
+
+(define (opt-cse-probe-different-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCpuId 2 (IrValueI64 7) (IrValueI64 0) 1)
+    (compiler-ir-instr-cons
+      (IrInstrCpuId 3 (IrValueI64 7) (IrValueI64 0) 2)
+      (compiler-ir-instr-cons
+        (IrInstrCpuId 4 (IrValueI64 7) (IrValueI64 1) 1)
+        (compiler-ir-instr-cons
+          (IrInstrXgetbv 5 (IrValueI64 0))
+          (compiler-ir-instr-cons (IrInstrXgetbv 6 (IrValueI64 1)) (IrInstrNil)))))))
+
 ;; Returns 42 when CSE eliminates the repeated pure expression (2 arithmetic
 ;; instrs -> 1) yet preserves the second expression both across an intervening
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
+;; It also CSEs identical CPU probes while preserving probes with different
+;; register indices or operands.
 (define (compiler-optimize-cse-self-test) : i64
   (let
     [cse : CompilerIrInstrList
@@ -25176,10 +25368,20 @@
       (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))]
     [redef : CompilerIrInstrList
       (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))]
+    [probe : CompilerIrInstrList
+      (opt-cse-instrs (OptExprNil) (opt-cse-probe-instrs))]
+    [probe-different : CompilerIrInstrList
+      (opt-cse-instrs (OptExprNil) (opt-cse-probe-different-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs cse) 1) (return 1))
       (unless (= (opt-count-arith-instrs store) 2) (return 2))
       (unless (= (opt-count-arith-instrs redef) 2) (return 3))
+      (unless (= (opt-count-cpuid-instrs probe) 1) (return 4))
+      (unless (= (opt-mov-src-var probe 3 (- 0 1)) 2) (return 5))
+      (unless (= (opt-count-xgetbv-instrs probe) 1) (return 6))
+      (unless (= (opt-mov-src-var probe 5 (- 0 1)) 4) (return 7))
+      (unless (= (opt-count-cpuid-instrs probe-different) 3) (return 8))
+      (unless (= (opt-count-xgetbv-instrs probe-different) 2) (return 9))
       42)))
 
 ;; --- cross-block GVN self-tests (#1349) -------------------------------------
@@ -25339,36 +25541,92 @@
               (IrInstrNil)))
           (IrBlockNil))))))
 
+(define (opt-gvn-probe-dominated-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrCpuId 20 (IrValueI64 7) (IrValueI64 0) 1)
+        (compiler-ir-instr-cons
+          (IrInstrXgetbv 21 (IrValueI64 0))
+          (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (IrInstrCpuId 22 (IrValueI64 7) (IrValueI64 0) 1)
+          (compiler-ir-instr-cons
+            (IrInstrXgetbv 23 (IrValueI64 0))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 23)))
+              (IrInstrNil)))))
+      (IrBlockNil))))
+
+(define (opt-gvn-probe-different-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrCpuId 20 (IrValueI64 7) (IrValueI64 0) 1)
+        (compiler-ir-instr-cons
+          (IrInstrXgetbv 21 (IrValueI64 0))
+          (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (IrInstrCpuId 22 (IrValueI64 7) (IrValueI64 0) 2)
+          (compiler-ir-instr-cons
+            (IrInstrCpuId 23 (IrValueI64 7) (IrValueI64 1) 1)
+            (compiler-ir-instr-cons
+              (IrInstrXgetbv 24 (IrValueI64 1))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 24)))
+                (IrInstrNil))))))
+      (IrBlockNil))))
+
 ;; Returns 42 only when cross-block GVN rewrites dominated repeats (diamond and
 ;; loop drop to 1 binop), leaves non-dominating siblings alone (3 binops), and
-;; refuses to CSE across a reassigned operand (2 binops).
+;; refuses to CSE across a reassigned operand (2 binops). CPU probes are reused
+;; only when an identical probe is available from a strict dominator.
 (define (compiler-optimize-gvn-self-test) : i64
-  (begin
-    (unless
-      (=
-        (opt-gvn-count-binops-blocks
-          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
-        1)
-      (return 1))
-    (unless
-      (=
-        (opt-gvn-count-binops-blocks
-          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
-        3)
-      (return 2))
-    (unless
-      (=
-        (opt-gvn-count-binops-blocks
-          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-redef-blocks)))
-        2)
-      (return 3))
-    (unless
-      (=
-        (opt-gvn-count-binops-blocks
-          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
-        1)
-      (return 4))
-    42))
+  (let
+    [probe : CompilerIrBlockList
+      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-probe-dominated-blocks))]
+    [probe-different : CompilerIrBlockList
+      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-probe-different-blocks))]
+    (begin
+      (unless
+        (=
+          (opt-gvn-count-binops-blocks
+            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
+          1)
+        (return 1))
+      (unless
+        (=
+          (opt-gvn-count-binops-blocks
+            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
+          3)
+        (return 2))
+      (unless
+        (=
+          (opt-gvn-count-binops-blocks
+            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-redef-blocks)))
+          2)
+        (return 3))
+      (unless
+        (=
+          (opt-gvn-count-binops-blocks
+            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
+          1)
+        (return 4))
+      (unless (= (opt-count-cpuid-blocks probe) 1) (return 5))
+      (unless (= (opt-blocks-mov-src-var probe 22 (- 0 1)) 20) (return 6))
+      (unless (= (opt-count-xgetbv-blocks probe) 1) (return 7))
+      (unless (= (opt-blocks-mov-src-var probe 23 (- 0 1)) 21) (return 8))
+      (unless (= (opt-count-cpuid-blocks probe-different) 3) (return 9))
+      (unless (= (opt-count-xgetbv-blocks probe-different) 2) (return 10))
+      42)))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
@@ -31686,6 +31944,7 @@
   (match effect
     [(IrEffectPure) false]
     [(IrEffectMemoryRead) false]
+    [(IrEffectCpuProbe) true]
     [(IrEffectMemoryWrite) true]
     [(IrEffectControlFlow) false]
     [(IrEffectUnknown) true]))

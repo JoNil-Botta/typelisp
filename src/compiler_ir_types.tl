@@ -1352,6 +1352,7 @@
 (defenum CompilerIrEffect
   (IrEffectPure)
   (IrEffectMemoryRead)
+  (IrEffectCpuProbe)
   (IrEffectMemoryWrite)
   (IrEffectControlFlow)
   (IrEffectUnknown))
@@ -1365,6 +1366,10 @@
     [(IrEffectMemoryRead)
       (match b
         [(IrEffectMemoryRead) true]
+        [_ false])]
+    [(IrEffectCpuProbe)
+      (match b
+        [(IrEffectCpuProbe) true]
         [_ false])]
     [(IrEffectMemoryWrite)
       (match b
@@ -1383,6 +1388,7 @@
   (match effect
     [(IrEffectPure) false]
     [(IrEffectMemoryRead) false]
+    [(IrEffectCpuProbe) true]
     [(IrEffectMemoryWrite) true]
     [(IrEffectControlFlow) true]
     [(IrEffectUnknown) true]))
@@ -1449,8 +1455,8 @@
     [(IrInstrEntryArgc _) IrEffectMemoryRead]
     [(IrInstrEntryArgv _) IrEffectMemoryRead]
     [(IrInstrEntryEnvp _) IrEffectMemoryRead]
-    [(IrInstrCpuId _ _ _ _) IrEffectUnknown]
-    [(IrInstrXgetbv _ _) IrEffectUnknown]
+    [(IrInstrCpuId _ _ _ _) IrEffectCpuProbe]
+    [(IrInstrXgetbv _ _) IrEffectCpuProbe]
     [(IrInstrSyscall _ _) IrEffectUnknown]
     [(IrInstrAlloc _ _) IrEffectMemoryWrite]
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
@@ -2848,6 +2854,10 @@
       (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))
       IrEffectMemoryRead)
     (compiler-ir-effect-is?
+      (IrInstrCpuId 10 (IrValueI64 1) (IrValueI64 0) 0)
+      IrEffectCpuProbe)
+    (compiler-ir-effect-is? (IrInstrXgetbv 11 (IrValueI64 0)) IrEffectCpuProbe)
+    (compiler-ir-effect-is?
       (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok")
       IrEffectControlFlow)
     (compiler-ir-effect-is?
@@ -2971,11 +2981,13 @@
   (and
     (not (compiler-ir-effect-has-side-effect? IrEffectPure))
     (not (compiler-ir-effect-has-side-effect? IrEffectMemoryRead))
+    (compiler-ir-effect-has-side-effect? IrEffectCpuProbe)
     (compiler-ir-effect-has-side-effect? IrEffectMemoryWrite)
     (compiler-ir-effect-has-side-effect? IrEffectControlFlow)
     (compiler-ir-effect-has-side-effect? IrEffectUnknown)
     (not (compiler-ir-effect-invalidates-cse? IrEffectPure))
     (compiler-ir-effect-invalidates-cse? IrEffectMemoryRead)
+    (compiler-ir-effect-invalidates-cse? IrEffectCpuProbe)
     (compiler-ir-effect-invalidates-cse? IrEffectMemoryWrite)
     (compiler-ir-effect-invalidates-cse? IrEffectControlFlow)
     (compiler-ir-effect-invalidates-cse? IrEffectUnknown)))

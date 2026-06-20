@@ -518,6 +518,106 @@
       (if flag (set! n 2) unit)
       (take borrowed))))")
 
+(define (compiler-typecheck-borrow-if-branch-local-after-join-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (begin
+    (if flag
+      (let [borrowed : (& n i64) (& n)] (begin (take borrowed) unit))
+      unit)
+    (set! n 2)
+    n))")
+
+(define (compiler-typecheck-borrow-if-result-before-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (let
+    [borrowed : (& n i64)
+      (if flag
+        (& n)
+        (& n))]
+    (begin
+      (set! n 2)
+      (take borrowed))))")
+
+(define (compiler-typecheck-borrow-if-result-after-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (let
+    [borrowed : (& n i64)
+      (if flag
+        (& n)
+        (& n))]
+    (begin
+      (take borrowed)
+      (set! n 2)
+      n)))")
+
+(define (compiler-typecheck-borrow-match-branch-local-after-join-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(defenum Flag (On) (Off))
+(define (main [n : i64] [flag : Flag]) : i64
+  (begin
+    (match flag
+      [On (let [borrowed : (& n i64) (& n)] (begin (take borrowed) unit))]
+      [Off unit])
+    (set! n 2)
+    n))")
+
+(define (compiler-typecheck-borrow-match-result-before-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(defenum Flag (On) (Off))
+(define (main [n : i64] [flag : Flag]) : i64
+  (let
+    [borrowed : (& n i64)
+      (match flag
+        [On (& n)]
+        [Off (& n)])]
+    (begin
+      (set! n 2)
+      (take borrowed))))")
+
+(define (compiler-typecheck-borrow-match-result-after-last-use-source) : String
+  "(define (take [n : (& n i64)]) : i64 1)
+(defenum Flag (On) (Off))
+(define (main [n : i64] [flag : Flag]) : i64
+  (let
+    [borrowed : (& n i64)
+      (match flag
+        [On (& n)]
+        [Off (& n)])]
+    (begin
+      (take borrowed)
+      (set! n 2)
+      n)))")
+
+(define (compiler-typecheck-borrow-if-aggregate-result-before-last-use-source) : String
+  "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
+(define (read-box [box : (RefBox owner)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (let
+    [box : (RefBox n)
+      (if flag
+        (RefBox n)
+        (RefBox n))]
+    (begin
+      (set! n 2)
+      (read-box box))))")
+
+(define (compiler-typecheck-borrow-if-aggregate-result-after-last-use-source) : String
+  "(defstruct RefBox (:lifetimes owner) (value (& owner i64)))
+(define (read-box [box : (RefBox owner)]) : i64 1)
+(define (main [n : i64] [flag : bool]) : i64
+  (let
+    [box : (RefBox n)
+      (if flag
+        (RefBox n)
+        (RefBox n))]
+    (begin
+      (read-box box)
+      (set! n 2)
+      n)))")
+
 (define (compiler-typecheck-borrow-while-conservative-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
 (define (main [n : i64]) : i64
@@ -622,6 +722,25 @@
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-if-conservative-source)
       "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-if-branch-local-after-join-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-if-result-before-last-use-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-if-result-after-last-use-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-match-branch-local-after-join-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-match-result-before-last-use-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-match-result-after-last-use-source))
+    (compiler-typecheck-labeled-borrow-error-ok?
+      (compiler-typecheck-borrow-if-aggregate-result-before-last-use-source)
+      "typecheck: cannot assign to borrowed place `n`")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-if-aggregate-result-after-last-use-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-while-conservative-source)
       "typecheck: cannot assign to borrowed place `n`")))

@@ -28386,11 +28386,20 @@
     [(TcStringCons name rest)
       (tc-borrow-check-add-names (tc-moved-add locals name) (box-get rest))]))
 
-(define (tc-borrow-check-pattern-locals
+(define (tc-borrow-check-remove-root-states
+  [borrowed : TcMovedSet]
+  [names : TcStringList]) : TcMovedSet
+  (match names
+    [(TcStringNil) borrowed]
+    [(TcStringCons name rest)
+      (tc-borrow-check-remove-root-states
+        (tc-borrow-check-remove-root-state borrowed name)
+        (box-get rest))]))
+
+(define (tc-borrow-check-pattern-bound-names
   [ctx : TcContext]
   [scrut-ty : AstType]
-  [pattern : AstPattern]
-  [locals : TcMovedSet]) : TcMovedSet
+  [pattern : AstPattern]) : TcStringList
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-match-coverage-type ctx scrut-ty)))
     [(AstTyEnum _)
@@ -28398,23 +28407,25 @@
         [(AstPatVariant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-borrow-check-add-names
-              locals
-              (tc-pattern-list-add-bound-names patterns TcStringNil)))]
-        [_ locals])]
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
     [(AstTyEnumArgs _ _)
       (match pattern
         [(AstPatVariant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-borrow-check-add-names
-              locals
-              (tc-pattern-list-add-bound-names patterns TcStringNil)))]
-        [_ locals])]
-    [_
-      (tc-borrow-check-add-names
-        locals
-        (tc-pattern-add-bound-names pattern TcStringNil))]))
+            (tc-pattern-list-add-bound-names patterns TcStringNil))]
+        [_ TcStringNil])]
+    [_ (tc-pattern-add-bound-names pattern TcStringNil)]))
+
+(define (tc-borrow-check-pattern-locals
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]
+  [locals : TcMovedSet]) : TcMovedSet
+  (tc-borrow-check-add-names
+    locals
+    (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern)))
 
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
@@ -28959,15 +28970,16 @@
                 [(ErrTcBorrowCheck message)
                   (ErrTcBorrowCheckResourceBindings message)]))]))]))
 
-(define (tc-borrow-check-arms
+(define (tc-borrow-check-arms-join
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [scrut-ty : AstType]
-  [arms : AstMatchArmList]) : TcBorrowCheckResult
+  [arms : AstMatchArmList]
+  [joined : TcMovedSet]) : TcBorrowCheckResult
   (match arms
-    [(AstMatchArmNil) (OkTcBorrowCheck borrowed)]
+    [(AstMatchArmNil) (OkTcBorrowCheck joined)]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -28987,16 +28999,34 @@
                       (tc-moved-clone locals))
                     (tc-moved-clone borrowed)
                     body)
-                    [(OkTcBorrowCheck _)
-                      (tc-borrow-check-arms
-                        ctx
-                        env
-                        locals
-                        borrowed
-                        scrut-ty
-                        rest)]
+                    [(OkTcBorrowCheck arm-borrowed)
+                      (let
+                        [visible-arm-borrowed : TcMovedSet
+                          (tc-borrow-check-remove-root-states
+                            arm-borrowed
+                            (tc-borrow-check-pattern-bound-names
+                              ctx
+                              scrut-ty
+                              pattern))]
+                        (tc-borrow-check-arms-join
+                          ctx
+                          env
+                          locals
+                          borrowed
+                          scrut-ty
+                          rest
+                          (tc-moved-union joined visible-arm-borrowed)))]
                     [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
                 [(ErrTcEnv message) (ErrTcBorrowCheck message)]))]))]))
+
+(define (tc-borrow-check-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : TcBorrowCheckResult
+  (tc-borrow-check-arms-join ctx env locals borrowed scrut-ty arms borrowed))
 
 (define (tc-borrow-check-expr
   [ctx : TcContext]
@@ -29115,14 +29145,15 @@
               (tc-moved-clone locals)
               (tc-moved-clone borrowedc)
               then-branch)
-              [(OkTcBorrowCheck _)
+              [(OkTcBorrowCheck borrowedt)
                 (match (tc-borrow-check-expr
                   ctx
                   env
                   (tc-moved-clone locals)
                   (tc-moved-clone borrowedc)
                   else-branch)
-                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowedc)]
+                  [(OkTcBorrowCheck borrowede)
+                    (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
                   [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]

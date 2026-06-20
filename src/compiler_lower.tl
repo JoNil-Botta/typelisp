@@ -35294,6 +35294,7 @@
                                           names))])
                                   checked-names)]
                               (begin
+                                (ast-node-pool-context-install! pools)
                                 (cfg
                                   compile-profile
                                   (compiler-lower-profile-finish

@@ -137,9 +137,7 @@
 (define (msvc-digit? [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
-    (if (>= code (cast '0' : i64))
-      (<= code (cast '9' : i64))
-      false)))
+    (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64)))))
 
 ;: Return the numeric value of an ASCII decimal digit, or zero otherwise.
 (define (msvc-digit-value [c : char]) : i64
@@ -148,83 +146,24 @@
     0))
 
 ;: Read one dotted numeric version segment starting at `index`.
-(define (msvc-version-read-segment-from
-  [version : String]
-  [index : i64]
-  [n : i64]
-  [value : i64]) : MsvcVersionCursor
-  (let
-    [i : i64 index]
-    [out : i64 value]
-    [done : bool false]
-    (begin
-      (while (if (< i n)
-        (not done)
-        false)
-        (let
-          [c : char (string-ref version i)]
-          (if (string.char-eq c '.')
-            (set! done true)
-            (begin
-              (if (msvc-digit? c)
-                (set! out (+ (* out 10) (- (cast c : i64) (cast '0' : i64))))
-                unit)
-              (set! i (+ i 1))))))
-      (MsvcVersionCursor out i))))
-
-;: Read one dotted numeric version segment starting at `index`.
 (define (msvc-version-read-segment [version : String] [index : i64]) : MsvcVersionCursor
-  (msvc-version-read-segment-from version index (string-length version) 0))
-
-;: Return the numeric segment value starting at `index`, accumulating in `value`.
-(define (msvc-version-segment-value-from
-  [version : String]
-  [index : i64]
-  [n : i64]
-  [value : i64]) : i64
   (let
+    [n : i64 (string-length version)]
     [i : i64 index]
-    [out : i64 value]
+    [value : i64 0]
     [done : bool false]
     (begin
-      (while (if (< i n)
-        (not done)
-        false)
+      (while (and (< i n) (not done))
         (let
           [c : char (string-ref version i)]
           (if (string.char-eq c '.')
             (set! done true)
             (begin
               (if (msvc-digit? c)
-                (set! out (+ (* out 10) (- (cast c : i64) (cast '0' : i64))))
+                (set! value (+ (* value 10) (msvc-digit-value c)))
                 unit)
               (set! i (+ i 1))))))
-      out)))
-
-;: Return the numeric value of the dotted version segment starting at `index`.
-(define (msvc-version-segment-value [version : String] [index : i64]) : i64
-  (msvc-version-segment-value-from version index (string-length version) 0))
-
-;: Return the end index of the dotted version segment starting at `index`.
-(define (msvc-version-segment-next-from
-  [version : String]
-  [index : i64]
-  [n : i64]) : i64
-  (let
-    [i : i64 index]
-    [done : bool false]
-    (begin
-      (while (if (< i n)
-        (not done)
-        false)
-        (if (string.char-eq (string-ref version i) '.')
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
-
-;: Return the index where the dotted version segment starting at `index` stops.
-(define (msvc-version-segment-next [version : String] [index : i64]) : i64
-  (msvc-version-segment-next-from version index (string-length version)))
+      (MsvcVersionCursor value i))))
 
 ;: Advance past a dotted version separator if one is present.
 (define (msvc-version-next-index [version : String] [index : i64]) : i64
@@ -235,31 +174,25 @@
       index)))
 
 ;: Return true when owned `left` is a newer dotted numeric version than `right`.
-(define (msvc-version-greater-owned-from
-  [left : String]
-  [right : String]
-  [left-len : i64]
-  [right-len : i64]
-  [left-index : i64]
-  [right-index : i64]) : bool
+(define (msvc-version-greater-owned? [left : String] [right : String]) : bool
   (let
-    [li : i64 left-index]
-    [ri : i64 right-index]
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    [left-index : i64 0]
+    [right-index : i64 0]
     [greater : bool false]
     [done : bool false]
     (begin
-      (while (if (not done)
-        (if (< li left-len)
-          true
-          (< ri right-len))
-        false)
+      (while (and
+        (not done)
+        (or (< left-index left-len) (< right-index right-len)))
         (let
-          [left-value : i64
-            (msvc-version-segment-value-from left li left-len 0)]
-          [right-value : i64
-            (msvc-version-segment-value-from right ri right-len 0)]
-          [left-next : i64 (msvc-version-segment-next-from left li left-len)]
-          [right-next : i64 (msvc-version-segment-next-from right ri right-len)]
+          [left-segment : MsvcVersionCursor
+            (stdlib.msvc.msvc-version-read-segment left left-index)]
+          [right-segment : MsvcVersionCursor
+            (stdlib.msvc.msvc-version-read-segment right right-index)]
+          [left-value : i64 (struct-get left-segment value)]
+          [right-value : i64 (struct-get right-segment value)]
           (if (> left-value right-value)
             (begin
               (set! greater true)
@@ -267,19 +200,15 @@
             (if (< left-value right-value)
               (set! done true)
               (begin
-                (set! li (msvc-version-next-index left left-next))
-                (set! ri (msvc-version-next-index right right-next)))))))
+                (set!
+                  left-index
+                  (msvc-version-next-index left (struct-get left-segment next)))
+                (set!
+                  right-index
+                  (msvc-version-next-index
+                    right
+                    (struct-get right-segment next))))))))
       greater)))
-
-;: Return true when owned `left` is a newer dotted numeric version than `right`.
-(define (msvc-version-greater-owned? [left : String] [right : String]) : bool
-  (msvc-version-greater-owned-from
-    left
-    right
-    (string-length left)
-    (string-length right)
-    0
-    0))
 
 ;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : (& left str)] [right : (& right str)]) : bool
@@ -645,16 +574,15 @@
       (MsvcNoToolset))
     (let
       [version : String (vector.string-vec-get entries index "")]
-      [toolset-root : String (stdlib.msvc.msvc-path-join parent version)]
-      [tool-path : String
-        (stdlib.msvc.msvc-toolset-tool-path toolset-root tool)]
-      [usable : bool (stdlib.msvc.msvc-path-exists-owned? tool-path)]
+      [toolset-root : String (msvc-path-join parent version)]
+      [tool-path : String (msvc-toolset-tool-path toolset-root tool)]
+      [usable : bool (msvc-path-exists-owned? tool-path)]
       (if (if usable
         (if has-best
           (msvc-version-greater-owned? version best-version)
           true)
         false)
-        (stdlib.msvc.msvc-toolset-scan-entries
+        (msvc-toolset-scan-entries
           entries
           (+ index 1)
           parent
@@ -662,7 +590,7 @@
           toolset-root
           version
           true)
-        (stdlib.msvc.msvc-toolset-scan-entries
+        (msvc-toolset-scan-entries
           entries
           (+ index 1)
           parent
@@ -784,22 +712,16 @@
 ;: Return true when a Windows SDK version has the pieces needed by link.exe.
 (define (msvc-sdk-version-usable? [sdk-root : String] [version : String]) : bool
   (let
-    [lib-root : String (stdlib.msvc.msvc-sdk-version-root sdk-root version)]
-    [kernel32 : String
-      (stdlib.msvc.msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
-    [ucrt : String (stdlib.msvc.msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
+    [lib-root : String (msvc-sdk-version-root sdk-root version)]
+    [kernel32 : String (msvc-path-join3 lib-root "um/x64" "kernel32.lib")]
+    [ucrt : String (msvc-path-join3 lib-root "ucrt/x64" "ucrt.lib")]
     [include-root : String
-      (stdlib.msvc.msvc-path-join
-        (stdlib.msvc.msvc-path-join sdk-root "Include")
-        version)]
-    (if (stdlib.msvc.msvc-path-exists-owned? kernel32)
-      (if (stdlib.msvc.msvc-path-exists-owned? ucrt)
-        (if (stdlib.msvc.msvc-dir-exists-owned?
-          (stdlib.msvc.msvc-path-join include-root "shared"))
-          (if (stdlib.msvc.msvc-dir-exists-owned?
-            (stdlib.msvc.msvc-path-join include-root "um"))
-            (stdlib.msvc.msvc-dir-exists-owned?
-              (stdlib.msvc.msvc-path-join include-root "ucrt"))
+      (msvc-path-join (msvc-path-join sdk-root "Include") version)]
+    (if (msvc-path-exists-owned? kernel32)
+      (if (msvc-path-exists-owned? ucrt)
+        (if (msvc-dir-exists-owned? (msvc-path-join include-root "shared"))
+          (if (msvc-dir-exists-owned? (msvc-path-join include-root "um"))
+            (msvc-dir-exists-owned? (msvc-path-join include-root "ucrt"))
             false)
           false)
         false)
@@ -818,19 +740,14 @@
       (MsvcNoSdk))
     (let
       [version : String (vector.string-vec-get entries index "")]
-      [usable : bool (stdlib.msvc.msvc-sdk-version-usable? sdk-root version)]
+      [usable : bool (msvc-sdk-version-usable? sdk-root version)]
       (if (if usable
         (if has-best
           (msvc-version-greater-owned? version best-version)
           true)
         false)
-        (stdlib.msvc.msvc-sdk-scan-entries
-          entries
-          (+ index 1)
-          sdk-root
-          version
-          true)
-        (stdlib.msvc.msvc-sdk-scan-entries
+        (msvc-sdk-scan-entries entries (+ index 1) sdk-root version true)
+        (msvc-sdk-scan-entries
           entries
           (+ index 1)
           sdk-root
@@ -1135,14 +1052,8 @@
   (value msvc-supported-target?)
   (value msvc-digit?)
   (value msvc-digit-value)
-  (value msvc-version-read-segment-from)
   (value msvc-version-read-segment)
-  (value msvc-version-segment-value-from)
-  (value msvc-version-segment-value)
-  (value msvc-version-segment-next-from)
-  (value msvc-version-segment-next)
   (value msvc-version-next-index)
-  (value msvc-version-greater-owned-from)
   (value msvc-version-greater-owned?)
   (value msvc-version-greater?)
   (value msvc-path-exists?)

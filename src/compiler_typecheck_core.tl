@@ -5377,6 +5377,30 @@
     name
     "; import the module or use a visible dotted module alias"))
 
+(define (tc-comptime-syntax-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "expr-bool")
+    (string-eq name "expr-int")
+    (string-eq name "expr-var")
+    (string-eq name "expr-splice")
+    (string-eq name "expr-if")
+    (ctfe-expr-inspector-name? name)
+    (ctfe-expr-list-inspector-name? name)
+    (ctfe-expr-clause-inspector-name? name)
+    (ctfe-expr-clause-list-inspector-name? name)))
+
+(define (tc-comptime-helper-qualified-lookup-key
+  [env : TcTypeEnv]
+  [name : String]) : TcMaybeString
+  (let
+    [call-name : String (ctfe-comptime-helper-call-name name)]
+    (if (and
+      (not (string-eq call-name name))
+      (tc-comptime-syntax-helper-name? call-name)
+      (tc-source-name-bound-exact? env call-name))
+      (TcSomeString call-name)
+      (TcNoString))))
+
 (define (tc-dotted-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (tc-dotted-type-name-lookup-key-from-id ctx name (tc-name-id name)))
 
@@ -5451,18 +5475,22 @@
               name-id
               first-dot))
             (OkTcString name)
-            (match (tc-source-dotted-alias-key ctx name first-dot)
+            (match (tc-comptime-helper-qualified-lookup-key env name)
               [(TcSomeString key) (OkTcString key)]
               [(TcNoString)
-                (match (tc-source-dotted-full-path-key ctx name)
+                (match (tc-source-dotted-alias-key ctx name first-dot)
                   [(TcSomeString key) (OkTcString key)]
                   [(TcNoString)
-                    (if (tc-source-name-bound-exact-id? env name-id)
-                      (OkTcString name)
-                      (match (tc-enum-qualified-variant-lookup-key ctx name)
-                        [(OkTcString key) (OkTcString key)]
-                        [(ErrTcString _)
-                          (ErrTcString (tc-unresolved-dotted-name-message name))]))])])))))))
+                    (match (tc-source-dotted-full-path-key ctx name)
+                      [(TcSomeString key) (OkTcString key)]
+                      [(TcNoString)
+                        (if (tc-source-name-bound-exact-id? env name-id)
+                          (OkTcString name)
+                          (match (tc-enum-qualified-variant-lookup-key ctx name)
+                            [(OkTcString key) (OkTcString key)]
+                            [(ErrTcString _)
+                              (ErrTcString
+                                (tc-unresolved-dotted-name-message name))]))])])])))))))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]

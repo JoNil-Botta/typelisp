@@ -6615,6 +6615,25 @@
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 
+(define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
+  "(defmacro (all [args : bool ...]) : bool
+  (if (comptime.expr-list-empty? args)
+    (comptime.expr-bool true)
+    `(if ,(comptime.expr-list-head args)
+       (all ,@(comptime.expr-list-tail args))
+       false)))
+(defmacro (pick [arms : ExprClause ...]) : i64
+  (if (comptime.expr-clause-list-empty? arms)
+    (comptime.expr-int 0)
+    `(if ,(comptime.expr-clause-first (comptime.expr-clause-list-head arms))
+       ,(comptime.expr-clause-second (comptime.expr-clause-list-head arms))
+       (pick ,@(comptime.expr-clause-list->expr-list
+                 (comptime.expr-clause-list-tail arms))))))
+(define (main) : i64
+  (if (all true true)
+    (pick [false 1] [true 42])
+    0))")
+
 (define (compiler-typecheck-defmacro-unsafe-source) : String
   "(defmacro (bad) : bool (unsafe (expr-bool true)))
 (define (main) : i64 0)")
@@ -6661,6 +6680,8 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-pure-string-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-comptime-qualified-helper-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-produced-mismatch-source)
       "typecheck: macro body produced type does not match declaration")

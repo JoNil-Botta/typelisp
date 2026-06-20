@@ -111,14 +111,99 @@ normalize_asm() {
     asm=$1
     out=$2
     symbols=$3
+    target=$4
+    opt_level=$5
+    name=$6
 
-    awk -v symbols="$symbols" '
+    awk -v symbols="$symbols" -v target="$target" -v opt_level="$opt_level" -v name="$name" '
         function trim(s) {
             gsub(/^[ \t\r]+/, "", s)
             gsub(/[ \t\r]+$/, "", s)
             return s
         }
+        function abi_arg_normalize_enabled() {
+            return opt_level == "2" &&
+                (name == "functions" ||
+                    name == "lambda_capture_struct_enum" ||
+                    name == "many_args")
+        }
+        function abi_arg_allowed(arg_index) {
+            if (!abi_arg_normalize_enabled()) return 0
+            if (name == "lambda_capture_struct_enum") return arg_index == 0
+            if (name == "functions") return arg_index >= 0 && arg_index <= 2
+            if (name == "many_args") return arg_index >= 0 && arg_index <= 7
+            return 0
+        }
+        function normalize_one_arg_reg(s, reg, arg_index) {
+            if (abi_arg_allowed(arg_index)) {
+                gsub(reg, "%ABI" arg_index, s)
+            }
+            return s
+        }
+        function normalize_arg_regs(s) {
+            if (target == "linux-x86_64") {
+                s = normalize_one_arg_reg(s, "%rdi", 0)
+                s = normalize_one_arg_reg(s, "%rsi", 1)
+                s = normalize_one_arg_reg(s, "%rdx", 2)
+                s = normalize_one_arg_reg(s, "%rcx", 3)
+                s = normalize_one_arg_reg(s, "%r9", 5)
+            } else {
+                s = normalize_one_arg_reg(s, "%rcx", 0)
+                s = normalize_one_arg_reg(s, "%rdx", 1)
+                s = normalize_one_arg_reg(s, "%r9", 3)
+            }
+            return s
+        }
+        function stack_arg_for_offset(offset) {
+            arg_index = (offset / 8) - 1
+            if (!abi_arg_allowed(arg_index)) {
+                return ""
+            }
+            if (target == "linux-x86_64") {
+                if (arg_index == 4 || arg_index >= 6) return "%ABI" arg_index
+            } else {
+                if (arg_index == 2 || arg_index >= 4) return "%ABI" arg_index
+            }
+            return ""
+        }
+        function flush_pending_stack_arg() {
+            if (pending_stack_arg != "") {
+                print pending_stack_line
+                pending_stack_arg = ""
+                pending_stack_line = ""
+            }
+        }
+        function maybe_capture_stack_arg_load(s, tmp, offset, arg) {
+            if (s !~ /^movq -[0-9]+\(%rbp\), %r8$/) {
+                return 0
+            }
+            tmp = s
+            sub(/^movq -/, "", tmp)
+            sub(/\(%rbp\), %r8$/, "", tmp)
+            offset = tmp + 0
+            arg = stack_arg_for_offset(offset)
+            if (arg == "") {
+                return 0
+            }
+            pending_stack_arg = arg
+            pending_stack_line = s
+            return 1
+        }
+        function consume_pending_stack_arg(s) {
+            if (pending_stack_arg == "") {
+                return s
+            }
+            if (s ~ / %r8,/) {
+                gsub(/%r8/, pending_stack_arg, s)
+                pending_stack_arg = ""
+                pending_stack_line = ""
+                return s
+            }
+            flush_pending_stack_arg()
+            return s
+        }
         function stop_func() {
+            flush_pending_stack_arg()
             active = 0
             current = ""
             skip_prologue = 0
@@ -181,9 +266,15 @@ normalize_asm() {
 
             gsub(/\.Lf[0-9]+/, ".LfN", line)
             gsub(/\.Ltmp[0-9]+/, ".LtmpN", line)
+            line = normalize_arg_regs(line)
+            line = consume_pending_stack_arg(line)
+            if (maybe_capture_stack_arg_load(line)) {
+                next
+            }
             print line
         }
         END {
+            flush_pending_stack_arg()
             missing = 0
             for (i = 1; i <= wanted_count; i++) {
                 symbol = symbol_order[i]
@@ -204,6 +295,7 @@ normalize_asm() {
 normalize_all() {
     asm_dir=$1
     norm_dir=$2
+    target=$3
 
     mkdir -p "$norm_dir"
     opt_levels | while read -r opt_level; do
@@ -212,7 +304,10 @@ normalize_all() {
             normalize_asm \
                 "$asm_dir/opt${opt_level}_$name.s" \
                 "$norm_dir/opt${opt_level}_$name.norm" \
-                "$symbols"
+                "$symbols" \
+                "$target" \
+                "$opt_level" \
+                "$name"
         done
     done
 }
@@ -257,20 +352,7 @@ compare_outputs() {
 }
 
 expected_target_asm_mismatch() {
-    opt_level=$1
-    name=$2
-
-    case "$opt_level:$name" in
-        2:functions | 2:lambda_capture_struct_enum | 2:many_args)
-            # Linux opt2 can now keep safe scalar parameter values in incoming
-            # ABI registers. Windows keeps the old stack homes until #3493
-            # resolves the target-specific scratch/register-argument audit.
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    return 1
 }
 
 rm -rf "$LINUX_ASM_DIR" "$WINDOWS_ASM_DIR" "$LINUX_NORM_DIR" "$WINDOWS_NORM_DIR"
@@ -278,8 +360,8 @@ mkdir -p "$LINUX_ASM_DIR" "$WINDOWS_ASM_DIR" "$LINUX_NORM_DIR" "$WINDOWS_NORM_DI
 
 compile_all "$LINUX_ASM_DIR" linux-x86_64
 compile_all "$WINDOWS_ASM_DIR" windows-x86_64
-normalize_all "$LINUX_ASM_DIR" "$LINUX_NORM_DIR"
-normalize_all "$WINDOWS_ASM_DIR" "$WINDOWS_NORM_DIR"
+normalize_all "$LINUX_ASM_DIR" "$LINUX_NORM_DIR" linux-x86_64
+normalize_all "$WINDOWS_ASM_DIR" "$WINDOWS_NORM_DIR" windows-x86_64
 
 if [ "$self_test" -eq 1 ]; then
     if ! compare_outputs; then

@@ -166,11 +166,13 @@ runtime-helper-heavy programs. The assembly parity corpus is even narrower: it
 compares helper bodies only after function prologues, and deliberately leaves
 direct C ABI call setup, indirect-call register differences, shadow space,
 sret, stack probing, entry symbols, and runtime shims to the backend smoke and
-native integration layers until the normalizer has an explicit target-ABI model.
-Opt2 helper bodies that intentionally differ because Linux keeps safe scalar
-parameters in incoming ABI registers while Windows still uses stack homes are
-listed in the script as expected mismatches; those entries fail once they become
-stale and should be removed with the Windows parameter-home follow-up (#3493).
+native integration layers. The normalizer has a narrow target-ABI model for the
+former opt2 scalar-parameter-home mismatches: selected incoming scalar argument
+registers, plus stack homes forced by target scratch registers, normalize to
+`%ABI<n>` pseudo operands for the affected corpus helpers only. The parity
+script has no expected-mismatch entries; any normalized helper-body difference is
+treated as a regression unless the script is deliberately updated with a tightly
+scoped, stale-entry-checked exception.
 
 ### Assembly size reports
 

@@ -1737,10 +1737,7 @@
 (define (compiler-reg-abi-param-preassign-enabled? [abi : CompilerRegTargetAbi]) : bool
   (match abi
     [(CompilerRegAbiLinux) true]
-    ;; The Windows backend still has target-specific scratch/register-argument
-    ;; interactions that need a separate audit before incoming arg homes are
-    ;; safe in opt2 self-builds.
-    [(CompilerRegAbiWindows) false]))
+    [(CompilerRegAbiWindows) true]))
 
 (define (compiler-reg-param-pin-safe?
   [assignments : CompilerRegAssignmentTable]
@@ -3139,6 +3136,8 @@
   (match op
     [(IrBinDiv) true]
     [(IrBinMod) true]
+    [(IrBinSafeDiv) true]
+    [(IrBinSafeMod) true]
     [(IrBinShl) true]
     [(IrBinShr) true]
     [_ false]))
@@ -3158,6 +3157,9 @@
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrSyscall _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
+    [(IrInstrCpuId _ _ _ _) true]
+    [(IrInstrXgetbv _ _) true]
+    [(IrInstrPack _ _ _) true]
     [(IrInstrBinOp _ op _ _ _) (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
@@ -7458,11 +7460,15 @@
     (compiler-reg-param-register-function))
     [(CompilerRegPlan assignments ineligible _ _ _)
       (and
-        (compiler-live-set-contains? ineligible 0)
-        (compiler-live-set-contains? ineligible 1)
+        (not (compiler-live-set-contains? ineligible 0))
+        (not (compiler-live-set-contains? ineligible 1))
         (compiler-live-set-contains? ineligible 2)
-        (compiler-reg-unassigned? assignments 0)
-        (compiler-reg-unassigned? assignments 1)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 0)
+          "%rcx")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%rdx")
         (compiler-reg-unassigned? assignments 2))]))
 
 (define (compiler-reg-scalar-param-clobber-ok?) : bool

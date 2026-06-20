@@ -1,9 +1,11 @@
 ;# FFI boundary helpers.
 ;#
 ;# Provides C string marshalling helpers for raw-pointer FFI boundaries. The
-;# `ffi-c-string-copy!` family writes into caller-owned storage without
-;# allocating. `ffi-c-string-alloc` and `ffi-cstr` allocate a NUL-terminated byte
-;# buffer in the active arena and return its `(Ptr u8)`.
+;# `ffi-c-bytes-copy!` family writes borrowed bytes into caller-owned storage
+;# without allocating. `ffi-c-bytes-alloc` and `ffi-cbytes` allocate a
+;# NUL-terminated byte buffer in the active arena and return its `(Ptr u8)`.
+;# Compatibility `ffi-c-string-*` wrappers borrow their input text as bytes and
+;# delegate to the byte-slice path.
 ;#
 ;# Usage: `(import "stdlib/ffi.tl")`
 ;#
@@ -19,90 +21,129 @@
 ;#       1
 ;#       0)))
 ;# ```
-;: Result type for copying a TypeLisp string into caller-owned C string storage.
+(import "byte_buf.tl")
+
+;: Result type for copying TypeLisp bytes into caller-owned C string storage.
 (defenum FfiCStringCopyResult
   (FfiCStringCopyOk i64)
   (FfiCStringInteriorNul)
   (FfiCStringBufferTooSmall i64))
 
-;: Return the byte count needed for a NUL-terminated copy of `text`.
-(define (ffi-c-string-required-bytes [text : String]) : i64
-  (+ (string-length text) 1))
+;: Return the byte count needed for a NUL-terminated copy of `view`.
+(define (ffi-c-bytes-required-bytes [view : (& source bytes)]) : i64
+  (+ (bytes-length view) 1))
 
-;: Return true when `text` contains an interior NUL byte.
-(define (ffi-c-string-interior-nul? [text : String]) : bool
+;: Return true when `view` contains an interior NUL byte.
+(define (ffi-c-bytes-interior-nul? [view : (& source bytes)]) : bool
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (bytes-length view)]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
-        (if (= (string-ref text i) '\0')
+        (if (= (bytes-ref view i) (cast '\0' : u8))
           (set! found true)
           (set! i (+ i 1))))
       found)))
+
+;: Copy exactly `n` bytes from `view` into `dst`.
+;:
+;: The caller must ensure `n` is at most `(bytes-length view)` and that `dst`
+;: points to writable storage for at least `n` bytes.
+(define (ffi-c-bytes-copy-bytes!
+  [view : (& source bytes)]
+  [dst : (MutPtr u8)]
+  [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (unsafe
+          (ptr-write! (ptr-offset dst i) (bytes-ref view i)))
+        (set! i (+ i 1))))))
+
+;: Copy `view` to caller-owned mutable storage and append the trailing NUL byte.
+;:
+;: Returns `FfiCStringInteriorNul` without writing when `view` contains a NUL
+;: byte. Returns `FfiCStringBufferTooSmall required` without writing when
+;: `capacity` is smaller than `(ffi-c-bytes-required-bytes view)`. On success,
+;: returns `FfiCStringCopyOk bytes-written`, where `bytes-written` includes the
+;: trailing NUL. Raw-pointer validity, alignment, and lifetime remain the
+;: caller's responsibility.
+(define (ffi-c-bytes-copy!
+  [view : (& source bytes)]
+  [dst : (MutPtr u8)]
+  [capacity : i64]) : FfiCStringCopyResult
+  (let
+    [needed : i64 (ffi-c-bytes-required-bytes view)]
+    (if (ffi-c-bytes-interior-nul? view)
+      (FfiCStringInteriorNul)
+      (if (< capacity needed)
+        (FfiCStringBufferTooSmall needed)
+        (let
+          [n : i64 (bytes-length view)]
+          (begin
+            (ffi-c-bytes-copy-bytes! view dst n)
+            (unsafe
+              (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
+            (FfiCStringCopyOk needed)))))))
+
+;: Allocate a NUL-terminated C string copy of `view` in the active arena.
+;:
+;: Returns null when `view` contains an interior NUL byte. On success, the
+;: returned pointer remains valid until the active arena is rewound, reset, or
+;: destroyed; callers must not free it and must not use it after the owning arena
+;: is invalidated.
+(define (ffi-c-bytes-alloc [view : (& source bytes)]) : (Ptr u8)
+  (if (ffi-c-bytes-interior-nul? view)
+    (ptr-null : (Ptr u8))
+    (let
+      [needed : i64 (ffi-c-bytes-required-bytes view)]
+      [n : i64 (bytes-length view)]
+      [buf : (Array u8) (make-array u8 needed)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data buf))]
+      (begin
+        (ffi-c-bytes-copy-bytes! view dst n)
+        (unsafe
+          (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
+        (unsafe
+          (ptr-cast dst : (Ptr u8)))))))
+
+;: Short alias for `ffi-c-bytes-alloc`.
+(define (ffi-cbytes [view : (& source bytes)]) : (Ptr u8)
+  (ffi-c-bytes-alloc view))
+
+;: Return the byte count needed for a NUL-terminated copy of `text`.
+(define (ffi-c-string-required-bytes [text : String]) : i64
+  (ffi-c-bytes-required-bytes (str-as-bytes (& text))))
+
+;: Return true when `text` contains an interior NUL byte.
+(define (ffi-c-string-interior-nul? [text : String]) : bool
+  (ffi-c-bytes-interior-nul? (str-as-bytes (& text))))
 
 ;: Copy exactly `n` bytes from `text` into `dst`.
 ;:
 ;: The caller must ensure `n` is at most `(string-length text)` and that `dst`
 ;: points to writable storage for at least `n` bytes.
 (define (ffi-c-string-copy-bytes! [text : String] [dst : (MutPtr u8)] [n : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i n)
-      (begin
-        (unsafe
-          (ptr-write! (ptr-offset dst i) (cast (string-ref text i) : u8)))
-        (set! i (+ i 1))))))
+  (ffi-c-bytes-copy-bytes! (str-as-bytes (& text)) dst n))
 
 ;: Copy `text` to caller-owned mutable storage and append the trailing NUL byte.
 ;:
-;: Returns `FfiCStringInteriorNul` without writing when `text` contains a NUL
-;: byte. Returns `FfiCStringBufferTooSmall required` without writing when
-;: `capacity` is smaller than `(ffi-c-string-required-bytes text)`. On success,
-;: returns `FfiCStringCopyOk bytes-written`, where `bytes-written` includes the
-;: trailing NUL. Raw-pointer validity, alignment, and lifetime remain the
-;: caller's responsibility.
+;: Compatibility wrapper over `ffi-c-bytes-copy!`.
 (define (ffi-c-string-copy!
   [text : String]
   [dst : (MutPtr u8)]
   [capacity : i64]) : FfiCStringCopyResult
-  (let
-    [needed : i64 (ffi-c-string-required-bytes text)]
-    (if (ffi-c-string-interior-nul? text)
-      (FfiCStringInteriorNul)
-      (if (< capacity needed)
-        (FfiCStringBufferTooSmall needed)
-        (let
-          [n : i64 (string-length text)]
-          (begin
-            (ffi-c-string-copy-bytes! text dst n)
-            (unsafe
-              (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
-            (FfiCStringCopyOk needed)))))))
+  (ffi-c-bytes-copy! (str-as-bytes (& text)) dst capacity))
 
 ;: Allocate a NUL-terminated C string copy in the active arena.
 ;:
-;: Returns null when `text` contains an interior NUL byte. On success, the
-;: returned pointer remains valid until the active arena is rewound, reset, or
-;: destroyed; callers must not free it and must not use it after the owning arena
-;: is invalidated.
+;: Compatibility wrapper over `ffi-c-bytes-alloc`.
 (define (ffi-c-string-alloc [text : String]) : (Ptr u8)
-  (if (ffi-c-string-interior-nul? text)
-    (ptr-null : (Ptr u8))
-    (let
-      [needed : i64 (ffi-c-string-required-bytes text)]
-      [n : i64 (string-length text)]
-      [buf : (Array u8) (make-array u8 needed)]
-      [dst : (MutPtr u8)
-        (unsafe
-          (array-data buf))]
-      (begin
-        (ffi-c-string-copy-bytes! text dst n)
-        (unsafe
-          (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
-        (unsafe
-          (ptr-cast dst : (Ptr u8)))))))
+  (ffi-c-bytes-alloc (str-as-bytes (& text))))
 
 ;: Short alias for `ffi-c-string-alloc`.
 (define (ffi-cstr [text : String]) : (Ptr u8)
@@ -186,6 +227,16 @@
     (if (= (ffi-c-string-required-bytes "abc") 4)
       unit
       (ffi-test-fail))
+    (let
+      [view-text : String "bytes"]
+      [view : (& view-text bytes) (str-as-bytes (& view-text))]
+      (begin
+        (if (= (ffi-c-bytes-required-bytes view) 6)
+          unit
+          (ffi-test-fail))
+        (if (not (ffi-c-bytes-interior-nul? view))
+          unit
+          (ffi-test-fail))))
     (if (not (ffi-c-string-interior-nul? "abc"))
       unit
       (ffi-test-fail))
@@ -209,6 +260,19 @@
         (ffi-test-assert-u8-eq (ffi-test-read-u8 exact 2) 99)
         (ffi-test-assert-u8-eq (ffi-test-read-u8 exact 3) 0)))
     (let
+      [bytes-text : String "buf"]
+      [bytes-view : (& bytes-text bytes) (str-as-bytes (& bytes-text))]
+      [bytes-storage : (Array u8) (make-array u8 4)]
+      [bytes-dst : (MutPtr u8)
+        (unsafe
+          (array-data bytes-storage))]
+      (begin
+        (ffi-test-assert-copy-ok (ffi-c-bytes-copy! bytes-view bytes-dst 4) 4)
+        (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 0) 98)
+        (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 1) 117)
+        (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 2) 102)
+        (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 3) 0)))
+    (let
       [small-storage : (Array u8) (make-array u8 3)]
       [small : (MutPtr u8)
         (unsafe
@@ -231,6 +295,24 @@
         (ffi-test-assert-interior-nul (ffi-c-string-copy! with-nul nul-buf 4))
         (ffi-test-assert-u8-eq (ffi-test-read-u8 nul-buf 0) 88)))
     (let
+      [binary : ByteBuf
+        (byte-buf-push
+          (byte-buf-push (byte-buf-new) (cast 97 : u8))
+          (cast 0 : u8))]
+      [binary-view : (& binary bytes) (byte-buf-as-bytes (& binary))]
+      [binary-storage : (Array u8) (make-array u8 3)]
+      [binary-buf : (MutPtr u8)
+        (unsafe
+          (array-data binary-storage))]
+      (begin
+        (ffi-test-write-u8! binary-buf 0 66)
+        (if (ffi-c-bytes-interior-nul? binary-view)
+          unit
+          (ffi-test-fail))
+        (ffi-test-assert-interior-nul
+          (ffi-c-bytes-copy! binary-view binary-buf 3))
+        (ffi-test-assert-u8-eq (ffi-test-read-u8 binary-buf 0) 66)))
+    (let
       [empty-ptr : (Ptr u8) (ffi-c-string-alloc "")]
       (begin
         (if (not (ptr-null? empty-ptr))
@@ -247,6 +329,17 @@
         (ffi-test-assert-u8-eq (ffi-test-read-const-u8 ptr 1) 98)
         (ffi-test-assert-u8-eq (ffi-test-read-const-u8 ptr 2) 99)
         (ffi-test-assert-u8-eq (ffi-test-read-const-u8 ptr 3) 0)))
+    (let
+      [bytes-text : String "pq"]
+      [bytes-view : (& bytes-text bytes) (str-as-bytes (& bytes-text))]
+      [bytes-ptr : (Ptr u8) (ffi-cbytes bytes-view)]
+      (begin
+        (if (not (ptr-null? bytes-ptr))
+          unit
+          (ffi-test-fail))
+        (ffi-test-assert-u8-eq (ffi-test-read-const-u8 bytes-ptr 0) 112)
+        (ffi-test-assert-u8-eq (ffi-test-read-const-u8 bytes-ptr 1) 113)
+        (ffi-test-assert-u8-eq (ffi-test-read-const-u8 bytes-ptr 2) 0)))
     (let
       [alias-ptr : (Ptr u8) (ffi-cstr "xy")]
       (begin

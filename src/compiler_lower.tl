@@ -2733,6 +2733,26 @@
       [(string-eq base "tl_string_concat3") "tl-runtime-string-concat3"]
       [(string-eq base "tl_string_concat4") "tl-runtime-string-concat4"]
       [(string-eq base "tl_string_concat5") "tl-runtime-string-concat5"]
+      [(string-eq base "tl_atomic_i64_load_ptr")
+        "tl-runtime-atomic-i64-load-ptr"]
+      [(string-eq base "tl_atomic_i64_store_ptr")
+        "tl-runtime-atomic-i64-store-ptr!"]
+      [(string-eq base "tl_atomic_i64_add_ptr")
+        "tl-runtime-atomic-i64-add-ptr!"]
+      [(string-eq base "tl_atomic_i64_fetch_add_ptr")
+        "tl-runtime-atomic-i64-fetch-add-ptr!"]
+      [(string-eq base "tl_atomic_i64_cas_ptr")
+        "tl-runtime-atomic-i64-cas-ptr!"]
+      [(string-eq base "tl_atomic_i32_load_ptr")
+        "tl-runtime-atomic-i32-load-ptr"]
+      [(string-eq base "tl_atomic_i32_store_ptr")
+        "tl-runtime-atomic-i32-store-ptr!"]
+      [(string-eq base "tl_atomic_i32_add_ptr")
+        "tl-runtime-atomic-i32-add-ptr!"]
+      [(string-eq base "tl_atomic_i32_fetch_add_ptr")
+        "tl-runtime-atomic-i32-fetch-add-ptr!"]
+      [(string-eq base "tl_atomic_i32_cas_ptr")
+        "tl-runtime-atomic-i32-cas-ptr!"]
       [else ""])))
 
 (define (lower-reach-add-runtime-prelude-string-helper

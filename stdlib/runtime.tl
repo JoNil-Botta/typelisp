@@ -60,6 +60,68 @@
 (unsafe
   (extern (runtime-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
 
+;: Sequentially consistent atomic load of one raw `i64` pointer.
+(define (tl-runtime-atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
+  (unsafe
+    (atomic-load ptr)))
+
+;: Sequentially consistent atomic store of one raw `i64` pointer.
+(define (tl-runtime-atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64]) : unit
+  (unsafe
+    (atomic-store! ptr value)))
+
+;: Sequentially consistent atomic add of one raw `i64` pointer.
+(define (tl-runtime-atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64]) : unit
+  (unsafe
+    (atomic-add! ptr delta)))
+
+;: Sequentially consistent atomic fetch-add of one raw `i64` pointer.
+(define (tl-runtime-atomic-i64-fetch-add-ptr!
+  [ptr : (MutPtr i64)]
+  [delta : i64]) : i64
+  (unsafe
+    (atomic-fetch-add! ptr delta)))
+
+;: Sequentially consistent compare-exchange of one raw `i64` pointer. Returns
+;: the previous value observed at `ptr`.
+(define (tl-runtime-atomic-i64-cas-ptr!
+  [ptr : (MutPtr i64)]
+  [expected : i64]
+  [new-value : i64]) : i64
+  (unsafe
+    (atomic-cas! ptr expected new-value)))
+
+;: Sequentially consistent atomic load of one raw `i32` pointer.
+(define (tl-runtime-atomic-i32-load-ptr [ptr : (Ptr i32)]) : i32
+  (unsafe
+    (atomic-load ptr)))
+
+;: Sequentially consistent atomic store of one raw `i32` pointer.
+(define (tl-runtime-atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32]) : unit
+  (unsafe
+    (atomic-store! ptr value)))
+
+;: Sequentially consistent atomic add of one raw `i32` pointer.
+(define (tl-runtime-atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32]) : unit
+  (unsafe
+    (atomic-add! ptr delta)))
+
+;: Sequentially consistent atomic fetch-add of one raw `i32` pointer.
+(define (tl-runtime-atomic-i32-fetch-add-ptr!
+  [ptr : (MutPtr i32)]
+  [delta : i32]) : i32
+  (unsafe
+    (atomic-fetch-add! ptr delta)))
+
+;: Sequentially consistent compare-exchange of one raw `i32` pointer. Returns
+;: the previous value observed at `ptr`.
+(define (tl-runtime-atomic-i32-cas-ptr!
+  [ptr : (MutPtr i32)]
+  [expected : i32]
+  [new-value : i32]) : i32
+  (unsafe
+    (atomic-cas! ptr expected new-value)))
+
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64
   (unsafe

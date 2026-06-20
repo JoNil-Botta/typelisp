@@ -499,6 +499,174 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-runtime-atomic-wrapper-source) : String
+  "(define (tl-runtime-atomic-i64-load-ptr [ptr : (Ptr i64)])
+  : i64
+  (unsafe (atomic-load ptr)))
+
+(define (tl-runtime-atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
+  : unit
+  (unsafe (atomic-store! ptr value)))
+
+(define (tl-runtime-atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+  : unit
+  (unsafe (atomic-add! ptr delta)))
+
+(define (tl-runtime-atomic-i64-fetch-add-ptr!
+  [ptr : (MutPtr i64)]
+  [delta : i64])
+  : i64
+  (unsafe (atomic-fetch-add! ptr delta)))
+
+(define (tl-runtime-atomic-i64-cas-ptr!
+  [ptr : (MutPtr i64)]
+  [expected : i64]
+  [new-value : i64])
+  : i64
+  (unsafe (atomic-cas! ptr expected new-value)))
+
+(define (tl-runtime-atomic-i32-load-ptr [ptr : (Ptr i32)])
+  : i32
+  (unsafe (atomic-load ptr)))
+
+(define (tl-runtime-atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
+  : unit
+  (unsafe (atomic-store! ptr value)))
+
+(define (tl-runtime-atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+  : unit
+  (unsafe (atomic-add! ptr delta)))
+
+(define (tl-runtime-atomic-i32-fetch-add-ptr!
+  [ptr : (MutPtr i32)]
+  [delta : i32])
+  : i32
+  (unsafe (atomic-fetch-add! ptr delta)))
+
+(define (tl-runtime-atomic-i32-cas-ptr!
+  [ptr : (MutPtr i32)]
+  [expected : i32]
+  [new-value : i32])
+  : i32
+  (unsafe (atomic-cas! ptr expected new-value)))
+
+(define (tl-runtime-atomic-wrapper-root
+  [p64 : (MutPtr i64)]
+  [p32 : (MutPtr i32)])
+  : i64
+  (begin
+    (tl-runtime-atomic-i64-load-ptr (unsafe (ptr-cast p64 : (Ptr i64))))
+    (tl-runtime-atomic-i64-store-ptr! p64 0)
+    (tl-runtime-atomic-i64-add-ptr! p64 1)
+    (tl-runtime-atomic-i64-fetch-add-ptr! p64 1)
+    (tl-runtime-atomic-i64-cas-ptr! p64 1 2)
+    (tl-runtime-atomic-i32-load-ptr (unsafe (ptr-cast p32 : (Ptr i32))))
+    (tl-runtime-atomic-i32-store-ptr! p32 (cast 0 : i32))
+    (tl-runtime-atomic-i32-add-ptr! p32 (cast 1 : i32))
+    (tl-runtime-atomic-i32-fetch-add-ptr! p32 (cast 1 : i32))
+    (tl-runtime-atomic-i32-cas-ptr! p32 (cast 1 : i32) (cast 2 : i32))
+    42))
+
+(define (main) : i64
+  (let
+    [items64 : (Array i64) (make-array i64 1)]
+    [items32 : (Array i32) (make-array i32 1)]
+    (tl-runtime-atomic-wrapper-root
+      (unsafe (array-data items64))
+      (unsafe (array-data items32)))))")
+
+(define (compiler-backend-emit-runtime-atomic-wrapper-source
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-path-mode
+    "stdlib/runtime.tl"
+    (compiler-backend-runtime-atomic-wrapper-source)
+    (compiler-backend-lower-mode-for-target target (BackendModeScalar)))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target program spans target)]
+    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
+
+(define (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? [asm : String]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_load_ptr:\n    movq (%rdi), %rax\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_store_ptr:\n    xchgq %rsi, (%rdi)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_add_ptr:\n    lock addq %rsi, (%rdi)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_fetch_add_ptr:\n    movq %rsi, %rax\n    lock xaddq %rax, (%rdi)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_cas_ptr:\n    movq %rsi, %rax\n    lock cmpxchgq %rdx, (%rdi)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_load_ptr:\n    movl (%rdi), %eax\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_store_ptr:\n    xchgl %esi, (%rdi)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_add_ptr:\n    lock addl %esi, (%rdi)\n    ret\n"))
+    (compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_fetch_add_ptr:\n    movl %esi, %eax\n    lock xaddl %eax, (%rdi)\n    ret\n")
+    (compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_cas_ptr:\n    movl %esi, %eax\n    lock cmpxchgl %edx, (%rdi)\n    ret\n")))
+
+(define (compiler-backend-runtime-atomic-windows-wrapper-asm-ok? [asm : String]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_load_ptr:\n    movq (%rcx), %rax\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_store_ptr:\n    xchgq %rdx, (%rcx)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_add_ptr:\n    lock addq %rdx, (%rcx)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_fetch_add_ptr:\n    movq %rdx, %rax\n    lock xaddq %rax, (%rcx)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i64_cas_ptr:\n    movq %rdx, %rax\n    lock cmpxchgq %r8, (%rcx)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_load_ptr:\n    movl (%rcx), %eax\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_store_ptr:\n    xchgl %edx, (%rcx)\n    ret\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_atomic_i32_add_ptr:\n    lock addl %edx, (%rcx)\n    ret\n"))
+    (compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_fetch_add_ptr:\n    movl %edx, %eax\n    lock xaddl %eax, (%rcx)\n    ret\n")
+    (compiler-backend-string-contains?
+      asm
+      "tl_atomic_i32_cas_ptr:\n    movl %edx, %eax\n    lock cmpxchgl %r8d, (%rcx)\n    ret\n")))
+
+(define (compiler-backend-runtime-atomic-wrapper-asm-ok?) : bool
+  (match (compiler-backend-emit-runtime-atomic-wrapper-source
+    (BackendTargetLinux))
+    [(OkCompilerBackend linux-asm)
+      (match (compiler-backend-emit-runtime-atomic-wrapper-source
+        (BackendTargetWindows))
+        [(OkCompilerBackend windows-asm)
+          (and
+            (compiler-backend-runtime-atomic-linux-wrapper-asm-ok? linux-asm)
+            (compiler-backend-runtime-atomic-windows-wrapper-asm-ok?
+              windows-asm))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-string-source) : String
   "(define greeting : String \"hi\")
 (define (main) : String \"hi\")")
@@ -6564,6 +6732,15 @@
         (compiler-backend-runtime-helper-owner-id-ok?)
         (compiler-backend-runtime-plan-id-lookup-only-ok?)))))
 
+(define (compiler-backend-runtime-atomic-functions-removed-ok?) : bool
+  (and
+    (string-eq
+      (compiler-backend-runtime-atomic-functions (BackendTargetLinux))
+      "")
+    (string-eq
+      (compiler-backend-runtime-atomic-functions (BackendTargetWindows))
+      "")))
+
 (define (compiler-backend-runtime-global-symbol-ok?
   [asm : String]
   [name : String]) : bool
@@ -6573,29 +6750,14 @@
   (and
     (backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_memcpy")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_load_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_store_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_add_ptr")
-      (compiler-backend-runtime-global-symbol-ok?
-        asm
-        "tl_atomic_i64_fetch_add_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_cas_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_load_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_store_ptr"))
-    (backend-and8
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_add_ptr")
-      (compiler-backend-runtime-global-symbol-ok?
-        asm
-        "tl_atomic_i32_fetch_add_ptr")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_cas_ptr")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_current")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_set")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_poison_enable")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic"))
-    (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total"))
+    (backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_live")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_peak")
       (compiler-backend-runtime-global-symbol-ok?
@@ -6603,11 +6765,13 @@
         "tl_profile_alloc_reset_peak")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_alloc")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset"))))
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset")
+      true
+      true)))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 25)
+    (= (compiler-backend-string-count asm "    .globl ") 15)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -6616,7 +6780,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 28)
+    (= (compiler-backend-string-count asm "    .globl ") 18)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -6628,7 +6792,7 @@
   [target : CompilerBackendTarget]
   [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    lock ") 17)
+    (= (compiler-backend-string-count asm "    lock ") 11)
     (if (compiler-backend-target-windows? target)
       (and
         (= (compiler-backend-string-count asm "%gs:0x28") 22)
@@ -10315,6 +10479,8 @@
         (compiler-backend-runtime-helper-asm-ok?)
         (compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
+        (compiler-backend-runtime-atomic-functions-removed-ok?)
+        (compiler-backend-runtime-atomic-wrapper-asm-ok?)
         (compiler-backend-runtime-global-inventory-ok?)
         (compiler-backend-runtime-page-call-inventory-ok?)
         (compiler-backend-profile-runtime-split-ok?))

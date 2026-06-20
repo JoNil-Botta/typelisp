@@ -72,7 +72,6 @@ src/compiler_backend.tl	compiler-backend-runtime-linux-only	runtime	compiler-bac
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime extern declarations differ for Windows imports.
 src/compiler_backend.tl	compiler-backend-runtime-fs-functions-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime filesystem helpers differ between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-memcpy-functions	runtime	compiler-backend-target-windows[?]	1	Runtime memcpy helper differs between Windows and Linux.
-src/compiler_backend.tl	compiler-backend-runtime-atomic-functions	runtime	compiler-backend-target-windows[?]	1	Runtime atomic helper argument registers differ between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	compiler-backend-target-windows[?]	13	Runtime helper assembly selects Windows imports and implementations by target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux	entry	BackendTargetLinux	1	Linux-named assembly emitter explicitly selects the Linux entry/runtime target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans	entry	BackendTargetLinux	1	Linux-named span-aware emitter explicitly selects the Linux entry/runtime target.

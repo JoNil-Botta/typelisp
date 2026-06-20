@@ -3411,6 +3411,26 @@
       [(string-eq leaf "tl-runtime-string-concat3") "tl_string_concat3"]
       [(string-eq leaf "tl-runtime-string-concat4") "tl_string_concat4"]
       [(string-eq leaf "tl-runtime-string-concat5") "tl_string_concat5"]
+      [(string-eq leaf "tl-runtime-atomic-i64-load-ptr")
+        "tl_atomic_i64_load_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i64-store-ptr!")
+        "tl_atomic_i64_store_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i64-add-ptr!")
+        "tl_atomic_i64_add_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i64-fetch-add-ptr!")
+        "tl_atomic_i64_fetch_add_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i64-cas-ptr!")
+        "tl_atomic_i64_cas_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i32-load-ptr")
+        "tl_atomic_i32_load_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i32-store-ptr!")
+        "tl_atomic_i32_store_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i32-add-ptr!")
+        "tl_atomic_i32_add_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i32-fetch-add-ptr!")
+        "tl_atomic_i32_fetch_add_ptr"]
+      [(string-eq leaf "tl-runtime-atomic-i32-cas-ptr!")
+        "tl_atomic_i32_cas_ptr"]
       [else ""])))
 
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
@@ -10072,8 +10092,11 @@
   [symbol : String]) : bool
   (let
     [symbol-id : i64 (compiler-backend-runtime-helper-name-id symbol)]
+    [prelude-symbol : String
+      (compiler-backend-runtime-prelude-string-helper-symbol name)]
     (and
       (or
+        (string-eq prelude-symbol symbol)
         (compiler-backend-string-contains? name "stdlib/runtime.tl::")
         (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
       (>= symbol-id 0)
@@ -10081,6 +10104,7 @@
         (compiler-builtin-backend-tl-substring-id? symbol-id)
         (compiler-builtin-backend-tl-str-view-id? symbol-id)
         (compiler-builtin-backend-runtime-concat-id? symbol-id)
+        (compiler-builtin-backend-runtime-atomic-id? symbol-id)
         (compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
 
 (define (compiler-backend-validate-function-symbols-into
@@ -13547,6 +13571,18 @@
           ", ("
           ptr
           ")\n")])))
+
+(define (compiler-backend-emit-atomic-helper-function
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (str-cat
+    ".globl "
+    symbol
+    "\n"
+    symbol
+    ":\n"
+    (compiler-backend-atomic-inline-asm target symbol)
+    "    ret\n"))
 
 (define (compiler-backend-emit-inline-atomic-call
   [target : CompilerBackendTarget]
@@ -19678,120 +19714,124 @@
             [(CompilerRegColoringNone) plan-types]
             [(CompilerRegColoringRemap remap _)
               (compiler-reg-color-rebuild-types remap rewritten-vars plan-types)])]
+        [symbol : String
+          (compiler-backend-function-symbol-index program-index name)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts rewritten-vars emit-blocks-list)]
-        [_phi-targets : unit
-          (set!
-            compiler-backend-current-phi-targets
-            (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
-        (match (compiler-backend-emit-param-spills
-          target
-          assignments
-          params
-          0
-          0
-          0
-          0
-          program-index
-          slot-vars)
-          [(OkCompilerBackend spills)
-            (let
-              [symbol : String
-                (compiler-backend-function-symbol-index program-index name)]
-              [label-scope : String
-                (compiler-backend-function-label-scope program-index name)]
-              [_addr-forward : unit
-                (compiler-backend-addr-of-forwarding-enable!
-                  rewritten-vars
-                  emit-blocks-list
-                  use-counts)]
-              (match (compiler-backend-emit-blocks
-                target
-                label-scope
-                name
-                emit-blocks-list
-                emit-blocks-list
-                assignments
-                slot-vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts)
-                [(OkCompilerBackend body)
-                  (let
-                    [frame : i64
-                      (+
-                        (compiler-backend-frame-size
-                          (compiler-backend-frame-slots-with-groups
-                            slot-vars
-                            assignments
-                            has-group-vars))
-                        (compiler-backend-outgoing-frame-space
-                          target
-                          emit-blocks-list
-                          program-index))]
-                    [_addr-forward-done : unit
-                      (compiler-backend-addr-of-forwarding-disable!)]
-                    (OkCompilerBackend
-                      (str-cat
-                        (compiler-backend-function-symbol-map-comment
-                          program-index
-                          name)
-                        ".globl "
-                        symbol
-                        "\n"
-                        (compiler-backend-emit-function-entry
-                          target
-                          symbol
-                          frame)
-                        ""
-                        ""
-                        (compiler-backend-mode-prologue mode)
-                        (compiler-backend-emit-save-callee-regs
-                          assignments
-                          slot-vars)
-                        (compiler-backend-emit-windows-main-argv-capture
-                          target
-                          name
-                          emit-entry
-                          plan)
-                        (compiler-backend-emit-linux-crt-main-argv-capture
-                          target
-                          name
-                          crt-entry
-                          plan)
-                        (if (and
-                          (string-eq name "main")
-                          (or
-                            (compiler-backend-target-windows? target)
-                            (and
+        (if (compiler-backend-atomic-call-name? symbol)
+          (OkCompilerBackend
+            (compiler-backend-emit-atomic-helper-function target symbol))
+          (let
+            [_phi-targets : unit
+              (set!
+                compiler-backend-current-phi-targets
+                (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
+            (match (compiler-backend-emit-param-spills
+              target
+              assignments
+              params
+              0
+              0
+              0
+              0
+              program-index
+              slot-vars)
+              [(OkCompilerBackend spills)
+                (let
+                  [label-scope : String
+                    (compiler-backend-function-label-scope program-index name)]
+                  [_addr-forward : unit
+                    (compiler-backend-addr-of-forwarding-enable!
+                      rewritten-vars
+                      emit-blocks-list
+                      use-counts)]
+                  (match (compiler-backend-emit-blocks
+                    target
+                    label-scope
+                    name
+                    emit-blocks-list
+                    emit-blocks-list
+                    assignments
+                    slot-vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts)
+                    [(OkCompilerBackend body)
+                      (let
+                        [frame : i64
+                          (+
+                            (compiler-backend-frame-size
+                              (compiler-backend-frame-slots-with-groups
+                                slot-vars
+                                assignments
+                                has-group-vars))
+                            (compiler-backend-outgoing-frame-space
+                              target
+                              emit-blocks-list
+                              program-index))]
+                        [_addr-forward-done : unit
+                          (compiler-backend-addr-of-forwarding-disable!)]
+                        (OkCompilerBackend
+                          (str-cat
+                            (compiler-backend-function-symbol-map-comment
+                              program-index
+                              name)
+                            ".globl "
+                            symbol
+                            "\n"
+                            (compiler-backend-emit-function-entry
+                              target
+                              symbol
+                              frame)
+                            ""
+                            ""
+                            (compiler-backend-mode-prologue mode)
+                            (compiler-backend-emit-save-callee-regs
+                              assignments
+                              slot-vars)
+                            (compiler-backend-emit-windows-main-argv-capture
+                              target
+                              name
+                              emit-entry
+                              plan)
+                            (compiler-backend-emit-linux-crt-main-argv-capture
+                              target
+                              name
                               crt-entry
-                              (compiler-backend-target-linux? target))))
-                          (compiler-backend-global-initializers
-                            globals
-                            program-index)
-                          "")
-                        spills
-                        body
-                        (compiler-backend-return-epilogue
-                          name
-                          assignments
-                          slot-vars
-                          emit-blocks-list)
-                        (compiler-backend-emit-windows-seh-endproc target)
-                        "\n")))]
-                [(ErrCompilerBackend message)
-                  (let
-                    [_addr-forward-done : unit
-                      (compiler-backend-addr-of-forwarding-disable!)]
-                    (ErrCompilerBackend message))]))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+                              plan)
+                            (if (and
+                              (string-eq name "main")
+                              (or
+                                (compiler-backend-target-windows? target)
+                                (and
+                                  crt-entry
+                                  (compiler-backend-target-linux? target))))
+                              (compiler-backend-global-initializers
+                                globals
+                                program-index)
+                              "")
+                            spills
+                            body
+                            (compiler-backend-return-epilogue
+                              name
+                              assignments
+                              slot-vars
+                              emit-blocks-list)
+                            (compiler-backend-emit-windows-seh-endproc target)
+                            "\n")))]
+                    [(ErrCompilerBackend message)
+                      (let
+                        [_addr-forward-done : unit
+                          (compiler-backend-addr-of-forwarding-disable!)]
+                        (ErrCompilerBackend message))]))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
 
 ;; 0: every function escapes through a per-function scratch arena. The old
 ;; limit of 24 sent small-function transients to the program arena to skip
@@ -24197,98 +24237,8 @@ tl_memcpy:
 "))
 
 (define (compiler-backend-runtime-atomic-functions
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    .globl tl_atomic_i64_load_ptr
-tl_atomic_i64_load_ptr:
-    movq (%rcx), %rax
-    ret
-    .globl tl_atomic_i64_store_ptr
-tl_atomic_i64_store_ptr:
-    xchgq %rdx, (%rcx)
-    ret
-    .globl tl_atomic_i64_add_ptr
-tl_atomic_i64_add_ptr:
-    lock addq %rdx, (%rcx)
-    ret
-    .globl tl_atomic_i64_fetch_add_ptr
-tl_atomic_i64_fetch_add_ptr:
-    movq %rdx, %rax
-    lock xaddq %rax, (%rcx)
-    ret
-    .globl tl_atomic_i64_cas_ptr
-tl_atomic_i64_cas_ptr:
-    movq %rdx, %rax
-    lock cmpxchgq %r8, (%rcx)
-    ret
-    .globl tl_atomic_i32_load_ptr
-tl_atomic_i32_load_ptr:
-    movl (%rcx), %eax
-    ret
-    .globl tl_atomic_i32_store_ptr
-tl_atomic_i32_store_ptr:
-    xchgl %edx, (%rcx)
-    ret
-    .globl tl_atomic_i32_add_ptr
-tl_atomic_i32_add_ptr:
-    lock addl %edx, (%rcx)
-    ret
-    .globl tl_atomic_i32_fetch_add_ptr
-tl_atomic_i32_fetch_add_ptr:
-    movl %edx, %eax
-    lock xaddl %eax, (%rcx)
-    ret
-    .globl tl_atomic_i32_cas_ptr
-tl_atomic_i32_cas_ptr:
-    movl %edx, %eax
-    lock cmpxchgl %r8d, (%rcx)
-    ret
-"
-    "    .globl tl_atomic_i64_load_ptr
-tl_atomic_i64_load_ptr:
-    movq (%rdi), %rax
-    ret
-    .globl tl_atomic_i64_store_ptr
-tl_atomic_i64_store_ptr:
-    xchgq %rsi, (%rdi)
-    ret
-    .globl tl_atomic_i64_add_ptr
-tl_atomic_i64_add_ptr:
-    lock addq %rsi, (%rdi)
-    ret
-    .globl tl_atomic_i64_fetch_add_ptr
-tl_atomic_i64_fetch_add_ptr:
-    movq %rsi, %rax
-    lock xaddq %rax, (%rdi)
-    ret
-    .globl tl_atomic_i64_cas_ptr
-tl_atomic_i64_cas_ptr:
-    movq %rsi, %rax
-    lock cmpxchgq %rdx, (%rdi)
-    ret
-    .globl tl_atomic_i32_load_ptr
-tl_atomic_i32_load_ptr:
-    movl (%rdi), %eax
-    ret
-    .globl tl_atomic_i32_store_ptr
-tl_atomic_i32_store_ptr:
-    xchgl %esi, (%rdi)
-    ret
-    .globl tl_atomic_i32_add_ptr
-tl_atomic_i32_add_ptr:
-    lock addl %esi, (%rdi)
-    ret
-    .globl tl_atomic_i32_fetch_add_ptr
-tl_atomic_i32_fetch_add_ptr:
-    movl %esi, %eax
-    lock xaddl %eax, (%rdi)
-    ret
-    .globl tl_atomic_i32_cas_ptr
-tl_atomic_i32_cas_ptr:
-    movl %esi, %eax
-    lock cmpxchgl %edx, (%rdi)
-    ret
-"))
+  [_target : CompilerBackendTarget]) : String
+  "")
 
 (define (compiler-backend-runtime-linux-only
   [target : CompilerBackendTarget]
@@ -26647,36 +26597,6 @@ tl_atomic_i32_cas_ptr:
     [symbols : BackendStringList BackendStringNil]
     (begin
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i32_cas_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i32_fetch_add_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i32_add_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i32_store_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i32_load_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i64_cas_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i64_fetch_add_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i64_add_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i64_store_ptr" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_atomic_i64_load_ptr" symbols))
       (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
       (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
       (set! symbols (compiler-backend-string-cons "tl_region_reset" symbols))

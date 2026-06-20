@@ -30,9 +30,9 @@ Language direction:
 - Treat ISPC-style SPMD as the data-parallel model. The current source surface
   is in [SPEC.md section 5.15](SPEC.md); scalar gather-only reads from dynamic
   arrays (#2762), lane identity forms (#2761), and the scalar/AVX-512 masked
-  varying `if` subset are implemented. AVX2 emits an explicit masked-if
-  diagnostic, and the remaining SPMD queue covers broader masked-if value
-  results (#3356), wider lane types (#2763), public vector/mask values (#2764),
+  varying `if` subset are implemented, including value-producing scalar lane
+  selects. AVX2 emits an explicit masked-if diagnostic, and the remaining SPMD
+  queue covers wider lane types (#2763), public vector/mask values (#2764),
   cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
   flow (#2767), and varying-call ABI (#2768).
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
@@ -930,8 +930,8 @@ runtime dispatch selection, and additionally vectorizes `i64` min/max
 reductions.
 Unsupported vector IR falls back or rejects explicitly.
 Masked varying `if` is implemented for scalar reference lowering and the
-current AVX-512 subset; AVX2 reports the staged masked-if diagnostic. Broader
-value-producing masked-if selects are tracked by #3356.
+current AVX-512 subset, including value-producing scalar lane selects; AVX2
+reports the staged masked-if diagnostic.
 `(program-index)`/`(program-count)` lane identity forms are accepted in the
 SPMD scopes described by `SPEC.md` and are backend-mode observable.
 

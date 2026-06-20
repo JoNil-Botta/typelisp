@@ -1726,14 +1726,18 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-after liveness label instr-index))]
-              [(IrInstrCallCAbiStoreResult _ _ _ _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-after liveness label instr-index))]
-              [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-after liveness label instr-index))]
+              [(IrInstrCallCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-after liveness label instr-index))])]
+              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-after liveness label instr-index))])]
               [(IrInstrTailCall _ _ _)
                 (compiler-live-set-union
                   out
@@ -1784,20 +1788,28 @@
                 (compiler-live-set-union
                   out
                   (compiler-live-call-args-vars args))]
-              [(IrInstrCallCAbiStoreResult base _ args _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-value-vars-into
-                    (compiler-live-call-args-vars args)
-                    base))]
-              [(IrInstrCallIndirectCAbiStoreResult base func args _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-value-vars-into
-                    (compiler-live-value-vars-into
-                      (compiler-live-call-args-vars args)
-                      base)
-                    func))]
+              [(IrInstrCallCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-call-args-vars args)
+                        base))])]
+              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                      base
+                      func
+                      args
+                      _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-value-vars-into
+                          (compiler-live-call-args-vars args)
+                          base)
+                        func))])]
               [(IrInstrTailCall _ args _)
                 (compiler-live-set-union
                   out
@@ -1937,26 +1949,39 @@
   (match instr
     [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
     [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ elem-ty)
-      (match elem-ty
-        [(AstTyBool) set]
-        [_ (compiler-live-set-insert set dst)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstTyBool) set]
+            [_ (compiler-live-set-insert set dst)])])]
     [_ set]))
 
 (define (compiler-reg-mask-defs-instr
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
     [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ elem-ty)
-      (match elem-ty
-        [(AstTyBool) (compiler-live-set-insert set dst)]
-        [_ set])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstTyBool) (compiler-live-set-insert set dst)]
+            [_ set])])]
     [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
@@ -2746,10 +2771,14 @@
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrCallCAbiStoreResult _ _ _ _)
-                (compiler-live-set-insert out p)]
-              [(IrInstrCallIndirectCAbiStoreResult _ _ _ _)
-                (compiler-live-set-insert out p)]
+              [(IrInstrCallCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+                    (compiler-live-set-insert out p)])]
+              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+                    (compiler-live-set-insert out p)])]
               [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrTailCallIndirect _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
@@ -2797,8 +2826,12 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrSyscall _ _) true]
@@ -4472,13 +4505,15 @@
         invalid
         dst
         (compiler-reg-color-phi-root roots inputs (- 0 1)))]
-    [(IrInstrSelect dst _ true-value false-value _ _)
-      (let
-        [left : i64 (compiler-reg-color-value-root roots true-value)]
-        [right : i64 (compiler-reg-color-value-root roots false-value)]
-        (if (and (>= left 0) (= left right))
-          (compiler-reg-color-set-root! roots invalid dst left)
-          false))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ true-value false-value _ _)
+          (let
+            [left : i64 (compiler-reg-color-value-root roots true-value)]
+            [right : i64 (compiler-reg-color-value-root roots false-value)]
+            (if (and (>= left 0) (= left right))
+              (compiler-reg-color-set-root! roots invalid dst left)
+              false))])]
     [_ false]))
 
 (define (compiler-reg-color-propagate-root-seq
@@ -4688,16 +4723,20 @@
       (compiler-reg-color-invalidate-value! roots invalid value)]
     [(IrInstrSplat _ value _ _)
       (compiler-reg-color-invalidate-value! roots invalid value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid lhs)
-        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid lhs)
+            (compiler-reg-color-invalidate-value! roots invalid rhs))])]
     [(IrInstrVectorReduce _ _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid lhs)
-        (compiler-reg-color-invalidate-value! roots invalid rhs))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid lhs)
+            (compiler-reg-color-invalidate-value! roots invalid rhs))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid lhs)
@@ -4706,42 +4745,50 @@
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(IrInstrMaskReduce _ _ src _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(IrInstrSelect dst mask true-value false-value _ _)
-      (let
-        [left : i64 (compiler-reg-color-value-root roots true-value)]
-        [right : i64 (compiler-reg-color-value-root roots false-value)]
-        [dst-root : i64
-          (if (and (>= dst 0) (< dst (array-length roots)))
-            (array-ref roots dst)
-            (- 0 1))]
-        (begin
-          (compiler-reg-color-invalidate-value! roots invalid mask)
-          (if (and (>= left 0) (not (= left dst-root)))
-            (compiler-reg-color-invalidate-root! invalid left)
-            unit)
-          (if (and (>= right 0) (not (= right dst-root)))
-            (compiler-reg-color-invalidate-root! invalid right)
-            unit)))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst mask true-value false-value _ _)
+          (let
+            [left : i64 (compiler-reg-color-value-root roots true-value)]
+            [right : i64 (compiler-reg-color-value-root roots false-value)]
+            [dst-root : i64
+              (if (and (>= dst 0) (< dst (array-length roots)))
+                (array-ref roots dst)
+                (- 0 1))]
+            (begin
+              (compiler-reg-color-invalidate-value! roots invalid mask)
+              (if (and (>= left 0) (not (= left dst-root)))
+                (compiler-reg-color-invalidate-root! invalid left)
+                unit)
+              (if (and (>= right 0) (not (= right dst-root)))
+                (compiler-reg-color-invalidate-root! invalid right)
+                unit)))])]
     [(IrInstrVectorLoad _ base index _ _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid base)
         (compiler-reg-color-invalidate-value! roots invalid index))]
-    [(IrInstrVectorStore base index value _ _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid base)
-        (compiler-reg-color-invalidate-value! roots invalid index)
-        (compiler-reg-color-invalidate-value! roots invalid value))]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid base)
-        (compiler-reg-color-invalidate-value! roots invalid index)
-        (compiler-reg-color-invalidate-value! roots invalid value)
-        (compiler-reg-color-invalidate-value! roots invalid mask))]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid base)
-        (compiler-reg-color-invalidate-value! roots invalid index)
-        (compiler-reg-color-invalidate-value! roots invalid mask))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-value! roots invalid index)
+            (compiler-reg-color-invalidate-value! roots invalid value))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-value! roots invalid index)
+            (compiler-reg-color-invalidate-value! roots invalid value)
+            (compiler-reg-color-invalidate-value! roots invalid mask))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-value! roots invalid index)
+            (compiler-reg-color-invalidate-value! roots invalid mask))])]
     [(IrInstrTailMask _ index length _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid index)
@@ -4766,15 +4813,19 @@
       (begin
         (compiler-reg-color-invalidate-value! roots invalid callee)
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid base)
-        (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
-      (begin
-        (compiler-reg-color-invalidate-value! roots invalid base)
-        (compiler-reg-color-invalidate-value! roots invalid callee)
-        (compiler-reg-color-invalidate-call-args! roots invalid args))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-call-args! roots invalid args))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-value! roots invalid callee)
+            (compiler-reg-color-invalidate-call-args! roots invalid args))])]
     [(IrInstrTailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(IrInstrStore _ value _)
@@ -5474,14 +5525,16 @@
         (compiler-reg-remap-value remap value)
         lanes
         ty)]
-    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
-      (IrInstrVectorBinOp
-        (compiler-reg-remap-id remap dst)
-        op
-        (compiler-reg-remap-value remap lhs)
-        (compiler-reg-remap-value remap rhs)
-        lanes
-        ty)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-bin-op
+            (compiler-reg-remap-id remap dst)
+            op
+            (compiler-reg-remap-value remap lhs)
+            (compiler-reg-remap-value remap rhs)
+            lanes
+            ty)])]
     [(IrInstrVectorReduce dst op src lanes ty)
       (IrInstrVectorReduce
         (compiler-reg-remap-id remap dst)
@@ -5489,14 +5542,16 @@
         (compiler-reg-remap-value remap src)
         lanes
         ty)]
-    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
-      (IrInstrVectorCompare
-        (compiler-reg-remap-id remap dst)
-        op
-        (compiler-reg-remap-value remap lhs)
-        (compiler-reg-remap-value remap rhs)
-        lanes
-        ty)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes ty)
+          (ir-instr-vector-compare
+            (compiler-reg-remap-id remap dst)
+            op
+            (compiler-reg-remap-value remap lhs)
+            (compiler-reg-remap-value remap rhs)
+            lanes
+            ty)])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
       (IrInstrMaskBinOp
         (compiler-reg-remap-id remap dst)
@@ -5515,14 +5570,16 @@
         op
         (compiler-reg-remap-value remap src)
         lanes)]
-    [(IrInstrSelect dst mask true-value false-value lanes ty)
-      (IrInstrSelect
-        (compiler-reg-remap-id remap dst)
-        (compiler-reg-remap-value remap mask)
-        (compiler-reg-remap-value remap true-value)
-        (compiler-reg-remap-value remap false-value)
-        lanes
-        ty)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst mask true-value false-value lanes ty)
+          (ir-instr-select
+            (compiler-reg-remap-id remap dst)
+            (compiler-reg-remap-value remap mask)
+            (compiler-reg-remap-value remap true-value)
+            (compiler-reg-remap-value remap false-value)
+            lanes
+            ty)])]
     [(IrInstrVectorLoad dst base index lanes ty)
       (IrInstrVectorLoad
         (compiler-reg-remap-id remap dst)
@@ -5530,29 +5587,35 @@
         (compiler-reg-remap-value remap index)
         lanes
         ty)]
-    [(IrInstrVectorStore base index value lanes ty)
-      (IrInstrVectorStore
-        (compiler-reg-remap-value remap base)
-        (compiler-reg-remap-value remap index)
-        (compiler-reg-remap-value remap value)
-        lanes
-        ty)]
-    [(IrInstrPredicatedStore base index value mask lanes ty)
-      (IrInstrPredicatedStore
-        (compiler-reg-remap-value remap base)
-        (compiler-reg-remap-value remap index)
-        (compiler-reg-remap-value remap value)
-        (compiler-reg-remap-value remap mask)
-        lanes
-        ty)]
-    [(IrInstrPredicatedLoad dst base index mask lanes ty)
-      (IrInstrPredicatedLoad
-        (compiler-reg-remap-id remap dst)
-        (compiler-reg-remap-value remap base)
-        (compiler-reg-remap-value remap index)
-        (compiler-reg-remap-value remap mask)
-        lanes
-        ty)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value lanes ty)
+          (ir-instr-vector-store
+            (compiler-reg-remap-value remap base)
+            (compiler-reg-remap-value remap index)
+            (compiler-reg-remap-value remap value)
+            lanes
+            ty)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask lanes ty)
+          (ir-instr-predicated-store
+            (compiler-reg-remap-value remap base)
+            (compiler-reg-remap-value remap index)
+            (compiler-reg-remap-value remap value)
+            (compiler-reg-remap-value remap mask)
+            lanes
+            ty)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst base index mask lanes ty)
+          (ir-instr-predicated-load
+            (compiler-reg-remap-id remap dst)
+            (compiler-reg-remap-value remap base)
+            (compiler-reg-remap-value remap index)
+            (compiler-reg-remap-value remap mask)
+            lanes
+            ty)])]
     [(IrInstrTailMask dst index length lanes)
       (IrInstrTailMask
         (compiler-reg-remap-id remap dst)
@@ -5597,18 +5660,26 @@
         (compiler-reg-remap-value remap callee)
         (compiler-reg-remap-call-args remap args)
         ty)]
-    [(IrInstrCallCAbiStoreResult base name args slots)
-      (IrInstrCallCAbiStoreResult
-        (compiler-reg-remap-value remap base)
-        name
-        (compiler-reg-remap-call-args remap args)
-        slots)]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args slots)
-      (IrInstrCallIndirectCAbiStoreResult
-        (compiler-reg-remap-value remap base)
-        (compiler-reg-remap-value remap callee)
-        (compiler-reg-remap-call-args remap args)
-        slots)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          (ir-instr-call-cabi-store-result
+            (compiler-reg-remap-value remap base)
+            name
+            (compiler-reg-remap-call-args remap args)
+            slots)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+            base
+            callee
+            args
+            slots)
+          (ir-instr-call-indirect-cabi-store-result
+            (compiler-reg-remap-value remap base)
+            (compiler-reg-remap-value remap callee)
+            (compiler-reg-remap-call-args remap args)
+            slots)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (compiler-reg-remap-call-args remap args) ty)]
     [(IrInstrTailCallIndirect callee args ty)
@@ -6433,7 +6504,7 @@
           (compiler-ir-instr-cons
             (IrInstrVectorLoad 1 (IrValueI64 0) (IrValueI64 4) 4 (AstTyI64))
             (compiler-ir-instr-cons
-              (IrInstrVectorBinOp
+              (ir-instr-vector-bin-op
                 2
                 (IrBinAdd)
                 (IrValueVar 0)
@@ -6441,7 +6512,7 @@
                 4
                 (AstTyI64))
               (compiler-ir-instr-cons
-                (IrInstrVectorBinOp
+                (ir-instr-vector-bin-op
                   3
                   (IrBinAdd)
                   (IrValueVar 0)
@@ -6449,7 +6520,7 @@
                   4
                   (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrVectorStore
+                  (ir-instr-vector-store
                     (IrValueI64 0)
                     (IrValueI64 8)
                     (IrValueVar 3)

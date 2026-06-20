@@ -5212,7 +5212,7 @@
       40
       11)
     (compiler-backend-instr-diagnostic-case-ok?
-      (IrInstrVectorBinOp
+      (ir-instr-vector-bin-op
         3
         (IrBinMod)
         (IrValueVar 0)
@@ -5955,7 +5955,7 @@
           (compiler-ir-instr-cons
             (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
             (compiler-ir-instr-cons
-              (IrInstrVectorBinOp
+              (ir-instr-vector-bin-op
                 2
                 (IrBinAdd)
                 (IrValueVar 0)

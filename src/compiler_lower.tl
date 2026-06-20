@@ -17565,7 +17565,7 @@
                     [(LowerExpr base-state base _)
                       (let
                         [instr : CompilerIrInstr
-                          (IrInstrCallCAbiStoreResult
+                          (ir-instr-call-cabi-store-result
                             base
                             (lower-resolve-call-name base-state env name)
                             (compiler-ir-call-args-from-list values)
@@ -17703,7 +17703,7 @@
                 [(LowerExpr base-state base _)
                   (let
                     [instr : CompilerIrInstr
-                      (IrInstrCallIndirectCAbiStoreResult
+                      (ir-instr-call-indirect-cabi-store-result
                         base
                         func-value
                         (compiler-ir-call-args-from-list values)
@@ -26577,7 +26577,7 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc s v)
       (LowerExpr
-        (lower-state-emit s (IrInstrVectorBinOp v op lhs rhs lanes elem-ty))
+        (lower-state-emit s (ir-instr-vector-bin-op v op lhs rhs lanes elem-ty))
         (IrValueVar v)
         elem-ty)]))
 
@@ -26630,7 +26630,9 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc s v)
       (LowerExpr
-        (lower-state-emit s (IrInstrVectorCompare v op lhs rhs lanes elem-ty))
+        (lower-state-emit
+          s
+          (ir-instr-vector-compare v op lhs rhs lanes elem-ty))
         (IrValueVar v)
         (AstTyBool))]))
 
@@ -26692,7 +26694,7 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc s v)
       (LowerExpr
-        (lower-state-emit s (IrInstrSelect v mask on-true on-false lanes ty))
+        (lower-state-emit s (ir-instr-select v mask on-true on-false lanes ty))
         (IrValueVar v)
         ty)]))
 
@@ -27525,7 +27527,7 @@
       (LowerExpr
         (lower-state-emit
           s
-          (IrInstrPredicatedLoad v base index mask lanes elem-ty))
+          (ir-instr-predicated-load v base index mask lanes elem-ty))
         (IrValueVar v)
         elem-ty)]))
 
@@ -27539,7 +27541,7 @@
   [elem-ty : AstType]) : LowerState
   (lower-state-emit
     state
-    (IrInstrPredicatedStore base index value mask lanes elem-ty)))
+    (ir-instr-predicated-store base index value mask lanes elem-ty)))
 
 (define (lower-emit-spmd-broadcast-lane-check
   [state : LowerState]
@@ -27935,7 +27937,7 @@
           (lower-state-emit
             (lower-state-emit
               s
-              (IrInstrVectorStore
+              (ir-instr-vector-store
                 (IrValueVar dst-array)
                 (IrValueVar index-var)
                 result-vec
@@ -36794,7 +36796,9 @@
 
 (define (lower-test-instr-vector-binop-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrVectorBinOp _ _ _ _ _ _) 1]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ _ _ _ _) 1])]
     [_ 0]))
 
 (define (lower-test-instr-vector-reduce-count [instr : CompilerIrInstr]) : i64
@@ -36804,22 +36808,30 @@
 
 (define (lower-test-instr-vector-store-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrVectorStore _ _ _ _ _) 1]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ _ _) 1])]
     [_ 0]))
 
 (define (lower-test-instr-predicated-load-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrPredicatedLoad _ _ _ _ _ _) 1]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ _ _ _ _ _) 1])]
     [_ 0]))
 
 (define (lower-test-instr-predicated-store-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrPredicatedStore _ _ _ _ _ _) 1]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) 1])]
     [_ 0]))
 
 (define (lower-test-instr-select-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrSelect _ _ _ _ _ _) 1]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ _ _ _ _ _) 1])]
     [_ 0]))
 
 (define (lower-test-instr-tail-mask-count [instr : CompilerIrInstr]) : i64
@@ -36843,30 +36855,40 @@
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(IrInstrVectorBinOp _ _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-        1
-        0)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ _ _ actual-lanes actual-ty)
+          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+            1
+            0)])]
     [(IrInstrVectorReduce _ _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(IrInstrVectorStore _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-        1
-        0)]
-    [(IrInstrPredicatedLoad _ _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-        1
-        0)]
-    [(IrInstrPredicatedStore _ _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-        1
-        0)]
-    [(IrInstrSelect _ _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-        1
-        0)]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload _ _ _ actual-lanes actual-ty)
+          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+            1
+            0)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ _ _ _ actual-lanes actual-ty)
+          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+            1
+            0)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload _ _ _ _ actual-lanes actual-ty)
+          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+            1
+            0)])]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ _ _ _ actual-lanes actual-ty)
+          (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+            1
+            0)])]
     [(IrInstrSplat _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1

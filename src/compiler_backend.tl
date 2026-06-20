@@ -11082,8 +11082,12 @@
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult _ _ _ _) true]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ _ _) true]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
@@ -11138,15 +11142,19 @@
         program-index)]
     [(IrInstrCallIndirectC _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
-    [(IrInstrCallCAbiStoreResult _ name args _)
-      (+
-        (compiler-backend-windows-stack-arg-space
-          args
-          (compiler-backend-call-param-types-index name program-index)
-          program-index)
-        16)]
-    [(IrInstrCallIndirectCAbiStoreResult _ _ args _)
-      (+ (compiler-backend-windows-closure-stack-arg-space args) 16)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ name args _)
+          (+
+            (compiler-backend-windows-stack-arg-space
+              args
+              (compiler-backend-call-param-types-index name program-index)
+              program-index)
+            16)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+          (+ (compiler-backend-windows-closure-stack-arg-space args) 16)])]
     [(IrInstrTailCallIndirect _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
@@ -14058,16 +14066,18 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
-        (compiler-backend-emit-vector-binop
-          assignments
-          dst
-          op
-          lhs
-          rhs
-          lanes
-          elem-ty
-          instr-diag)]
+      [(IrInstrVectorBinOp payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes elem-ty)
+            (compiler-backend-emit-vector-binop
+              assignments
+              dst
+              op
+              lhs
+              rhs
+              lanes
+              elem-ty
+              instr-diag)])]
       [(IrInstrVectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
           assignments
@@ -14077,16 +14087,18 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
-        (compiler-backend-emit-avx512-vector-compare
-          assignments
-          dst
-          op
-          lhs
-          rhs
-          lanes
-          elem-ty
-          instr-diag)]
+      [(IrInstrVectorCompare payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes elem-ty)
+            (compiler-backend-emit-avx512-vector-compare
+              assignments
+              dst
+              op
+              lhs
+              rhs
+              lanes
+              elem-ty
+              instr-diag)])]
       [(IrInstrMaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-avx512-mask-binop
           assignments
@@ -14111,16 +14123,24 @@
           src
           lanes
           instr-diag)]
-      [(IrInstrSelect dst mask on-true on-false lanes elem-ty)
-        (compiler-backend-emit-avx512-select
-          assignments
-          dst
-          mask
-          on-true
-          on-false
-          lanes
-          elem-ty
-          instr-diag)]
+      [(IrInstrSelect payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSelectPayload
+              dst
+              mask
+              on-true
+              on-false
+              lanes
+              elem-ty)
+            (compiler-backend-emit-avx512-select
+              assignments
+              dst
+              mask
+              on-true
+              on-false
+              lanes
+              elem-ty
+              instr-diag)])]
       [(IrInstrVectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
           assignments
@@ -14130,35 +14150,53 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorStore base index value lanes elem-ty)
-        (compiler-backend-emit-vector-store
-          assignments
-          base
-          index
-          value
-          lanes
-          elem-ty
-          instr-diag)]
-      [(IrInstrPredicatedStore base index value mask lanes elem-ty)
-        (compiler-backend-emit-avx512-predicated-store
-          assignments
-          base
-          index
-          value
-          mask
-          lanes
-          elem-ty
-          instr-diag)]
-      [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
-        (compiler-backend-emit-avx512-predicated-load
-          assignments
-          dst
-          base
-          index
-          mask
-          lanes
-          elem-ty
-          instr-diag)]
+      [(IrInstrVectorStore payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorStorePayload base index value lanes elem-ty)
+            (compiler-backend-emit-vector-store
+              assignments
+              base
+              index
+              value
+              lanes
+              elem-ty
+              instr-diag)])]
+      [(IrInstrPredicatedStore payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedStorePayload
+              base
+              index
+              value
+              mask
+              lanes
+              elem-ty)
+            (compiler-backend-emit-avx512-predicated-store
+              assignments
+              base
+              index
+              value
+              mask
+              lanes
+              elem-ty
+              instr-diag)])]
+      [(IrInstrPredicatedLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedLoadPayload
+              dst
+              base
+              index
+              mask
+              lanes
+              elem-ty)
+            (compiler-backend-emit-avx512-predicated-load
+              assignments
+              dst
+              base
+              index
+              mask
+              lanes
+              elem-ty
+              instr-diag)])]
       [(IrInstrTailMask dst index len lanes)
         (compiler-backend-emit-avx512-tail-mask
           function
@@ -14340,35 +14378,43 @@
           program-index
           vars
           instr-diag)]
-      [(IrInstrCallCAbiStoreResult base name args slots)
-        (compiler-backend-emit-c-abi-store-result-call
-          target
-          base
-          name
-          args
-          slots
-          assignments
-          types
-          global-types
-          plan
-          externs
-          program-index
-          vars
-          instr-diag)]
-      [(IrInstrCallIndirectCAbiStoreResult base func args slots)
-        (compiler-backend-emit-indirect-c-abi-store-result-call
-          target
-          base
-          func
-          args
-          slots
-          assignments
-          types
-          functions
-          externs
-          program-index
-          vars
-          instr-diag)]
+      [(IrInstrCallCAbiStoreResult payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+            (compiler-backend-emit-c-abi-store-result-call
+              target
+              base
+              name
+              args
+              slots
+              assignments
+              types
+              global-types
+              plan
+              externs
+              program-index
+              vars
+              instr-diag)])]
+      [(IrInstrCallIndirectCAbiStoreResult payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+              base
+              func
+              args
+              slots)
+            (compiler-backend-emit-indirect-c-abi-store-result-call
+              target
+              base
+              func
+              args
+              slots
+              assignments
+              types
+              functions
+              externs
+              program-index
+              vars
+              instr-diag)])]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
@@ -14667,16 +14713,20 @@
         (compiler-backend-count-value-use counts rhs))]
     [(IrInstrUnOp _ _ src _) (compiler-backend-count-value-use counts src)]
     [(IrInstrSplat _ value _ _) (compiler-backend-count-value-use counts value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (begin
-        (compiler-backend-count-value-use counts lhs)
-        (compiler-backend-count-value-use counts rhs))]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (begin
+            (compiler-backend-count-value-use counts lhs)
+            (compiler-backend-count-value-use counts rhs))])]
     [(IrInstrVectorReduce _ _ src _ _)
       (compiler-backend-count-value-use counts src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (begin
-        (compiler-backend-count-value-use counts lhs)
-        (compiler-backend-count-value-use counts rhs))]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (begin
+            (compiler-backend-count-value-use counts lhs)
+            (compiler-backend-count-value-use counts rhs))])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (begin
         (compiler-backend-count-value-use counts lhs)
@@ -14684,31 +14734,39 @@
     [(IrInstrMaskNot _ src _) (compiler-backend-count-value-use counts src)]
     [(IrInstrMaskReduce _ _ src _)
       (compiler-backend-count-value-use counts src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (begin
-        (compiler-backend-count-value-use counts mask)
-        (compiler-backend-count-value-use counts on-true)
-        (compiler-backend-count-value-use counts on-false))]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (begin
+            (compiler-backend-count-value-use counts mask)
+            (compiler-backend-count-value-use counts on-true)
+            (compiler-backend-count-value-use counts on-false))])]
     [(IrInstrVectorLoad _ base index _ _)
       (begin
         (compiler-backend-count-value-use counts base)
         (compiler-backend-count-value-use counts index))]
-    [(IrInstrVectorStore base index value _ _)
-      (begin
-        (compiler-backend-count-value-use counts base)
-        (compiler-backend-count-value-use counts index)
-        (compiler-backend-count-value-use counts value))]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (begin
-        (compiler-backend-count-value-use counts base)
-        (compiler-backend-count-value-use counts index)
-        (compiler-backend-count-value-use counts value)
-        (compiler-backend-count-value-use counts mask))]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (begin
-        (compiler-backend-count-value-use counts base)
-        (compiler-backend-count-value-use counts index)
-        (compiler-backend-count-value-use counts mask))]
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-value-use counts index)
+            (compiler-backend-count-value-use counts value))])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-value-use counts index)
+            (compiler-backend-count-value-use counts value)
+            (compiler-backend-count-value-use counts mask))])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-value-use counts index)
+            (compiler-backend-count-value-use counts mask))])]
     [(IrInstrTailMask _ index length _)
       (begin
         (compiler-backend-count-value-use counts index)
@@ -14733,15 +14791,19 @@
       (begin
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (begin
-        (compiler-backend-count-value-use counts base)
-        (compiler-backend-count-call-args-uses counts args))]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
-      (begin
-        (compiler-backend-count-value-use counts base)
-        (compiler-backend-count-value-use counts callee)
-        (compiler-backend-count-call-args-uses counts args))]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-call-args-uses counts args))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-value-use counts callee)
+            (compiler-backend-count-call-args-uses counts args))])]
     [(IrInstrTailCall _ args _)
       (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrTailCallIndirect callee args _)
@@ -20722,16 +20784,20 @@
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    [(IrInstrCallCAbiStoreResult base _ args _)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections base)
-        args)]
-    [(IrInstrCallIndirectCAbiStoreResult base func args _)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections base)
-          func)
-        args)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+          (compiler-backend-collect-call-args-collections
+            (compiler-backend-collect-value-collections collections base)
+            args)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+          (compiler-backend-collect-call-args-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              func)
+            args)])]
     [(IrInstrTailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrStore _ value _)
@@ -20766,16 +20832,20 @@
       (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSplat _ value _ _)
       (compiler-backend-collect-value-collections collections value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections lhs)
-        rhs)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections lhs)
+            rhs)])]
     [(IrInstrVectorReduce _ _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections collections lhs)
-        rhs)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections lhs)
+            rhs)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
@@ -20784,36 +20854,44 @@
       (compiler-backend-collect-value-collections collections src)]
     [(IrInstrMaskReduce _ _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections mask)
-          on-true)
-        on-false)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections mask)
+              on-true)
+            on-false)])]
     [(IrInstrVectorLoad _ base index _ _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections base)
         index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections base)
-          index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ _)
           (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-collections
-        (compiler-backend-collect-value-collections
-          (compiler-backend-collect-value-collections collections base)
-          index)
-        mask)]
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              index)
+            value)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections
+                (compiler-backend-collect-value-collections collections base)
+                index)
+              value)
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              index)
+            mask)])]
     [(IrInstrTailMask _ index length _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
@@ -21452,8 +21530,10 @@
   (match instr
     [(IrInstrCall _ call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
-    [(IrInstrCallCAbiStoreResult _ call-name _ _)
-      (compiler-backend-runtime-index-add-call index call-name)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ call-name _ _)
+          (compiler-backend-runtime-index-add-call index call-name)])]
     [(IrInstrTailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
     [(IrInstrBoundsCheck _ _ _)
@@ -26064,30 +26144,34 @@ tl_memcpy:
         function
         args
         0)]
-    [(IrInstrCallCAbiStoreResult base name args _)
-      (let
-        [target : String
-          (compiler-backend-call-symbol-index name plan program-index)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
-            (compiler-backend-object-call-args
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
+          (let
+            [target : String
+              (compiler-backend-call-symbol-index name plan program-index)]
+            (compiler-backend-object-add-text
+              (compiler-backend-object-add-text-relocation
+                (compiler-backend-object-call-args
+                  (compiler-backend-object-value-ref parts function base)
+                  function
+                  args
+                  0)
+                function
+                (ObjectRelocCall)
+                target)
+              (ObjectX64Call target)))])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+          (compiler-backend-object-call-args
+            (compiler-backend-object-value-ref
               (compiler-backend-object-value-ref parts function base)
               function
-              args
-              0)
+              callee)
             function
-            (ObjectRelocCall)
-            target)
-          (ObjectX64Call target)))]
-    [(IrInstrCallIndirectCAbiStoreResult base callee args _)
-      (compiler-backend-object-call-args
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref parts function base)
-          function
-          callee)
-        function
-        args
-        0)]
+            args
+            0)])]
     [(IrInstrTailCall name args _)
       (let
         [target : String
@@ -26184,20 +26268,32 @@ tl_memcpy:
       (compiler-backend-object-value-ref-with-type parts function src from-ty)]
     [(IrInstrSplat _ value _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ elem-ty)
-      (compiler-backend-object-value-ref-with-type
-        (compiler-backend-object-value-ref-with-type parts function lhs elem-ty)
-        function
-        rhs
-        elem-ty)]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ elem-ty)
+          (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-value-ref-with-type
+              parts
+              function
+              lhs
+              elem-ty)
+            function
+            rhs
+            elem-ty)])]
     [(IrInstrVectorReduce _ _ src _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function src elem-ty)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ elem-ty)
-      (compiler-backend-object-value-ref-with-type
-        (compiler-backend-object-value-ref-with-type parts function lhs elem-ty)
-        function
-        rhs
-        elem-ty)]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ elem-ty)
+          (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-value-ref-with-type
+              parts
+              function
+              lhs
+              elem-ty)
+            function
+            rhs
+            elem-ty)])]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function lhs)
@@ -26207,50 +26303,58 @@ tl_memcpy:
       (compiler-backend-object-value-ref parts function src)]
     [(IrInstrMaskReduce _ _ src _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrSelect _ mask on-true on-false _ ty)
-      (compiler-backend-object-value-ref-with-type
-        (compiler-backend-object-value-ref-with-type
-          (compiler-backend-object-value-ref parts function mask)
-          function
-          on-true
-          ty)
-        function
-        on-false
-        ty)]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ ty)
+          (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-value-ref-with-type
+              (compiler-backend-object-value-ref parts function mask)
+              function
+              on-true
+              ty)
+            function
+            on-false
+            ty)])]
     [(IrInstrVectorLoad _ base index _ _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)
         function
         index)]
-    [(IrInstrVectorStore base index value _ elem-ty)
-      (compiler-backend-object-value-ref-with-type
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref parts function base)
-          function
-          index)
-        function
-        value
-        elem-ty)]
-    [(IrInstrPredicatedStore base index value mask _ elem-ty)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref-with-type
-          (compiler-backend-object-value-ref
-            (compiler-backend-object-value-ref parts function base)
+    [(IrInstrVectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload base index value _ elem-ty)
+          (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-value-ref
+              (compiler-backend-object-value-ref parts function base)
+              function
+              index)
             function
-            index)
-          function
-          value
-          elem-ty)
-        function
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref
-          (compiler-backend-object-value-ref parts function base)
-          function
-          index)
-        function
-        mask)]
+            value
+            elem-ty)])]
+    [(IrInstrPredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload base index value mask _ elem-ty)
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref-with-type
+              (compiler-backend-object-value-ref
+                (compiler-backend-object-value-ref parts function base)
+                function
+                index)
+              function
+              value
+              elem-ty)
+            function
+            mask)])]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref
+              (compiler-backend-object-value-ref parts function base)
+              function
+              index)
+            function
+            mask)])]
     [(IrInstrTailMask _ index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)

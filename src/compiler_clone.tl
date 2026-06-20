@@ -46,6 +46,25 @@
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
   (string-i64-map-contains? (clone-name-set-map names) name))
 
+(define (clone-type-name-base [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (cast (string-ref name i) : i64) (cast '/' : i64))
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring name start (- n start)))))
+
+(define (clone-name-set-contains-type? [names : CloneNameSet] [name : String]) : bool
+  (if (clone-name-set-contains? names name)
+    true
+    (clone-name-set-contains? names (clone-type-name-base name))))
+
 (define (clone-name-list-contains? [names : CloneNameList] [name : String]) : bool
   (match names
     [(CloneNameNil) false]
@@ -107,9 +126,9 @@
     [(AstTyDynArray elem) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyBox elem) (clone-field-type-able? (ty-node-get elem) names)]
     [(AstTyRegion _ inner) (clone-field-type-able? (ty-node-get inner) names)]
-    [(AstTyVar name) (clone-name-set-contains? names (intern-str name))]
-    [(AstTyEnum name) (clone-name-set-contains? names (intern-str name))]
-    [(AstTyStruct name) (clone-name-set-contains? names (intern-str name))]
+    [(AstTyVar name) (clone-name-set-contains-type? names (intern-str name))]
+    [(AstTyEnum name) (clone-name-set-contains-type? names (intern-str name))]
+    [(AstTyStruct name) (clone-name-set-contains-type? names (intern-str name))]
     [_ false]))
 
 (define (clone-field-type-list-able?

@@ -133,9 +133,14 @@
                   (set! i (+ i 1)))))))
         (export (value sort!))))))
 
-(export (macro sort-vec))
+(export
+  (macro sort-vec)
+  (value sort-char-code-at)
+  (value string-less-borrowed?)
+  (value string-less?))
 
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).
+(cfg test (import stdlib.vector))
 (cfg test (import stdlib.test))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
 (cfg test (import (stdlib.sort.sort-vec i64) as i64sort))
@@ -148,6 +153,8 @@
   (defstruct SortPair
     (key i64)
     (seq i64)))
+
+(cfg test (export (type SortPair) (constructor SortPair)))
 
 (cfg test (import (stdlib.vector.vector SortPair) as pairv))
 (cfg test (import (stdlib.sort.sort-vec SortPair) as pairsort))

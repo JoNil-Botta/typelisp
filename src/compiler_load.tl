@@ -3121,32 +3121,45 @@
                             rest-paths
                             rest-modules
                             rest-seen)
-                          (OkCompilerLoadWithPaths
-                            (compiler-load-decl-list-append
-                              imported-decls
-                              (compiler-load-decls-after-import
+                          (let
+                            [after-import-expected : AstMaybeModuleName
+                              (compiler-load-after-import-expected-module
                                 kind
-                                resolved
                                 expected-module
                                 alias
-                                importer-source-module
-                                imported-decls
-                                rest-decls))
-                            (compiler-load-decl-path-list-append
-                              imported-paths
-                              (compiler-load-paths-after-import
-                                importer-path
+                                imported-decls)]
+                            [after-import-alias : AstMaybeImportAlias
+                              (compiler-load-after-import-alias
+                                kind
+                                expected-module
                                 alias
+                                imported-decls)]
+                            (OkCompilerLoadWithPaths
+                              (compiler-load-decl-list-append
                                 imported-decls
-                                rest-paths))
-                            (compiler-load-decl-module-list-append
-                              imported-modules
-                              (compiler-load-modules-after-import
-                                importer-module
-                                alias
-                                imported-decls
-                                rest-modules))
-                            rest-seen)]
+                                (compiler-load-decls-after-import
+                                  kind
+                                  resolved
+                                  after-import-expected
+                                  after-import-alias
+                                  importer-source-module
+                                  imported-decls
+                                  rest-decls))
+                              (compiler-load-decl-path-list-append
+                                imported-paths
+                                (compiler-load-paths-after-import
+                                  importer-path
+                                  after-import-alias
+                                  imported-decls
+                                  rest-paths))
+                              (compiler-load-decl-module-list-append
+                                imported-modules
+                                (compiler-load-modules-after-import
+                                  importer-module
+                                  after-import-alias
+                                  imported-decls
+                                  rest-modules))
+                              rest-seen))]
                         [(ErrCompilerLoadWithPaths diag)
                           (ErrCompilerLoadWithPaths diag)])]
                     [(ErrCompilerLoadWithPaths diag)
@@ -3930,6 +3943,26 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_pkg_legacy_module_dep.tl"
+      "(module legacy.pkg.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_pkg_legacy_module_entry.tl"
+      "(import \"cl_pkg_legacy_module_dep.tl\")
+(define (main) : i64 (get))")
+    (match (compiler-load-package-file-with-paths-and-roots
+      "target/cl_pkg_legacy_module_entry.tl"
+      (sym-i64-empty)
+      (string-vec-new)
+      "target"
+      (compiler-pkg-deps-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias? decls "legacy.pkg.dep" "")]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
@@ -6778,6 +6811,14 @@
       (return
         (begin
           (panic "compiler-load: legacy path module flat alias smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-package-legacy-path-module-flat-alias-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: package legacy path module flat alias smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

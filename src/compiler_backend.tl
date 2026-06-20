@@ -19818,30 +19818,44 @@
                 walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
-        [reg-type-info : CompilerRegVarTypes
-          (compiler-reg-function-var-types walk-func)]
+        [call-save-enabled : bool
+          (if (compiler-backend-mode-scalar? mode)
+            compiler-backend-scalar-registers-enabled
+            false)]
         [call-save-rewrite : CompilerRegCallSaveRewrite
-          (compiler-reg-caller-save-rewrite-blocks
-            blocks
-            vars
-            reg-type-info
+          (if call-save-enabled
+            (compiler-reg-caller-save-rewrite-blocks
+              blocks
+              vars
+              (compiler-reg-function-var-types walk-func)
+              reg-plan)
+            (CompilerRegCallSaveRewrite
+              blocks
+              vars
+              vars
+              CompilerRegAssignmentNil
+              CompilerRegVarTypeNil))]
+        [rewrite-reg-plan : CompilerRegPlan
+          (if call-save-enabled
+            (compiler-reg-plan-with-call-save-rewrite
+              reg-plan
+              call-save-rewrite)
             reg-plan)]
         [rewritten-blocks : CompilerIrBlockList
           (match call-save-rewrite
-            [(CompilerRegCallSaveRewrite out-blocks _) out-blocks])]
+            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
         [rewritten-vars : i64
           (match call-save-rewrite
-            [(CompilerRegCallSaveRewrite _ out-vars) out-vars])]
+            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
         [_regalloc-census : unit
           (cfg
             regalloc-census
-            (if (if (compiler-backend-mode-scalar? mode)
-              compiler-backend-scalar-registers-enabled
-              false)
+            (if call-save-enabled
               (compiler-reg-call-span-census-record-plan! walk-func reg-plan)
               unit)
             unit)]
-        [plan-types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
+        [plan-types : CompilerRegVarTypeList
+          (compiler-reg-plan-types rewrite-reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
@@ -19862,19 +19876,20 @@
           ;; That keeps both words inside the `slot-vars`-sized frame instead of
           ;; preserving the old high raw ids that drove #2598 frame growth.
           (compiler-reg-color-stack-slots
-            reg-plan
+            rewrite-reg-plan
             fn-group-vars
             params
             rewritten-blocks
             rewritten-vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
-            [(CompilerRegColoringNone) (compiler-reg-plan-assignments reg-plan)]
+            [(CompilerRegColoringNone)
+              (compiler-reg-plan-assignments rewrite-reg-plan)]
             [(CompilerRegColoringRemap remap _)
               (compiler-reg-color-rebuild-assignments
                 remap
                 rewritten-vars
-                (compiler-reg-plan-assignments reg-plan))])]
+                (compiler-reg-plan-assignments rewrite-reg-plan))])]
         [emit-blocks-list : CompilerIrBlockList
           (match coloring
             [(CompilerRegColoringNone) rewritten-blocks]

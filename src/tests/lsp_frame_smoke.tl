@@ -1,5 +1,5 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
-(import "lsp_frame_core.tl")
+(import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains? [items : StringVec] [needle : String]) : bool
   (let

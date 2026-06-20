@@ -231,13 +231,18 @@ copy_dep() {
     _source_dir=$2
     _case_dir=$3
     _src=$(dep_source_path "$_dep" "$_source_dir")
-    # src/ and src/tests/ sources import `../stdlib/...`, so stage stdlib at the
-    # parent of the case dir; tests/integration/ sources use `stdlib/...`.
+    # src/ sources import `../stdlib/...`; src/tests/ smoke drivers import
+    # `../src_module.tl` and `../../stdlib/...` so they stay directly runnable
+    # from the repository root while staged integration copies keep the same
+    # relative layout.
     case "$_dep" in
         stdlib/*)
             case "$_source_dir" in
-                "$ROOT/src" | "$ROOT/src/tests")
+                "$ROOT/src")
                     _dst="$(dirname -- "$_case_dir")/$_dep"
+                    ;;
+                "$ROOT/src/tests")
+                    _dst="$(dirname -- "$(dirname -- "$_case_dir")")/$_dep"
                     ;;
                 *)
                     _dst="$_case_dir/$_dep"
@@ -245,7 +250,21 @@ copy_dep() {
             esac
             ;;
         *)
-            _dst="$_case_dir/$_dep"
+            if [ "$_source_dir" = "$ROOT/src/tests" ]; then
+                case "$_src" in
+                    "$ROOT/src/tests/"*)
+                        _dst="$_case_dir/$_dep"
+                        ;;
+                    "$ROOT/src/"*)
+                        _dst="$(dirname -- "$_case_dir")/$_dep"
+                        ;;
+                    *)
+                        _dst="$_case_dir/$_dep"
+                        ;;
+                esac
+            else
+                _dst="$_case_dir/$_dep"
+            fi
             ;;
     esac
     mkdir -p "$(dirname -- "$_dst")"
@@ -255,8 +274,11 @@ copy_dep() {
         stdlib/core_macros.tl) ;;
         stdlib/*)
             case "$_source_dir" in
-                "$ROOT/src" | "$ROOT/src/tests")
+                "$ROOT/src")
                     _core_dst="$(dirname -- "$_case_dir")/stdlib/core_macros.tl"
+                    ;;
+                "$ROOT/src/tests")
+                    _core_dst="$(dirname -- "$(dirname -- "$_case_dir")")/stdlib/core_macros.tl"
                     ;;
                 *)
                     _core_dst="$_case_dir/stdlib/core_macros.tl"

@@ -21,7 +21,7 @@
 ;; implicit scratch-region candidates/blockers, and validates
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
-(import "compiler_optimize.tl")
+(import "../compiler_optimize.tl")
 
 (define (smoke-mov-dst-var-type?
   [instrs : CompilerIrInstrList]

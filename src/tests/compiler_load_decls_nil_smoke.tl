@@ -1,5 +1,5 @@
 ;; compiler_load_decls_nil_smoke.tl - Regression for #3172.
-(import "compiler_load.tl")
+(import "../compiler_load.tl")
 
 (define (main) : i64
   (match (compiler-load-decls-with-module-and-roots-cfg-root

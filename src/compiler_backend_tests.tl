@@ -8685,10 +8685,35 @@
         (not (compiler-backend-string-contains? asm "    cmpb %r8b, %al\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-missing-var-compare-width-ok?) : bool
+  (let
+    [rhs-spill : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil)]
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeNil)
+      (CompilerBackendGlobalTypeNil)
+      rhs-spill
+      2
+      (IrBinLt)
+      (IrValueVar 0)
+      (IrValueVar 1)
+      (AstTyBool))
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    cmpq -16(%rbp), %rax\n    setl %al\n")
+          (not
+            (compiler-backend-string-contains? asm "    cmpb -16(%rbp), %al\n")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-global-compare-width-ok?) : bool
   (and
     (compiler-backend-global-compare-binop-ok?)
-    (compiler-backend-global-compare-branch-ok?)))
+    (compiler-backend-global-compare-branch-ok?)
+    (compiler-backend-missing-var-compare-width-ok?)))
 
 (define (compiler-backend-f64-abi-source) : String
   "(define (half [x : f64]) : f64 (/ x 2.0))

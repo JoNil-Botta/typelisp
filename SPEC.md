@@ -3489,6 +3489,13 @@ specified.
   but inspect the enum without moving the owner. Payload bindings are immutable
   references tied to the borrowed scrutinee lifetime; `String` payloads bind as
   borrowed `str` references.
+- Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
+  the explicit `(box inner-pattern)` pattern. The form has exactly one inner
+  pattern, reads the boxed `T`, and checks/binds the inner pattern against `T`.
+  The initial supported inner patterns are irrefutable binding, `_`, and nested
+  `(box ...)` patterns. Borrowed box patterns and refutable inner patterns are
+  rejected with focused diagnostics. In enum contexts, `(box ...)` continues to
+  resolve as an enum variant pattern when the expected enum has such a variant.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
 - Bindings in enum patterns introduce variables for payload fields.

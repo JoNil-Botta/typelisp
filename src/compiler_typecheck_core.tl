@@ -20872,6 +20872,63 @@
       [(NoneI64)
         (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
 
+(define (tc-box-pattern-name? [name : i64]) : bool
+  (string-eq (intern-str name) "box"))
+
+(define (tc-box-pattern-args-supported?
+  [ctx : TcContext]
+  [args : AstPatternList]
+  [inner-ty : AstType]) : bool
+  (match args
+    [(AstPatternCons inner rest-box)
+      (let
+        [inner : AstPattern (box-get inner)]
+        [rest : AstPatternList (box-get rest-box)]
+        (match rest
+          [(AstPatternNil) (tc-box-pattern-inner-supported? ctx inner inner-ty)]
+          [_ false]))]
+    [_ false]))
+
+(define (tc-box-pattern-inner-supported?
+  [ctx : TcContext]
+  [pattern : AstPattern]
+  [inner-ty : AstType]) : bool
+  (match pattern
+    [(AstPatWildcard) true]
+    [(AstPatBinding _) true]
+    [(AstPatVariant name args-box)
+      (if (tc-box-pattern-name? name)
+        (match (tc-type-strip-region (tc-resolve-type ctx inner-ty))
+          [(AstTyBox nested-inner)
+            (tc-box-pattern-args-supported?
+              ctx
+              (box-get args-box)
+              (ty-node-get nested-inner))]
+          [_ false])
+        false)]
+    [_ false]))
+
+(define (tc-bind-box-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstPatternList]
+  [inner-ty : AstType]) : ResultTcEnv
+  (match args
+    [(AstPatternCons inner rest-box)
+      (let
+        [inner : AstPattern (box-get inner)]
+        [rest : AstPatternList (box-get rest-box)]
+        (match rest
+          [(AstPatternNil)
+            (if (tc-box-pattern-inner-supported? ctx inner inner-ty)
+              (tc-bind-sub-pattern ctx env inner inner-ty)
+              (ErrTcEnv
+                "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns"))]
+          [_
+            (ErrTcEnv
+              "typecheck: box pattern expects exactly one inner pattern")]))]
+    [_ (ErrTcEnv "typecheck: box pattern expects exactly one inner pattern")]))
+
 (define (tc-bind-sub-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -20907,8 +20964,16 @@
                 (box-get lifetimes)
                 args
                 (tc-type-outer-region ty))]
+            [(AstTyBox inner-ty)
+              (if (tc-box-pattern-name? name)
+                (tc-bind-box-pattern ctx env args (ty-node-get inner-ty))
+                (ErrTcEnv
+                  "typecheck: nested variant pattern requires enum field"))]
             [_
-              (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
+              (if (tc-box-pattern-name? name)
+                (ErrTcEnv "typecheck: box pattern requires Box field")
+                (ErrTcEnv
+                  "typecheck: nested variant pattern requires enum field"))]))]
       [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
 
 (define (tc-borrowed-field-ref-type [lifetime : String] [field-ty : AstType]) : AstType
@@ -21043,8 +21108,16 @@
                 (intern-str name)
                 (box-get lifetimes)
                 args)]
+            [(AstTyBox _)
+              (if (tc-box-pattern-name? name)
+                (ErrTcEnv "typecheck: borrowed box patterns are not supported")
+                (ErrTcEnv
+                  "typecheck: nested variant pattern requires enum field"))]
             [_
-              (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
+              (if (tc-box-pattern-name? name)
+                (ErrTcEnv "typecheck: box pattern requires Box field")
+                (ErrTcEnv
+                  "typecheck: nested variant pattern requires enum field"))]))]
       [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
 
 (define (tc-bind-borrowed-enum-match-pattern
@@ -21106,11 +21179,30 @@
               (intern-str enum-name)
               (box-get lifetimes)
               pattern)]
+          [(AstTyBox _)
+            (match pattern
+              [(AstPatWildcard) (OkTcEnv env)]
+              [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+              [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+              [(AstPatVariant name _)
+                (if (tc-box-pattern-name? name)
+                  (ErrTcEnv
+                    "typecheck: borrowed box patterns are not supported")
+                  (ErrTcEnv
+                    "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+              [_
+                (ErrTcEnv
+                  "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
           [_
             (match pattern
               [(AstPatWildcard) (OkTcEnv env)]
               [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
               [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+              [(AstPatVariant name _)
+                (if (tc-box-pattern-name? name)
+                  (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+                  (ErrTcEnv
+                    "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
               [_
                 (ErrTcEnv
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))]
@@ -21163,11 +21255,29 @@
               (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
     [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
+    [(AstTyBox inner-ty)
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+        [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+        [(AstPatVariant name args-box)
+          (let
+            [args : AstPatternList (box-get args-box)]
+            (if (tc-box-pattern-name? name)
+              (tc-bind-box-pattern ctx env args (ty-node-get inner-ty))
+              (ErrTcEnv
+                "typecheck: Box match only supports (box ...), binding, or wildcard patterns")))]
+        [_ (ErrTcEnv "typecheck: unsupported Box match pattern")])]
     [_
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
         [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
         [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+        [(AstPatVariant name _)
+          (if (tc-box-pattern-name? name)
+            (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+            (ErrTcEnv
+              "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
         [_
           (ErrTcEnv
             "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))
@@ -21533,6 +21643,10 @@
                       args)
                     false)]
                 [(ErrAstVariantDefList _) false]))]
+          [(AstTyBox inner-ty)
+            (if (tc-box-pattern-name? name)
+              (tc-box-pattern-args-supported? ctx args (ty-node-get inner-ty))
+              false)]
           [_ false]))]
     [_ false]))
 
@@ -21668,6 +21782,21 @@
               [(AstPatBinding _) true]
               [_ (tc-match-arms-have-catchall? rest)])]))]))
 
+(define (tc-match-arms-have-catchall-for-type?
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern _)
+            (if (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern)
+              true
+              (tc-match-arms-have-catchall-for-type? ctx scrut-ty rest))]))]))
+
 (define (tc-match-arms-cover-bool? [arms : AstMatchArmList] [want : bool]) : bool
   (match arms
     [(AstMatchArmNil) false]
@@ -21695,6 +21824,18 @@
     [(AstTyEnumArgs _ _)
       (match pattern
         [(AstPatWildcard) true]
+        [_ false])]
+    [(AstTyBox inner-ty)
+      (match pattern
+        [(AstPatWildcard) true]
+        [(AstPatBinding _) true]
+        [(AstPatVariant name args-box)
+          (if (tc-box-pattern-name? name)
+            (tc-box-pattern-args-supported?
+              ctx
+              (box-get args-box)
+              (ty-node-get inner-ty))
+            false)]
         [_ false])]
     [_
       (match pattern
@@ -21773,7 +21914,7 @@
             (ErrTcUnit "typecheck: non-exhaustive match")]))]
     [(AstTyBool) (tc-match-bool-exhaustive-ok arms)]
     [_
-      (if (tc-match-arms-have-catchall? arms)
+      (if (tc-match-arms-have-catchall-for-type? ctx scrut-ty arms)
         OkTcUnit
         (ErrTcUnit "typecheck: non-exhaustive match"))]))
 

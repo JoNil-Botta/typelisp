@@ -8915,12 +8915,208 @@
         (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-non-direct-tail-call-extern
+  [name : String]
+  [symbol : String]
+  [params : AstTypeList]
+  [ret : AstType]
+  [abi : AstExternAbi]) : CompilerIrExtern
+  (IrExtern
+    name
+    (AstTyFunc params (ty-node-push ret))
+    abi
+    symbol
+    AstExternLinkInputNil
+    false))
+
+(define (compiler-backend-non-direct-tail-call-emit
+  [target : CompilerBackendTarget]
+  [name : String]
+  [symbol : String]
+  [params : AstTypeList]
+  [ret : AstType]
+  [abi : AstExternAbi]
+  [args : CompilerIrCallArgs]) : ResultCompilerBackend
+  (let
+    [externs : CompilerIrExternList
+      (compiler-ir-extern-cons
+        (compiler-backend-non-direct-tail-call-extern
+          name
+          symbol
+          params
+          ret
+          abi)
+        IrExternNil)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil externs)]
+    (match (compiler-backend-runtime-plan-for IrFunctionNil externs)
+      [(OkBackendRuntimePlan plan)
+        (compiler-backend-emit-tail-call
+          target
+          "caller"
+          IrBlockNil
+          name
+          args
+          ret
+          CompilerRegAssignmentNil
+          CompilerRegVarTypeNil
+          (CompilerBackendGlobalTypeNil)
+          0
+          plan
+          IrFunctionNil
+          externs
+          index
+          (compiler-diagnostic-at-start "" ""))]
+      [(ErrBackendRuntimePlan message)
+        (ErrCompilerBackend (compiler-diagnostic-at-start "" message))])))
+
+(define (compiler-backend-non-direct-tail-call-i64-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-non-direct-tail-call-emit
+    target
+    "tail_target"
+    "tl_tail_target"
+    (ast-type-cons (AstTyI64) AstTypeNil)
+    (AstTyI64)
+    (AstExternAbiC)
+    (IrCallArgsOne (IrValueI64 42))))
+
+(define (compiler-backend-non-direct-tail-call-unit-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-non-direct-tail-call-emit
+    target
+    "tail_unit_target"
+    "tl_tail_unit_target"
+    (ast-type-cons (AstTyI64) AstTypeNil)
+    (AstTyUnit)
+    (AstExternAbiC)
+    (IrCallArgsOne (IrValueI64 42))))
+
+(define (compiler-backend-non-direct-tail-call-stack-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-non-direct-tail-call-emit
+    target
+    "tail_stack_target"
+    "tl_tail_stack_target"
+    (compiler-backend-i64-type-list8)
+    (AstTyI64)
+    (AstExternAbiC)
+    (compiler-backend-i64-immediate-call-args8)))
+
+(define (compiler-backend-non-direct-tail-call-varargs-params) : AstTypeList
+  (ast-type-cons
+    (ast-ty-mut-ptr (AstTyU8))
+    (ast-type-cons (AstTyI64) (ast-type-cons (ast-ty-ptr (AstTyU8)) AstTypeNil))))
+
+(define (compiler-backend-non-direct-tail-call-varargs-args) : CompilerIrCallArgs
+  (compiler-ir-call-args-from-list
+    (compiler-ir-value-cons
+      (IrValueI64 0)
+      (compiler-ir-value-cons
+        (IrValueI64 64)
+        (compiler-ir-value-cons
+          (IrValueI64 0)
+          (compiler-ir-value-cons
+            (IrValueF64 (compiler-backend-test-f64-bits "1.5"))
+            IrValueNil))))))
+
+(define (compiler-backend-non-direct-tail-call-varargs-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-non-direct-tail-call-emit
+    target
+    "tail_varargs_target"
+    "tl_tail_varargs_target"
+    (compiler-backend-non-direct-tail-call-varargs-params)
+    (AstTyI32)
+    (AstExternAbiCVarargsTyped (AstTyF64))
+    (compiler-backend-non-direct-tail-call-varargs-args)))
+
+(define (compiler-backend-non-direct-tail-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-non-direct-tail-call-i64-emit target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains?
+          asm
+          "    leave\n    jmp tl_tail_target\n")
+        (not
+          (compiler-backend-string-contains? asm "    call tl_tail_target\n"))
+        (not (compiler-backend-string-contains? asm "    ret\n"))
+        true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-non-direct-tail-call-unit-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-non-direct-tail-call-unit-emit target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "    call tl_tail_unit_target\n")
+        (compiler-backend-string-contains? asm "    movq $0, %rax\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    leave\n    jmp tl_tail_unit_target\n"))
+        true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-non-direct-tail-call-stack-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-non-direct-tail-call-stack-emit target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains?
+          asm
+          "    call tl_tail_stack_target\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    leave\n    jmp tl_tail_stack_target\n"))
+        (compiler-backend-string-contains? asm "    ret\n")
+        true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-non-direct-tail-call-varargs-pre-call?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-string-contains? asm "    movq %xmm3, %r9\n")
+    (compiler-backend-string-contains? asm "    movb $1, %al\n")))
+
+(define (compiler-backend-non-direct-tail-call-varargs-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-non-direct-tail-call-varargs-emit target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-non-direct-tail-call-varargs-pre-call? target asm)
+        (compiler-backend-string-contains?
+          asm
+          "    leave\n    jmp tl_tail_varargs_target\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_tail_varargs_target\n"))
+        (not (compiler-backend-string-contains? asm "    ret\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-indirect-tail-call-ok?) : bool
   (and
     (compiler-backend-indirect-tail-call-target-ok? (BackendTargetLinux))
     (compiler-backend-indirect-tail-call-target-ok? (BackendTargetWindows))
     (compiler-backend-indirect-tail-call-stack-target-ok? (BackendTargetLinux))
     (compiler-backend-indirect-tail-call-stack-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-non-direct-tail-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-non-direct-tail-call-target-ok? (BackendTargetWindows))
+    (compiler-backend-non-direct-tail-call-unit-target-ok? (BackendTargetLinux))
+    (compiler-backend-non-direct-tail-call-unit-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-non-direct-tail-call-stack-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-non-direct-tail-call-stack-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-non-direct-tail-call-varargs-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-non-direct-tail-call-varargs-target-ok?
       (BackendTargetWindows))))
 
 (define (compiler-backend-known-function-call-functions) : CompilerIrFunctionList

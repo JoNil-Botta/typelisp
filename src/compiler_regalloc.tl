@@ -80,7 +80,13 @@
 
 (defstruct CompilerRegIntervalIndex
   (starts (Array i64))
-  (ends (Array i64)))
+  (ends (Array i64))
+  (segments (Array CompilerRegIntervalList)))
+
+(defenum CompilerRegIntervalSelection
+  (CompilerRegIntervalSelection
+    CompilerRegIntervalList
+    CompilerRegIntervalIndex))
 
 (defenum CompilerRegActive
   (CompilerRegActive i64 i64 String))
@@ -972,11 +978,13 @@
   (let
     [starts : (Array i64) (make-array i64 vars)]
     [ends : (Array i64) (make-array i64 vars)]
+    [segments : (Array CompilerRegIntervalList)
+      (make-array CompilerRegIntervalList 0)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
       (compiler-reg-interval-index-fill! intervals starts ends)
-      (CompilerRegIntervalIndex starts ends))))
+      (CompilerRegIntervalIndex starts ends segments))))
 
 (define (compiler-reg-interval-index-lookup
   [index : CompilerRegIntervalIndex]
@@ -990,6 +998,11 @@
         CompilerRegNoInterval
         (CompilerRegSomeInterval
           (CompilerRegInterval var (array-ref starts var) (array-ref ends var)))))))
+
+(define (compiler-reg-interval-list-empty? [segments : CompilerRegIntervalList]) : bool
+  (match segments
+    [(CompilerRegIntervalNil) true]
+    [_ false]))
 
 (define (compiler-reg-extend-interval
   [starts : (Array i64)]
@@ -1051,29 +1064,160 @@
         (+ offset 1)
         offset))))
 
+(define (compiler-reg-segment-flush-var!
+  [segments : (Array CompilerRegIntervalList)]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [var : i64]) : unit
+  (if (or (< var 0) (>= var (array-length starts)) (< (array-ref starts var) 0))
+    unit
+    (begin
+      (array-set!
+        segments
+        var
+        (compiler-reg-interval-cons
+          (CompilerRegInterval var (array-ref starts var) (array-ref ends var))
+          (array-ref segments var)))
+      (array-set! starts var -1)
+      (array-set! ends var -1)
+      unit)))
+
+(define (compiler-reg-segment-note-point!
+  [segments : (Array CompilerRegIntervalList)]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [var : i64]
+  [point : i64]) : unit
+  (if (or (< var 0) (>= var (array-length starts)))
+    unit
+    (if (< (array-ref starts var) 0)
+      (begin
+        (array-set! starts var point)
+        (array-set! ends var point))
+      (let
+        [end : i64 (array-ref ends var)]
+        (if (<= point (+ end 1))
+          (if (> point end)
+            (array-set! ends var point)
+            unit)
+          (begin
+            (compiler-reg-segment-flush-var! segments starts ends var)
+            (array-set! starts var point)
+            (array-set! ends var point)))))))
+
+(define (compiler-reg-extend-segment-set-word-bits!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [bits : i64]
+  [var : i64]
+  [point : i64]) : unit
+  (if (= bits 0)
+    unit
+    (let
+      [index : i64 (compiler-reg-low-bit-index bits)]
+      [item-var : i64 (+ var index)]
+      (begin
+        (compiler-reg-extend-interval starts ends item-var point)
+        (compiler-reg-segment-note-point!
+          segments
+          segment-starts
+          segment-ends
+          item-var
+          point)
+        (compiler-reg-extend-segment-set-word-bits!
+          starts
+          ends
+          segments
+          segment-starts
+          segment-ends
+          (bit-and bits (- bits 1))
+          var
+          point)))))
+
+(define (compiler-reg-extend-segment-set-words!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [point : i64]) : unit
+  (let
+    [index : i64 word-index]
+    [word-count : i64 (compiler-live-set-word-count set)]
+    (while (< index word-count)
+      (begin
+        (compiler-reg-extend-segment-set-word-bits!
+          starts
+          ends
+          segments
+          segment-starts
+          segment-ends
+          (compiler-live-set-word-at set index)
+          (* index (compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-extend-segment-instr!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [live-after : CompilerLiveI64Set]
+  [point : i64]
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (compiler-reg-extend-segment-set-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      (compiler-live-instr-defs instr)
+      0
+      point)
+    (compiler-reg-extend-segment-set-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      (compiler-live-instr-uses instr)
+      0
+      point)
+    (compiler-reg-extend-segment-set-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      live-after
+      0
+      (+ point 1))))
+
 (define (compiler-reg-extend-set-words
   [starts : (Array i64)]
   [ends : (Array i64)]
   [set : CompilerLiveI64Set]
   [word-index : i64]
   [point : i64]) : unit
-  (if (>= word-index (compiler-live-set-word-count set))
-    unit
-    (begin
-      (compiler-reg-extend-set-word-bits
-        starts
-        ends
-        (compiler-live-set-word-at set word-index)
-        (* word-index (compiler-live-set-word-bits))
-        point)
-      (compiler-reg-extend-set-words starts ends set (+ word-index 1) point))))
-
-(define (compiler-reg-extend-set
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [set : CompilerLiveI64Set]
-  [point : i64]) : unit
-  (compiler-reg-extend-set-words starts ends set 0 point))
+  (let
+    [index : i64 word-index]
+    [word-count : i64 (compiler-live-set-word-count set)]
+    (while (< index word-count)
+      (begin
+        (compiler-reg-extend-set-word-bits
+          starts
+          ends
+          (compiler-live-set-word-at set index)
+          (* index (compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-set-word-bits
   [starts : (Array i64)]
@@ -1101,9 +1245,19 @@
   [point : i64]
   [instr : CompilerIrInstr]) : unit
   (begin
-    (compiler-reg-extend-set starts ends (compiler-live-instr-defs instr) point)
-    (compiler-reg-extend-set starts ends (compiler-live-instr-uses instr) point)
-    (compiler-reg-extend-set starts ends live-after (+ point 1))))
+    (compiler-reg-extend-set-words
+      starts
+      ends
+      (compiler-live-instr-defs instr)
+      0
+      point)
+    (compiler-reg-extend-set-words
+      starts
+      ends
+      (compiler-live-instr-uses instr)
+      0
+      point)
+    (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1))))
 
 (define (compiler-reg-live-intervals-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -1176,19 +1330,6 @@
         starts
         ends)]))
 
-(define (compiler-reg-live-intervals-blocks
-  [blocks : CompilerIrBlockList]
-  [liveness : CompilerFunctionLiveness]
-  [point : i64]
-  [starts : (Array i64)]
-  [ends : (Array i64)]) : i64
-  (compiler-reg-live-intervals-blocks-with-live
-    blocks
-    liveness
-    point
-    starts
-    ends))
-
 (define (compiler-reg-interval-arrays-to-list
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -1218,12 +1359,143 @@
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
-          (compiler-reg-live-intervals-blocks blocks liveness 0 starts ends)
+          (compiler-reg-live-intervals-blocks-with-live
+            blocks
+            liveness
+            0
+            starts
+            ends)
           (compiler-reg-interval-arrays-to-list
             starts
             ends
             (- vars 1)
             CompilerRegIntervalNil)))]))
+
+(define (compiler-reg-live-interval-selection-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [live-afters : CompilerLiveInstrSetVec]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [after-items : (Array CompilerLiveI64Set) (struct-get live-afters items)]
+    [index : i64 0]
+    [out-point : i64 point]
+    (begin
+      (while (< index count)
+        (let
+          [live-after : CompilerLiveI64Set
+            (if (< index (array-length after-items))
+              (array-ref after-items index)
+              (compiler-live-set-empty))]
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (compiler-reg-extend-segment-instr!
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends
+              live-after
+              out-point
+              instr)
+            (set! out-point (+ out-point 2))
+            (set! index (+ index 1)))))
+      out-point)))
+
+(define (compiler-reg-live-interval-selection-blocks
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]) : i64
+  (match blocks
+    [(IrBlockNil) point]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [live-afters : CompilerLiveInstrSetVec
+              (compiler-reg-live-intervals-find-afters liveness label)]
+            (compiler-reg-live-interval-selection-blocks
+              (box-get rest)
+              liveness
+              (compiler-reg-live-interval-selection-instr-seq
+                instrs
+                live-afters
+                point
+                starts
+                ends
+                segments
+                segment-starts
+                segment-ends)
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends))])]
+    [(IrBlockArray seq)
+      (compiler-reg-live-interval-selection-blocks
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        point
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends)]))
+
+(define (compiler-reg-live-interval-selection
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalSelection
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [starts : (Array i64) (make-array i64 vars)]
+        [ends : (Array i64) (make-array i64 vars)]
+        [segments : (Array CompilerRegIntervalList)
+          (make-array CompilerRegIntervalList vars)]
+        [segment-starts : (Array i64) (make-array i64 vars)]
+        [segment-ends : (Array i64) (make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array starts -1)
+          (compiler-reg-fill-i64-array ends -1)
+          (compiler-reg-fill-i64-array segment-starts -1)
+          (compiler-reg-fill-i64-array segment-ends -1)
+          (compiler-reg-live-interval-selection-blocks
+            blocks
+            liveness
+            0
+            starts
+            ends
+            segments
+            segment-starts
+            segment-ends)
+          (let
+            [index : i64 0]
+            (while (< index vars)
+              (begin
+                (compiler-reg-segment-flush-var!
+                  segments
+                  segment-starts
+                  segment-ends
+                  index)
+                (set! index (+ index 1)))))
+          (CompilerRegIntervalSelection
+            (compiler-reg-interval-arrays-to-list
+              starts
+              ends
+              (- vars 1)
+              CompilerRegIntervalNil)
+            (CompilerRegIntervalIndex starts ends segments))))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Cheap block-level liveness for register planning (#perf).
@@ -1845,7 +2117,7 @@
 (define (compiler-reg-param-assign-plan
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
-  [intervals : CompilerRegIntervalList]
+  [interval-index : CompilerRegIntervalIndex]
   [base-ineligible : CompilerLiveI64Set]
   [vars : i64]) : CompilerRegParamAssignPlan
   (match func
@@ -1871,7 +2143,7 @@
               (compiler-reg-param-assign-walk
                 abi
                 params
-                (compiler-reg-interval-index-build intervals vars)
+                interval-index
                 assignments
                 base-ineligible
                 base-ineligible
@@ -2476,6 +2748,26 @@
         [(CompilerRegInterval _ right-start right-end)
           (not (or (<= left-end right-start) (<= right-end left-start)))])]))
 
+(define (compiler-reg-interval-list-overlaps-one?
+  [segments : CompilerRegIntervalList]
+  [interval : CompilerRegInterval]) : bool
+  (match segments
+    [(CompilerRegIntervalNil) false]
+    [(CompilerRegIntervalCons head rest)
+      (if (compiler-reg-interval-overlap? head interval)
+        true
+        (compiler-reg-interval-list-overlaps-one? (box-get rest) interval))]))
+
+(define (compiler-reg-interval-list-overlaps?
+  [left : CompilerRegIntervalList]
+  [right : CompilerRegIntervalList]) : bool
+  (match left
+    [(CompilerRegIntervalNil) false]
+    [(CompilerRegIntervalCons head rest)
+      (if (compiler-reg-interval-list-overlaps-one? right head)
+        true
+        (compiler-reg-interval-list-overlaps? (box-get rest) right))]))
+
 (define (compiler-reg-interval-range?
   [intervals : CompilerRegIntervalList]
   [var : i64]
@@ -2515,6 +2807,33 @@
             (compiler-reg-interval-overlap? left-interval right-interval)]
           [(CompilerRegNoInterval) true])]
       [(CompilerRegNoInterval) true])))
+
+;; #3486 infrastructure: answer interference from per-var live segments when both
+;; sides have segment data, with the old coarse interval as the conservative
+;; fallback. Allocation still calls compiler-reg-vars-interfere-index? until the
+;; policy changes that consume holes are proven independently.
+(define (compiler-reg-vars-interfere-segmented-index?
+  [intervals : CompilerRegIntervalIndex]
+  [left : i64]
+  [right : i64]) : bool
+  (if (= left right)
+    true
+    (let
+      [segments : (Array CompilerRegIntervalList)
+        (struct-get intervals segments)]
+      [left-segments : CompilerRegIntervalList
+        (if (or (< left 0) (>= left (array-length segments)))
+          CompilerRegIntervalNil
+          (array-ref segments left))]
+      [right-segments : CompilerRegIntervalList
+        (if (or (< right 0) (>= right (array-length segments)))
+          CompilerRegIntervalNil
+          (array-ref segments right))]
+      (if (and
+        (not (compiler-reg-interval-list-empty? left-segments))
+        (not (compiler-reg-interval-list-empty? right-segments)))
+        (compiler-reg-interval-list-overlaps? left-segments right-segments)
+        (compiler-reg-vars-interfere-index? intervals left right)))))
 
 (define (compiler-reg-compatible-types?
   [types : CompilerRegVarTypes]
@@ -4514,21 +4833,17 @@
   [type-info : CompilerRegVarTypes]
   [types : CompilerRegVarTypeList]
   [intervals : CompilerRegIntervalList]
+  [interval-index : CompilerRegIntervalIndex]
   [assignment-table : CompilerRegAssignmentTable]
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]) : CompilerRegPlan
   (let
-    [vars : i64
-      (match func
-        [(IrFunction _ _ _ function-vars _) function-vars])]
     [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
-    [interval-index : CompilerRegIntervalIndex
-      (compiler-reg-interval-index-build intervals vars)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
     ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
     ;; discriminator). An empty array selects the original furthest-end policy,
@@ -4652,6 +4967,7 @@
       type-info
       types
       intervals
+      (compiler-reg-interval-index-build intervals vars)
       (compiler-reg-assignment-table-make vars)
       ineligible
       ineligible
@@ -4684,29 +5000,45 @@
     [vars : i64
       (match func
         [(IrFunction _ _ _ function-vars _) function-vars])]
-    [intervals : CompilerRegIntervalList
+    [interval-selection : CompilerRegIntervalSelection
       (if (compiler-reg-scalar-full-intervals? func)
-        (compiler-reg-live-intervals func (compiler-live-analyze-function func))
-        (compiler-reg-block-intervals func))]
-    [base-ineligible : CompilerLiveI64Set
-      (compiler-reg-mark-float-spanning
-        intervals
-        type-info
-        (compiler-reg-call-points func)
-        (compiler-reg-ineligible-vars-non-params func types))]
-    [param-plan : CompilerRegParamAssignPlan
-      (compiler-reg-param-assign-plan abi func intervals base-ineligible vars)]
-    (match param-plan
-      [(CompilerRegParamAssignPlan preassignments ineligible blocked)
-        (compiler-reg-plan-from
+        (compiler-reg-live-interval-selection
           func
-          type-info
-          types
-          intervals
-          preassignments
-          ineligible
-          blocked
-          true)])))
+          (compiler-live-analyze-function func))
+        (let
+          [block-intervals : CompilerRegIntervalList
+            (compiler-reg-block-intervals func)]
+          (CompilerRegIntervalSelection
+            block-intervals
+            (compiler-reg-interval-index-build block-intervals vars))))]
+    (match interval-selection
+      [(CompilerRegIntervalSelection intervals interval-index)
+        (let
+          [base-ineligible : CompilerLiveI64Set
+            (compiler-reg-mark-float-spanning
+              intervals
+              type-info
+              (compiler-reg-call-points func)
+              (compiler-reg-ineligible-vars-non-params func types))]
+          [param-plan : CompilerRegParamAssignPlan
+            (compiler-reg-param-assign-plan
+              abi
+              func
+              interval-index
+              base-ineligible
+              vars)]
+          (match param-plan
+            [(CompilerRegParamAssignPlan preassignments ineligible blocked)
+              (compiler-reg-plan-from
+                func
+                type-info
+                types
+                intervals
+                interval-index
+                preassignments
+                ineligible
+                blocked
+                true)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-scalar-for-abi CompilerRegAbiLinux func))
@@ -8575,6 +8907,51 @@
       conflict-ok
       table-conflict-ok)))
 
+(define (compiler-reg-segmented-interference-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 5)]
+    [ends : (Array i64) (make-array i64 5)]
+    [segments : (Array CompilerRegIntervalList)
+      (make-array CompilerRegIntervalList 5)]
+    [segment-index : CompilerRegIntervalIndex
+      (CompilerRegIntervalIndex starts ends segments)]
+    (begin
+      (compiler-reg-fill-i64-array starts -1)
+      (compiler-reg-fill-i64-array ends -1)
+      (array-set! starts 0 0)
+      (array-set! ends 0 8)
+      (array-set! starts 1 0)
+      (array-set! ends 1 8)
+      (array-set! starts 3 3)
+      (array-set! ends 3 5)
+      (array-set! starts 4 7)
+      (array-set! ends 4 9)
+      (array-set!
+        segments
+        1
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 1 0 2)
+          (compiler-reg-interval-cons
+            (CompilerRegInterval 1 6 8)
+            CompilerRegIntervalNil)))
+      (array-set!
+        segments
+        3
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 3 3 5)
+          CompilerRegIntervalNil))
+      (array-set!
+        segments
+        4
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 4 7 9)
+          CompilerRegIntervalNil))
+      (and
+        (not (compiler-reg-vars-interfere-segmented-index? segment-index 1 3))
+        (compiler-reg-vars-interfere-segmented-index? segment-index 1 4)
+        (compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
+        (compiler-reg-vars-interfere-segmented-index? segment-index 1 2)))))
+
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
     [(CompilerRegPlan chain-assignments _ _ _ _)
@@ -8925,8 +9302,8 @@
           (<= (+ (array-ref remap group-var) 1) slots))]
       [(CompilerRegColoringNone) false])))
 
-(define (compiler-regalloc-self-test) : i64
-  (if (and
+(define (compiler-regalloc-core-self-test?) : bool
+  (and
     (compiler-reg-reuse-ok?)
     (compiler-reg-f64-reuse-ok?)
     (compiler-reg-overlap-spill-ok?)
@@ -8940,6 +9317,10 @@
     (compiler-reg-xmm-clobbers-ok?)
     (compiler-reg-coalesce-ok?)
     (compiler-reg-vector-mask-homes-ok?)
+    (compiler-reg-segmented-interference-ok?)))
+
+(define (compiler-regalloc-scalar-self-test?) : bool
+  (and
     (compiler-reg-scalar-call-live-ok?)
     (compiler-reg-scalar-f64-call-live-ok?)
     (compiler-reg-scalar-handle-eligible-ok?)
@@ -8952,16 +9333,25 @@
     (compiler-reg-scalar-loop-backedge-ok?)
     (compiler-reg-scalar-zero-call-caller-saved-ok?)
     (compiler-reg-scalar-caller-saved-clobber-ok?)
+    (compiler-reg-scalar-call-spanning-caller-saved-ok?)))
+
+(define (compiler-regalloc-storage-self-test?) : bool
+  (and
     (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
-    (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-call-span-counts-ok?) true)
     (cfg test (compiler-reg-call-span-census-ok?) true)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)
     (compiler-reg-color-spill-param-pins-ok?)
-    (compiler-reg-color-storage-ranges-ok?))
+    (compiler-reg-color-storage-ranges-ok?)))
+
+(define (compiler-regalloc-self-test) : i64
+  (if (and
+    (compiler-regalloc-core-self-test?)
+    (compiler-regalloc-scalar-self-test?)
+    (compiler-regalloc-storage-self-test?))
     42
     (begin
       (panic "regalloc: smoke mismatch")

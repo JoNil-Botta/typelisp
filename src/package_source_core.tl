@@ -8,7 +8,9 @@
 ;; enumeration fall back to the manifest entry source.
 (import "../stdlib/fs.tl")
 (import "../stdlib/io.tl")
+(import stdlib.io)
 (import "../stdlib/list.tl")
+(import stdlib.list)
 (import "../stdlib/vector.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
@@ -209,49 +211,53 @@
     unit
     (panic "package-source: vector insert self-test mismatch")))
 
-(define (package-source-entry-list-insert [items : StringList] [value : String]) : StringList
+(define (package-source-entry-list-insert
+  [items : list.StringList]
+  [value : String]) : list.StringList
   (match items
-    [(StringNil) (StringCons value (box (StringNil)))]
-    [(StringCons head rest)
+    [(list.StringNil) (list.StringCons value (box (list.StringNil)))]
+    [(list.StringCons head rest)
       (if (package-source-string-less? value head)
-        (StringCons value (box items))
-        (StringCons
+        (list.StringCons value (box items))
+        (list.StringCons
           head
           (box (package-source-entry-list-insert (box-get rest) value))))]))
 
 (define (package-source-sort-entries-into
-  [entries : StringList]
-  [acc : StringList]) : StringList
+  [entries : list.StringList]
+  [acc : list.StringList]) : list.StringList
   (match entries
-    [(StringNil) acc]
-    [(StringCons head rest)
+    [(list.StringNil) acc]
+    [(list.StringCons head rest)
       (package-source-sort-entries-into
         (box-get rest)
         (package-source-entry-list-insert acc head))]))
 
-(define (package-source-sort-entries [entries : StringList]) : StringList
-  (package-source-sort-entries-into entries (StringNil)))
+(define (package-source-sort-entries [entries : list.StringList]) : list.StringList
+  (package-source-sort-entries-into entries (list.StringNil)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
-    [items : StringList
+    [items : list.StringList
       (package-source-sort-entries
-        (StringCons
+        (list.StringCons
           "zeta"
           (box
-            (StringCons "alpha" (box (StringCons "middle" (box (StringNil))))))))]
+            (list.StringCons
+              "alpha"
+              (box (list.StringCons "middle" (box (list.StringNil))))))))]
     (match items
-      [(StringCons first rest1)
+      [(list.StringCons first rest1)
         (match (box-get rest1)
-          [(StringCons second rest2)
+          [(list.StringCons second rest2)
             (match (box-get rest2)
-              [(StringCons third rest3)
+              [(list.StringCons third rest3)
                 (and
                   (string-eq first "alpha")
                   (string-eq second "middle")
                   (string-eq third "zeta")
                   (match (box-get rest3)
-                    [(StringNil) true]
+                    [(list.StringNil) true]
                     [_ false]))]
               [_ false])]
           [_ false])]
@@ -277,22 +283,22 @@
 (define (package-source-entry-error
   [command : String]
   [path : String]
-  [error : IoError]) : ResultPackageSourceList
+  [error : io.IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
     (str-cat
       (string-append command ": failed to inspect package path '")
       path
-      (string-append "': " (io-error-message error)))))
+      (string-append "': " (io.io-error-message error)))))
 
 (define (package-source-read-dir-error
   [command : String]
   [path : String]
-  [error : IoError]) : ResultPackageSourceList
+  [error : io.IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
     (str-cat
       (string-append command ": failed to read package directory '")
       path
-      (string-append "': " (io-error-message error)))))
+      (string-append "': " (io.io-error-message error)))))
 
 (define (package-source-entry-vec [source-set : PackageSourceSet]) : StringVec
   (let
@@ -331,7 +337,7 @@
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
       [(ErrIoStringList error)
-        (if (or (io-error-not-found? error) (io-error-unsupported? error))
+        (if (or (io.io-error-not-found? error) (io.io-error-unsupported? error))
           (OkPackageSourceList acc)
           (package-source-read-dir-error command dir error))]
       [(OkIoStringList entries)
@@ -349,7 +355,7 @@
     [root : String (struct-get source-set manifest-dir)]
     (match (try-read-dir (& root))
       [(ErrIoStringList error)
-        (if (io-error-unsupported? error)
+        (if (io.io-error-unsupported? error)
           (OkPackageSourceList (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
       [(OkIoStringList entries)
@@ -392,11 +398,11 @@
   [command : String]
   [root : String]
   [relative : String]
-  [entries : StringList]
+  [entries : list.StringList]
   [acc : StringVec]) : ResultPackageSourceList
   (match entries
-    [(StringNil) (OkPackageSourceList acc)]
-    [(StringCons name rest)
+    [(list.StringNil) (OkPackageSourceList acc)]
+    [(list.StringCons name rest)
       (match (package-source-scan-one command root relative name acc)
         [(ErrPackageSourceList message) (ErrPackageSourceList message)]
         [(OkPackageSourceList next)

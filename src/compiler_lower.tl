@@ -15,6 +15,7 @@
 (import "compiler_float.tl")
 (import "../stdlib/hashmap.tl")
 (import "../stdlib/string.tl")
+(import "../stdlib/str_cat.tl")
 
 (defenum LowerNameEnv
   (LowerNameNil)

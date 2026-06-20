@@ -670,6 +670,13 @@
       42
       "text-buf-api fixture result")))
 
+(cfg
+  test
+  (export
+    (value text-buf-test-assert-owned-string-eq)
+    (value text-buf-test-assert-text-buf)
+    (value text-buf-test-main)))
+
 (export
   (value text-buf-ascii-printable-table)
   (value text-buf-empty)

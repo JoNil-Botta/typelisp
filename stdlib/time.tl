@@ -59,10 +59,10 @@
       [timespec : (Array i64) (make-array i64 2)]
       [status : i64
         (unsafe
-          (syscall 228 clock-id (time-array-addr timespec)))]
+          (syscall 228 clock-id (stdlib.time.time-array-addr timespec)))]
       (if (< status 0)
-        (time-unavailable "time: clock_gettime unavailable")
-        (OkTimeMs (time-timespec-ms timespec))))))
+        (stdlib.time.time-unavailable "time: clock_gettime unavailable")
+        (OkTimeMs (stdlib.time.time-timespec-ms timespec))))))
 
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding.
 (cfg
@@ -90,15 +90,15 @@
     (let
       [file-time : (Array i64) (make-array i64 1)]
       [_ok : unit
-        (time-windows-get-system-time-as-file-time
+        (stdlib.time.time-windows-get-system-time-as-file-time
           (unsafe
             (array-data file-time)))]
       [unix-ms : i64
         (-
           (/ (array-ref file-time 0) 10000)
-          (time-windows-filetime-unix-epoch-ms))]
+          (stdlib.time.time-windows-filetime-unix-epoch-ms))]
       (if (< unix-ms 0)
-        (time-unavailable "time: system time before Unix epoch")
+        (stdlib.time.time-unavailable "time: system time before Unix epoch")
         (OkTimeMs unix-ms)))))
 
 ;: Windows monotonic milliseconds via `QueryPerformanceCounter/Frequency`.
@@ -109,27 +109,34 @@
       [counter : (Array i64) (make-array i64 1)]
       [freq : (Array i64) (make-array i64 1)]
       [counter-ok : i32
-        (time-windows-query-performance-counter
+        (stdlib.time.time-windows-query-performance-counter
           (unsafe
             (array-data counter)))]
       [freq-ok : i32
-        (time-windows-query-performance-frequency
+        (stdlib.time.time-windows-query-performance-frequency
           (unsafe
             (array-data freq)))]
       [freq-value : i64 (array-ref freq 0)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
-        (time-unavailable "time: performance counter unavailable")
+        (stdlib.time.time-unavailable "time: performance counter unavailable")
         (if (= freq-value 0)
-          (time-unavailable "time: performance counter frequency is zero")
+          (stdlib.time.time-unavailable
+            "time: performance counter frequency is zero")
           (OkTimeMs (/ (* (array-ref counter 0) 1000) freq-value)))))))
 
 ;: Return wall-clock Unix epoch milliseconds.
 (define (time-unix-ms) : ResultTimeMs
-  (cfg windows (time-windows-unix-ms) (time-linux-clock-ms 0)))
+  (cfg
+    windows
+    (stdlib.time.time-windows-unix-ms)
+    (stdlib.time.time-linux-clock-ms 0)))
 
 ;: Return monotonic elapsed milliseconds. The epoch is platform-defined.
 (define (time-monotonic-ms) : ResultTimeMs
-  (cfg windows (time-windows-monotonic-ms) (time-linux-clock-ms 1)))
+  (cfg
+    windows
+    (stdlib.time.time-windows-monotonic-ms)
+    (stdlib.time.time-linux-clock-ms 1)))
 
 ;: Inline test failure helper.
 (define (time-test-fail) : unit
@@ -141,56 +148,86 @@
 (define (time-test-assert [ok : bool]) : unit
   (if ok
     unit
-    (time-test-fail)))
+    (stdlib.time.time-test-fail)))
 
 ;: Inline test integer assertion.
 (define (time-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
-  (time-test-assert (= actual expected)))
+  (stdlib.time.time-test-assert (= actual expected)))
 
 ;: Inline test owned string assertion.
 (define (time-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (time-test-assert (string-eq actual expected)))
+  (stdlib.time.time-test-assert (string-eq actual expected)))
 
 ;: Inline test assertion for error result shape.
 (define (time-test-assert-result-error-shape) : unit
   (match (ErrTimeMs (TimeUnavailable "time unavailable"))
-    [(OkTimeMs _) (time-test-fail)]
+    [(OkTimeMs _) (stdlib.time.time-test-fail)]
     [(ErrTimeMs err)
-      (time-test-assert-string-eq (time-error-message err) "time unavailable")]))
+      (stdlib.time.time-test-assert-string-eq
+        (stdlib.time.time-error-message err)
+        "time unavailable")]))
 
 ;: Inline test assertion for wall-clock range.
 (define (time-test-assert-unix-range [result : ResultTimeMs]) : unit
   (match result
     [(OkTimeMs ms)
       (begin
-        (time-test-assert (> ms 946684800000))
-        (time-test-assert (< ms 4102444800000)))]
-    [(ErrTimeMs _) (time-test-fail)]))
+        (stdlib.time.time-test-assert (> ms 946684800000))
+        (stdlib.time.time-test-assert (< ms 4102444800000)))]
+    [(ErrTimeMs _) (stdlib.time.time-test-fail)]))
 
 ;: Inline test assertion for monotonic timestamp shape.
 (define (time-test-assert-monotonic-nonnegative [result : ResultTimeMs]) : i64
   (match result
     [(OkTimeMs ms)
       (begin
-        (time-test-assert (>= ms 0))
+        (stdlib.time.time-test-assert (>= ms 0))
         ms)]
     [(ErrTimeMs _) 0]))
 
 (test
   time-api
   (begin
-    (time-test-assert-result-error-shape)
-    (time-test-assert-unix-range (time-unix-ms))
+    (stdlib.time.time-test-assert-result-error-shape)
+    (stdlib.time.time-test-assert-unix-range (stdlib.time.time-unix-ms))
     (let
-      [first : i64 (time-test-assert-monotonic-nonnegative (time-monotonic-ms))]
+      [first : i64
+        (stdlib.time.time-test-assert-monotonic-nonnegative
+          (stdlib.time.time-monotonic-ms))]
       [second : i64
-        (time-test-assert-monotonic-nonnegative (time-monotonic-ms))]
+        (stdlib.time.time-test-assert-monotonic-nonnegative
+          (stdlib.time.time-monotonic-ms))]
       (begin
-        (time-test-assert (>= second first))
-        (time-test-assert-i64-eq (time-ms-or (OkTimeMs 123) 0) 123)
-        (time-test-assert-i64-eq
-          (time-ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
+        (stdlib.time.time-test-assert (>= second first))
+        (stdlib.time.time-test-assert-i64-eq
+          (stdlib.time.time-ms-or (OkTimeMs 123) 0)
+          123)
+        (stdlib.time.time-test-assert-i64-eq
+          (stdlib.time.time-ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
           7)))))
+
+(cfg (not windows) (export (value time-array-addr) (value time-linux-clock-ms)))
+
+(cfg
+  windows
+  (export
+    (value time-windows-get-system-time-as-file-time)
+    (value time-windows-query-performance-counter)
+    (value time-windows-query-performance-frequency)
+    (value time-windows-filetime-unix-epoch-ms)
+    (value time-windows-unix-ms)
+    (value time-windows-monotonic-ms)))
+
+(cfg
+  test
+  (export
+    (value time-test-fail)
+    (value time-test-assert)
+    (value time-test-assert-i64-eq)
+    (value time-test-assert-string-eq)
+    (value time-test-assert-result-error-shape)
+    (value time-test-assert-unix-range)
+    (value time-test-assert-monotonic-nonnegative)))
 
 (export
   (value time-error-message)

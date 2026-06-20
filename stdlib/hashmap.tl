@@ -1807,7 +1807,7 @@
 
 ;; Iteration walkers (deterministic bucket order, #829). No first-class
 ;; functions yet, so each walk is its own tail-recursive helper started at
-;; `(string-i64-map-next-occupied m 0)` and advanced with the cursor.
+;; `(stdlib.hashmap.string-i64-map-next-occupied m 0)` and advanced with the cursor.
 ;; Number of live entries the cursor visits (should equal the map's len).
 (cfg
   test
@@ -1848,11 +1848,11 @@
 (cfg
   test
   (define (string-string-iter-count [m : StringStringMap] [i : i64] [acc : i64]) : i64
-    (if (>= i (string-string-map-capacity m))
+    (if (>= i (stdlib.hashmap.string-string-map-capacity m))
       acc
       (stdlib.hashmap.string-string-iter-count
         m
-        (string-string-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.string-string-map-next-occupied m (+ i 1))
         (+ acc 1)))))
 
 (cfg
@@ -1861,38 +1861,40 @@
     [m : StringStringMap]
     [i : i64]
     [acc : i64]) : i64
-    (if (>= i (string-string-map-capacity m))
+    (if (>= i (stdlib.hashmap.string-string-map-capacity m))
       acc
       (stdlib.hashmap.string-string-iter-value-length-sum
         m
-        (string-string-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.string-string-map-next-occupied m (+ i 1))
         (+
           acc
           (stdlib.hashmap.string-string-entry-value-length-or
-            (string-string-map-entry-at m i)
+            (stdlib.hashmap.string-string-map-entry-at m i)
             0))))))
 
 (cfg
   test
   (define (i64-i64-iter-count [m : I64I64Map] [i : i64] [acc : i64]) : i64
-    (if (>= i (i64-i64-map-capacity m))
+    (if (>= i (stdlib.hashmap.i64-i64-map-capacity m))
       acc
       (stdlib.hashmap.i64-i64-iter-count
         m
-        (i64-i64-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.i64-i64-map-next-occupied m (+ i 1))
         (+ acc 1)))))
 
 (cfg
   test
   (define (i64-i64-iter-value-sum [m : I64I64Map] [i : i64] [acc : i64]) : i64
-    (if (>= i (i64-i64-map-capacity m))
+    (if (>= i (stdlib.hashmap.i64-i64-map-capacity m))
       acc
       (stdlib.hashmap.i64-i64-iter-value-sum
         m
-        (i64-i64-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.i64-i64-map-next-occupied m (+ i 1))
         (+
           acc
-          (stdlib.hashmap.i64-i64-entry-value-or (i64-i64-map-entry-at m i) 0))))))
+          (stdlib.hashmap.i64-i64-entry-value-or
+            (stdlib.hashmap.i64-i64-map-entry-at m i)
+            0))))))
 
 (cfg
   test
@@ -1944,11 +1946,11 @@
     [m : StringHashPayloadMap]
     [i : i64]
     [acc : i64]) : i64
-    (if (>= i (string-hash-payload-map-capacity m))
+    (if (>= i (stdlib.hashmap.string-hash-payload-map-capacity m))
       acc
       (stdlib.hashmap.string-hash-payload-iter-count
         m
-        (string-hash-payload-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.string-hash-payload-map-next-occupied m (+ i 1))
         (+ acc 1)))))
 
 (cfg
@@ -1957,15 +1959,15 @@
     [m : StringHashPayloadMap]
     [i : i64]
     [acc : i64]) : i64
-    (if (>= i (string-hash-payload-map-capacity m))
+    (if (>= i (stdlib.hashmap.string-hash-payload-map-capacity m))
       acc
       (stdlib.hashmap.string-hash-payload-iter-score-sum
         m
-        (string-hash-payload-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.string-hash-payload-map-next-occupied m (+ i 1))
         (+
           acc
           (stdlib.hashmap.string-hash-payload-entry-score-or
-            (string-hash-payload-map-entry-at m i)
+            (stdlib.hashmap.string-hash-payload-map-entry-at m i)
             0))))))
 
 (cfg
@@ -1974,11 +1976,11 @@
     [m : I64HashStateMap]
     [i : i64]
     [acc : i64]) : i64
-    (if (>= i (i64-hash-state-map-capacity m))
+    (if (>= i (stdlib.hashmap.i64-hash-state-map-capacity m))
       acc
       (stdlib.hashmap.i64-hash-state-iter-count
         m
-        (i64-hash-state-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.i64-hash-state-map-next-occupied m (+ i 1))
         (+ acc 1)))))
 
 (cfg
@@ -1987,16 +1989,112 @@
     [m : I64HashStateMap]
     [i : i64]
     [acc : i64]) : i64
-    (if (>= i (i64-hash-state-map-capacity m))
+    (if (>= i (stdlib.hashmap.i64-hash-state-map-capacity m))
       acc
       (stdlib.hashmap.i64-hash-state-iter-score-sum
         m
-        (i64-hash-state-map-next-occupied m (+ i 1))
+        (stdlib.hashmap.i64-hash-state-map-next-occupied m (+ i 1))
         (+
           acc
           (stdlib.hashmap.i64-hash-state-entry-score-or
-            (i64-hash-state-map-entry-at m i)
+            (stdlib.hashmap.i64-hash-state-map-entry-at m i)
             0))))))
+
+(cfg
+  test
+  (export
+    (value hashmap-test-assert-owned-string-eq)
+    (value hash-key-alpha)
+    (value hash-key-alpha-copy)
+    (value hash-key-beta)
+    (value hash-key-gamma)
+    (value hash-key-delta)
+    (value hash-key-missing)
+    (value probe-found?)
+    (value probe-absent?)
+    (value probe-full?)
+    (value probe-index-or)
+    (value fill-empty)
+    (value new-slots)
+    (value lookup-value-or)
+    (value string-i64-borrowed-value-found?)
+    (value insert-ok?)
+    (value insert-result-map)
+    (value remove-ok?)
+    (value remove-result-map)
+    (value update-ok?)
+    (value update-result-map)
+    (value entry-or-insert-inserted?)
+    (value entry-or-insert-result-map)
+    (value entry-or-insert-value-or)
+    (value entry-none?)
+    (value entry-value-or)
+    (value string-string-lookup-value-or)
+    (value string-string-borrowed-value-length-or)
+    (value string-string-insert-result-map)
+    (value string-string-remove-ok?)
+    (value string-string-remove-result-map)
+    (value string-string-update-ok?)
+    (value string-string-update-result-map)
+    (value string-string-entry-or-insert-inserted?)
+    (value string-string-entry-or-insert-result-map)
+    (value string-string-entry-or-insert-value-or)
+    (value string-string-entry-value-length-or)
+    (value i64-i64-lookup-value-or)
+    (value i64-i64-borrowed-value-found?)
+    (value i64-string-borrowed-value-length-or)
+    (value i64-i64-insert-result-map)
+    (value i64-i64-remove-ok?)
+    (value i64-i64-remove-result-map)
+    (value i64-i64-update-ok?)
+    (value i64-i64-update-result-map)
+    (value i64-i64-entry-or-insert-inserted?)
+    (value i64-i64-entry-or-insert-result-map)
+    (value i64-i64-entry-or-insert-value-or)
+    (value i64-i64-entry-value-or)
+    (value hash-nested-key-i64-lookup-value-or)
+    (value hash-nested-key-i64-borrowed-value-found?)
+    (value hash-nested-key-i64-insert-full?)
+    (value hash-nested-key-i64-remove-ok?)
+    (value hash-nested-key-i64-remove-result-map)
+    (value hash-nested-key-i64-update-ok?)
+    (value hash-nested-key-i64-update-result-map)
+    (value hash-nested-key-i64-entry-or-insert-inserted?)
+    (value hash-nested-key-i64-entry-or-insert-result-map)
+    (value hash-nested-key-i64-entry-or-insert-value-or)
+    (value hash-nested-key-i64-entry-value-or)
+    (value hash-payload-score)
+    (value string-hash-payload-lookup-score-or)
+    (value string-hash-payload-borrowed-score-or)
+    (value string-hash-payload-remove-ok?)
+    (value string-hash-payload-remove-result-map)
+    (value string-hash-payload-update-ok?)
+    (value string-hash-payload-update-result-map)
+    (value string-hash-payload-entry-score-or)
+    (value hash-state-score)
+    (value i64-hash-state-lookup-score-or)
+    (value i64-hash-state-remove-ok?)
+    (value i64-hash-state-remove-result-map)
+    (value i64-hash-state-update-ok?)
+    (value i64-hash-state-update-result-map)
+    (value i64-hash-state-entry-or-insert-inserted?)
+    (value i64-hash-state-entry-or-insert-result-map)
+    (value i64-hash-state-entry-or-insert-score-or)
+    (value i64-hash-state-entry-score-or)
+    (value iter-count)
+    (value iter-sum-values)
+    (value iter-monotonic?)
+    (value string-string-iter-count)
+    (value string-string-iter-value-length-sum)
+    (value i64-i64-iter-count)
+    (value i64-i64-iter-value-sum)
+    (value hash-nested-key-i64-iter-count)
+    (value hash-nested-key-i64-iter-value-sum)
+    (value hash-nested-key-i64-iter-monotonic?)
+    (value string-hash-payload-iter-count)
+    (value string-hash-payload-iter-score-sum)
+    (value i64-hash-state-iter-count)
+    (value i64-hash-state-iter-score-sum)))
 
 (cfg
   test
@@ -2004,16 +2102,16 @@
     hashmap-descriptor-contract
     (begin
       ;; --- hashmap-family key descriptor contract (#2056) ---
-      (hashmap-test-assert-owned-string-eq
-        (stdlib.hashmap.hashmap-string-key-descriptor-key)
+      (stdlib.hashmap.hashmap-test-assert-owned-string-eq
+        (hashmap-string-key-descriptor-key)
         "stdlib/hashmap/string-key-v1"
         "String key descriptor identity")
-      (hashmap-test-assert-owned-string-eq
-        (stdlib.hashmap.hashmap-i64-key-descriptor-key)
+      (stdlib.hashmap.hashmap-test-assert-owned-string-eq
+        (hashmap-i64-key-descriptor-key)
         "stdlib/hashmap/i64-key-v1"
         "i64 key descriptor identity")
-      (hashmap-test-assert-owned-string-eq
-        (stdlib.hashmap.hashmap-aggregate-key-descriptor-key)
+      (stdlib.hashmap.hashmap-test-assert-owned-string-eq
+        (hashmap-aggregate-key-descriptor-key)
         "stdlib/hashmap/aggregate-key-v1"
         "aggregate key descriptor identity")
       unit)))
@@ -2267,7 +2365,7 @@
             (i64-string-map-len fixture1)
             1
             "i64->String fixture generated len helper")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (match (i64-string-map-get fixture1 7)
               [(I64StringMapFound value) value]
               [(I64StringMapMissing) "missing"])
@@ -2293,15 +2391,24 @@
       (let
         [alpha : String "alpha"]
         [payload0 : StringHashPayloadMap
-          (string-hash-payload-map-with-capacity 2)]
+          (stdlib.hashmap.string-hash-payload-map-with-capacity 2)]
         [payload1 : StringHashPayloadMap
-          (string-hash-payload-map-put payload0 "alpha" (HashPayload 3 4))]
+          (stdlib.hashmap.string-hash-payload-map-put
+            payload0
+            "alpha"
+            (HashPayload 3 4))]
         [payload2 : StringHashPayloadMap
-          (string-hash-payload-map-put payload1 "beta" (HashPayload 5 6))]
+          (stdlib.hashmap.string-hash-payload-map-put
+            payload1
+            "beta"
+            (HashPayload 5 6))]
         [payload3 : StringHashPayloadMap
-          (string-hash-payload-map-put payload2 "gamma" (HashPayload 7 8))]
+          (stdlib.hashmap.string-hash-payload-map-put
+            payload2
+            "gamma"
+            (HashPayload 7 8))]
         [payload-hit : StringHashPayloadMapUpdateResult
-          (string-hash-payload-map-update-borrowed-if-present
+          (stdlib.hashmap.string-hash-payload-map-update-borrowed-if-present
             payload3
             (& alpha)
             (HashPayload 20 1))]
@@ -2309,20 +2416,20 @@
           (stdlib.hashmap.string-hash-payload-update-result-map payload-hit)]
         (begin
           (test.assert-true
-            (> (string-hash-payload-map-capacity payload4) 2)
+            (> (stdlib.hashmap.string-hash-payload-map-capacity payload4) 2)
             "StringHashPayload grows aggregate values")
           (test.assert-true
             (stdlib.hashmap.string-hash-payload-update-ok? payload-hit)
             "StringHashPayload borrowed update hit")
           (test.assert-i64-eq
             (stdlib.hashmap.string-hash-payload-lookup-score-or
-              (string-hash-payload-map-get payload4 "alpha")
+              (stdlib.hashmap.string-hash-payload-map-get payload4 "alpha")
               -1)
             21
             "StringHashPayload owned get updated aggregate")
           (test.assert-i64-eq
             (stdlib.hashmap.string-hash-payload-borrowed-score-or
-              (string-hash-payload-map-get-value-borrowed
+              (stdlib.hashmap.string-hash-payload-map-get-value-borrowed
                 (& payload4)
                 (& alpha))
               -1)
@@ -2330,7 +2437,7 @@
             "StringHashPayload borrowed value exposes fields")
           (let
             [payload-remove : StringHashPayloadMapRemoveResult
-              (string-hash-payload-map-remove payload4 "beta")]
+              (stdlib.hashmap.string-hash-payload-map-remove payload4 "beta")]
             [payload5 : StringHashPayloadMap
               (stdlib.hashmap.string-hash-payload-remove-result-map
                 payload-remove)]
@@ -2339,65 +2446,81 @@
                 (stdlib.hashmap.string-hash-payload-remove-ok? payload-remove)
                 "StringHashPayload remove aggregate")
               (test.assert-false
-                (string-hash-payload-map-contains? payload5 "beta")
+                (stdlib.hashmap.string-hash-payload-map-contains?
+                  payload5
+                  "beta")
                 "StringHashPayload removed key absent")
               (test.assert-i64-eq
                 (stdlib.hashmap.string-hash-payload-iter-count
                   payload5
-                  (string-hash-payload-map-next-occupied payload5 0)
+                  (stdlib.hashmap.string-hash-payload-map-next-occupied
+                    payload5
+                    0)
                   0)
                 2
                 "StringHashPayload iteration count")
               (test.assert-i64-eq
                 (stdlib.hashmap.string-hash-payload-iter-score-sum
                   payload5
-                  (string-hash-payload-map-next-occupied payload5 0)
+                  (stdlib.hashmap.string-hash-payload-map-next-occupied
+                    payload5
+                    0)
                   0)
                 36
                 "StringHashPayload iteration score sum")))))
       (let
-        [states0 : I64HashStateMap (i64-hash-state-map-with-capacity 2)]
+        [states0 : I64HashStateMap
+          (stdlib.hashmap.i64-hash-state-map-with-capacity 2)]
         [states1 : I64HashStateMap
-          (i64-hash-state-map-put states0 1 (HashReady 10))]
+          (stdlib.hashmap.i64-hash-state-map-put states0 1 (HashReady 10))]
         [states2 : I64HashStateMap
-          (i64-hash-state-map-put states1 2 (HashFailed))]
+          (stdlib.hashmap.i64-hash-state-map-put states1 2 (HashFailed))]
         [states3 : I64HashStateMap
-          (i64-hash-state-map-put states2 3 (HashPaused 7))]
+          (stdlib.hashmap.i64-hash-state-map-put states2 3 (HashPaused 7))]
         [state-hit : I64HashStateMapUpdateResult
-          (i64-hash-state-map-update-if-present states3 2 (HashReady 22))]
+          (stdlib.hashmap.i64-hash-state-map-update-if-present
+            states3
+            2
+            (HashReady 22))]
         [states4 : I64HashStateMap
           (stdlib.hashmap.i64-hash-state-update-result-map state-hit)]
         (begin
           (test.assert-true
-            (> (i64-hash-state-map-capacity states4) 2)
+            (> (stdlib.hashmap.i64-hash-state-map-capacity states4) 2)
             "I64HashState grows enum values")
           (test.assert-true
             (stdlib.hashmap.i64-hash-state-update-ok? state-hit)
             "I64HashState update hit")
           (test.assert-i64-eq
             (stdlib.hashmap.i64-hash-state-lookup-score-or
-              (i64-hash-state-map-get states4 2)
+              (stdlib.hashmap.i64-hash-state-map-get states4 2)
               -1)
             22
             "I64HashState get updated enum")
           (test.assert-i64-eq
             (stdlib.hashmap.i64-hash-state-lookup-score-or
-              (i64-hash-state-map-get states4 99)
+              (stdlib.hashmap.i64-hash-state-map-get states4 99)
               -1)
             -1
             "I64HashState missing enum")
           (let
             [state-remove : I64HashStateMapRemoveResult
-              (i64-hash-state-map-remove states4 1)]
+              (stdlib.hashmap.i64-hash-state-map-remove states4 1)]
             [states5 : I64HashStateMap
               (stdlib.hashmap.i64-hash-state-remove-result-map state-remove)]
             [state-inserted : I64HashStateMapEntryOrInsertResult
-              (i64-hash-state-map-entry-or-insert states5 4 (HashReady 40))]
+              (stdlib.hashmap.i64-hash-state-map-entry-or-insert
+                states5
+                4
+                (HashReady 40))]
             [states6 : I64HashStateMap
               (stdlib.hashmap.i64-hash-state-entry-or-insert-result-map
                 state-inserted)]
             [state-found : I64HashStateMapEntryOrInsertResult
-              (i64-hash-state-map-entry-or-insert states6 2 (HashFailed))]
+              (stdlib.hashmap.i64-hash-state-map-entry-or-insert
+                states6
+                2
+                (HashFailed))]
             [states7 : I64HashStateMap
               (stdlib.hashmap.i64-hash-state-entry-or-insert-result-map
                 state-found)]
@@ -2426,14 +2549,14 @@
               (test.assert-i64-eq
                 (stdlib.hashmap.i64-hash-state-iter-count
                   states7
-                  (i64-hash-state-map-next-occupied states7 0)
+                  (stdlib.hashmap.i64-hash-state-map-next-occupied states7 0)
                   0)
                 3
                 "I64HashState iteration count")
               (test.assert-i64-eq
                 (stdlib.hashmap.i64-hash-state-iter-score-sum
                   states7
-                  (i64-hash-state-map-next-occupied states7 0)
+                  (stdlib.hashmap.i64-hash-state-map-next-occupied states7 0)
                   0)
                 55
                 "I64HashState iteration score sum")))))
@@ -3348,53 +3471,66 @@
         [alpha : String "alpha"]
         [beta : String "beta"]
         [missing : String "missing"]
-        [ss0 : StringStringMap (string-string-map-with-capacity 4)]
-        [ss1 : StringStringMap (string-string-map-put ss0 "alpha" "red")]
-        [ss2 : StringStringMap (string-string-map-put ss1 "beta" "amber")]
-        [ss3 : StringStringMap (string-string-map-put ss2 "gamma" "blue")]
-        [ss4 : StringStringMap (string-string-map-put ss3 "delta" "gold")]
-        [ss5 : StringStringMap (string-string-map-put ss4 "alpha" "green")]
+        [ss0 : StringStringMap
+          (stdlib.hashmap.string-string-map-with-capacity 4)]
+        [ss1 : StringStringMap
+          (stdlib.hashmap.string-string-map-put ss0 "alpha" "red")]
+        [ss2 : StringStringMap
+          (stdlib.hashmap.string-string-map-put ss1 "beta" "amber")]
+        [ss3 : StringStringMap
+          (stdlib.hashmap.string-string-map-put ss2 "gamma" "blue")]
+        [ss4 : StringStringMap
+          (stdlib.hashmap.string-string-map-put ss3 "delta" "gold")]
+        [ss5 : StringStringMap
+          (stdlib.hashmap.string-string-map-put ss4 "alpha" "green")]
         (begin
-          (test.assert-i64-eq (string-string-map-len ss5) 4 "StringString len")
+          (test.assert-i64-eq
+            (stdlib.hashmap.string-string-map-len ss5)
+            4
+            "StringString len")
           (test.assert-true
-            (> (string-string-map-capacity ss5) 4)
+            (> (stdlib.hashmap.string-string-map-capacity ss5) 4)
             "StringString grew past seed capacity")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get-borrowed ss5 (& alpha))
+              (stdlib.hashmap.string-string-map-get-borrowed ss5 (& alpha))
               "fallback")
             "green"
             "StringString borrowed get updated alpha")
           (test.assert-i64-eq
             (stdlib.hashmap.string-string-borrowed-value-length-or
-              (string-string-map-get-value-borrowed (& ss5) (& alpha))
+              (stdlib.hashmap.string-string-map-get-value-borrowed
+                (& ss5)
+                (& alpha))
               -1)
             5
             "StringString borrowed value get returns alpha by reference")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get ss5 "gamma")
+              (stdlib.hashmap.string-string-map-get ss5 "gamma")
               "fallback")
             "blue"
             "StringString owned get gamma")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get-borrowed ss5 (& missing))
+              (stdlib.hashmap.string-string-map-get-borrowed ss5 (& missing))
               "fallback")
             "fallback"
             "StringString missing borrowed get")
           (test.assert-i64-eq
             (stdlib.hashmap.string-string-borrowed-value-length-or
-              (string-string-map-get-value-borrowed (& ss5) (& missing))
+              (stdlib.hashmap.string-string-map-get-value-borrowed
+                (& ss5)
+                (& missing))
               -1)
             -1
             "StringString missing borrowed value get")
           (test.assert-true
-            (string-string-map-contains-borrowed? ss5 (& beta))
+            (stdlib.hashmap.string-string-map-contains-borrowed? ss5 (& beta))
             "StringString borrowed contains beta")
           (let
             [removed : StringStringMapRemoveResult
-              (string-string-map-remove-borrowed ss5 (& beta))]
+              (stdlib.hashmap.string-string-map-remove-borrowed ss5 (& beta))]
             (begin
               (test.assert-true
                 (stdlib.hashmap.string-string-remove-ok? removed)
@@ -3404,27 +3540,29 @@
                   (stdlib.hashmap.string-string-remove-result-map removed)]
                 (begin
                   (test.assert-i64-eq
-                    (string-string-map-len ss6)
+                    (stdlib.hashmap.string-string-map-len ss6)
                     3
                     "StringString len after remove")
                   (test.assert-i64-eq
-                    (string-string-map-deleted ss6)
+                    (stdlib.hashmap.string-string-map-deleted ss6)
                     1
                     "StringString tombstone after remove")
                   (test.assert-false
-                    (string-string-map-contains-borrowed? ss6 (& beta))
+                    (stdlib.hashmap.string-string-map-contains-borrowed?
+                      ss6
+                      (& beta))
                     "StringString beta absent after remove")
                   (test.assert-i64-eq
                     (stdlib.hashmap.string-string-iter-count
                       ss6
-                      (string-string-map-next-occupied ss6 0)
+                      (stdlib.hashmap.string-string-map-next-occupied ss6 0)
                       0)
                     3
                     "StringString iteration count")
                   (test.assert-i64-eq
                     (stdlib.hashmap.string-string-iter-value-length-sum
                       ss6
-                      (string-string-map-next-occupied ss6 0)
+                      (stdlib.hashmap.string-string-map-next-occupied ss6 0)
                       0)
                     13
                     "StringString iteration value length sum")))))))
@@ -3438,13 +3576,17 @@
       ;; --- generated String -> String update / entry-or-insert API (#888) ---
       (let
         [alpha-update : String "alpha"]
-        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu0 : StringStringMap
+          (stdlib.hashmap.string-string-map-with-capacity 4)]
         [ssu1 : StringStringMap
-          (string-string-map-insert-or-update ssu0 "alpha" "red")]
+          (stdlib.hashmap.string-string-map-insert-or-update ssu0 "alpha" "red")]
         [ssu2 : StringStringMap
-          (string-string-map-insert-or-update ssu1 "beta" "amber")]
+          (stdlib.hashmap.string-string-map-insert-or-update
+            ssu1
+            "beta"
+            "amber")]
         [ssu-hit : StringStringMapUpdateResult
-          (string-string-map-update-borrowed-if-present
+          (stdlib.hashmap.string-string-map-update-borrowed-if-present
             ssu2
             (& alpha-update)
             "green")]
@@ -3454,18 +3596,22 @@
           (test.assert-true
             (stdlib.hashmap.string-string-update-ok? ssu-hit)
             "StringString borrowed update hit")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get ssu3 "alpha")
+              (stdlib.hashmap.string-string-map-get ssu3 "alpha")
               "fallback")
             "green"
             "StringString update overwrites alpha")))
       (let
-        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu0 : StringStringMap
+          (stdlib.hashmap.string-string-map-with-capacity 4)]
         [ssu1 : StringStringMap
-          (string-string-map-insert-or-update ssu0 "alpha" "red")]
+          (stdlib.hashmap.string-string-map-insert-or-update ssu0 "alpha" "red")]
         [ssu-miss : StringStringMapUpdateResult
-          (string-string-map-update-if-present ssu1 "missing" "black")]
+          (stdlib.hashmap.string-string-map-update-if-present
+            ssu1
+            "missing"
+            "black")]
         [ssu2 : StringStringMap
           (stdlib.hashmap.string-string-update-result-map ssu-miss)]
         (begin
@@ -3473,25 +3619,35 @@
             (stdlib.hashmap.string-string-update-ok? ssu-miss)
             "StringString update miss")
           (test.assert-i64-eq
-            (string-string-map-len ssu2)
+            (stdlib.hashmap.string-string-map-len ssu2)
             1
             "StringString update miss keeps len")))
       (let
-        [ssu0 : StringStringMap (string-string-map-with-capacity 4)]
+        [ssu0 : StringStringMap
+          (stdlib.hashmap.string-string-map-with-capacity 4)]
         [ssu1 : StringStringMap
-          (string-string-map-insert-or-update ssu0 "alpha" "green")]
+          (stdlib.hashmap.string-string-map-insert-or-update
+            ssu0
+            "alpha"
+            "green")]
         [ssu2 : StringStringMap
-          (string-string-map-insert-or-update ssu1 "beta" "amber")]
+          (stdlib.hashmap.string-string-map-insert-or-update
+            ssu1
+            "beta"
+            "amber")]
         [ssu-removed : StringStringMapRemoveResult
-          (string-string-map-remove ssu2 "beta")]
+          (stdlib.hashmap.string-string-map-remove ssu2 "beta")]
         [ssu3 : StringStringMap
           (stdlib.hashmap.string-string-remove-result-map ssu-removed)]
         [ssu-inserted : StringStringMapEntryOrInsertResult
-          (string-string-map-entry-or-insert ssu3 "beta" "gold")]
+          (stdlib.hashmap.string-string-map-entry-or-insert ssu3 "beta" "gold")]
         [ssu4 : StringStringMap
           (stdlib.hashmap.string-string-entry-or-insert-result-map ssu-inserted)]
         [ssu-found : StringStringMapEntryOrInsertResult
-          (string-string-map-entry-or-insert ssu4 "alpha" "purple")]
+          (stdlib.hashmap.string-string-map-entry-or-insert
+            ssu4
+            "alpha"
+            "purple")]
         [ssu5 : StringStringMap
           (stdlib.hashmap.string-string-entry-or-insert-result-map ssu-found)]
         (begin
@@ -3499,48 +3655,55 @@
             (stdlib.hashmap.string-string-entry-or-insert-inserted?
               ssu-inserted)
             "StringString entry-or-insert inserted")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-entry-or-insert-value-or
               ssu-inserted
               "fallback")
             "gold"
             "StringString entry-or-insert returns default")
           (test.assert-i64-eq
-            (string-string-map-deleted ssu4)
+            (stdlib.hashmap.string-string-map-deleted ssu4)
             0
             "StringString entry-or-insert reuses tombstone")
           (test.assert-false
             (stdlib.hashmap.string-string-entry-or-insert-inserted? ssu-found)
             "StringString entry-or-insert found")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-entry-or-insert-value-or
               ssu-found
               "fallback")
             "green"
             "StringString entry-or-insert returns existing")
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get ssu5 "alpha")
+              (stdlib.hashmap.string-string-map-get ssu5 "alpha")
               "fallback")
             "green"
             "StringString entry-or-insert found does not overwrite")))
       (let
-        [ssu0 : StringStringMap (string-string-map-with-capacity 2)]
+        [ssu0 : StringStringMap
+          (stdlib.hashmap.string-string-map-with-capacity 2)]
         [ssu1 : StringStringMap
-          (string-string-map-insert-or-update ssu0 "alpha" "green")]
+          (stdlib.hashmap.string-string-map-insert-or-update
+            ssu0
+            "alpha"
+            "green")]
         [ssu2 : StringStringMap
-          (string-string-map-insert-or-update ssu1 "beta" "gold")]
+          (stdlib.hashmap.string-string-map-insert-or-update ssu1 "beta" "gold")]
         [ssu3 : StringStringMap
-          (string-string-map-insert-or-update ssu2 "gamma" "blue")]
+          (stdlib.hashmap.string-string-map-insert-or-update
+            ssu2
+            "gamma"
+            "blue")]
         (begin
-          (hashmap-test-assert-owned-string-eq
+          (stdlib.hashmap.hashmap-test-assert-owned-string-eq
             (stdlib.hashmap.string-string-lookup-value-or
-              (string-string-map-get ssu3 "gamma")
+              (stdlib.hashmap.string-string-map-get ssu3 "gamma")
               "fallback")
             "blue"
             "StringString insert-or-update inserts new key")
           (test.assert-true
-            (> (string-string-map-capacity ssu3) 2)
+            (> (stdlib.hashmap.string-string-map-capacity ssu3) 2)
             "StringString insert-or-update grows")))
       unit)))
 
@@ -3551,42 +3714,52 @@
     (begin
       ;; --- generated i64 -> i64 map family (#817) ---
       (let
-        [ii0 : I64I64Map (i64-i64-map-with-capacity 4)]
-        [ii1 : I64I64Map (i64-i64-map-put ii0 1 10)]
-        [ii2 : I64I64Map (i64-i64-map-put ii1 2 20)]
-        [ii3 : I64I64Map (i64-i64-map-put ii2 3 30)]
-        [ii4 : I64I64Map (i64-i64-map-put ii3 4 40)]
-        [ii5 : I64I64Map (i64-i64-map-put ii4 1 99)]
+        [ii0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
+        [ii1 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii0 1 10)]
+        [ii2 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii1 2 20)]
+        [ii3 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii2 3 30)]
+        [ii4 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii3 4 40)]
+        [ii5 : I64I64Map (stdlib.hashmap.i64-i64-map-put ii4 1 99)]
         (begin
-          (test.assert-i64-eq (i64-i64-map-len ii5) 4 "I64I64 len")
+          (test.assert-i64-eq
+            (stdlib.hashmap.i64-i64-map-len ii5)
+            4
+            "I64I64 len")
           (test.assert-true
-            (> (i64-i64-map-capacity ii5) 4)
+            (> (stdlib.hashmap.i64-i64-map-capacity ii5) 4)
             "I64I64 grew past seed capacity")
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get ii5 1) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get ii5 1)
+              -1)
             99
             "I64I64 updated key 1")
           (test.assert-true
             (stdlib.hashmap.i64-i64-borrowed-value-found?
-              (i64-i64-map-get-value-borrowed (& ii5) 1))
+              (stdlib.hashmap.i64-i64-map-get-value-borrowed (& ii5) 1))
             "I64I64 borrowed value get finds key 1")
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get ii5 3) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get ii5 3)
+              -1)
             30
             "I64I64 get key 3")
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get ii5 99) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get ii5 99)
+              -1)
             -1
             "I64I64 missing key")
           (test.assert-false
             (stdlib.hashmap.i64-i64-borrowed-value-found?
-              (i64-i64-map-get-value-borrowed (& ii5) 99))
+              (stdlib.hashmap.i64-i64-map-get-value-borrowed (& ii5) 99))
             "I64I64 missing borrowed value get")
           (test.assert-true
-            (i64-i64-map-contains? ii5 2)
+            (stdlib.hashmap.i64-i64-map-contains? ii5 2)
             "I64I64 contains key 2")
           (let
-            [removed : I64I64MapRemoveResult (i64-i64-map-remove ii5 2)]
+            [removed : I64I64MapRemoveResult
+              (stdlib.hashmap.i64-i64-map-remove ii5 2)]
             (begin
               (test.assert-true
                 (stdlib.hashmap.i64-i64-remove-ok? removed)
@@ -3596,27 +3769,27 @@
                   (stdlib.hashmap.i64-i64-remove-result-map removed)]
                 (begin
                   (test.assert-i64-eq
-                    (i64-i64-map-len ii6)
+                    (stdlib.hashmap.i64-i64-map-len ii6)
                     3
                     "I64I64 len after remove")
                   (test.assert-i64-eq
-                    (i64-i64-map-deleted ii6)
+                    (stdlib.hashmap.i64-i64-map-deleted ii6)
                     1
                     "I64I64 tombstone after remove")
                   (test.assert-false
-                    (i64-i64-map-contains? ii6 2)
+                    (stdlib.hashmap.i64-i64-map-contains? ii6 2)
                     "I64I64 removed key absent")
                   (test.assert-i64-eq
                     (stdlib.hashmap.i64-i64-iter-count
                       ii6
-                      (i64-i64-map-next-occupied ii6 0)
+                      (stdlib.hashmap.i64-i64-map-next-occupied ii6 0)
                       0)
                     3
                     "I64I64 iteration count")
                   (test.assert-i64-eq
                     (stdlib.hashmap.i64-i64-iter-value-sum
                       ii6
-                      (i64-i64-map-next-occupied ii6 0)
+                      (stdlib.hashmap.i64-i64-map-next-occupied ii6 0)
                       0)
                     169
                     "I64I64 iteration value sum")))))))
@@ -3629,47 +3802,55 @@
     (begin
       ;; --- generated i64 -> i64 update / entry-or-insert API (#888) ---
       (let
-        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
-        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
-        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
+        [iiu0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu0 1 10)]
+        [iiu2 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu1 2 20)]
         [iiu-hit : I64I64MapUpdateResult
-          (i64-i64-map-update-if-present iiu2 1 70)]
+          (stdlib.hashmap.i64-i64-map-update-if-present iiu2 1 70)]
         [iiu3 : I64I64Map (stdlib.hashmap.i64-i64-update-result-map iiu-hit)]
         (begin
           (test.assert-true
             (stdlib.hashmap.i64-i64-update-ok? iiu-hit)
             "I64I64 update hit")
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get iiu3 1) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get iiu3 1)
+              -1)
             70
             "I64I64 update overwrites key 1")))
       (let
-        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
-        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 10)]
+        [iiu0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu0 1 10)]
         [iiu-miss : I64I64MapUpdateResult
-          (i64-i64-map-update-if-present iiu1 99 990)]
+          (stdlib.hashmap.i64-i64-map-update-if-present iiu1 99 990)]
         [iiu2 : I64I64Map (stdlib.hashmap.i64-i64-update-result-map iiu-miss)]
         (begin
           (test.assert-false
             (stdlib.hashmap.i64-i64-update-ok? iiu-miss)
             "I64I64 update miss")
           (test.assert-i64-eq
-            (i64-i64-map-len iiu2)
+            (stdlib.hashmap.i64-i64-map-len iiu2)
             1
             "I64I64 update miss keeps len")))
       (let
-        [iiu0 : I64I64Map (i64-i64-map-with-capacity 4)]
-        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
-        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 20)]
-        [iiu-removed : I64I64MapRemoveResult (i64-i64-map-remove iiu2 2)]
+        [iiu0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 4)]
+        [iiu1 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu0 1 70)]
+        [iiu2 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu1 2 20)]
+        [iiu-removed : I64I64MapRemoveResult
+          (stdlib.hashmap.i64-i64-map-remove iiu2 2)]
         [iiu5 : I64I64Map
           (stdlib.hashmap.i64-i64-remove-result-map iiu-removed)]
         [iiu-inserted : I64I64MapEntryOrInsertResult
-          (i64-i64-map-entry-or-insert iiu5 2 222)]
+          (stdlib.hashmap.i64-i64-map-entry-or-insert iiu5 2 222)]
         [iiu6 : I64I64Map
           (stdlib.hashmap.i64-i64-entry-or-insert-result-map iiu-inserted)]
         [iiu-found : I64I64MapEntryOrInsertResult
-          (i64-i64-map-entry-or-insert iiu6 1 111)]
+          (stdlib.hashmap.i64-i64-map-entry-or-insert iiu6 1 111)]
         [iiu7 : I64I64Map
           (stdlib.hashmap.i64-i64-entry-or-insert-result-map iiu-found)]
         (begin
@@ -3681,7 +3862,7 @@
             222
             "I64I64 entry-or-insert returns default")
           (test.assert-i64-eq
-            (i64-i64-map-deleted iiu6)
+            (stdlib.hashmap.i64-i64-map-deleted iiu6)
             0
             "I64I64 entry-or-insert reuses tombstone")
           (test.assert-false
@@ -3692,21 +3873,28 @@
             70
             "I64I64 entry-or-insert returns existing")
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get iiu7 1) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get iiu7 1)
+              -1)
             70
             "I64I64 entry-or-insert found does not overwrite")))
       (let
-        [iiu0 : I64I64Map (i64-i64-map-with-capacity 2)]
-        [iiu1 : I64I64Map (i64-i64-map-insert-or-update iiu0 1 70)]
-        [iiu2 : I64I64Map (i64-i64-map-insert-or-update iiu1 2 222)]
-        [iiu8 : I64I64Map (i64-i64-map-insert-or-update iiu2 3 30)]
+        [iiu0 : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 2)]
+        [iiu1 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu0 1 70)]
+        [iiu2 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu1 2 222)]
+        [iiu8 : I64I64Map
+          (stdlib.hashmap.i64-i64-map-insert-or-update iiu2 3 30)]
         (begin
           (test.assert-i64-eq
-            (stdlib.hashmap.i64-i64-lookup-value-or (i64-i64-map-get iiu8 3) -1)
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get iiu8 3)
+              -1)
             30
             "I64I64 insert-or-update inserts key 3")
           (test.assert-true
-            (> (i64-i64-map-capacity iiu8) 2)
+            (> (stdlib.hashmap.i64-i64-map-capacity iiu8) 2)
             "I64I64 insert-or-update grows")))
       unit)))
 
@@ -3770,6 +3958,21 @@
   (value string-string-map-insert)
   (value string-string-map-remove-borrowed)
   (value string-string-map-resized)
+  (value i64-i64-map-with-capacity)
+  (value i64-i64-map-len)
+  (value i64-i64-map-capacity)
+  (value i64-i64-map-deleted)
+  (value i64-i64-map-put)
+  (value i64-i64-map-get)
+  (value i64-i64-map-get-value-borrowed)
+  (value i64-i64-map-contains?)
+  (value i64-i64-map-insert)
+  (value i64-i64-map-remove)
+  (value i64-i64-map-update-if-present)
+  (value i64-i64-map-insert-or-update)
+  (value i64-i64-map-entry-or-insert)
+  (value i64-i64-map-next-occupied)
+  (value i64-i64-map-entry-at)
   (type StringI64MapSlot)
   (type StringI64MapProbe)
   (type StringI64Map)
@@ -3790,12 +3993,25 @@
   (type StringStringMapUpdateResult)
   (type StringStringMapEntryOrInsertResult)
   (type StringStringMapEntry)
+  (type I64I64MapSlot)
+  (type I64I64MapProbe)
   (type I64I64Map)
+  (type I64I64MapLookup)
+  (type I64I64MapBorrowedValueLookup)
+  (type I64I64MapInsertResult)
+  (type I64I64MapRemoveResult)
+  (type I64I64MapUpdateResult)
+  (type I64I64MapEntryOrInsertResult)
+  (type I64I64MapMutEntryInfo)
+  (type I64I64MapMutEntry)
+  (type I64I64MapEntry)
   (constructor StringI64Map)
   (constructor StringI64MapMutEntryInfo)
   (constructor StringI64MapMutEntry)
   (constructor StringStringMap)
   (constructor I64I64Map)
+  (constructor I64I64MapMutEntryInfo)
+  (constructor I64I64MapMutEntry)
   (field StringI64Map slots)
   (field StringI64Map len)
   (field StringI64Map deleted)
@@ -3809,6 +4025,19 @@
   (field StringI64MapMutEntry present)
   (field StringI64MapMutEntry key)
   (field StringI64MapMutEntry hash)
+  (field I64I64Map slots)
+  (field I64I64Map len)
+  (field I64I64Map deleted)
+  (field I64I64MapMutEntryInfo index)
+  (field I64I64MapMutEntryInfo present)
+  (field I64I64MapMutEntryInfo key)
+  (field I64I64MapMutEntryInfo hash)
+  (field I64I64MapMutEntry slots)
+  (field I64I64MapMutEntry borrow)
+  (field I64I64MapMutEntry index)
+  (field I64I64MapMutEntry present)
+  (field I64I64MapMutEntry key)
+  (field I64I64MapMutEntry hash)
   (variant StringI64MapEmpty)
   (variant StringI64MapTombstone)
   (variant StringI64MapOccupied)
@@ -3843,4 +4072,24 @@
   (variant StringStringMapEntryOrInsertInserted)
   (variant StringStringMapEntryNone)
   (variant StringStringMapEntrySome)
+  (variant I64I64MapEmpty)
+  (variant I64I64MapTombstone)
+  (variant I64I64MapOccupied)
+  (variant I64I64MapProbeFound)
+  (variant I64I64MapProbeAbsent)
+  (variant I64I64MapProbeFull)
+  (variant I64I64MapMissing)
+  (variant I64I64MapFound)
+  (variant I64I64MapBorrowedValueMissing)
+  (variant I64I64MapBorrowedValueFound)
+  (variant I64I64MapInsertOk)
+  (variant I64I64MapInsertFull)
+  (variant I64I64MapRemoveOk)
+  (variant I64I64MapRemoveMissing)
+  (variant I64I64MapUpdateOk)
+  (variant I64I64MapUpdateMissing)
+  (variant I64I64MapEntryOrInsertFound)
+  (variant I64I64MapEntryOrInsertInserted)
+  (variant I64I64MapEntryNone)
+  (variant I64I64MapEntrySome)
   (macro string-i64-map-get-mut-entry-borrowed))

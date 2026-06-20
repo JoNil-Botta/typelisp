@@ -5,24 +5,51 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: `(import stdlib.string)` plus `(import stdlib.str_cat)`, then
-;# `(str_cat.str-cat a b c)`.
-;#
-;# The multi-argument dotted-import example below is illustrative until #3436
-;# lets macro expansions emit qualified helper calls.
+;# Usage in current flat-import callers: import this module, then call
+;# `(str-cat a b c)`. A dotted external `str_cat.str-cat` call still needs
+;# imported-macro dependency alias support before its helper calls can stay
+;# independent of the caller's imports.
 ;#
 ;# ```lisp
-;# (import stdlib.string)
-;# (import stdlib.str_cat)
+;# (import "../stdlib/str_cat.tl")
 ;#
 ;# (define (greet [name : String]) : String
-;#   (str_cat.str-cat "hello, " name "!"))
+;#   (str-cat "hello, " name "!"))
 ;# ```
 (module stdlib.str_cat)
 
 (import stdlib.string)
 (cfg test (import stdlib.test))
 (cfg test (import stdlib.hashmap))
+
+;: Local aliases for the flat helper names emitted by `str-cat` today. External
+;: callers still provide these through legacy flat imports; these definitions
+;: keep this module's own inline tests independent of a legacy stdlib import.
+(define (string-append [left : String] [right : String]) : String
+  (string.string-append left right))
+
+(define (string-concat3 [a : String] [b : String] [c : String]) : String
+  (string.string-concat3 a b c))
+
+(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string.string-concat4 a b c d))
+
+(define (string-concat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string.string-concat5 a b c d e))
+
+(define (string-concat-all [parts : (Array String)]) : String
+  (string.string-concat-all parts))
+
+(define (string-concat-all-pack-part
+  [parts : (Array String)]
+  [index : i64]
+  [value : String]) : (Array String)
+  (string.string-concat-all-pack-part parts index value))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
@@ -32,8 +59,8 @@
 (defmacro (str-cat-pack [parts : Expr] [index : Expr] [args : String ...]) : Expr
   (if (expr-list-empty? args)
     parts
-    `(str_cat.str-cat-pack
-      (string.string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
+    `(str-cat-pack
+      (string-concat-all-pack-part ,parts ,index ,(expr-list-head args))
       (+ ,index 1)
       ,@(expr-list-tail args))))
 
@@ -55,24 +82,24 @@
           [b : Expr (expr-list-head rest1)]
           [rest2 : ExprList (expr-list-tail rest1)]
           (if (expr-list-empty? rest2)
-            `(string.string-append ,a ,b)
+            `(string-append ,a ,b)
             (let
               [c : Expr (expr-list-head rest2)]
               [rest3 : ExprList (expr-list-tail rest2)]
               (if (expr-list-empty? rest3)
-                `(string.string-concat3 ,a ,b ,c)
+                `(string-concat3 ,a ,b ,c)
                 (let
                   [d : Expr (expr-list-head rest3)]
                   [rest4 : ExprList (expr-list-tail rest3)]
                   (if (expr-list-empty? rest4)
-                    `(string.string-concat4 ,a ,b ,c ,d)
+                    `(string-concat4 ,a ,b ,c ,d)
                     (let
                       [e : Expr (expr-list-head rest4)]
                       [rest5 : ExprList (expr-list-tail rest4)]
                       (if (expr-list-empty? rest5)
-                        `(string.string-concat5 ,a ,b ,c ,d ,e)
-                        `(string.string-concat-all
-                          (str_cat.str-cat-pack
+                        `(string-concat5 ,a ,b ,c ,d ,e)
+                        `(string-concat-all
+                          (str-cat-pack
                             (make-array
                               String
                               ,(expr-int (expr-list-length args)))
@@ -141,7 +168,8 @@
   test
   (define (str-cat-api-generated-ok) : bool
     (>=
-      (i64-i64-map-capacity (i64-i64-map-put (i64-i64-map-with-capacity 8) 1 7))
+      (hashmap.i64-i64-map-capacity
+        (hashmap.i64-i64-map-put (hashmap.i64-i64-map-with-capacity 8) 1 7))
       8)))
 
 (cfg

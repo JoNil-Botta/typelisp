@@ -742,38 +742,38 @@
 (import stdlib.process_runtime)
 
 ;: Convert public argv storage to the runtime module's no-cycle representation.
-(define (process-runtime-args [args : ProcessStringList]) : process_runtime.ProcessStringList
+(define (process-runtime-args [args : ProcessStringList]) : process_runtime.ProcessRuntimeStringList
   (let
     [step : ProcessStringStep (process-string-step args)]
     (if (process-string-step-present? step)
-      (process_runtime.process-args-cons
+      (process_runtime.process-runtime-args-cons
         (process-string-step-value step)
         (process-runtime-args (process-string-step-rest step)))
-      (process_runtime.process-args-empty))))
+      (process_runtime.process-runtime-args-empty))))
 
 ;: Convert public env storage to the runtime module's no-cycle representation.
-(define (process-runtime-env [env : ProcessEnvList]) : process_runtime.ProcessEnvList
+(define (process-runtime-env [env : ProcessEnvList]) : process_runtime.ProcessRuntimeEnvList
   (let
     [step : ProcessEnvStep (process-env-step env)]
     (if (process-env-step-present? step)
-      (process_runtime.process-env-cons
+      (process_runtime.process-runtime-env-cons
         (process-env-step-name step)
         (process-env-step-value step)
         (process-runtime-env (process-env-step-rest step)))
-      (process_runtime.process-env-empty))))
+      (process_runtime.process-runtime-env-empty))))
 
 ;: Convert a public optional string to the runtime module's no-cycle representation.
-(define (process-runtime-maybe-string [value : ProcessMaybeString]) : process_runtime.ProcessMaybeString
+(define (process-runtime-maybe-string [value : ProcessMaybeString]) : process_runtime.ProcessRuntimeMaybeString
   (let
     [info : ProcessMaybeStringInfo (process-maybe-string-info value)]
     (if (process-maybe-string-info-present? info)
-      (process_runtime.process-some-string
+      (process_runtime.process-runtime-some-string
         (process-maybe-string-info-value info))
-      (process_runtime.process-no-string))))
+      (process_runtime.process-runtime-no-string))))
 
 ;: Convert a public command to the runtime module's no-cycle representation.
-(define (process-runtime-command [command : ProcessCommand]) : process_runtime.ProcessCommand
-  (process_runtime.process-command-full
+(define (process-runtime-command [command : ProcessCommand]) : process_runtime.ProcessRuntimeCommand
+  (process_runtime.process-runtime-command-full
     (process-command-executable command)
     (process-runtime-args (process-command-argv command))
     (process-runtime-maybe-string (process-command-cwd command))
@@ -781,18 +781,18 @@
     (process-runtime-maybe-string (process-command-stdin command))))
 
 ;: Convert a public child handle to the runtime module's no-cycle representation.
-(define (process-runtime-child [child : ProcessChild]) : process_runtime.ProcessChild
-  (process_runtime.process-child
+(define (process-runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
+  (process_runtime.process-runtime-child
     (struct-get child pid)
     (struct-get child stdout-handle)
     (struct-get child stderr-handle)))
 
 ;: Convert a runtime captured-output result to the public result enum.
 (define (process-output-from-runtime
-  [result : process_runtime.ResultProcessOutput]) : ResultProcessOutput
+  [result : process_runtime.ResultProcessRuntimeOutput]) : ResultProcessOutput
   (let
-    [info : process_runtime.ProcessOutputInfo
-      (process_runtime.process-result-output-info result)]
+    [info : process_runtime.ProcessRuntimeOutputInfo
+      (process_runtime.process-runtime-result-output-info result)]
     (if (struct-get info ok)
       (process-output-ok-public
         (struct-get info status)
@@ -805,10 +805,10 @@
 
 ;: Convert a runtime async-start result to the public result enum.
 (define (process-child-from-runtime
-  [result : process_runtime.ResultProcessChild]) : ResultProcessChild
+  [result : process_runtime.ResultProcessRuntimeChild]) : ResultProcessChild
   (let
-    [info : process_runtime.ProcessChildInfo
-      (process_runtime.process-result-child-info result)]
+    [info : process_runtime.ProcessRuntimeChildInfo
+      (process_runtime.process-runtime-result-child-info result)]
     (if (struct-get info ok)
       (process-child-ok-public
         (struct-get info pid)

@@ -33,13 +33,16 @@
 ;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (profile-scratch-ptr [slot : i64]) : (MutPtr i64)
   (unsafe
-    (ptr-offset (ptr-cast (array-data profile-now-scratch) : (MutPtr i64)) slot)))
+    (ptr-offset
+      (ptr-cast (array-data stdlib.profile.profile-now-scratch) : (MutPtr i64))
+      slot)))
 
 ;: Return the shared timestamp scratch data address for raw Linux syscalls.
 (define (profile-scratch-addr) : i64
   (unsafe
     (cast
-      (ptr->int (ptr-cast (array-data profile-now-scratch) : (Ptr u8)))
+      (ptr->int
+        (ptr-cast (array-data stdlib.profile.profile-now-scratch) : (Ptr u8)))
       : i64)))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
@@ -47,12 +50,12 @@
   (let
     [status : i64
       (unsafe
-        (syscall 228 1 (profile-scratch-addr)))]
+        (syscall 228 1 (stdlib.profile.profile-scratch-addr)))]
     (if (< status 0)
       0
       (+
-        (* (array-ref profile-now-scratch 0) 1000)
-        (/ (array-ref profile-now-scratch 1) 1000000)))))
+        (* (array-ref stdlib.profile.profile-now-scratch 0) 1000)
+        (/ (array-ref stdlib.profile.profile-now-scratch 1) 1000000)))))
 
 ;: Windows `QueryPerformanceCounter/Frequency` timestamp.
 (cfg
@@ -60,35 +63,40 @@
   (define (profile-windows-now-ms) : i64
     (let
       [counter-ok : i32
-        (profile-win-query-performance-counter (profile-scratch-ptr 0))]
+        (stdlib.profile.profile-win-query-performance-counter
+          (stdlib.profile.profile-scratch-ptr 0))]
       [freq-ok : i32
-        (profile-win-query-performance-frequency (profile-scratch-ptr 1))]
-      [freq : i64 (array-ref profile-now-scratch 1)]
+        (stdlib.profile.profile-win-query-performance-frequency
+          (stdlib.profile.profile-scratch-ptr 1))]
+      [freq : i64 (array-ref stdlib.profile.profile-now-scratch 1)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         0
         (if (= freq 0)
           0
-          (/ (* (array-ref profile-now-scratch 0) 1000) freq))))))
+          (/ (* (array-ref stdlib.profile.profile-now-scratch 0) 1000) freq))))))
 
 ;: Return a coarse monotonic timestamp in milliseconds.
 (define (profile-now-ms) : i64
-  (cfg windows (profile-windows-now-ms) (profile-linux-now-ms)))
+  (cfg
+    windows
+    (stdlib.profile.profile-windows-now-ms)
+    (stdlib.profile.profile-linux-now-ms)))
 
 ;: Return total allocated bytes since process start.
 (define (profile-alloc-total) : i64
-  (tl_profile_alloc_total))
+  (stdlib.profile.tl_profile_alloc_total))
 
 ;: Return currently live bytes in runtime allocation arenas.
 (define (profile-alloc-live) : i64
-  (tl_profile_alloc_live))
+  (stdlib.profile.tl_profile_alloc_live))
 
 ;: Return the peak live byte count since process start or last peak reset.
 (define (profile-alloc-peak) : i64
-  (tl_profile_alloc_peak))
+  (stdlib.profile.tl_profile_alloc_peak))
 
 ;: Reset the peak live byte counter to the current live byte count.
 (define (profile-alloc-reset-peak) : unit
-  (tl_profile_alloc_reset_peak))
+  (stdlib.profile.tl_profile_alloc_reset_peak))
 
 ;: Inline test failure helper.
 (define (profile-test-fail) : unit
@@ -100,7 +108,7 @@
 (define (profile-test-assert [ok : bool]) : unit
   (if ok
     unit
-    (profile-test-fail)))
+    (stdlib.profile.profile-test-fail)))
 
 ;: Allocate an array so allocation counters have observable work.
 (define (profile-test-allocation) : (Array i64)
@@ -113,21 +121,35 @@
 (test
   profile-api
   (begin
-    (profile-test-assert (>= (profile-now-ms) 0))
-    (profile-alloc-reset-peak)
+    (stdlib.profile.profile-test-assert (>= (stdlib.profile.profile-now-ms) 0))
+    (stdlib.profile.profile-alloc-reset-peak)
     (let
-      [before-total : i64 (profile-alloc-total)]
-      [before-live : i64 (profile-alloc-live)]
-      [items : (Array i64) (profile-test-allocation)]
-      [after-total : i64 (profile-alloc-total)]
-      [after-live : i64 (profile-alloc-live)]
-      [peak : i64 (profile-alloc-peak)]
+      [before-total : i64 (stdlib.profile.profile-alloc-total)]
+      [before-live : i64 (stdlib.profile.profile-alloc-live)]
+      [items : (Array i64) (stdlib.profile.profile-test-allocation)]
+      [after-total : i64 (stdlib.profile.profile-alloc-total)]
+      [after-live : i64 (stdlib.profile.profile-alloc-live)]
+      [peak : i64 (stdlib.profile.profile-alloc-peak)]
       (begin
-        (profile-test-assert (= (array-length items) 4))
-        (profile-test-assert (= (array-ref items 0) 12))
-        (profile-test-assert (>= after-total before-total))
-        (profile-test-assert (>= after-live before-live))
-        (profile-test-assert (>= peak after-live))))))
+        (stdlib.profile.profile-test-assert (= (array-length items) 4))
+        (stdlib.profile.profile-test-assert (= (array-ref items 0) 12))
+        (stdlib.profile.profile-test-assert (>= after-total before-total))
+        (stdlib.profile.profile-test-assert (>= after-live before-live))
+        (stdlib.profile.profile-test-assert (>= peak after-live))))))
+
+(cfg
+  windows
+  (export
+    (value profile-win-query-performance-counter)
+    (value profile-win-query-performance-frequency)
+    (value profile-windows-now-ms)))
+
+(cfg
+  test
+  (export
+    (value profile-test-fail)
+    (value profile-test-assert)
+    (value profile-test-allocation)))
 
 (export
   (value profile-now-scratch)

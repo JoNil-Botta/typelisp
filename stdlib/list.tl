@@ -186,6 +186,7 @@
   (string-list-builder-build-onto builder (StringNil)))
 
 ;; Inline coverage migrated from stdlib/tests/list_api.tl (#3082).
+(cfg test (import stdlib.io))
 (cfg test (import stdlib.test))
 
 (cfg
@@ -203,7 +204,7 @@
     [message : String]) : unit
     (match items
       [(StringNil) unit]
-      [_ (panic message)])))
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -215,8 +216,8 @@
       [(StringCons a rest)
         (match (box-get rest)
           [(StringNil) (list-test-assert-owned-string-eq a first message)]
-          [_ (panic message)])]
-      [_ (panic message)])))
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -238,10 +239,10 @@
                       (list-test-assert-owned-string-eq a first message)
                       (list-test-assert-owned-string-eq b second message)
                       (list-test-assert-owned-string-eq c third message))]
-                  [_ (panic message)])]
-              [_ (panic message)])]
-          [_ (panic message)])]
-      [_ (panic message)])))
+                  [_ (io.panic message)])]
+              [_ (io.panic message)])]
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -267,11 +268,11 @@
                           (list-test-assert-owned-string-eq b second message)
                           (list-test-assert-owned-string-eq c third message)
                           (list-test-assert-owned-string-eq d fourth message))]
-                      [_ (panic message)])]
-                  [_ (panic message)])]
-              [_ (panic message)])]
-          [_ (panic message)])]
-      [_ (panic message)])))
+                      [_ (io.panic message)])]
+                  [_ (io.panic message)])]
+              [_ (io.panic message)])]
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test

@@ -8512,22 +8512,24 @@
     [_ variant-name]))
 
 (define (lower-member-name-base [name : String]) : String
-  (if (tc-name-qualified? name)
-    (tc-qualified-name-base name)
-    (let
-      [i : i64 0]
-      [last-dot : i64 -1]
-      [n : i64 (string-length name)]
-      (begin
-        (while (< i n)
-          (begin
-            (if (char-eq (string-ref name i) '.')
-              (set! last-dot i)
-              unit)
-            (set! i (+ i 1))))
-        (if (and (>= last-dot 0) (< last-dot (- n 1)))
-          (substring name (+ last-dot 1) (- n (+ last-dot 1)))
-          name)))))
+  (let
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string-length source)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref source i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (if (and (>= last-dot 0) (< last-dot (- n 1)))
+        (substring source (+ last-dot 1) (- n (+ last-dot 1)))
+        source))))
 
 (define (lower-variant-payload-offset
   [ctx : TcContext]

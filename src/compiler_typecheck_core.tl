@@ -7213,14 +7213,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-source-expr-policy-ok ctx inner))]
-    [(AstExprQuote inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-policy-ok ctx inner))]
-    [(AstExprQuasiquote inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprQuote _) OkTcUnit]
+    [(AstExprQuasiquote _) OkTcUnit]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -31373,6 +31367,20 @@
               (OkMacroSexpr
                 (macro-form3 "ann" sinner (SpSSym ":" span) sty span))]
             [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+    [(AstExprBorrow mutable lifetime place-id)
+      (match (macro-child-to-spanned-sexpr place-id span origin)
+        [(OkMacroSexpr splace)
+          (let
+            [head : String
+              (if mutable
+                "&mut"
+                "&")]
+            (match lifetime
+              [(AstBorrowLifetimeInferred)
+                (OkMacroSexpr (macro-form1 head splace span))]
+              [(AstBorrowLifetimeNamed name)
+                (OkMacroSexpr (macro-form2 head (SpSSym name span) splace span))]))]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstExprReturn inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)

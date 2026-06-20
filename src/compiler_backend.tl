@@ -12923,6 +12923,9 @@
         program-index)]
     [target-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
+    [return-normalize : String (compiler-backend-tail-call-return-normalize ty)]
+    [varargs-pre-call : String
+      (compiler-backend-varargs-pre-call target name externs param-types)]
     (if (compiler-backend-direct-tail-call?
       target
       source-function
@@ -12972,31 +12975,40 @@
         program-index
         vars)
         [(OkCompilerBackend args-asm)
-          (OkCompilerBackend
-            (string-append
-              (compiler-backend-emit-call-space-sub call-space)
+          (if (and
+            (= call-space 0)
+            (= tail-stack-count 0)
+            (string-eq return-normalize ""))
+            (OkCompilerBackend
               (string-append
                 args-asm
                 (string-append
-                  (compiler-backend-varargs-pre-call
-                    target
-                    name
-                    externs
-                    param-types)
-                  (str-cat
-                    "    call "
-                    target-symbol
-                    "\n"
-                    (string-append
-                      (compiler-backend-emit-call-space-add call-space)
+                  varargs-pre-call
+                  (compiler-backend-tail-jump-tail
+                    assignments
+                    vars
+                    target-symbol))))
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub call-space)
+                (string-append
+                  args-asm
+                  (string-append
+                    varargs-pre-call
+                    (str-cat
+                      "    call "
+                      target-symbol
+                      "\n"
                       (string-append
-                        (compiler-backend-tail-call-return-normalize ty)
-                        (compiler-backend-return-tail
-                          source-function
-                          assignments
-                          vars
-                          blocks)))
-                    "")))))]
+                        (compiler-backend-emit-call-space-add call-space)
+                        (string-append
+                          return-normalize
+                          (compiler-backend-return-tail
+                            source-function
+                            assignments
+                            vars
+                            blocks)))
+                      ""))))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-trivial-phi-return-find

@@ -5526,6 +5526,11 @@
     [(IrBinShr) true]
     [_ false]))
 
+(define (compiler-backend-missing-compare-operand-ty [result-ty : AstType]) : AstType
+  (match result-ty
+    [(AstTyBool) (AstTyI64)]
+    [_ result-ty]))
+
 (define (compiler-backend-binop-operand-ty
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -5539,7 +5544,8 @@
       [(CompilerRegNoType)
         (match (compiler-backend-value-type types global-types rhs)
           [(CompilerRegSomeType ty) ty]
-          [(CompilerRegNoType) result-ty])])
+          [(CompilerRegNoType)
+            (compiler-backend-missing-compare-operand-ty result-ty)])])
     (if (compiler-backend-binop-bit-or-shift? op)
       (match (compiler-backend-value-type types global-types lhs)
         [(CompilerRegSomeType ty) ty]

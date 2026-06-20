@@ -26636,6 +26636,30 @@
         (IrValueVar v)
         (AstTyBool))]))
 
+(define (lower-emit-mask-select
+  [state : LowerState]
+  [then-mask : CompilerIrValue]
+  [then-value : CompilerIrValue]
+  [else-mask : CompilerIrValue]
+  [else-value : CompilerIrValue]
+  [lanes : i64]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [then-bits : CompilerIrValue IrValueUnit]
+    [else-bits : CompilerIrValue IrValueUnit]
+    (begin
+      (match (lower-emit-mask-binop s (IrMaskAnd) then-mask then-value lanes)
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! then-bits value))])
+      (match (lower-emit-mask-binop s (IrMaskAnd) else-mask else-value lanes)
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! else-bits value))])
+      (lower-emit-mask-binop s (IrMaskOr) then-bits else-bits lanes))))
+
 (define (lower-emit-select
   [state : LowerState]
   [mask : CompilerIrValue]
@@ -28669,21 +28693,32 @@
                                         [_
                                           (if (and
                                             (ast-type-eq? then-ty else-ty)
-                                            (lower-avx512-masked-select-result-supported?
-                                              else-state
-                                              lanes
-                                              then-ty))
+                                            (lower-type-bool? then-ty))
                                             (OkLowerExpr
-                                              (lower-emit-select
+                                              (lower-emit-mask-select
                                                 else-state
                                                 then-mask
                                                 then-value
+                                                else-mask
                                                 else-value
+                                                lanes))
+                                            (if (and
+                                              (ast-type-eq? then-ty else-ty)
+                                              (lower-avx512-masked-select-result-supported?
+                                                else-state
                                                 lanes
                                                 then-ty))
-                                            (lower-avx512-masked-unsupported
-                                              expr
-                                              "this value-producing masked if result type"))])])]
+                                              (OkLowerExpr
+                                                (lower-emit-select
+                                                  else-state
+                                                  then-mask
+                                                  then-value
+                                                  else-value
+                                                  lanes
+                                                  then-ty))
+                                              (lower-avx512-masked-unsupported
+                                                expr
+                                                "this value-producing masked if result type")))])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])])])])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))

@@ -2723,6 +2723,189 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-call-save-test-globals) : CompilerIrGlobalList
+  (let
+    [globals : CompilerIrGlobalList IrGlobalNil]
+    (begin
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g5c" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g5b" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g6" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g5" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g4" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g3" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g2" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g1" (AstTyI64) (IrValueI64 0))
+          globals))
+      (set!
+        globals
+        (compiler-ir-global-cons
+          (IrGlobal "g0" (AstTyI64) (IrValueI64 0))
+          globals))
+      globals)))
+
+(define (compiler-backend-call-save-main-instrs) : CompilerIrInstrList
+  (let
+    [instrs : CompilerIrInstrList IrInstrNil]
+    (begin
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g5c" (IrValueVar 5) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g5b" (IrValueVar 5) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g6" (IrValueVar 6) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g5" (IrValueVar 5) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g4" (IrValueVar 4) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g3" (IrValueVar 3) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g2" (IrValueVar 2) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g1" (IrValueVar 1) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g0" (IrValueVar 0) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrCall 7 "side_effect" (IrCallArgsNil) (AstTyUnit))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 6 (IrValueI64 6) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 5 (IrValueI64 5) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 4 (IrValueI64 4) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 3 (IrValueI64 3) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 2 (IrValueI64 2) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 1 (IrValueI64 1) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 0 (IrValueI64 0) (AstTyI64)) instrs))
+      instrs)))
+
+(define (compiler-backend-call-save-program) : CompilerIrProgram
+  (IrProgram
+    (compiler-backend-call-save-test-globals)
+    (compiler-ir-function-cons
+      (IrFunction
+        "side_effect"
+        IrParamNil
+        (AstTyUnit)
+        0
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))
+          IrBlockNil))
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          8
+          (compiler-ir-block-cons
+            (compiler-ir-block "entry" (compiler-backend-call-save-main-instrs))
+            IrBlockNil))
+        IrFunctionNil))
+    IrExternNil))
+
+(define (compiler-backend-call-save-r9-wrap-ok?) : bool
+  (begin
+    (compiler-backend-set-scalar-registers! true)
+    (match (compiler-backend-emit-program-linux
+      (compiler-backend-call-save-program))
+      [(OkCompilerBackend asm)
+        (let
+          [ok : bool
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    call _tl_side_effect\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movq %r9, %rax\n    movq %rax, -")
+              (compiler-backend-string-contains? asm "(%rbp), %r9\n"))]
+          (begin
+            (compiler-backend-set-scalar-registers! false)
+            ok))]
+      [(ErrCompilerBackend _)
+        (begin
+          (compiler-backend-set-scalar-registers! false)
+          false)])))
+
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
@@ -9912,6 +10095,7 @@
         (compiler-backend-never-branch-register-group-ok?))
       (and
         (compiler-backend-regalloc-ok?)
+        (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?))
       (compiler-backend-peephole-ok?)
       (and

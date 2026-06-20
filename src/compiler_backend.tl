@@ -19587,6 +19587,20 @@
               (compiler-reg-plan-function-scalar walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (compiler-reg-plan-function walk-func))]
+        [reg-type-info : CompilerRegVarTypes
+          (compiler-reg-function-var-types walk-func)]
+        [call-save-rewrite : CompilerRegCallSaveRewrite
+          (compiler-reg-caller-save-rewrite-blocks
+            blocks
+            vars
+            reg-type-info
+            reg-plan)]
+        [rewritten-blocks : CompilerIrBlockList
+          (match call-save-rewrite
+            [(CompilerRegCallSaveRewrite out-blocks _) out-blocks])]
+        [rewritten-vars : i64
+          (match call-save-rewrite
+            [(CompilerRegCallSaveRewrite _ out-vars) out-vars])]
         [_regalloc-census : unit
           (cfg
             regalloc-census
@@ -19601,13 +19615,15 @@
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
         [fn-group-vars : CompilerLiveI64Set
-          (compiler-reg-function-group-vars walk-func plan-types)]
+          (compiler-reg-function-group-vars
+            (IrFunction name params ret-ty rewritten-vars rewritten-blocks)
+            plan-types)]
         [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
         ;; #2598: compact the frame after regalloc by renumbering stack-resident
         ;; values into a dense slot prefix. Plans without intervals (the
         ;; stack-only opt0/opt1 path) pass through unchanged; `slot-vars`
         ;; replaces the raw var count everywhere the frame layout is derived,
-        ;; while `vars` keeps indexing per-variable side tables.
+        ;; while `rewritten-vars` keeps indexing per-variable side tables.
         [coloring
           : CompilerRegColoring
           ;; Stack-homed register groups keep word0 in their remapped formula
@@ -19618,36 +19634,36 @@
             reg-plan
             fn-group-vars
             params
-            blocks
-            vars)]
+            rewritten-blocks
+            rewritten-vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
             [(CompilerRegColoringNone) (compiler-reg-plan-assignments reg-plan)]
             [(CompilerRegColoringRemap remap _)
               (compiler-reg-color-rebuild-assignments
                 remap
-                vars
+                rewritten-vars
                 (compiler-reg-plan-assignments reg-plan))])]
         [emit-blocks-list : CompilerIrBlockList
           (match coloring
-            [(CompilerRegColoringNone) blocks]
+            [(CompilerRegColoringNone) rewritten-blocks]
             [(CompilerRegColoringRemap remap _)
-              (compiler-reg-remap-blocks remap blocks)])]
+              (compiler-reg-remap-blocks remap rewritten-blocks)])]
         [slot-vars : i64
           (match coloring
-            [(CompilerRegColoringNone) vars]
+            [(CompilerRegColoringNone) rewritten-vars]
             [(CompilerRegColoringRemap _ slots) slots])]
         [types : CompilerRegVarTypeList
           (match coloring
             [(CompilerRegColoringNone) plan-types]
             [(CompilerRegColoringRemap remap _)
-              (compiler-reg-color-rebuild-types remap vars plan-types)])]
+              (compiler-reg-color-rebuild-types remap rewritten-vars plan-types)])]
         [use-counts : (Array i64)
-          (compiler-backend-function-use-counts vars emit-blocks-list)]
+          (compiler-backend-function-use-counts rewritten-vars emit-blocks-list)]
         [_phi-targets : unit
           (set!
             compiler-backend-current-phi-targets
-            (compiler-backend-phi-target-labels-for-blocks blocks))]
+            (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
         (match (compiler-backend-emit-param-spills
           target
           assignments
@@ -19666,7 +19682,7 @@
                 (compiler-backend-function-label-scope program-index name)]
               [_addr-forward : unit
                 (compiler-backend-addr-of-forwarding-enable!
-                  vars
+                  rewritten-vars
                   emit-blocks-list
                   use-counts)]
               (match (compiler-backend-emit-blocks
@@ -19698,7 +19714,7 @@
                             has-group-vars))
                         (compiler-backend-outgoing-frame-space
                           target
-                          blocks
+                          emit-blocks-list
                           program-index))]
                     [_addr-forward-done : unit
                       (compiler-backend-addr-of-forwarding-disable!)]

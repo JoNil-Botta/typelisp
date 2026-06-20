@@ -2485,14 +2485,109 @@
               (+ 1 (compiler-reg-spill-count (box-get rest)))]
             [_ (compiler-reg-spill-count (box-get rest))])])]))
 
+;; Static spill weight = number of textual uses of `var` (#3473 PR: spill-weight
+;; eviction). A higher weight means the value is referenced more, so keeping it in
+;; a register saves more reload traffic. Out-of-range vars score 0.
+(define (compiler-reg-spill-weight [ref-counts : (Array i64)] [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length ref-counts)))
+    (array-ref ref-counts var)
+    0))
+
+;; Is active `a` a better spill victim than active `b`? The cheaper value to
+;; spill wins: lower static use count first, then the existing furthest-end /
+;; larger-var order for a total, var-id-stable tie-break (matches
+;; compiler-reg-active-before?), so the choice stays deterministic.
+(define (compiler-reg-active-more-spillable?
+  [a : CompilerRegActive]
+  [b : CompilerRegActive]
+  [ref-counts : (Array i64)]) : bool
+  (match a
+    [(CompilerRegActive a-var _ _)
+      (match b
+        [(CompilerRegActive b-var _ _)
+          (let
+            [wa : i64 (compiler-reg-spill-weight ref-counts a-var)]
+            [wb : i64 (compiler-reg-spill-weight ref-counts b-var)]
+            (cond
+              [(< wa wb) true]
+              [(> wa wb) false]
+              [else (compiler-reg-active-before? b a)]))])]))
+
+;; Lowest-spill-weight active var that is NOT a 2-word register-group var and
+;; whose interval OUTLIVES the incoming interval (end strictly past cur-end).
+;; Restricting victims to longer-lived values preserves the furthest-end policy's
+;; key property -- a short-lived temp is never spilled in favour of keeping a
+;; longer-lived value, since spilling such a temp would store-and-immediately-
+;; reload for no benefit. Among the eligible longer-lived values the cheapest to
+;; spill (lowest static use count) wins, so loop-carried/hot values stay in
+;; registers. The group exclusion mirrors compiler-reg-active-max-non-group: a
+;; paired var can never be evicted to one 8-byte slot.
+(define (compiler-reg-active-min-weight-outliving
+  [active : CompilerRegActiveList]
+  [group-vars : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]
+  [cur-end : i64]) : CompilerRegMaybeActive
+  (match active
+    [(CompilerRegActiveNil) CompilerRegNoActive]
+    [(CompilerRegActiveCons item rest)
+      (let
+        [rest-best : CompilerRegMaybeActive
+          (compiler-reg-active-min-weight-outliving
+            (box-get rest)
+            group-vars
+            ref-counts
+            cur-end)]
+        (match item
+          [(CompilerRegActive id item-end _)
+            (if (or
+              (compiler-live-set-contains? group-vars id)
+              (<= item-end cur-end))
+              rest-best
+              (match rest-best
+                [(CompilerRegNoActive) (CompilerRegSomeActive item)]
+                [(CompilerRegSomeActive other)
+                  (if (compiler-reg-active-more-spillable?
+                    item
+                    other
+                    ref-counts)
+                    (CompilerRegSomeActive item)
+                    (CompilerRegSomeActive other))]))]))]))
+
+;; Pick the active interval to evict (Some) or fall back to spilling the incoming
+;; interval (None). With an empty ref-counts array (SIMD/AVX path and the XMM
+;; scalar stage) this is the original furthest-end policy verbatim, keeping that
+;; output byte-identical: evict the furthest-ending active only when it outlives
+;; the incoming interval. With ref counts (integer scalar opt2 stage) evict the
+;; lowest-use-count value among those that outlive the incoming interval.
+(define (compiler-reg-spill-victim
+  [active : CompilerRegActiveList]
+  [group-vars : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]
+  [cur-end : i64]) : CompilerRegMaybeActive
+  (if (= (array-length ref-counts) 0)
+    (match (compiler-reg-active-max-non-group active group-vars)
+      [(CompilerRegNoActive) CompilerRegNoActive]
+      [(CompilerRegSomeActive m)
+        (match m
+          [(CompilerRegActive _ m-end _)
+            (if (> m-end cur-end)
+              (CompilerRegSomeActive m)
+              CompilerRegNoActive)])])
+    (compiler-reg-active-min-weight-outliving
+      active
+      group-vars
+      ref-counts
+      cur-end)))
+
 (define (compiler-reg-spill-at-interval
   [interval : CompilerRegInterval]
   [active : CompilerRegActiveList]
   [assignments : CompilerRegAssignmentTable]
-  [group-vars : CompilerLiveI64Set]) : CompilerRegAssignState
+  [group-vars : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]) : CompilerRegAssignState
   (match interval
     [(CompilerRegInterval var _ end)
-      (match (compiler-reg-active-max-non-group active group-vars)
+      (match (compiler-reg-spill-victim active group-vars ref-counts end)
         [(CompilerRegNoActive)
           (CompilerRegAssignState
             active
@@ -2503,25 +2598,18 @@
         [(CompilerRegSomeActive spill)
           (match spill
             [(CompilerRegActive spill-var spill-end spill-reg)
-              (if (> spill-end end)
-                (CompilerRegAssignState
-                  (compiler-reg-active-insert
-                    (compiler-reg-active-remove-var active spill-var)
-                    (CompilerRegActive var end spill-reg))
-                  (compiler-reg-assignment-table-insert
-                    (compiler-reg-assignment-table-insert
-                      assignments
-                      spill-var
-                      (CompilerRegSpill
-                        (compiler-reg-stack-slot-offset spill-var)))
-                    var
-                    (CompilerRegRegister spill-reg)))
-                (CompilerRegAssignState
-                  active
+              (CompilerRegAssignState
+                (compiler-reg-active-insert
+                  (compiler-reg-active-remove-var active spill-var)
+                  (CompilerRegActive var end spill-reg))
+                (compiler-reg-assignment-table-insert
                   (compiler-reg-assignment-table-insert
                     assignments
-                    var
-                    (CompilerRegSpill (compiler-reg-stack-slot-offset var)))))])])]))
+                    spill-var
+                    (CompilerRegSpill
+                      (compiler-reg-stack-slot-offset spill-var)))
+                  var
+                  (CompilerRegRegister spill-reg)))])])]))
 
 (define (compiler-reg-assign-candidates
   [candidates : CompilerRegIntervalList]
@@ -2531,7 +2619,8 @@
   [moves : CompilerRegMoveList]
   [interval-index : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
-  [group-vars : CompilerLiveI64Set]) : CompilerRegAssignState
+  [group-vars : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -2573,7 +2662,8 @@
                       moves
                       interval-index
                       types
-                      group-vars)]
+                      group-vars
+                      ref-counts)]
                   [(CompilerRegRegisterPair reg-a reg-b)
                     ;; #2386: a coalesced register-pair occupies both registers for
                     ;; the var's lifetime -- two active entries that expire together.
@@ -2592,7 +2682,8 @@
                       moves
                       interval-index
                       types
-                      group-vars)]
+                      group-vars
+                      ref-counts)]
                   [(CompilerRegSpill _)
                     (compiler-reg-assign-candidates
                       (box-get rest)
@@ -2605,7 +2696,8 @@
                       moves
                       interval-index
                       types
-                      group-vars)])]
+                      group-vars
+                      ref-counts)])]
               [(CompilerRegNoLocation)
                 (if (compiler-live-set-contains? group-vars var)
                   ;; #2386: a 2-word register-group var needs TWO free GP registers
@@ -2625,7 +2717,8 @@
                       moves
                       interval-index
                       types
-                      group-vars)
+                      group-vars
+                      ref-counts)
                     (if (>=
                       (-
                         (compiler-reg-string-list-count regs)
@@ -2653,7 +2746,8 @@
                           moves
                           interval-index
                           types
-                          group-vars))
+                          group-vars
+                          ref-counts))
                       ;; Fewer than two GP registers free: a group var cannot live in
                       ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
                       ;; (NoLocation). The backend then homes both words in the var's
@@ -2668,7 +2762,8 @@
                         moves
                         interval-index
                         types
-                        group-vars)))
+                        group-vars
+                        ref-counts)))
                   (if (=
                     (compiler-reg-active-count expired)
                     (compiler-reg-string-list-count regs))
@@ -2676,7 +2771,8 @@
                       interval
                       expired
                       assignments
-                      group-vars)
+                      group-vars
+                      ref-counts)
                       [(CompilerRegAssignState next-active next-assignments)
                         (compiler-reg-assign-candidates
                           (box-get rest)
@@ -2686,7 +2782,8 @@
                           moves
                           interval-index
                           types
-                          group-vars)])
+                          group-vars
+                          ref-counts)])
                     (let
                       [reg : String
                         (compiler-reg-first-free-register regs expired)]
@@ -2703,7 +2800,8 @@
                         moves
                         interval-index
                         types
-                        group-vars))))]))])]))
+                        group-vars
+                        ref-counts))))]))])]))
 
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
@@ -3879,6 +3977,14 @@
       (compiler-reg-interval-index-build intervals vars)]
     [assignment-table : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-make vars)]
+    ;; #3473: static use counts drive spill-weight eviction on the integer scalar
+    ;; opt2 stage (allow-caller-saved-zero-call is the scalar-opt2 discriminator).
+    ;; An empty array selects the original furthest-end policy, keeping the
+    ;; SIMD/AVX plan and the caller-saved XMM stage byte-identical.
+    [eviction-ref-counts : (Array i64)
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-ref-counts func)
+        (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
         (compiler-reg-candidates intervals type-info ineligible false)
@@ -3888,7 +3994,8 @@
         moves
         interval-index
         type-info
-        group-vars)]
+        group-vars
+        eviction-ref-counts)]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -3936,7 +4043,8 @@
         moves
         interval-index
         type-info
-        (compiler-live-set-empty))]
+        (compiler-live-set-empty)
+        (make-array i64 0))]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
         [(CompilerRegAssignState _ assignments) assignments])]

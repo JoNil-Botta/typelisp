@@ -5,6 +5,7 @@
 (import "compiler_load.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
+(import "compiler_float.tl")
 (import "compiler_ctfe.tl")
 (import "compiler_specialize.tl")
 (import "compiler_clone.tl")
@@ -9859,6 +9860,52 @@
     actual
     expected))
 
+(define (tc-float-literal-non-finite-message [ty-name : String]) : String
+  (str-cat "typecheck: non-finite " ty-name " literal is not supported"))
+
+(define (tc-float-literal-f64-type [text : String]) : ResultTcType
+  (match (compiler-float-parse-f64 text)
+    [(CompilerFloatSomeF64 value)
+      (if (compiler-float-f64-finite? value)
+        (OkTcType (AstTyF64))
+        (ErrTcType (tc-float-literal-non-finite-message "f64")))]
+    [(CompilerFloatNoF64)
+      (if (compiler-float-decimal-syntax? text)
+        (ErrTcType (tc-float-literal-non-finite-message "f64"))
+        (ErrTcType "typecheck: invalid f64 literal"))]))
+
+(define (tc-float-literal-f32-type [text : String] [expected : AstType]) : ResultTcType
+  (match (compiler-float-parse-f64 text)
+    [(CompilerFloatSomeF64 value)
+      (let
+        [rounded : f64 (compiler-float-round-f32-as-f64 value)]
+        (if (and
+          (compiler-float-f64-finite? value)
+          (compiler-float-f64-finite? rounded))
+          (OkTcType expected)
+          (ErrTcType (tc-float-literal-non-finite-message "f32"))))]
+    [(CompilerFloatNoF64)
+      (if (compiler-float-decimal-syntax? text)
+        (ErrTcType (tc-float-literal-non-finite-message "f32"))
+        (ErrTcType "typecheck: invalid f64 literal"))]))
+
+(define (tc-float-literal-type-with-expected
+  [text : String]
+  [expected : AstType]) : ResultTcType
+  (if (tc-type-eq (tc-type-strip-region expected) (AstTyF32))
+    (tc-float-literal-f32-type text expected)
+    (match (tc-float-literal-f64-type text)
+      [(OkTcType actual)
+        (if (tc-type-compatible? expected actual)
+          (OkTcType (tc-contextual-result-type expected actual))
+          (OkTcType actual))]
+      [(ErrTcType message) (ErrTcType message)])))
+
+(define (tc-literal-type-checked [lit : AstLiteral]) : ResultTcType
+  (match lit
+    [(AstLitFloat text) (tc-float-literal-f64-type text)]
+    [_ (OkTcType (tc-literal-type lit))]))
+
 (define (tc-float-literal-expr? [expr : AstExpr]) : bool
   (match expr
     [(AstExprSpanned inner-box _)
@@ -9870,6 +9917,22 @@
         [(AstLitFloat _) true]
         [_ false])]
     [_ false]))
+
+(define (tc-float-literal-expr-with-expected
+  [expr : AstExpr]
+  [expected : AstType]) : ResultTcType
+  (match expr
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (match (tc-float-literal-expr-with-expected inner expected)
+          [(OkTcType ty) (OkTcType ty)]
+          [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitFloat text) (tc-float-literal-type-with-expected text expected)]
+        [_ (OkTcType (tc-literal-type lit))])]
+    [_ (OkTcType (AstTyF64))]))
 
 (define (tc-integer-literal-expr? [expr : AstExpr]) : bool
   (match expr
@@ -9948,7 +10011,9 @@
         (match (tc-expr ctx env right)
           [(OkTcType right-actual)
             (if (tc-type-eq (tc-type-strip-region right-actual) (AstTyF32))
-              (tc-binop-types-with-same-operands op (AstTyF32))
+              (match (tc-float-literal-expr-with-expected left (AstTyF32))
+                [(OkTcType _) (tc-binop-types-with-same-operands op (AstTyF32))]
+                [(ErrTcType message) (ErrTcBinOpTypes message)])
               (tc-binop-types-from-left ctx env op left-ty right))]
           [(ErrTcType message) (ErrTcBinOpTypes message)])
         (if (tc-integer-literal-expr? left)
@@ -10471,10 +10536,8 @@
     [_
       (if (tc-integer-literal-expr? expr)
         (tc-integer-literal-expr-with-expected ctx expr expected)
-        (if (and
-          (tc-type-eq (tc-type-strip-region expected) (AstTyF32))
-          (tc-float-literal-expr? expr))
-          (OkTcType expected)
+        (if (tc-float-literal-expr? expr)
+          (tc-float-literal-expr-with-expected expr expected)
           (match (tc-expr ctx env expr)
             [(OkTcType actual)
               (if (tc-type-compatible? expected actual)
@@ -20666,6 +20729,17 @@
       [(AstLitInt _ _) (tc-integer-type? scrut-ty)]
       [_ (tc-type-eq lit-ty scrut-ty)])))
 
+(define (tc-bind-literal-pattern
+  [env : TcTypeEnv]
+  [lit : AstLiteral]
+  [scrut-ty : AstType]) : ResultTcEnv
+  (match (tc-literal-type-checked lit)
+    [(OkTcType _)
+      (if (tc-literal-pattern-compatible? lit scrut-ty)
+        (OkTcEnv env)
+        (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+    [(ErrTcType message) (ErrTcEnv message)]))
+
 (define (tc-bind-sub-pattern-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -20775,10 +20849,7 @@
     (match pattern
       [(AstPatBinding name) (OkTcEnv (tc-bind-id env name ty))]
       [(AstPatWildcard) (OkTcEnv env)]
-      [(AstPatLiteral lit)
-        (if (tc-literal-pattern-compatible? lit ty)
-          (OkTcEnv env)
-          (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+      [(AstPatLiteral lit) (tc-bind-literal-pattern env lit ty)]
       [(AstPatVariant name args-box)
         (let
           [args : AstPatternList (box-get args-box)]
@@ -20916,10 +20987,7 @@
       [(AstPatBinding name)
         (OkTcEnv (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
       [(AstPatWildcard) (OkTcEnv env)]
-      [(AstPatLiteral lit)
-        (if (tc-literal-pattern-compatible? lit ty)
-          (OkTcEnv env)
-          (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+      [(AstPatLiteral lit) (tc-bind-literal-pattern env lit ty)]
       [(AstPatVariant name args-box)
         (let
           [args : AstPatternList (box-get args-box)]
@@ -21009,10 +21077,7 @@
             (match pattern
               [(AstPatWildcard) (OkTcEnv env)]
               [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
-              [(AstPatLiteral lit)
-                (if (tc-literal-pattern-compatible? lit scrut-ty)
-                  (OkTcEnv env)
-                  (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+              [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
               [_
                 (ErrTcEnv
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))]
@@ -21069,10 +21134,7 @@
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
         [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
-        [(AstPatLiteral lit)
-          (if (tc-literal-pattern-compatible? lit scrut-ty)
-            (OkTcEnv env)
-            (ErrTcEnv "typecheck: literal pattern type mismatch"))]
+        [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
         [_
           (ErrTcEnv
             "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))
@@ -23168,7 +23230,7 @@
         (match result
           [(OkTcType ty) (OkTcType ty)]
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
-    [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
+    [(AstExprLiteral lit) (tc-literal-type-checked lit)]
     [(AstExprBinaryData _) (OkTcType (ast-ty-dyn-array (AstTyU8)))]
     [(AstExprVar name)
       (let

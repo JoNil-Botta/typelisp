@@ -24533,7 +24533,14 @@
               (IrValueF64 (opt-test-f64-bits "1.00000001"))
               (AstTyF64)
               (AstTyF32))
-            (IrInstrNil)))))))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                56
+                (IrBinMul)
+                (IrValueF64 (opt-test-f64-bits "-0.0"))
+                (IrValueF64 (opt-test-f64-bits "1.0"))
+                (AstTyF64))
+              (IrInstrNil))))))))
 
 (define (opt-float-fold-invalid-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -24543,7 +24550,27 @@
       (IrValueF64 (opt-test-f64-bits "1.0"))
       (IrValueF64 (opt-test-f64-bits "0.0"))
       (AstTyF64))
-    (IrInstrNil)))
+    (compiler-ir-instr-cons
+      (IrInstrBinOp
+        57
+        (IrBinDiv)
+        (IrValueF64 (opt-test-f32-bits "1.0"))
+        (IrValueF64 (opt-test-f32-bits "0.0"))
+        (AstTyF32))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp
+          58
+          (IrBinMul)
+          (IrValueF64 (opt-test-f64-bits "1e+308"))
+          (IrValueF64 (opt-test-f64-bits "1e+308"))
+          (AstTyF64))
+        (compiler-ir-instr-cons
+          (IrInstrCast
+            59
+            (IrValueF64 (opt-test-f64-bits "3.5e+38"))
+            (AstTyF64)
+            (AstTyF32))
+          (IrInstrNil))))))
 
 (define (opt-finite-cast-fold-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -24632,7 +24659,9 @@
       (opt-mov-dst-bool-value? pos 42 true)
       (opt-mov-dst-f64-bits? pos 43 (opt-test-f64-bits "-3.75"))
       (opt-mov-dst-f64-bits? pos 44 (opt-test-f32-bits "1.00000001"))
-      (= (opt-count-arith-instrs neg) 1)
+      (opt-mov-dst-f64-bits? pos 56 (opt-test-f64-bits "-0.0"))
+      (= (opt-count-arith-instrs neg) 3)
+      (= (opt-count-cast-instrs neg) 1)
       (= (opt-count-cast-instrs finite-casts) 0)
       (opt-mov-dst-f64-bits? finite-casts 46 (opt-test-f64-bits "-42.0"))
       (opt-mov-dst-f64-bits?

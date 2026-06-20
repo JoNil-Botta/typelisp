@@ -261,7 +261,13 @@ truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
 default. Floating-point literals are always `f64` unless a contextual `f32`
-expected type is present.
+expected type is present. Source float constants are finite-only in v1: decimal
+float literal text that parses to non-finite `f64`, or that rounds to
+non-finite `f32` in a contextual `f32` position, is rejected during
+typechecking. `NaN`, `nan`, `Infinity`, `inf`, and similar spellings are not
+float literal syntax; they are ordinary identifiers and remain unbound unless a
+program declares such names. Portable infinity/NaN source syntax and payload
+semantics are deferred to a future feature.
 
 ---
 
@@ -969,13 +975,19 @@ the same CTFE float kind; `f32` arithmetic rounds results through binary32.
 Float literal text is parsed deterministically from the source grammar, folded
 results are serialized through the compiler-owned shortest round-tripping
 formatter, and optimizer folding uses the same parse/format helpers. CTFE
-rejects division by zero and non-finite float literals/results until TypeLisp
-specifies portable infinity and NaN payload behavior. Lowered IR/backend float
+rejects float division by zero deterministically and rejects any non-finite
+float literal, cast result, arithmetic result, or unary result. Optimizer
+constant folding follows the same finite-only materialization policy: division
+by zero and non-finite folded results are not folded, so runtime behavior stays
+the generated machine-code behavior for those expressions. Signed zero is
+finite and may be parsed, folded, and emitted normally. Lowered IR/backend float
 constants carry explicit IEEE-754 bit payloads instead of decimal text: `f64`
 uses the full 64-bit binary64 payload, while `f32` stores the low 32 binary32
 bits in the same payload field. Assembly/object emission writes those bits
 directly (`.quad` for `f64`, `.long`/4-byte object records for `f32`) rather
-than reparsing decimal strings.
+than reparsing decimal strings. Portable infinity/NaN source syntax,
+payload-preserving non-finite CTFE, and public non-finite constant semantics are
+deferred to a separate future feature.
 
 The rule applies to the comptime path, not to every runtime call of the same
 function. A helper that is safe along the macro/comptime call graph may remain

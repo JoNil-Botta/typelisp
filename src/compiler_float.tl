@@ -28,6 +28,11 @@
   (CompilerFiniteCastResultF64 f64)
   (CompilerFiniteCastResultF32 f64))
 
+(define (compiler-float-decimal-syntax? [text : String]) : bool
+  (match (io-float-parse-decimal text)
+    [(IoFloatSomeDecimal _ _ _) true]
+    [(IoFloatNoDecimal) false]))
+
 (define (compiler-float-parse-f64 [text : String]) : CompilerFloatMaybeF64
   (match (io-float-parse-f64 text)
     [(IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
@@ -337,6 +342,15 @@
     (compiler-float-parse-f32-bits-eq? "0.1" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "0.10000000149011612" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "-0" 0x80000000)
+    (match (compiler-float-parse-f64-bits "1e+309")
+      [(CompilerFloatSomeBits _) false]
+      [(CompilerFloatNoBits) true])
+    (match (compiler-float-parse-f32-bits "3.5e+38")
+      [(CompilerFloatSomeBits _) false]
+      [(CompilerFloatNoBits) true])
+    (compiler-float-decimal-syntax? "1e+309")
+    (not (compiler-float-decimal-syntax? "not-a-float"))
+    (not (compiler-float-decimal-syntax? "1."))
     (match (compiler-float-parse-f64 "not-a-float")
       [(CompilerFloatSomeF64 _) false]
       [(CompilerFloatNoF64) true])))

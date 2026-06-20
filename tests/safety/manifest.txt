@@ -7,6 +7,7 @@
 
 # Integer overflow wraps; supported integer/char casts have defined results.
 integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|-
+float_literal_signed_zero_defined|run-exit|tests/safety/float_literal_signed_zero_defined.tl|42|-
 
 # Integer division/modulo and invalid shift counts trap deterministically.
 division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|tl: integer division or remainder error
@@ -75,6 +76,12 @@ integer_literal_u64_overflow_reject|check-fail|tests/safety/integer_literal_u64_
 integer_literal_u64_based_overflow_reject|check-fail|tests/safety/integer_literal_u64_based_overflow_reject.tl|-|integer literal 0x10000000000000000 does not fit expected type u64
 integer_literal_u64_negative_reject|check-fail|tests/safety/integer_literal_u64_negative_reject.tl|-|integer literal -1 does not fit expected type u64
 integer_literal_u64_negative_zero_reject|check-fail|tests/safety/integer_literal_u64_negative_zero_reject.tl|-|integer literal -0 does not fit expected type u64
+float_literal_f64_overflow_reject|check-fail|tests/safety/float_literal_f64_overflow_reject.tl|-|non-finite f64 literal is not supported
+float_literal_f32_overflow_reject|check-fail|tests/safety/float_literal_f32_overflow_reject.tl|-|non-finite f32 literal is not supported
+float_literal_nan_reject|check-fail|tests/safety/float_literal_nan_reject.tl|-|unbound name NaN
+float_literal_nan_lower_reject|check-fail|tests/safety/float_literal_nan_lower_reject.tl|-|unbound name nan
+float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_reject.tl|-|unbound name Infinity
+float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type

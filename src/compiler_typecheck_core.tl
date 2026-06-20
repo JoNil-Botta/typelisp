@@ -11152,6 +11152,19 @@
         [_ false])]
     [_ false]))
 
+(define (tc-call-mutable-ref-formal? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyMutRef _ _) true]
+    [(AstTyVar _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyMutRef _ _) true]
+        [_ false])]
+    [(AstTyVarArgs _ _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyMutRef _ _) true]
+        [_ false])]
+    [_ false]))
+
 (define (tc-call-actual-reference? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyRef _ _) true]
@@ -28025,19 +28038,56 @@
 (define (tc-borrow-check-mut-path [path : String]) : String
   (string-append "#mut." path))
 
+(define (tc-borrow-check-two-phase-mut-prefix) : String
+  "#two-phase-mut.")
+
+(define (tc-borrow-check-two-phase-mut-path [path : String]) : String
+  (string-append (tc-borrow-check-two-phase-mut-prefix) path))
+
+(define (tc-borrow-check-two-phase-mut-path? [path : String]) : bool
+  (tc-move-string-prefix? path (tc-borrow-check-two-phase-mut-prefix)))
+
+(define (tc-borrow-check-two-phase-mut-original-path [path : String]) : String
+  (let
+    [prefix : String (tc-borrow-check-two-phase-mut-prefix)]
+    [prefix-len : i64 (string-length prefix)]
+    [path-len : i64 (string-length path)]
+    (substring path prefix-len (- path-len prefix-len))))
+
 (define (tc-borrow-check-remove-root-state
   [borrowed : TcMovedSet]
   [name : String]) : TcMovedSet
   (tc-moved-remove-root-state
-    (tc-moved-remove-root-state borrowed name)
-    (tc-borrow-check-mut-path name)))
+    (tc-moved-remove-root-state
+      (tc-moved-remove-root-state borrowed name)
+      (tc-borrow-check-mut-path name))
+    (tc-borrow-check-two-phase-mut-path name)))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
   [path : String]) : TcMovedSet
   (tc-moved-remove
-    (tc-moved-remove borrowed (tc-moved-path-key path))
-    (tc-moved-path-key (tc-borrow-check-mut-path path))))
+    (tc-moved-remove
+      (tc-moved-remove borrowed (tc-moved-path-key path))
+      (tc-moved-path-key (tc-borrow-check-mut-path path)))
+    (tc-moved-path-key (tc-borrow-check-two-phase-mut-path path))))
+
+(define (tc-borrow-check-two-phase-mut-conflict
+  [borrowed : TcMovedSet]
+  [path : String]) : TcMoveConflict
+  (tc-moved-path-conflict borrowed (tc-borrow-check-two-phase-mut-path path)))
+
+(define (tc-borrow-check-two-phase-mut-conflict-message
+  [borrowed : TcMovedSet]
+  [path : String]
+  [primary : AstExpr]
+  [message : String]) : String
+  (tc-borrow-check-rich-conflict-message
+    borrowed
+    (tc-borrow-check-two-phase-mut-path path)
+    path
+    primary
+    message))
 
 (define (tc-borrow-check-path-root-end [path : String] [index : i64] [n : i64]) : i64
   (if (>= index n)
@@ -28239,6 +28289,29 @@
         origin-id)
       borrowed1)))
 
+(define (tc-borrow-check-add-two-phase-mut-borrow-path
+  [borrowed : TcMovedSet]
+  [path : String]
+  [origin : AstExpr]) : TcMovedSet
+  (tc-moved-add-value
+    borrowed
+    (tc-moved-path-key (tc-borrow-check-two-phase-mut-path path))
+    (ast-node-push origin)))
+
+(define (tc-borrow-check-add-two-phase-mut-place
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [place : AstExpr]
+  [origin : AstExpr]) : TcBorrowCheckResult
+  (match (tc-borrow-check-local-place-path locals place)
+    [(TcSomeString path)
+      (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
+        [(OkTcUnit)
+          (OkTcBorrowCheck
+            (tc-borrow-check-add-two-phase-mut-borrow-path borrowed path origin))]
+        [(ErrTcUnit message) (ErrTcBorrowCheck message)])]
+    [(TcNoString) (OkTcBorrowCheck borrowed)]))
+
 (define (tc-borrow-check-move-conflict
   [borrowed : TcMovedSet]
   [path : String]
@@ -28251,7 +28324,15 @@
         path
         primary
         (tc-borrow-check-move-message path)))
-    OkTcUnit))
+    (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
+      [(TcSomeMoveConflict _ _)
+        (ErrTcUnit
+          (tc-borrow-check-two-phase-mut-conflict-message
+            borrowed
+            path
+            primary
+            (tc-borrow-check-move-message path)))]
+      [TcNoMoveConflict OkTcUnit])))
 
 (define (tc-borrow-check-assign-conflict
   [borrowed : TcMovedSet]
@@ -28265,7 +28346,15 @@
         path
         primary
         (tc-borrow-check-assign-message path)))
-    OkTcUnit))
+    (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
+      [(TcSomeMoveConflict _ _)
+        (ErrTcUnit
+          (tc-borrow-check-two-phase-mut-conflict-message
+            borrowed
+            path
+            primary
+            (tc-borrow-check-assign-message path)))]
+      [TcNoMoveConflict OkTcUnit])))
 
 (define (tc-borrow-check-mutably-borrow-conflict
   [borrowed : TcMovedSet]
@@ -28279,7 +28368,15 @@
         path
         primary
         (tc-borrow-check-mutably-borrow-message path)))
-    OkTcUnit))
+    (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
+      [(TcSomeMoveConflict _ _)
+        (ErrTcUnit
+          (tc-borrow-check-two-phase-mut-conflict-message
+            borrowed
+            path
+            primary
+            (tc-borrow-check-mutably-borrow-message path)))]
+      [TcNoMoveConflict OkTcUnit])))
 
 (define (tc-borrow-check-immutably-borrow-conflict
   [borrowed : TcMovedSet]
@@ -28602,6 +28699,42 @@
     locals
     (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern)))
 
+(define (tc-borrow-check-effective-arg-with-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [arg : AstExpr]
+  [ty : AstType]) : TcBorrowCheckResult
+  (match (tc-borrow-check-expr ctx env locals borrowed arg)
+    [(OkTcBorrowCheck borrowed1)
+      (match (tc-borrow-check-after-consuming-value ctx locals borrowed1 arg ty)
+        [(OkTcBorrowCheck borrowed2)
+          (if (= (tc-moved-len borrowed2) 0)
+            (OkTcBorrowCheck borrowed2)
+            (tc-borrow-check-after-reading-value ctx locals borrowed2 arg ty))]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+
+(define (tc-borrow-check-arg-with-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [arg : AstExpr]
+  [ty : AstType]) : TcBorrowCheckResult
+  (match (tc-call-effective-arg-expr ctx env arg ty)
+    [(OkTcExpr effective)
+      (tc-borrow-check-effective-arg-with-type
+        ctx
+        env
+        locals
+        borrowed
+        effective
+        ty)]
+    [(ErrTcExpr message)
+      (ErrTcBorrowCheck (tc-locate-error-at-expr arg message))]))
+
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -28623,48 +28756,195 @@
             (let
               [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-call-effective-arg-expr ctx env head-expr ty)
-                [(OkTcExpr effective-head)
-                  (match (tc-borrow-check-expr
+              (match (tc-borrow-check-arg-with-type
+                ctx
+                env
+                locals
+                borrowed
+                head-expr
+                ty)
+                [(OkTcBorrowCheck borrowed1)
+                  (tc-borrow-check-exprs-with-types
                     ctx
                     env
                     locals
-                    borrowed
-                    effective-head)
-                    [(OkTcBorrowCheck borrowed1)
-                      (match (tc-borrow-check-after-consuming-value
-                        ctx
-                        locals
-                        borrowed1
-                        effective-head
-                        ty)
-                        [(OkTcBorrowCheck borrowed2)
-                          (if (= (tc-moved-len borrowed2) 0)
-                            (tc-borrow-check-exprs-with-types
+                    borrowed1
+                    rest
+                    rest-types)]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+
+(define (tc-borrow-check-activate-two-phase-mut-borrows-loop
+  [borrowed : TcMovedSet]
+  [map : StringI64Map]
+  [index : i64]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (if (>= index (string-i64-map-capacity map))
+    (OkTcBorrowCheck borrowed)
+    (match (string-i64-map-entry-at map index)
+      [(StringI64MapEntrySome key _)
+        (let
+          [next : i64 (string-i64-map-next-occupied map (+ index 1))]
+          (if (tc-moved-path-key? key)
+            (let
+              [path : String (tc-moved-conflict-display-path key)]
+              (if (tc-borrow-check-two-phase-mut-path? path)
+                (let
+                  [display-path : String
+                    (tc-borrow-check-two-phase-mut-original-path path)]
+                  (match (tc-moved-path-conflict borrowed display-path)
+                    [(TcSomeMoveConflict _ _)
+                      (ErrTcBorrowCheck
+                        (tc-borrow-check-rich-conflict-message
+                          borrowed
+                          display-path
+                          display-path
+                          primary
+                          (tc-borrow-check-mutably-borrow-message display-path)))]
+                    [TcNoMoveConflict
+                      (tc-borrow-check-activate-two-phase-mut-borrows-loop
+                        borrowed
+                        map
+                        next
+                        primary)]))
+                (tc-borrow-check-activate-two-phase-mut-borrows-loop
+                  borrowed
+                  map
+                  next
+                  primary)))
+            (tc-borrow-check-activate-two-phase-mut-borrows-loop
+              borrowed
+              map
+              next
+              primary)))]
+      [(StringI64MapEntryNone)
+        (tc-borrow-check-activate-two-phase-mut-borrows-loop
+          borrowed
+          map
+          (string-i64-map-next-occupied map (+ index 1))
+          primary)])))
+
+(define (tc-borrow-check-activate-two-phase-mut-borrows
+  [borrowed : TcMovedSet]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (tc-borrow-check-activate-two-phase-mut-borrows-loop
+    borrowed
+    (tc-moved-map borrowed)
+    (string-i64-map-next-occupied (tc-moved-map borrowed) 0)
+    primary))
+
+(define (tc-borrow-check-reserve-two-phase-mut-call-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [borrow-expr : AstExpr]
+  [place : AstExpr]) : TcBorrowCheckResult
+  (match (tc-borrow-check-place-read-conflict locals borrowed place borrow-expr)
+    [(OkTcBorrowCheck borrowed0)
+      (match (tc-borrow-check-expr ctx env locals borrowed0 place)
+        [(OkTcBorrowCheck borrowed1)
+          (match (tc-borrow-place ctx env place)
+            [(OkTcBorrowPlace _)
+              (tc-borrow-check-add-two-phase-mut-place
+                locals
+                borrowed1
+                place
+                borrow-expr)]
+            [(ErrTcBorrowPlace message) (ErrTcBorrowCheck message)])]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+
+(define (tc-borrow-check-call-args-two-phase-with-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [reserved : bool]
+  [call-expr : AstExpr]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : TcBorrowCheckResult
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil)
+          (if reserved
+            (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
+            (OkTcBorrowCheck borrowed))]
+        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match types
+          [(AstTypeCons ty rest-types)
+            (let
+              [ty : AstType (ty-node-get ty)]
+              [rest-types : AstTypeList (box-get rest-types)]
+              (match (tc-call-effective-arg-expr ctx env head-expr ty)
+                [(OkTcExpr effective-head)
+                  (match (ast-expr-unspan effective-head)
+                    [(AstExprBorrow mutable _ place-box)
+                      (if (and mutable (tc-call-mutable-ref-formal? ctx ty))
+                        (let
+                          [place : AstExpr (ast-node-get place-box)]
+                          (match (tc-borrow-check-reserve-two-phase-mut-call-arg
+                            ctx
+                            env
+                            locals
+                            borrowed
+                            effective-head
+                            place)
+                            [(OkTcBorrowCheck borrowed1)
+                              (tc-borrow-check-call-args-two-phase-with-types
+                                ctx
+                                env
+                                locals
+                                borrowed1
+                                true
+                                call-expr
+                                rest
+                                rest-types)]
+                            [(ErrTcBorrowCheck message)
+                              (ErrTcBorrowCheck message)]))
+                        (match (tc-borrow-check-effective-arg-with-type
+                          ctx
+                          env
+                          locals
+                          borrowed
+                          effective-head
+                          ty)
+                          [(OkTcBorrowCheck borrowed1)
+                            (tc-borrow-check-call-args-two-phase-with-types
                               ctx
                               env
                               locals
-                              borrowed2
+                              borrowed1
+                              reserved
+                              call-expr
                               rest
-                              rest-types)
-                            (match (tc-borrow-check-after-reading-value
-                              ctx
-                              locals
-                              borrowed2
-                              effective-head
-                              ty)
-                              [(OkTcBorrowCheck borrowed3)
-                                (tc-borrow-check-exprs-with-types
-                                  ctx
-                                  env
-                                  locals
-                                  borrowed3
-                                  rest
-                                  rest-types)]
-                              [(ErrTcBorrowCheck message)
-                                (ErrTcBorrowCheck message)]))]
-                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                              rest-types)]
+                          [(ErrTcBorrowCheck message)
+                            (ErrTcBorrowCheck message)]))]
+                    [_
+                      (match (tc-borrow-check-effective-arg-with-type
+                        ctx
+                        env
+                        locals
+                        borrowed
+                        effective-head
+                        ty)
+                        [(OkTcBorrowCheck borrowed1)
+                          (tc-borrow-check-call-args-two-phase-with-types
+                            ctx
+                            env
+                            locals
+                            borrowed1
+                            reserved
+                            call-expr
+                            rest
+                            rest-types)]
+                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
                 [(ErrTcExpr message)
                   (ErrTcBorrowCheck (tc-locate-error-at-expr head-expr message))]))]
           [(AstTypeNil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
@@ -28773,61 +29053,67 @@
   [func : AstExpr]
   [args : AstExprList]
   [types : AstTypeList]) : TcBorrowCheckResult
-  (match (tc-borrow-check-exprs-with-types
-    ctx
-    env
-    locals
-    (tc-moved-clone borrowed)
-    args
-    types)
-    [(OkTcBorrowCheck _)
-      (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-        (match (tc-borrow-check-auto-borrowed-call-args
-          ctx
-          env
-          locals
-          borrowed
-          args
-          types)
-          [(OkTcBorrowCheck borrowed2)
-            (match (tc-borrow-check-thread-channel-send-message
-              ctx
-              env
-              locals
-              borrowed2
-              func
-              args
-              types)
-              [(OkTcBorrowCheck borrowed3)
-                (tc-borrow-check-after-call-effects
-                  ctx
-                  env
-                  locals
-                  borrowed3
-                  call-expr
-                  func
-                  args)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
-        (match (tc-borrow-check-thread-channel-send-message
-          ctx
-          env
-          locals
-          borrowed
-          func
-          args
-          types)
-          [(OkTcBorrowCheck borrowed2)
-            (tc-borrow-check-after-call-effects
-              ctx
-              env
-              locals
-              borrowed2
-              call-expr
-              func
-              args)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+  (let
+    [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
+    [validation-result : TcBorrowCheckResult
+      (tc-borrow-check-call-args-two-phase-with-types
+        ctx
+        env
+        locals
+        validation-borrowed
+        false
+        call-expr
+        args
+        types)]
+    (match validation-result
+      [(OkTcBorrowCheck _)
+        (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+          (match (tc-borrow-check-auto-borrowed-call-args
+            ctx
+            env
+            locals
+            borrowed
+            args
+            types)
+            [(OkTcBorrowCheck borrowed2)
+              (match (tc-borrow-check-thread-channel-send-message
+                ctx
+                env
+                locals
+                borrowed2
+                func
+                args
+                types)
+                [(OkTcBorrowCheck borrowed3)
+                  (tc-borrow-check-after-call-effects
+                    ctx
+                    env
+                    locals
+                    borrowed3
+                    call-expr
+                    func
+                    args)]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+          (match (tc-borrow-check-thread-channel-send-message
+            ctx
+            env
+            locals
+            borrowed
+            func
+            args
+            types)
+            [(OkTcBorrowCheck borrowed2)
+              (tc-borrow-check-after-call-effects
+                ctx
+                env
+                locals
+                borrowed2
+                call-expr
+                func
+                args)]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]

@@ -209,6 +209,60 @@
     unit
     (panic "package-source: vector insert self-test mismatch")))
 
+(define (package-source-entry-list-insert [items : StringList] [value : String]) : StringList
+  (match items
+    [(StringNil) (StringCons value (box (StringNil)))]
+    [(StringCons head rest)
+      (if (package-source-string-less? value head)
+        (StringCons value (box items))
+        (StringCons
+          head
+          (box (package-source-entry-list-insert (box-get rest) value))))]))
+
+(define (package-source-sort-entries-into
+  [entries : StringList]
+  [acc : StringList]) : StringList
+  (match entries
+    [(StringNil) acc]
+    [(StringCons head rest)
+      (package-source-sort-entries-into
+        (box-get rest)
+        (package-source-entry-list-insert acc head))]))
+
+(define (package-source-sort-entries [entries : StringList]) : StringList
+  (package-source-sort-entries-into entries (StringNil)))
+
+(define (package-source-sort-entries-self-test?) : bool
+  (let
+    [items : StringList
+      (package-source-sort-entries
+        (StringCons
+          "zeta"
+          (box
+            (StringCons "alpha" (box (StringCons "middle" (box (StringNil))))))))]
+    (match items
+      [(StringCons first rest1)
+        (match (box-get rest1)
+          [(StringCons second rest2)
+            (match (box-get rest2)
+              [(StringCons third rest3)
+                (and
+                  (string-eq first "alpha")
+                  (string-eq second "middle")
+                  (string-eq third "zeta")
+                  (match (box-get rest3)
+                    [(StringNil) true]
+                    [_ false]))]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
+(test
+  package-source-sorts-directory-entries-before-scanning
+  (if (package-source-sort-entries-self-test?)
+    unit
+    (panic "package-source: entry sort self-test mismatch")))
+
 (define (package-source-dir-has-manifest? [dir : String]) : bool
   (file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
@@ -261,7 +315,12 @@
       [(ErrIoStringList error)
         (package-source-read-dir-error command dir error)]
       [(OkIoStringList entries)
-        (package-source-scan-entries command root relative entries acc)])))
+        (package-source-scan-entries
+          command
+          root
+          relative
+          (package-source-sort-entries entries)
+          acc)])))
 
 (define (package-source-scan-optional-dir
   [command : String]
@@ -276,7 +335,12 @@
           (OkPackageSourceList acc)
           (package-source-read-dir-error command dir error))]
       [(OkIoStringList entries)
-        (package-source-scan-entries command root relative entries acc)])))
+        (package-source-scan-entries
+          command
+          root
+          relative
+          (package-source-sort-entries entries)
+          acc)])))
 
 (define (package-source-scan-root
   [command : String]
@@ -289,7 +353,12 @@
           (OkPackageSourceList (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
       [(OkIoStringList entries)
-        (package-source-scan-entries command root "" entries (string-vec-new))])))
+        (package-source-scan-entries
+          command
+          root
+          ""
+          (package-source-sort-entries entries)
+          (string-vec-new))])))
 
 (define (package-source-scan-one
   [command : String]

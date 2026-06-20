@@ -50,6 +50,7 @@
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
+(include-str compiler-embedded-stdlib-tests-process-runtime-stderr "stdlib/tests/process_runtime_stderr.tl")
 (include-str compiler-embedded-stdlib-tests-profile-api "stdlib/tests/profile_api.tl")
 (include-str compiler-embedded-stdlib-tests-sort-api "stdlib/tests/sort_api.tl")
 (include-str compiler-embedded-stdlib-tests-sync-api "stdlib/tests/sync_api.tl")
@@ -246,6 +247,12 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-runtime))
+        unit)
+      (if (string-eq suffix "tests/process_runtime_stderr.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-process-runtime-stderr))
         unit)
       (if (string-eq suffix "tests/profile_api.tl")
         (set!

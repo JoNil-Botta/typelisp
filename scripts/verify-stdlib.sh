@@ -233,6 +233,7 @@ stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|prin
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/process_runtime_stderr.tl|42|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

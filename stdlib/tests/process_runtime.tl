@@ -25,14 +25,6 @@
       expected-stderr)
     message))
 
-(define (assert-process-stderr-nonempty
-  [result : process.ResultProcessOutput]
-  [expected-status : i64]
-  [message : String]) : unit
-  (test.assert-true
-    (process.process-result-stderr-nonempty? result expected-status)
-    message))
-
 (define (assert-process-spawn-failed
   [result : process.ResultProcessOutput]
   [message : String]) : unit
@@ -44,15 +36,17 @@
 (define (assert-process-child-ok
   [result : process.ResultProcessChild]
   [message : String]) : process.ProcessChild
-  (if (process.process-child-started? result)
-    (process.ProcessChild
-      (process.process-child-result-pid-or result (- 0 1))
-      (process.process-child-result-stdout-handle-or result (- 0 1))
-      (process.process-child-result-stderr-handle-or result (- 0 1)))
-    (io.panic
-      (string.string-append
-        message
-        (process.process-child-result-error-message-or result "")))))
+  (let
+    [info : process.ProcessChildInfo (process.process-child-result-info result)]
+    (if (process.process-child-info-ok? info)
+      (process.ProcessChild
+        (process.process-child-info-pid info)
+        (process.process-child-info-stdout-handle info)
+        (process.process-child-info-stderr-handle info))
+      (io.panic
+        (string.string-append
+          message
+          (process.process-child-result-error-message-or result ""))))))
 
 (define (assert-process-child-spawn-failed
   [result : process.ResultProcessChild]
@@ -293,14 +287,6 @@
         ""
         ""
         "process nonzero status")
-      (assert-process-stderr-nonempty
-        (process.process-output
-          (process.process-command
-            "/usr/bin/ls"
-            (process.process-args-single
-              "/definitely_missing_typelisp_process_840")))
-        2
-        "process stderr capture")
       (assert-process-spawn-failed
         (process.process-output
           (process.process-command

@@ -72,10 +72,12 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.
-- `process_runtime.tl` covers backend process execution for stdout, stderr,
-  argv and env propagation through list-backed and vector-backed command
-  builders, nonzero status, failed spawn, and async start/wait on Linux, plus
-  the structured unsupported async result on Windows.
+- `process_runtime.tl` covers backend process execution for stdout, argv and
+  env propagation through list-backed and vector-backed command builders,
+  nonzero status, failed spawn, and async start/wait on Linux, plus the
+  structured unsupported async result on Windows. `process_runtime_stderr.tl`
+  separately covers runtime-backed stderr extraction through the public
+  one-pass result helper.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
   checked `String`/array/box join wrappers. Worker-count shape, deterministic

@@ -63,6 +63,13 @@
   (present bool)
   (value String))
 
+;: Single-pass destructured child result for imported callers.
+(defstruct ProcessChildInfo
+  (ok bool)
+  (pid i64)
+  (stdout-handle i64)
+  (stderr-handle i64))
+
 ;: Process command data: executable path, argv, cwd, env, and stdin.
 (defstruct ProcessCommand
   (executable String)
@@ -527,28 +534,39 @@
     [(OkProcessChild _) true]
     [(ErrProcessChild _) false]))
 
+;: Destructure a child result in one pass.
+(define (process-child-result-info [result : ResultProcessChild]) : ProcessChildInfo
+  (match result
+    [(OkProcessChild child)
+      (ProcessChildInfo
+        true
+        (struct-get child pid)
+        (struct-get child stdout-handle)
+        (struct-get child stderr-handle))]
+    [(ErrProcessChild _) (ProcessChildInfo false (- 0 1) (- 0 1) (- 0 1))]))
+
+;: Return true when `info` describes a started child.
+(define (process-child-info-ok? [info : ProcessChildInfo]) : bool
+  (struct-get info ok))
+
+;: Return the child pid from `info`, or -1 when it is not ok.
+(define (process-child-info-pid [info : ProcessChildInfo]) : i64
+  (struct-get info pid))
+
+;: Return the child stdout handle from `info`, or -1 when it is not ok.
+(define (process-child-info-stdout-handle [info : ProcessChildInfo]) : i64
+  (struct-get info stdout-handle))
+
+;: Return the child stderr handle from `info`, or -1 when it is not ok.
+(define (process-child-info-stderr-handle [info : ProcessChildInfo]) : i64
+  (struct-get info stderr-handle))
+
 ;: Return the output status, or `fallback` when `result` is an error.
 (define (process-result-status-or
   [result : ResultProcessOutput]
   [fallback : i64]) : i64
   (match (process-result-output-normalize result)
     [(OkProcessOutput output) (process-output-status output)]
-    [(ErrProcessOutput _) fallback]))
-
-;: Return captured stdout, or `fallback` when `result` is an error.
-(define (process-result-stdout-or
-  [result : ResultProcessOutput]
-  [fallback : String]) : String
-  (match (process-result-output-normalize result)
-    [(OkProcessOutput output) (process-output-stdout output)]
-    [(ErrProcessOutput _) fallback]))
-
-;: Return captured stderr, or `fallback` when `result` is an error.
-(define (process-result-stderr-or
-  [result : ResultProcessOutput]
-  [fallback : String]) : String
-  (match (process-result-output-normalize result)
-    [(OkProcessOutput output) (process-output-stderr output)]
     [(ErrProcessOutput _) fallback]))
 
 ;: Return true when `result` is an `Ok` output matching all expected fields.
@@ -573,8 +591,8 @@
   (match result
     [(OkProcessOutput output)
       (if (= (process-output-status output) expected-status)
-        (if (string.string-eq (process-output-stdout output) "")
-          (not (string.string-eq (process-output-stderr output) ""))
+        (if (= (string-length (process-output-stdout output)) 0)
+          (> (string-length (process-output-stderr output)) 0)
           false)
         false)]
     [(ErrProcessOutput _) false]))
@@ -585,22 +603,6 @@
   [fallback : i64]) : i64
   (match (process-result-child-normalize result)
     [(OkProcessChild child) (struct-get child pid)]
-    [(ErrProcessChild _) fallback]))
-
-;: Return the child stdout handle, or `fallback` when `result` is an error.
-(define (process-child-result-stdout-handle-or
-  [result : ResultProcessChild]
-  [fallback : i64]) : i64
-  (match (process-result-child-normalize result)
-    [(OkProcessChild child) (struct-get child stdout-handle)]
-    [(ErrProcessChild _) fallback]))
-
-;: Return the child stderr handle, or `fallback` when `result` is an error.
-(define (process-child-result-stderr-handle-or
-  [result : ResultProcessChild]
-  [fallback : i64]) : i64
-  (match (process-result-child-normalize result)
-    [(OkProcessChild child) (struct-get child stderr-handle)]
     [(ErrProcessChild _) fallback]))
 
 ;: Return true when an output result carries an invalid-command error.
@@ -1193,6 +1195,15 @@
         (not
           (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))))
       (process-test-assert
+        (process-result-stderr-nonempty?
+          (OkProcessOutput (ProcessOutput 7 "" "stderr"))
+          7))
+      (process-test-assert
+        (not
+          (process-result-stderr-nonempty?
+            (OkProcessOutput (ProcessOutput 7 "stdout" "stderr"))
+            7)))
+      (process-test-assert
         (not
           (process-result-success?
             (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))))
@@ -1280,14 +1291,15 @@
   (value process-success?)
   (value process-result-success?)
   (value process-child-started?)
+  (value process-child-result-info)
+  (value process-child-info-ok?)
+  (value process-child-info-pid)
+  (value process-child-info-stdout-handle)
+  (value process-child-info-stderr-handle)
   (value process-result-status-or)
-  (value process-result-stdout-or)
-  (value process-result-stderr-or)
   (value process-result-output-eq?)
   (value process-result-stderr-nonempty?)
   (value process-child-result-pid-or)
-  (value process-child-result-stdout-handle-or)
-  (value process-child-result-stderr-handle-or)
   (value process-result-invalid-command?)
   (value process-result-error-message-or)
   (value process-child-result-invalid-command?)
@@ -1311,6 +1323,7 @@
   (type ProcessStringStep)
   (type ProcessEnvStep)
   (type ProcessMaybeStringInfo)
+  (type ProcessChildInfo)
   (type ProcessCommand)
   (type ProcessOutput)
   (type ProcessChild)
@@ -1321,6 +1334,7 @@
   (constructor ProcessStringStep)
   (constructor ProcessEnvStep)
   (constructor ProcessMaybeStringInfo)
+  (constructor ProcessChildInfo)
   (constructor ProcessCommand)
   (constructor ProcessOutput)
   (constructor ProcessChild)
@@ -1335,6 +1349,10 @@
   (field ProcessEnvStep rest)
   (field ProcessMaybeStringInfo present)
   (field ProcessMaybeStringInfo value)
+  (field ProcessChildInfo ok)
+  (field ProcessChildInfo pid)
+  (field ProcessChildInfo stdout-handle)
+  (field ProcessChildInfo stderr-handle)
   (field ProcessCommand executable)
   (field ProcessCommand argv)
   (field ProcessCommand cwd)

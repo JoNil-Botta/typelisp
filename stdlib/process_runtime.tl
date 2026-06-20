@@ -284,22 +284,6 @@
     [(OkProcessOutput output) (struct-get output status)]
     [(ErrProcessOutput _) fallback]))
 
-;: Return captured stdout, or `fallback` when `result` is an error.
-(define (process-result-stdout-or
-  [result : ResultProcessOutput]
-  [fallback : String]) : String
-  (match result
-    [(OkProcessOutput output) (struct-get output stdout)]
-    [(ErrProcessOutput _) fallback]))
-
-;: Return captured stderr, or `fallback` when `result` is an error.
-(define (process-result-stderr-or
-  [result : ResultProcessOutput]
-  [fallback : String]) : String
-  (match result
-    [(OkProcessOutput output) (struct-get output stderr)]
-    [(ErrProcessOutput _) fallback]))
-
 ;: Return an error kind code, or `fallback` when `result` is ok.
 (define (process-result-error-kind-or
   [result : ResultProcessOutput]
@@ -360,22 +344,6 @@
   [fallback : i64]) : i64
   (match result
     [(OkProcessChild child) (struct-get child pid)]
-    [(ErrProcessChild _) fallback]))
-
-;: Return the child stdout handle, or `fallback` when `result` is an error.
-(define (process-child-result-stdout-handle-or
-  [result : ResultProcessChild]
-  [fallback : i64]) : i64
-  (match result
-    [(OkProcessChild child) (struct-get child stdout-handle)]
-    [(ErrProcessChild _) fallback]))
-
-;: Return the child stderr handle, or `fallback` when `result` is an error.
-(define (process-child-result-stderr-handle-or
-  [result : ResultProcessChild]
-  [fallback : i64]) : i64
-  (match result
-    [(OkProcessChild child) (struct-get child stderr-handle)]
     [(ErrProcessChild _) fallback]))
 
 ;: Return a child-result error kind code, or `fallback` when `result` is ok.
@@ -1616,15 +1584,11 @@
   (value process-output-ok)
   (value process-result-output-ok?)
   (value process-result-status-or)
-  (value process-result-stdout-or)
-  (value process-result-stderr-or)
   (value process-result-error-kind-or)
   (value process-result-error-message-or)
   (value process-result-output-info)
   (value process-result-child-ok?)
   (value process-child-result-pid-or)
-  (value process-child-result-stdout-handle-or)
-  (value process-child-result-stderr-handle-or)
   (value process-child-result-error-kind-or)
   (value process-child-result-error-message-or)
   (value process-result-child-info)

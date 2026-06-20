@@ -122,7 +122,7 @@ table.
 | Non-numeric casts | Static reject | Casts touching non-numeric types are rejected before lowering. See section 3.8 and #1101. |
 | Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
 | Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is implemented by the selfhost checker (#805, #1048, #1049, #1050). |
-| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are implemented (#1033/#1034/#1035); straight-line non-lexical last-use shortening is implemented for the first #810 slice, with branch/loop joins still conservative. |
+| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are implemented (#1033/#1034/#1035); non-lexical last-use shortening is implemented for straight-line sequences and path-sensitive `if`/`match` joins, with loop joins still conservative. |
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker is implemented (#806). Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
 | Task-thread data-race freedom | Static reject | Safe task-threading APIs reject captured, sent, returned, or shared values whose arena owner does not prove storage lifetime across the participating threads, or whose structural transfer/share classification does not prove race-free access. See section 6.5 and #2590/#2592. |
@@ -1271,11 +1271,11 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
   tracked local/place paths. Tracked aggregate-place paths conflict only when
   they are the same path or one is an ancestor of the other, so mutable borrows
   of disjoint sibling fields may coexist while overlapping whole-field,
-  same-field, and field-element borrows are rejected. Straight-line
-  non-lexical last-use shortening is implemented for local expression
-  sequences; path-sensitive branch joins, loop-carried shortening,
-  reference-capturing closure relaxation, and general dereference/update
-  operations remain follow-up borrow-checker work.
+  same-field, and field-element borrows are rejected. Non-lexical last-use
+  shortening is implemented for local expression sequences and path-sensitive
+  `if`/`match` joins; loop-carried shortening, reference-capturing closure
+  relaxation, and general dereference/update operations remain follow-up
+  borrow-checker work.
 - Lowering supports reference values for scalar referents, borrowed `str`, and
   array referents used by `array-ref`, `array-set!`, and `array-push!`.
   Borrowed `str` source semantics are specified in section 3.11.
@@ -1350,11 +1350,11 @@ value/lambda call, or constructor call has a formal parameter of type
 type is compatible with `T`. The inferred lifetime participates in ordinary
 call lifetime substitution: repeated formal lifetime names must infer the same
 caller lifetime, and fixed lifetime names must match exactly. The synthesized
-  borrow lives until the last straight-line use of any reference value that
-  carries the borrow lifetime, or to the end of the innermost conservative
-  control-flow scope when a later branch/loop join cannot yet be shortened.
-  Explicit borrow expressions use the same lifetime rule. Macros are checked
-  after expansion.
+  borrow lives until the last use of any reference value that carries the
+  borrow lifetime across straight-line sequences and path-sensitive `if`/`match`
+  joins, or to the end of the innermost conservative control-flow scope when a
+  later loop or unsupported join cannot yet be shortened. Explicit borrow
+  expressions use the same lifetime rule. Macros are checked after expansion.
 Extern C ABI calls remain out of scope while safe reference types are not legal
 C ABI parameter values. Arbitrary rvalues and temporaries are still rejected
 because they have no stable lexical owner:
@@ -1534,31 +1534,34 @@ possible:
 - Attempts to use type parameters, type expressions, or generic type
   constructors where only lifetime names are allowed.
 
-V1 exclusions: path-sensitive branch joins, loop-carried non-lexical
-lifetimes, runtime generics/type parameters, trait-like bounds, lifetime
-elision syntax, lifetime subtyping/coercion, and Rust compiler product-surface
-changes are out of scope. The selfhost parser, AST, typechecker, and lowerer
-support for this specified syntax is implemented (#1722/#804), as are
-mutable-reference creation and exclusivity (#806), straight-line last-use
-shortening for borrows (#810 first slice), and non-escaping
-reference-capturing closures (#808/#2280).
+V1 exclusions: loop-carried non-lexical lifetimes, runtime generics/type
+parameters, trait-like bounds, lifetime elision syntax, lifetime
+subtyping/coercion, and Rust compiler product-surface changes are out of scope.
+The selfhost parser, AST, typechecker, and lowerer support for this specified
+syntax is implemented (#1722/#804), as are mutable-reference creation and
+exclusivity (#806), straight-line and path-sensitive branch last-use shortening
+for borrows (#810 first slices), and non-escaping reference-capturing closures
+(#808/#2280).
 
-**Straight-line v1 lifetime rule.** A borrow created in v1 lives until the last
-straight-line use of a reference value that carries the borrow lifetime. This
-shortening applies across expression sequences such as `begin`, `unsafe`, and
-`let`/resource bodies after their bindings have been established. A plain
-auto-borrowed call argument whose callee does not return or store a reference
-tied to the argument lifetime ends after the call expression. If the reference
-result is bound, stored in a lifetime-parameterized aggregate, returned, or
-otherwise remains available as a reference value, the owner remains borrowed
-until that value's last straight-line use.
+**Non-lexical v1 lifetime rule.** A borrow created in v1 lives until the last
+use of a reference value that carries the borrow lifetime. This shortening
+applies across expression sequences such as `begin`, `unsafe`, and
+`let`/resource bodies after their bindings have been established, and across
+path-sensitive `if`/`match` joins. Branch-local borrows that do not escape the
+taken branch end at their last in-branch reference use; borrows that escape
+through the branch result, an outer assignment, or a lifetime-parameterized
+aggregate result remain live after the join until the escaping value's last
+use. A plain auto-borrowed call argument whose callee does not return or store a
+reference tied to the argument lifetime ends after the call expression. If the
+reference result is bound, stored in a lifetime-parameterized aggregate,
+returned, or otherwise remains available as a reference value, the owner remains
+borrowed until that value's last proven use.
 
 Lexical scopes are still the conservative boundary for flows this slice does
 not prove: function/lambda bodies, `let` bodies, `with-arena` bodies, resource
-`with` bodies, individual `match` arms, branch joins, loops, `foreach`, and
-SPMD control flow. When a borrow crosses one of those boundaries and a later
-reference use remains possible, it is kept live for the conservative scope
-instead of being shortened through the join.
+`with` bodies, loops, `foreach`, and SPMD control flow. When a borrow crosses
+one of those boundaries and a later reference use remains possible, it is kept
+live for the conservative scope instead of being shortened through the join.
 
 While an immutable borrow is live, later move-only by-value moves, `set!`
 assignment to the borrowed place, and mutable borrows/mutations of the same
@@ -1575,9 +1578,9 @@ local. Lexical mutable reborrowing is supported: a nested scope may borrow a
 descendant through an existing mutable reference, and the outer mutable
 reference becomes usable again after that nested scope ends. Using or mutating
 through the outer reference while the inner reborrow is still live remains
-rejected. Straight-line `begin` sequences can shorten immutable and
-storage-backed mutable borrow conflicts after the last use, but branch and loop
-joins remain conservative.
+rejected. Straight-line `begin` sequences and path-sensitive `if`/`match` joins
+can shorten immutable and storage-backed mutable borrow conflicts after the last
+use, but loop joins remain conservative.
 
 **Invalid escapes in v1.** The checker rejects references that would outlive
 their owner or arena:
@@ -1597,8 +1600,8 @@ Mutable reference creation and exclusivity are implemented (#806). Nominal
 returned/stored lifetime parameter syntax is specified in section 3.10.1 and
 implemented by #1722/#804. Non-escaping reference-capturing closures are
 implemented (#808/#2280); mutation of captured names remains rejected (#2552).
-Straight-line non-lexical lifetime shortening is implemented as the first #810
-slice; path-sensitive branch joins, loop-carried liveness, and broader
+Straight-line non-lexical lifetime shortening and path-sensitive branch joins
+are implemented as the first #810 slices; loop-carried liveness and broader
 control-flow shortening remain later #810 slices.
 
 ```lisp test=ignore name=borrow-local-param-ok reason="illustrative borrow-expression example; not a standalone program"

@@ -156,6 +156,10 @@
   (CompilerBackendPeepholeNoMove)
   (CompilerBackendPeepholeMove String String))
 
+(defstruct CompilerBackendPeepholeEmitResult
+  (buf TextBuf)
+  (rax-owner String))
+
 (defenum CompilerBackendMaybeI64
   (CompilerBackendNoI64)
   (CompilerBackendSomeI64 i64))
@@ -27393,8 +27397,14 @@ tl_atomic_i32_cas_ptr:
     spans
     true))
 
+(define (compiler-backend-peephole-byte-at [data : (Ptr u8)] [index : i64]) : i64
+  (cast
+    (unsafe
+      (ptr-read (ptr-offset data index)))
+    : i64))
+
 (define (compiler-backend-peephole-line-end
-  [asm : String]
+  [asm-data : (Ptr u8)]
   [start : i64]
   [n : i64]) : i64
   (let
@@ -27402,7 +27412,7 @@ tl_atomic_i32_cas_ptr:
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (= (string-ref asm i) '\n')
+        (if (= (compiler-backend-peephole-byte-at asm-data i) 10)
           (set! done true)
           (set! i (+ i 1))))
       i)))
@@ -27416,6 +27426,33 @@ tl_atomic_i32_cas_ptr:
     (if newline
       (text-buf-append with-line "\n")
       with-line)))
+
+(define (compiler-backend-peephole-append-line-range
+  [buf : TextBuf]
+  [asm : String]
+  [start : i64]
+  [end : i64]
+  [newline : bool]) : TextBuf
+  (let
+    [with-line : TextBuf
+      (if (> end start)
+        (text-buf-append buf (substring asm start (- end start)))
+        buf)]
+    (if newline
+      (text-buf-append with-line "\n")
+      with-line)))
+
+(define (compiler-backend-peephole-append-pending-line
+  [buf : TextBuf]
+  [asm : String]
+  [start : i64]
+  [end : i64]
+  [owned-line : String]
+  [owned? : bool]
+  [newline : bool]) : TextBuf
+  (if owned?
+    (compiler-backend-peephole-append-line buf owned-line newline)
+    (compiler-backend-peephole-append-line-range buf asm start end newline)))
 
 (define (compiler-backend-peephole-find-comma-space
   [line : String]
@@ -27453,6 +27490,80 @@ tl_atomic_i32_cas_ptr:
             (substring line (+ comma 2) (- n (+ comma 2))))
           (CompilerBackendPeepholeNoMove)))
       (CompilerBackendPeepholeNoMove))))
+
+(define (compiler-backend-peephole-movq-prefix-len) : i64
+  9)
+
+(define (compiler-backend-peephole-movq-prefix-at-range?
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (if (> (+ start (compiler-backend-peephole-movq-prefix-len)) end)
+    false
+    (and
+      (= (compiler-backend-peephole-byte-at asm-data start) 32)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 1)) 32)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 2)) 32)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 3)) 32)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 4)) 109)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 5)) 111)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 6)) 118)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 7)) 113)
+      (= (compiler-backend-peephole-byte-at asm-data (+ start 8)) 32))))
+
+(define (compiler-backend-peephole-find-comma-space-range
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (< (+ i 1) end)
+          (if (and
+            (= (compiler-backend-peephole-byte-at asm-data i) 44)
+            (= (compiler-backend-peephole-byte-at asm-data (+ i 1)) 32))
+            (begin
+              (set! found i)
+              (set! done true))
+            (set! i (+ i 1)))
+          (set! done true)))
+      found)))
+
+(define (compiler-backend-peephole-movq-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : CompilerBackendPeepholeMove
+  (let
+    [prefix-len : i64 (compiler-backend-peephole-movq-prefix-len)]
+    [operand-start : i64 (+ start prefix-len)]
+    (if (compiler-backend-peephole-movq-prefix-at-range? asm-data start end)
+      (let
+        [comma : i64
+          (compiler-backend-peephole-find-comma-space-range
+            asm-data
+            operand-start
+            end)]
+        (if (and (> comma operand-start) (< (+ comma 2) end))
+          (CompilerBackendPeepholeMove
+            (substring asm operand-start (- comma operand-start))
+            (substring asm (+ comma 2) (- end (+ comma 2))))
+          (CompilerBackendPeepholeNoMove)))
+      (CompilerBackendPeepholeNoMove))))
+
+(define (compiler-backend-peephole-line-movq
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [owned-line : String]
+  [owned? : bool]) : CompilerBackendPeepholeMove
+  (if owned?
+    (compiler-backend-peephole-movq owned-line)
+    (compiler-backend-peephole-movq-range asm asm-data start end)))
 
 (define (compiler-backend-peephole-register-operand? [operand : String]) : bool
   (and (> (string-length operand) 0) (= (string-ref operand 0) '%')))
@@ -27571,146 +27682,290 @@ tl_atomic_i32_cas_ptr:
           [(CompilerBackendPeepholeNoMove) 0]))]
     [(CompilerBackendPeepholeNoMove) 0]))
 
+(define (compiler-backend-peephole-line-self-move?
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [owned-line : String]
+  [owned? : bool]) : bool
+  (match (compiler-backend-peephole-line-movq
+    asm
+    asm-data
+    start
+    end
+    owned-line
+    owned?)
+    [(CompilerBackendPeepholeMove src dst)
+      (compiler-backend-peephole-self-move-operands? src dst)]
+    [(CompilerBackendPeepholeNoMove) false]))
+
+(define (compiler-backend-peephole-pair-action-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : i64
+  (match (compiler-backend-peephole-line-movq
+    asm
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?)
+    [(CompilerBackendPeepholeMove src dst)
+      (if (compiler-backend-peephole-self-move-operands? src dst)
+        1
+        (match (compiler-backend-peephole-movq-range
+          asm
+          asm-data
+          next-start
+          next-end)
+          [(CompilerBackendPeepholeMove next-src next-dst)
+            (cond
+              [(compiler-backend-peephole-overwritten-frame-store-operands?
+                  src
+                  dst
+                  next-src
+                  next-dst)
+                1]
+              [(compiler-backend-peephole-redundant-move-operands?
+                  src
+                  dst
+                  next-src
+                  next-dst)
+                2]
+              [(compiler-backend-peephole-forward-frame-load-operands?
+                  src
+                  dst
+                  next-src
+                  next-dst)
+                3]
+              [else 0])]
+          [(CompilerBackendPeepholeNoMove) 0]))]
+    [(CompilerBackendPeepholeNoMove) 0]))
+
+(define (compiler-backend-peephole-forward-frame-load-line-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : String
+  (match (compiler-backend-peephole-line-movq
+    asm
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?)
+    [(CompilerBackendPeepholeMove src dst)
+      (match (compiler-backend-peephole-movq-range
+        asm
+        asm-data
+        next-start
+        next-end)
+        [(CompilerBackendPeepholeMove next-src next-dst)
+          (if (compiler-backend-peephole-forward-frame-load-operands?
+            src
+            dst
+            next-src
+            next-dst)
+            (backend-cat4 "    movq " src ", " next-dst)
+            (substring asm next-start (- next-end next-start)))]
+        [(CompilerBackendPeepholeNoMove)
+          (substring asm next-start (- next-end next-start))])]
+    [(CompilerBackendPeepholeNoMove)
+      (substring asm next-start (- next-end next-start))]))
+
+(define (compiler-backend-peephole-emit-pending-line
+  [out : TextBuf]
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [pending-newline : bool]
+  [rax-owner : String]) : CompilerBackendPeepholeEmitResult
+  (match (compiler-backend-peephole-line-movq
+    asm
+    asm-data
+    pending-start
+    pending-end
+    pending-line
+    pending-owned?)
+    [(CompilerBackendPeepholeMove src dst)
+      (let
+        [next-out : TextBuf
+          (if (and
+            (string-eq dst "%rax")
+            (string-eq src rax-owner)
+            (compiler-backend-peephole-stack-slot-operand? src))
+            out
+            (compiler-backend-peephole-append-pending-line
+              out
+              asm
+              pending-start
+              pending-end
+              pending-line
+              pending-owned?
+              pending-newline))]
+        [next-owner : String
+          (compiler-backend-peephole-rax-slot-next-owner rax-owner src dst)]
+        (CompilerBackendPeepholeEmitResult next-out next-owner))]
+    [(CompilerBackendPeepholeNoMove)
+      (CompilerBackendPeepholeEmitResult
+        (compiler-backend-peephole-append-pending-line
+          out
+          asm
+          pending-start
+          pending-end
+          pending-line
+          pending-owned?
+          pending-newline)
+        "")]))
+
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let
     [n : i64 (string-length asm)]
+    [asm-data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
     [i : i64 0]
     [out : TextBuf (text-buf-empty)]
     [has-pending : bool false]
+    [pending-start : i64 0]
+    [pending-end : i64 0]
     [pending-line : String ""]
+    [pending-owned? : bool false]
     [pending-newline : bool false]
     [rax-owner : String ""]
     (begin
       (while (< i n)
         (let
-          [end : i64 (compiler-backend-peephole-line-end asm i n)]
+          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
           [next-start : i64
             (if (< end n)
               (+ end 1)
               end)]
           [line-newline : bool (< end n)]
-          [line : String (substring asm i (- end i))]
           (begin
             (if has-pending
               (let
                 [action : i64
-                  (compiler-backend-peephole-pair-action pending-line line)]
+                  (compiler-backend-peephole-pair-action-range
+                    asm
+                    asm-data
+                    pending-start
+                    pending-end
+                    pending-line
+                    pending-owned?
+                    i
+                    end)]
                 (cond
                   [(= action 1)
                     (begin
-                      (set! pending-line line)
+                      (set! pending-start i)
+                      (set! pending-end end)
+                      (set! pending-line "")
+                      (set! pending-owned? false)
                       (set! pending-newline line-newline))]
                   [(= action 2) unit]
                   [(= action 3)
-                    (begin
-                      (match (compiler-backend-peephole-movq pending-line)
-                        [(CompilerBackendPeepholeMove src dst)
-                          (begin
-                            (if (and
-                              (string-eq dst "%rax")
-                              (string-eq src rax-owner)
-                              (compiler-backend-peephole-stack-slot-operand?
-                                src))
-                              unit
-                              (set!
-                                out
-                                (compiler-backend-peephole-append-line
-                                  out
-                                  pending-line
-                                  pending-newline)))
-                            (set!
-                              rax-owner
-                              (compiler-backend-peephole-rax-slot-next-owner
-                                rax-owner
-                                src
-                                dst)))]
-                        [(CompilerBackendPeepholeNoMove)
-                          (begin
-                            (set! rax-owner "")
-                            (set!
-                              out
-                              (compiler-backend-peephole-append-line
-                                out
-                                pending-line
-                                pending-newline)))])
-                      (set!
-                        pending-line
-                        (compiler-backend-peephole-forward-frame-load-line
+                    (let
+                      [forwarded-line : String
+                        (compiler-backend-peephole-forward-frame-load-line-range
+                          asm
+                          asm-data
+                          pending-start
+                          pending-end
                           pending-line
-                          line))
-                      (set! pending-newline line-newline))]
+                          pending-owned?
+                          i
+                          end)]
+                      (begin
+                        (let
+                          [emit : CompilerBackendPeepholeEmitResult
+                            (compiler-backend-peephole-emit-pending-line
+                              out
+                              asm
+                              asm-data
+                              pending-start
+                              pending-end
+                              pending-line
+                              pending-owned?
+                              pending-newline
+                              rax-owner)]
+                          (begin
+                            (set! out (struct-get emit buf))
+                            (set! rax-owner (struct-get emit rax-owner))))
+                        (set! pending-start 0)
+                        (set! pending-end 0)
+                        (set! pending-line forwarded-line)
+                        (set! pending-owned? true)
+                        (set! pending-newline line-newline)))]
                   [else
                     (begin
-                      (match (compiler-backend-peephole-movq pending-line)
-                        [(CompilerBackendPeepholeMove src dst)
-                          (begin
-                            (if (and
-                              (string-eq dst "%rax")
-                              (string-eq src rax-owner)
-                              (compiler-backend-peephole-stack-slot-operand?
-                                src))
-                              unit
-                              (set!
-                                out
-                                (compiler-backend-peephole-append-line
-                                  out
-                                  pending-line
-                                  pending-newline)))
-                            (set!
-                              rax-owner
-                              (compiler-backend-peephole-rax-slot-next-owner
-                                rax-owner
-                                src
-                                dst)))]
-                        [(CompilerBackendPeepholeNoMove)
-                          (begin
-                            (set! rax-owner "")
-                            (set!
-                              out
-                              (compiler-backend-peephole-append-line
-                                out
-                                pending-line
-                                pending-newline)))])
-                      (set! pending-line line)
+                      (let
+                        [emit : CompilerBackendPeepholeEmitResult
+                          (compiler-backend-peephole-emit-pending-line
+                            out
+                            asm
+                            asm-data
+                            pending-start
+                            pending-end
+                            pending-line
+                            pending-owned?
+                            pending-newline
+                            rax-owner)]
+                        (begin
+                          (set! out (struct-get emit buf))
+                          (set! rax-owner (struct-get emit rax-owner))))
+                      (set! pending-start i)
+                      (set! pending-end end)
+                      (set! pending-line "")
+                      (set! pending-owned? false)
                       (set! pending-newline line-newline))]))
               (begin
                 (set! has-pending true)
-                (set! pending-line line)
+                (set! pending-start i)
+                (set! pending-end end)
+                (set! pending-line "")
+                (set! pending-owned? false)
                 (set! pending-newline line-newline)))
             (set! i next-start))))
       (if (and
         has-pending
-        (not (compiler-backend-peephole-self-move? pending-line)))
+        (not
+          (compiler-backend-peephole-line-self-move?
+            asm
+            asm-data
+            pending-start
+            pending-end
+            pending-line
+            pending-owned?)))
         (begin
-          (match (compiler-backend-peephole-movq pending-line)
-            [(CompilerBackendPeepholeMove src dst)
-              (begin
-                (if (and
-                  (string-eq dst "%rax")
-                  (string-eq src rax-owner)
-                  (compiler-backend-peephole-stack-slot-operand? src))
-                  unit
-                  (set!
-                    out
-                    (compiler-backend-peephole-append-line
-                      out
-                      pending-line
-                      pending-newline)))
-                (set!
-                  rax-owner
-                  (compiler-backend-peephole-rax-slot-next-owner
-                    rax-owner
-                    src
-                    dst)))]
-            [(CompilerBackendPeepholeNoMove)
-              (begin
-                (set! rax-owner "")
-                (set!
-                  out
-                  (compiler-backend-peephole-append-line
-                    out
-                    pending-line
-                    pending-newline)))]))
+          (let
+            [emit : CompilerBackendPeepholeEmitResult
+              (compiler-backend-peephole-emit-pending-line
+                out
+                asm
+                asm-data
+                pending-start
+                pending-end
+                pending-line
+                pending-owned?
+                pending-newline
+                rax-owner)]
+            (begin
+              (set! out (struct-get emit buf))
+              (set! rax-owner (struct-get emit rax-owner)))))
         unit)
       (text-buf-render out))))
 

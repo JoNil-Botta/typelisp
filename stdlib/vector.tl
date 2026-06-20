@@ -784,6 +784,15 @@
           (set! (struct-get v len) last-index)
           (StringVecPopOk value v))))))
 
+;: Return the rest vector from a `string-vec-pop` result, or `fallback` when the
+;: pop was empty.
+(comptime-decl
+  (:generated vector-family string-vec-pop-rest-or "String")
+  (define (string-vec-pop-rest-or [p : StringVecPop] [fallback : StringVec]) : StringVec
+    (match p
+      [(StringVecPopOk _ rest) rest]
+      [(StringVecPopEmpty) fallback])))
+
 ;: Build a string vector from the live prefix `[0, count)` of `src`.
 (comptime-decl
   (:generated vector-family string-vec-from-array "String")
@@ -1899,6 +1908,7 @@
   (value string-vec-grow)
   (value string-vec-push)
   (value string-vec-pop)
+  (value string-vec-pop-rest-or)
   (value string-vec-from-array)
   (value string-vec-to-array)
   (value string-vec-extend-from)

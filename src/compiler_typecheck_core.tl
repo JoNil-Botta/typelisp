@@ -3855,6 +3855,30 @@
   [name : String]) : ResultTcType
   (tc-lookup-hygiene-global-visible-id ctx env (tc-name-id name)))
 
+(define (tc-lookup-dotted-source-visible
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-source-name-lookup-key-after-local-field-check ctx env name)
+    [(OkTcString lookup-name)
+      (let
+        [lookup-id : i64 (tc-name-id lookup-name)]
+        (match (tc-lookup-unsafe-id env lookup-id)
+          [(OkTcTypeUnsafe ty unsafe)
+            (if unsafe
+              (match (tc-require-unsafe env lookup-name)
+                [(OkTcUnit)
+                  (match (tc-qualified-value-visible-ok ctx lookup-name)
+                    [(OkTcUnit) (OkTcType ty)]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)])
+              (match (tc-qualified-value-visible-ok ctx lookup-name)
+                [(OkTcUnit) (OkTcType ty)]
+                [(ErrTcUnit message) (ErrTcType message)]))]
+          [(ErrTcTypeUnsafe message)
+            (tc-variant-constructor-type-for-lookup-or ctx lookup-name message)]))]
+    [(ErrTcString message) (ErrTcType message)]))
+
 (define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
   (if tc-hygiene-active-top-env-ready
     (if (string-eq module "")
@@ -3893,22 +3917,24 @@
   (let
     [name : String (intern-str name-id)]
     [def-ctx : TcContext (tc-context-with-module ctx module)]
-    (match (tc-hygiene-definition-env ctx module)
-      [(OkTcEnv def-env)
-        (match (tc-lookup-unsafe-id def-env name-id)
-          [(OkTcTypeUnsafe ty unsafe)
-            (if unsafe
-              (match (tc-require-unsafe env name)
-                [(OkTcUnit)
-                  (match (tc-qualified-value-visible-ok def-ctx name)
-                    [(OkTcUnit) (OkTcType ty)]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcUnit message) (ErrTcType message)])
-              (match (tc-qualified-value-visible-ok def-ctx name)
-                [(OkTcUnit) (OkTcType ty)]
-                [(ErrTcUnit message) (ErrTcType message)]))]
-          [(ErrTcTypeUnsafe message) (ErrTcType message)])]
-      [(ErrTcEnv message) (ErrTcType message)])))
+    (if (>= (intern-first-dot name-id) 0)
+      (tc-lookup-dotted-source-visible ctx env name)
+      (match (tc-hygiene-definition-env ctx module)
+        [(OkTcEnv def-env)
+          (match (tc-lookup-unsafe-id def-env name-id)
+            [(OkTcTypeUnsafe ty unsafe)
+              (if unsafe
+                (match (tc-require-unsafe env name)
+                  [(OkTcUnit)
+                    (match (tc-qualified-value-visible-ok def-ctx name)
+                      [(OkTcUnit) (OkTcType ty)]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcUnit message) (ErrTcType message)])
+                (match (tc-qualified-value-visible-ok def-ctx name)
+                  [(OkTcUnit) (OkTcType ty)]
+                  [(ErrTcUnit message) (ErrTcType message)]))]
+            [(ErrTcTypeUnsafe message) (ErrTcType message)])]
+        [(ErrTcEnv message) (ErrTcType message)]))))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]

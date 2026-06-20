@@ -10478,6 +10478,7 @@
       (and
         (compiler-backend-runtime-helper-asm-ok?)
         (compiler-backend-str-view-runtime-helper-asm-ok?)
+        (compiler-backend-unused-str-view-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-atomic-functions-removed-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)

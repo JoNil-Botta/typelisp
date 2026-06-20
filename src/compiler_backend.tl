@@ -22077,19 +22077,18 @@
       (compiler-backend-runtime-index-extern? index "tl_div_abort")]
     [extern-shift-abort : bool
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
-    [_extern-substring : bool
+    [extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [_extern-str-view : bool
+    [extern-str-view : bool
       (compiler-backend-runtime-index-extern? index "tl_str_view")]
-    [_extern-concat : bool
-      (compiler-backend-runtime-index-extern-concat? index)]
+    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
     [_extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [_extern-string-to-int : bool
       (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
     [_extern-hash-string : bool
       (compiler-backend-runtime-index-extern? index "tl_hash_string")]
-    [_extern-int-to-string : bool
+    [extern-int-to-string : bool
       (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
       (compiler-backend-runtime-index-extern-alias?
@@ -22311,14 +22310,23 @@
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
-    [needs-substring : bool (and (not defines-substring) calls-substring)]
-    [needs-str-view : bool (and (not defines-str-view) calls-str-view)]
-    [needs-concat : bool (and (not defines-concat) calls-concat)]
+    ;; Migrated string helpers live in stdlib/runtime.tl, but the plan bit still
+    ;; owns their fixed symbols so stdlib extern declarations are not emitted.
+    ;; Importing a helper declaration can root the prelude helper before any IR
+    ;; call remains, so extern presence must count here as well as calls.
+    [needs-substring : bool
+      (and (not defines-substring) (or extern-substring calls-substring))]
+    [needs-str-view : bool
+      (and (not defines-str-view) (or extern-str-view calls-str-view))]
+    [needs-concat : bool
+      (and (not defines-concat) (or extern-concat calls-concat))]
     [_needs-string-eq : bool false]
     [_needs-string-to-int : bool false]
     [_needs-hash-string : bool false]
     [needs-int-to-string : bool
-      (and (not defines-int-to-string) calls-int-to-string)]
+      (and
+        (not defines-int-to-string)
+        (or extern-int-to-string calls-int-to-string))]
     [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]
@@ -29018,6 +29026,50 @@ tl_memcpy:
           (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
           (not (compiler-backend-string-contains? asm "tl_substring:\n"))
           (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-unused-str-view-extern-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "stdlib/runtime.tl::tl-runtime-str-view"
+        IrParamNil
+        (AstTyI64)
+        0
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+              IrInstrNil))
+          IrBlockNil))
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          0
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil))
+    (compiler-ir-extern-cons
+      (compiler-ir-extern-default "tl_str_view" (AstTyI64))
+      IrExternNil)))
+
+(define (compiler-backend-unused-str-view-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-unused-str-view-extern-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".globl tl_str_view\n")
+        (compiler-backend-string-contains? asm "tl_str_view:\n")
+        (not (compiler-backend-string-contains? asm ".extern tl_str_view\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

@@ -6153,13 +6153,34 @@
     (compiler-backend-runtime-helper-known? name)
     (compiler-backend-plan-provides? plan name)))
 
+(define (compiler-backend-runtime-helper-owner-core-ok? [name : String]) : bool
+  (match (compiler-backend-runtime-helper-owner name)
+    [(BackendRuntimeOwnerCore) true]
+    [_ false]))
+
 (define (compiler-backend-runtime-helper-inventory-core-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
+    (compiler-backend-runtime-helper-owner-core-ok? name)))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-ffi-symbol-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
     (match (compiler-backend-runtime-helper-owner name)
-      [(BackendRuntimeOwnerCore) true]
+      [(BackendRuntimeOwnerStdlibFfi) true]
+      [_ false])))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (and
+    (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
+    (match (compiler-backend-runtime-helper-owner name)
+      [(BackendRuntimeOwnerStdlibTypeLisp) true]
       [_ false])))
 
 (define (compiler-backend-runtime-helper-inventory-compat-alias-ok?
@@ -6211,43 +6232,87 @@
       "tl_arena_poison_enable")
     (compiler-backend-runtime-helper-inventory-core-symbol-ok?
       plan
-      "tl_thread_init")))
+      "tl_thread_init")
+    (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+      plan
+      "tl_thread_entry_ptr")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_memcpy")
+    (compiler-backend-runtime-helper-owner-core-ok? "__chkstk")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_setup_argv")
+    (compiler-backend-runtime-helper-owner-core-ok? "_tl_start")))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (backend-and4
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-ffi-symbol-ok?
       plan
       "tl_profile_alloc_total")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-ffi-symbol-ok?
       plan
       "tl_profile_alloc_live")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-ffi-symbol-ok?
       plan
       "tl_profile_alloc_peak")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-ffi-symbol-ok?
       plan
       "tl_profile_alloc_reset_peak")))
 
 (define (compiler-backend-runtime-helper-inventory-stdlib-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (compiler-backend-runtime-helper-inventory-symbol-ok? plan "tl_substring")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+      plan
+      "tl_substring")
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
       plan
       "tl_string_concat")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
       plan
       "tl_string_concat3")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
       plan
       "tl_string_concat4")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
       plan
       "tl_string_concat5")
-    (compiler-backend-runtime-helper-inventory-symbol-ok?
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
       plan
       "tl_int_to_string")))
+
+(define (compiler-backend-runtime-helper-inventory-stdlib-atomic-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i64_load_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i64_store_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i64_add_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i64_fetch_add_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i64_cas_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i32_load_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i32_store_ptr")
+      (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+        plan
+        "tl_atomic_i32_add_ptr"))
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+      plan
+      "tl_atomic_i32_fetch_add_ptr")
+    (compiler-backend-runtime-helper-inventory-stdlib-type-lisp-symbol-ok?
+      plan
+      "tl_atomic_i32_cas_ptr")))
 
 (define (compiler-backend-runtime-helper-inventory-retired-string-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -6436,6 +6501,8 @@
       [profile-id : i64
         (compiler-backend-runtime-name-id "tl_profile_alloc_total")]
       [stdlib-id : i64 (compiler-backend-runtime-name-id "tl_string_concat")]
+      [atomic-id : i64
+        (compiler-backend-runtime-name-id "tl_atomic_i64_cas_ptr")]
       [compat-id : i64 (compiler-backend-runtime-name-id "env-path-separator")]
       [retired-id : i64 (compiler-backend-runtime-name-id "tl_oob_abort")]
       (and
@@ -6444,6 +6511,7 @@
           (compiler-backend-runtime-helper-stdlib-ffi-id? profile-id)
           (compiler-backend-runtime-helper-stdlib-type-lisp-id? stdlib-id)
           (compiler-backend-runtime-helper-compatibility-alias-id? compat-id))
+        (compiler-backend-runtime-helper-stdlib-type-lisp-id? atomic-id)
         (not (compiler-backend-runtime-helper-known-id? retired-id))
         (compiler-builtin-backend-runtime-concat-id? stdlib-id)
         (compiler-builtin-backend-runtime-profile-id? profile-id)))))
@@ -6483,17 +6551,110 @@
       (compiler-backend-runtime-helper-inventory-core-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
+      (compiler-backend-runtime-helper-inventory-stdlib-atomic-ok? plan)
       (compiler-backend-runtime-helper-inventory-env-compat-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-file-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-io-ok? plan)
-      (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
       (and
+        (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
         (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
         (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok? plan)
         (compiler-backend-runtime-helper-inventory-retired-string-ok? plan)
         (compiler-backend-runtime-helper-inventory-negative-ok? plan)
         (compiler-backend-runtime-helper-owner-id-ok?)
         (compiler-backend-runtime-plan-id-lookup-only-ok?)))))
+
+(define (compiler-backend-runtime-global-symbol-ok?
+  [asm : String]
+  [name : String]) : bool
+  (compiler-backend-string-contains? asm (str-cat "    .globl " name "\n")))
+
+(define (compiler-backend-runtime-common-global-symbols-ok? [asm : String]) : bool
+  (and
+    (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_memcpy")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_load_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_store_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_add_ptr")
+      (compiler-backend-runtime-global-symbol-ok?
+        asm
+        "tl_atomic_i64_fetch_add_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i64_cas_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_load_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_store_ptr"))
+    (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_add_ptr")
+      (compiler-backend-runtime-global-symbol-ok?
+        asm
+        "tl_atomic_i32_fetch_add_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_atomic_i32_cas_ptr")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_current")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_set")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_poison_enable")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic"))
+    (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_live")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_peak")
+      (compiler-backend-runtime-global-symbol-ok?
+        asm
+        "tl_profile_alloc_reset_peak")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_alloc")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset"))))
+
+(define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
+  (and
+    (= (compiler-backend-string-count asm "    .globl ") 25)
+    (compiler-backend-runtime-common-global-symbols-ok? asm)
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
+    (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
+    (not (compiler-backend-runtime-global-symbol-ok? asm "tl_setup_argv"))
+    (not (compiler-backend-runtime-global-symbol-ok? asm "_tl_start"))))
+
+(define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
+  (and
+    (= (compiler-backend-string-count asm "    .globl ") 28)
+    (compiler-backend-runtime-common-global-symbols-ok? asm)
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
+    (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_setup_argv")
+    (compiler-backend-runtime-global-symbol-ok? asm "_tl_start")
+    (not (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init"))))
+
+(define (compiler-backend-runtime-sensitive-instrs-ok?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (and
+    (= (compiler-backend-string-count asm "    lock ") 17)
+    (if (compiler-backend-target-windows? target)
+      (and
+        (= (compiler-backend-string-count asm "%gs:0x28") 22)
+        (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 0))
+      (and
+        (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 20)
+        (= (compiler-backend-string-count asm "%gs:0x28") 0)))))
+
+(define (compiler-backend-runtime-global-inventory-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        target
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (compiler-backend-runtime-sensitive-instrs-ok? target asm)
+      (if (compiler-backend-target-windows? target)
+        (compiler-backend-runtime-windows-global-symbols-ok? asm)
+        (compiler-backend-runtime-linux-global-symbols-ok? asm)))))
+
+(define (compiler-backend-runtime-global-inventory-ok?) : bool
+  (and
+    (compiler-backend-runtime-global-inventory-target-ok? (BackendTargetLinux))
+    (compiler-backend-runtime-global-inventory-target-ok?
+      (BackendTargetWindows))))
 
 (define (compiler-backend-runtime-page-call-inventory-linux-ok?) : bool
   (let
@@ -10154,6 +10315,7 @@
         (compiler-backend-runtime-helper-asm-ok?)
         (compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
+        (compiler-backend-runtime-global-inventory-ok?)
         (compiler-backend-runtime-page-call-inventory-ok?)
         (compiler-backend-profile-runtime-split-ok?))
       (compiler-backend-alloc-runtime-arena-ok?)

@@ -708,12 +708,15 @@
 
 ;: Close `fd` with the `close` syscall when it names an open descriptor.
 (define (process-linux-close-if [fd : i64]) : unit
-  (if (>= fd 0)
-    (begin
-      (unsafe
-        (syscall 3 fd))
-      unit)
-    unit))
+  (cfg
+    windows
+    unit
+    (if (>= fd 0)
+      (begin
+        (unsafe
+          (syscall 3 fd))
+        unit)
+      unit)))
 
 ;: Build a NUL-terminated `char**` argv (argv[0] = `exec-addr`) and return its
 ;: integer address.
@@ -846,26 +849,29 @@
 ;: Write `len` bytes at `data-addr` to `fd`, returning 0 on success, the raw
 ;: negative `-errno` on a write error, or -1 on a zero-length write.
 (define (process-linux-write-all [fd : i64] [data-addr : i64] [len : i64]) : i64
-  (let
-    [off : i64 0]
-    [result : i64 0]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< off len))
-        (let
-          [written : i64
-            (unsafe
-              (syscall 1 fd (+ data-addr off) (- len off)))]
-          (if (< written 0)
-            (begin
-              (set! result written)
-              (set! done true))
-            (if (= written 0)
+  (cfg
+    windows
+    -1
+    (let
+      [off : i64 0]
+      [result : i64 0]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< off len))
+          (let
+            [written : i64
+              (unsafe
+                (syscall 1 fd (+ data-addr off) (- len off)))]
+            (if (< written 0)
               (begin
-                (set! result -1)
+                (set! result written)
                 (set! done true))
-              (set! off (+ off written))))))
-      result)))
+              (if (= written 0)
+                (begin
+                  (set! result -1)
+                  (set! done true))
+                (set! off (+ off written))))))
+        result))))
 
 ;: Feed `data-addr`/`len` to the child stdin pipe while ignoring SIGPIPE, then
 ;: restore the old SIGPIPE disposition. Returns 0 when input was delivered (or a
@@ -876,151 +882,157 @@
   [stdin-w : i64]
   [data-addr : i64]
   [len : i64]) : i64
-  (if (not has-stdin)
-    0
-    (begin
-      (stdlib.process_runtime.process-linux-close-if stdin-r)
-      (let
-        [act : (Array u64) (make-array u64 4)]
-        [old : (Array u64) (make-array u64 4)]
-        (begin
-          (array-set! act 0 (cast 1 : u64))
-          (unsafe
-            (syscall
-              13
-              13
-              (stdlib.process_runtime.process-array-u64-addr act)
-              (stdlib.process_runtime.process-array-u64-addr old)
-              8))
-          (let
-            [written : i64
-              (stdlib.process_runtime.process-linux-write-all
-                stdin-w
-                data-addr
-                len)]
-            (begin
-              (stdlib.process_runtime.process-linux-close-if stdin-w)
-              (unsafe
-                (syscall
-                  13
-                  13
-                  (stdlib.process_runtime.process-array-u64-addr old)
+  (cfg
+    windows
+    1
+    (if (not has-stdin)
+      0
+      (begin
+        (stdlib.process_runtime.process-linux-close-if stdin-r)
+        (let
+          [act : (Array u64) (make-array u64 4)]
+          [old : (Array u64) (make-array u64 4)]
+          (begin
+            (array-set! act 0 (cast 1 : u64))
+            (unsafe
+              (syscall
+                13
+                13
+                (stdlib.process_runtime.process-array-u64-addr act)
+                (stdlib.process_runtime.process-array-u64-addr old)
+                8))
+            (let
+              [written : i64
+                (stdlib.process_runtime.process-linux-write-all
+                  stdin-w
+                  data-addr
+                  len)]
+              (begin
+                (stdlib.process_runtime.process-linux-close-if stdin-w)
+                (unsafe
+                  (syscall
+                    13
+                    13
+                    (stdlib.process_runtime.process-array-u64-addr old)
+                    0
+                    8))
+                (if (>= written 0)
                   0
-                  8))
-              (if (>= written 0)
-                0
-                (if (= written -32)
-                  0
-                  1)))))))))
+                  (if (= written -32)
+                    0
+                    1))))))))))
 
 ;: Assemble argv/envp/cwd/marker C strings and open the capture descriptors
 ;: (memfd stdout/stderr, an optional stdin pipe, and the exec-failure pipe)
 ;: before forking. `failed` records a pre-fork OS error.
 (define (process-linux-prepare [command : ProcessRuntimeCommand]) : ProcessLinuxSpawn
-  (let
-    [exec-addr : i64
-      (stdlib.process_runtime.process-array-u8-addr
-        (io.io-c-string
-          (stdlib.process_runtime.process-runtime-command-executable command)))]
-    [argv-addr : i64
-      (stdlib.process_runtime.process-linux-build-argv
-        exec-addr
-        (stdlib.process_runtime.process-runtime-command-argv command))]
-    [envp-addr : i64
-      (stdlib.process_runtime.process-linux-build-envp
-        (stdlib.process_runtime.process-runtime-command-env command))]
-    [cwd-addr : i64
-      (stdlib.process_runtime.process-runtime-maybe-cstring-addr
-        (stdlib.process_runtime.process-runtime-command-cwd command))]
-    [marker-addr : i64
-      (stdlib.process_runtime.process-array-u8-addr (io.io-c-string "exec"))]
-    [has-stdin : bool
-      (stdlib.process_runtime.process-runtime-maybe-present?
-        (stdlib.process_runtime.process-runtime-command-stdin command))]
-    [stdin-data : i64
-      (stdlib.process_runtime.process-runtime-maybe-data-addr
-        (stdlib.process_runtime.process-runtime-command-stdin command))]
-    [stdin-len : i64
-      (stdlib.process_runtime.process-runtime-maybe-len
-        (stdlib.process_runtime.process-runtime-command-stdin command))]
-    [stdin-r : i64 -1]
-    [stdin-w : i64 -1]
-    [stdout-fd : i64 -1]
-    [stderr-fd : i64 -1]
-    [exec-r : i64 -1]
-    [exec-w : i64 -1]
-    [failed : bool false]
-    [pbuf : (Array i32) (make-array i32 2)]
-    [ebuf : (Array i32) (make-array i32 2)]
-    (begin
-      (if has-stdin
-        (if (<
-          (unsafe
-            (syscall
-              293
-              (stdlib.process_runtime.process-array-i32-addr pbuf)
-              524288))
-          0)
-          (set! failed true)
-          (begin
-            (set! stdin-r (cast (array-ref pbuf 0) : i64))
-            (set! stdin-w (cast (array-ref pbuf 1) : i64))))
-        unit)
-      (if (not failed)
-        (let
-          [fd : i64
+  (cfg
+    windows
+    (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true)
+    (let
+      [exec-addr : i64
+        (stdlib.process_runtime.process-array-u8-addr
+          (io.io-c-string
+            (stdlib.process_runtime.process-runtime-command-executable command)))]
+      [argv-addr : i64
+        (stdlib.process_runtime.process-linux-build-argv
+          exec-addr
+          (stdlib.process_runtime.process-runtime-command-argv command))]
+      [envp-addr : i64
+        (stdlib.process_runtime.process-linux-build-envp
+          (stdlib.process_runtime.process-runtime-command-env command))]
+      [cwd-addr : i64
+        (stdlib.process_runtime.process-runtime-maybe-cstring-addr
+          (stdlib.process_runtime.process-runtime-command-cwd command))]
+      [marker-addr : i64
+        (stdlib.process_runtime.process-array-u8-addr (io.io-c-string "exec"))]
+      [has-stdin : bool
+        (stdlib.process_runtime.process-runtime-maybe-present?
+          (stdlib.process_runtime.process-runtime-command-stdin command))]
+      [stdin-data : i64
+        (stdlib.process_runtime.process-runtime-maybe-data-addr
+          (stdlib.process_runtime.process-runtime-command-stdin command))]
+      [stdin-len : i64
+        (stdlib.process_runtime.process-runtime-maybe-len
+          (stdlib.process_runtime.process-runtime-command-stdin command))]
+      [stdin-r : i64 -1]
+      [stdin-w : i64 -1]
+      [stdout-fd : i64 -1]
+      [stderr-fd : i64 -1]
+      [exec-r : i64 -1]
+      [exec-w : i64 -1]
+      [failed : bool false]
+      [pbuf : (Array i32) (make-array i32 2)]
+      [ebuf : (Array i32) (make-array i32 2)]
+      (begin
+        (if has-stdin
+          (if (<
             (unsafe
               (syscall
-                319
-                (stdlib.process_runtime.process-array-u8-addr
-                  (io.io-c-string "typelisp-process-stdout"))
-                0))]
-          (if (< fd 0)
+                293
+                (stdlib.process_runtime.process-array-i32-addr pbuf)
+                524288))
+            0)
             (set! failed true)
-            (set! stdout-fd fd)))
-        unit)
-      (if (not failed)
-        (let
-          [fd : i64
+            (begin
+              (set! stdin-r (cast (array-ref pbuf 0) : i64))
+              (set! stdin-w (cast (array-ref pbuf 1) : i64))))
+          unit)
+        (if (not failed)
+          (let
+            [fd : i64
+              (unsafe
+                (syscall
+                  319
+                  (stdlib.process_runtime.process-array-u8-addr
+                    (io.io-c-string "typelisp-process-stdout"))
+                  0))]
+            (if (< fd 0)
+              (set! failed true)
+              (set! stdout-fd fd)))
+          unit)
+        (if (not failed)
+          (let
+            [fd : i64
+              (unsafe
+                (syscall
+                  319
+                  (stdlib.process_runtime.process-array-u8-addr
+                    (io.io-c-string "typelisp-process-stderr"))
+                  0))]
+            (if (< fd 0)
+              (set! failed true)
+              (set! stderr-fd fd)))
+          unit)
+        (if (not failed)
+          (if (<
             (unsafe
               (syscall
-                319
-                (stdlib.process_runtime.process-array-u8-addr
-                  (io.io-c-string "typelisp-process-stderr"))
-                0))]
-          (if (< fd 0)
+                293
+                (stdlib.process_runtime.process-array-i32-addr ebuf)
+                524288))
+            0)
             (set! failed true)
-            (set! stderr-fd fd)))
-        unit)
-      (if (not failed)
-        (if (<
-          (unsafe
-            (syscall
-              293
-              (stdlib.process_runtime.process-array-i32-addr ebuf)
-              524288))
-          0)
-          (set! failed true)
-          (begin
-            (set! exec-r (cast (array-ref ebuf 0) : i64))
-            (set! exec-w (cast (array-ref ebuf 1) : i64))))
-        unit)
-      (ProcessLinuxSpawn
-        exec-addr
-        argv-addr
-        envp-addr
-        cwd-addr
-        marker-addr
-        has-stdin
-        stdin-data
-        stdin-len
-        stdin-r
-        stdin-w
-        stdout-fd
-        stderr-fd
-        exec-r
-        exec-w
-        failed))))
+            (begin
+              (set! exec-r (cast (array-ref ebuf 0) : i64))
+              (set! exec-w (cast (array-ref ebuf 1) : i64))))
+          unit)
+        (ProcessLinuxSpawn
+          exec-addr
+          argv-addr
+          envp-addr
+          cwd-addr
+          marker-addr
+          has-stdin
+          stdin-data
+          stdin-len
+          stdin-r
+          stdin-w
+          stdout-fd
+          stderr-fd
+          exec-r
+          exec-w
+          failed)))))
 
 ;: Close every descriptor recorded in a spawn struct (pre-fork cleanup).
 (define (process-linux-cleanup-spawn [spawn : ProcessLinuxSpawn]) : unit
@@ -1036,172 +1048,174 @@
 ;: Child failure path: write the `exec` marker through the failure pipe so the
 ;: parent learns `execve` did not take over, then exit(127). Never returns.
 (define (process-linux-child-fail [exec-w : i64] [marker-addr : i64]) : never
-  (begin
-    (unsafe
-      (syscall 1 exec-w marker-addr 4))
-    (unsafe
-      (syscall 60 127))
-    (stdlib.process_runtime.process-linux-child-fail exec-w marker-addr)))
+  (cfg
+    windows
+    (stdlib.process_runtime.process-linux-child-fail exec-w marker-addr)
+    (begin
+      (unsafe
+        (syscall 1 exec-w marker-addr 4))
+      (unsafe
+        (syscall 60 127))
+      (stdlib.process_runtime.process-linux-child-fail exec-w marker-addr))))
 
 ;: Forked child path (syscalls only, no allocation): wire stdin/stdout/stderr,
 ;: chdir, then `execve`. Never returns (it execs or exits 127).
 (define (process-linux-exec-child [spawn : ProcessLinuxSpawn]) : never
-  (begin
-    (unsafe
-      (syscall 3 (struct-get spawn exec-r)))
-    (if (>= (struct-get spawn stdin-w) 0)
-      (begin
-        (unsafe
-          (syscall 3 (struct-get spawn stdin-w)))
+  (cfg
+    windows
+    (stdlib.process_runtime.process-linux-exec-child spawn)
+    (begin
+      (unsafe
+        (syscall 3 (struct-get spawn exec-r)))
+      (if (>= (struct-get spawn stdin-w) 0)
+        (begin
+          (unsafe
+            (syscall 3 (struct-get spawn stdin-w)))
+          (if (<
+            (unsafe
+              (syscall 33 (struct-get spawn stdin-r) 0))
+            0)
+            (stdlib.process_runtime.process-linux-child-fail
+              (struct-get spawn exec-w)
+              (struct-get spawn marker-addr))
+            (begin
+              (unsafe
+                (syscall 3 (struct-get spawn stdin-r)))
+              unit)))
+        unit)
+      (unsafe
+        (syscall 33 (struct-get spawn stdout-fd) 1))
+      (unsafe
+        (syscall 33 (struct-get spawn stderr-fd) 2))
+      (unsafe
+        (syscall 3 (struct-get spawn stdout-fd)))
+      (unsafe
+        (syscall 3 (struct-get spawn stderr-fd)))
+      (if (not (= (struct-get spawn cwd-addr) 0))
         (if (<
           (unsafe
-            (syscall 33 (struct-get spawn stdin-r) 0))
+            (syscall 80 (struct-get spawn cwd-addr)))
           0)
           (stdlib.process_runtime.process-linux-child-fail
             (struct-get spawn exec-w)
             (struct-get spawn marker-addr))
-          (begin
-            (unsafe
-              (syscall 3 (struct-get spawn stdin-r)))
-            unit)))
-      unit)
-    (unsafe
-      (syscall 33 (struct-get spawn stdout-fd) 1))
-    (unsafe
-      (syscall 33 (struct-get spawn stderr-fd) 2))
-    (unsafe
-      (syscall 3 (struct-get spawn stdout-fd)))
-    (unsafe
-      (syscall 3 (struct-get spawn stderr-fd)))
-    (if (not (= (struct-get spawn cwd-addr) 0))
-      (if (<
-        (unsafe
-          (syscall 80 (struct-get spawn cwd-addr)))
-        0)
-        (stdlib.process_runtime.process-linux-child-fail
-          (struct-get spawn exec-w)
-          (struct-get spawn marker-addr))
+          unit)
         unit)
-      unit)
-    (unsafe
-      (syscall
-        59
-        (struct-get spawn exec-addr)
-        (struct-get spawn argv-addr)
-        (struct-get spawn envp-addr)))
-    (stdlib.process_runtime.process-linux-child-fail
-      (struct-get spawn exec-w)
-      (struct-get spawn marker-addr))))
+      (unsafe
+        (syscall
+          59
+          (struct-get spawn exec-addr)
+          (struct-get spawn argv-addr)
+          (struct-get spawn envp-addr)))
+      (stdlib.process_runtime.process-linux-child-fail
+        (struct-get spawn exec-w)
+        (struct-get spawn marker-addr)))))
 
 ;: Return true when the child wrote the `execve`-failure marker.
 (define (process-linux-exec-failed? [exec-r : i64]) : bool
-  (let
-    [buf : (Array u8) (make-array u8 8)]
-    [count : i64
-      (unsafe
-        (syscall 0 exec-r (stdlib.process_runtime.process-array-u8-addr buf) 8))]
-    (begin
-      (stdlib.process_runtime.process-linux-close-if exec-r)
-      (> count 0))))
+  (cfg
+    windows
+    true
+    (let
+      [buf : (Array u8) (make-array u8 8)]
+      [count : i64
+        (unsafe
+          (syscall
+            0
+            exec-r
+            (stdlib.process_runtime.process-array-u8-addr buf)
+            8))]
+      (begin
+        (stdlib.process_runtime.process-linux-close-if exec-r)
+        (> count 0)))))
 
 ;: Parent path for the captured-output runtime: feed stdin, wait for the child,
 ;: detect `execve` failure, then read the memfd-captured stdout/stderr.
 (define (process-linux-output-parent [spawn : ProcessLinuxSpawn] [pid : i64]) : ResultProcessRuntimeOutput
-  (begin
-    (stdlib.process_runtime.process-linux-close-if (struct-get spawn exec-w))
-    (let
-      [stdin-status : i64
-        (stdlib.process_runtime.process-linux-feed-stdin
-          (struct-get spawn has-stdin)
-          (struct-get spawn stdin-r)
-          (struct-get spawn stdin-w)
-          (struct-get spawn stdin-data)
-          (struct-get spawn stdin-len))]
-      (if (= stdin-status 1)
-        (begin
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn stdout-fd))
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn stderr-fd))
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn exec-r))
-          (stdlib.process_runtime.process-wait-error))
-        (let
-          [statusbuf : (Array i32) (make-array i32 1)]
-          [waited : i64
-            (unsafe
-              (syscall
-                61
-                pid
-                (stdlib.process_runtime.process-array-i32-addr statusbuf)
-                0
-                0))]
-          (if (< waited 0)
-            (begin
-              (stdlib.process_runtime.process-linux-close-if
-                (struct-get spawn stdout-fd))
-              (stdlib.process_runtime.process-linux-close-if
-                (struct-get spawn stderr-fd))
-              (stdlib.process_runtime.process-linux-close-if
-                (struct-get spawn exec-r))
-              (stdlib.process_runtime.process-wait-error))
-            (if (stdlib.process_runtime.process-linux-exec-failed?
+  (cfg
+    windows
+    (stdlib.process_runtime.process-wait-error)
+    (begin
+      (stdlib.process_runtime.process-linux-close-if (struct-get spawn exec-w))
+      (let
+        [stdin-status : i64
+          (stdlib.process_runtime.process-linux-feed-stdin
+            (struct-get spawn has-stdin)
+            (struct-get spawn stdin-r)
+            (struct-get spawn stdin-w)
+            (struct-get spawn stdin-data)
+            (struct-get spawn stdin-len))]
+        (if (= stdin-status 1)
+          (begin
+            (stdlib.process_runtime.process-linux-close-if
+              (struct-get spawn stdout-fd))
+            (stdlib.process_runtime.process-linux-close-if
+              (struct-get spawn stderr-fd))
+            (stdlib.process_runtime.process-linux-close-if
               (struct-get spawn exec-r))
+            (stdlib.process_runtime.process-wait-error))
+          (let
+            [statusbuf : (Array i32) (make-array i32 1)]
+            [waited : i64
+              (unsafe
+                (syscall
+                  61
+                  pid
+                  (stdlib.process_runtime.process-array-i32-addr statusbuf)
+                  0
+                  0))]
+            (if (< waited 0)
               (begin
                 (stdlib.process_runtime.process-linux-close-if
                   (struct-get spawn stdout-fd))
                 (stdlib.process_runtime.process-linux-close-if
                   (struct-get spawn stderr-fd))
-                (stdlib.process_runtime.process-spawn-error))
-              (let
-                [stdout-text : String
-                  (io.io-read-fd-to-string (struct-get spawn stdout-fd))]
-                [stderr-text : String
-                  (io.io-read-fd-to-string (struct-get spawn stderr-fd))]
-                [status : i64
-                  (stdlib.process_runtime.process-decode-status
-                    (array-ref statusbuf 0))]
+                (stdlib.process_runtime.process-linux-close-if
+                  (struct-get spawn exec-r))
+                (stdlib.process_runtime.process-wait-error))
+              (if (stdlib.process_runtime.process-linux-exec-failed?
+                (struct-get spawn exec-r))
                 (begin
                   (stdlib.process_runtime.process-linux-close-if
                     (struct-get spawn stdout-fd))
                   (stdlib.process_runtime.process-linux-close-if
                     (struct-get spawn stderr-fd))
-                  (stdlib.process_runtime.process-runtime-output-ok
-                    status
-                    stdout-text
-                    stderr-text))))))))))
+                  (stdlib.process_runtime.process-spawn-error))
+                (let
+                  [stdout-text : String
+                    (io.io-read-fd-to-string (struct-get spawn stdout-fd))]
+                  [stderr-text : String
+                    (io.io-read-fd-to-string (struct-get spawn stderr-fd))]
+                  [status : i64
+                    (stdlib.process_runtime.process-decode-status
+                      (array-ref statusbuf 0))]
+                  (begin
+                    (stdlib.process_runtime.process-linux-close-if
+                      (struct-get spawn stdout-fd))
+                    (stdlib.process_runtime.process-linux-close-if
+                      (struct-get spawn stderr-fd))
+                    (stdlib.process_runtime.process-runtime-output-ok
+                      status
+                      stdout-text
+                      stderr-text)))))))))))
 
 ;: Parent path for the asynchronous start runtime: feed stdin, detect immediate
 ;: `execve` failure, otherwise return a child owning the capture descriptors.
 (define (process-linux-start-parent [spawn : ProcessLinuxSpawn] [pid : i64]) : ResultProcessRuntimeChild
-  (begin
-    (stdlib.process_runtime.process-linux-close-if (struct-get spawn exec-w))
-    (let
-      [stdin-status : i64
-        (stdlib.process_runtime.process-linux-feed-stdin
-          (struct-get spawn has-stdin)
-          (struct-get spawn stdin-r)
-          (struct-get spawn stdin-w)
-          (struct-get spawn stdin-data)
-          (struct-get spawn stdin-len))]
-      (if (= stdin-status 1)
-        (begin
-          (unsafe
-            (syscall
-              61
-              pid
-              (stdlib.process_runtime.process-array-i32-addr (make-array i32 1))
-              0
-              0))
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn stdout-fd))
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn stderr-fd))
-          (stdlib.process_runtime.process-linux-close-if
-            (struct-get spawn exec-r))
-          (stdlib.process_runtime.process-wait-error-child))
-        (if (stdlib.process_runtime.process-linux-exec-failed?
-          (struct-get spawn exec-r))
+  (cfg
+    windows
+    (stdlib.process_runtime.process-wait-error-child)
+    (begin
+      (stdlib.process_runtime.process-linux-close-if (struct-get spawn exec-w))
+      (let
+        [stdin-status : i64
+          (stdlib.process_runtime.process-linux-feed-stdin
+            (struct-get spawn has-stdin)
+            (struct-get spawn stdin-r)
+            (struct-get spawn stdin-w)
+            (struct-get spawn stdin-data)
+            (struct-get spawn stdin-len))]
+        (if (= stdin-status 1)
           (begin
             (unsafe
               (syscall
@@ -1215,88 +1229,115 @@
               (struct-get spawn stdout-fd))
             (stdlib.process_runtime.process-linux-close-if
               (struct-get spawn stderr-fd))
-            (stdlib.process_runtime.process-spawn-error-child))
-          (stdlib.process_runtime.process-runtime-child-ok
-            pid
-            (struct-get spawn stdout-fd)
-            (struct-get spawn stderr-fd)))))))
+            (stdlib.process_runtime.process-linux-close-if
+              (struct-get spawn exec-r))
+            (stdlib.process_runtime.process-wait-error-child))
+          (if (stdlib.process_runtime.process-linux-exec-failed?
+            (struct-get spawn exec-r))
+            (begin
+              (unsafe
+                (syscall
+                  61
+                  pid
+                  (stdlib.process_runtime.process-array-i32-addr
+                    (make-array i32 1))
+                  0
+                  0))
+              (stdlib.process_runtime.process-linux-close-if
+                (struct-get spawn stdout-fd))
+              (stdlib.process_runtime.process-linux-close-if
+                (struct-get spawn stderr-fd))
+              (stdlib.process_runtime.process-spawn-error-child))
+            (stdlib.process_runtime.process-runtime-child-ok
+              pid
+              (struct-get spawn stdout-fd)
+              (struct-get spawn stderr-fd))))))))
 
 ;: Linux captured-output runtime: prepare, fork, and dispatch parent/child.
 (define (process-linux-output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
-  (let
-    [spawn : ProcessLinuxSpawn
-      (stdlib.process_runtime.process-linux-prepare command)]
-    (if (struct-get spawn failed)
-      (begin
-        (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
-        (stdlib.process_runtime.process-spawn-error))
-      (let
-        [pid : i64
-          (unsafe
-            (syscall 57))]
-        (if (< pid 0)
-          (begin
-            (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
-            (stdlib.process_runtime.process-spawn-error))
-          (if (= pid 0)
-            (stdlib.process_runtime.process-linux-exec-child spawn)
-            (stdlib.process_runtime.process-linux-output-parent spawn pid)))))))
+  (cfg
+    windows
+    (stdlib.process_runtime.process-spawn-error)
+    (let
+      [spawn : ProcessLinuxSpawn
+        (stdlib.process_runtime.process-linux-prepare command)]
+      (if (struct-get spawn failed)
+        (begin
+          (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
+          (stdlib.process_runtime.process-spawn-error))
+        (let
+          [pid : i64
+            (unsafe
+              (syscall 57))]
+          (if (< pid 0)
+            (begin
+              (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
+              (stdlib.process_runtime.process-spawn-error))
+            (if (= pid 0)
+              (stdlib.process_runtime.process-linux-exec-child spawn)
+              (stdlib.process_runtime.process-linux-output-parent spawn pid))))))))
 
 ;: Linux asynchronous start runtime: prepare, fork, and dispatch parent/child.
 (define (process-linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
-  (let
-    [spawn : ProcessLinuxSpawn
-      (stdlib.process_runtime.process-linux-prepare command)]
-    (if (struct-get spawn failed)
-      (begin
-        (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
-        (stdlib.process_runtime.process-spawn-error-child))
-      (let
-        [pid : i64
-          (unsafe
-            (syscall 57))]
-        (if (< pid 0)
-          (begin
-            (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
-            (stdlib.process_runtime.process-spawn-error-child))
-          (if (= pid 0)
-            (stdlib.process_runtime.process-linux-exec-child spawn)
-            (stdlib.process_runtime.process-linux-start-parent spawn pid)))))))
+  (cfg
+    windows
+    (stdlib.process_runtime.process-spawn-error-child)
+    (let
+      [spawn : ProcessLinuxSpawn
+        (stdlib.process_runtime.process-linux-prepare command)]
+      (if (struct-get spawn failed)
+        (begin
+          (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
+          (stdlib.process_runtime.process-spawn-error-child))
+        (let
+          [pid : i64
+            (unsafe
+              (syscall 57))]
+          (if (< pid 0)
+            (begin
+              (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
+              (stdlib.process_runtime.process-spawn-error-child))
+            (if (= pid 0)
+              (stdlib.process_runtime.process-linux-exec-child spawn)
+              (stdlib.process_runtime.process-linux-start-parent spawn pid))))))))
 
 ;: Linux asynchronous wait runtime: reap the child, read the memfd-captured
 ;: stdout/stderr, release the capture descriptors, and decode the exit status.
 (define (process-linux-wait [child : ProcessRuntimeChild]) : ResultProcessRuntimeOutput
-  (let
-    [pid : i64 (struct-get child pid)]
-    [stdout-fd : i64 (struct-get child stdout-handle)]
-    [stderr-fd : i64 (struct-get child stderr-handle)]
-    [statusbuf : (Array i32) (make-array i32 1)]
-    [waited : i64
-      (unsafe
-        (syscall
-          61
-          pid
-          (stdlib.process_runtime.process-array-i32-addr statusbuf)
-          0
-          0))]
-    (if (< waited 0)
-      (begin
-        (stdlib.process_runtime.process-linux-close-if stdout-fd)
-        (stdlib.process_runtime.process-linux-close-if stderr-fd)
-        (stdlib.process_runtime.process-wait-error))
-      (let
-        [stdout-text : String (io.io-read-fd-to-string stdout-fd)]
+  (cfg
+    windows
+    (stdlib.process_runtime.process-wait-error)
+    (let
+      [pid : i64 (struct-get child pid)]
+      [stdout-fd : i64 (struct-get child stdout-handle)]
+      [stderr-fd : i64 (struct-get child stderr-handle)]
+      [statusbuf : (Array i32) (make-array i32 1)]
+      [waited : i64
+        (unsafe
+          (syscall
+            61
+            pid
+            (stdlib.process_runtime.process-array-i32-addr statusbuf)
+            0
+            0))]
+      (if (< waited 0)
         (begin
           (stdlib.process_runtime.process-linux-close-if stdout-fd)
-          (let
-            [stderr-text : String (io.io-read-fd-to-string stderr-fd)]
-            (begin
-              (stdlib.process_runtime.process-linux-close-if stderr-fd)
-              (stdlib.process_runtime.process-runtime-output-ok
-                (stdlib.process_runtime.process-decode-status
-                  (array-ref statusbuf 0))
-                stdout-text
-                stderr-text))))))))
+          (stdlib.process_runtime.process-linux-close-if stderr-fd)
+          (stdlib.process_runtime.process-wait-error))
+        (let
+          [stdout-text : String (io.io-read-fd-to-string stdout-fd)]
+          (begin
+            (stdlib.process_runtime.process-linux-close-if stdout-fd)
+            (let
+              [stderr-text : String (io.io-read-fd-to-string stderr-fd)]
+              (begin
+                (stdlib.process_runtime.process-linux-close-if stderr-fd)
+                (stdlib.process_runtime.process-runtime-output-ok
+                  (stdlib.process_runtime.process-decode-status
+                    (array-ref statusbuf 0))
+                  stdout-text
+                  stderr-text)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Windows runtime (kernel32 CreateProcessA with temp-file redirection).

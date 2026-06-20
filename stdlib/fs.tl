@@ -39,54 +39,73 @@
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (fs-linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall 83 (io.io-linux-ptr-arg path) mode))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall 83 (io.io-linux-ptr-arg path) mode)))))
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
 (define (fs-linux-syscall-unlink [path : (Ptr u8)]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall 87 (io.io-linux-ptr-arg path)))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall 87 (io.io-linux-ptr-arg path))))))
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
 (define (fs-linux-syscall-rmdir [path : (Ptr u8)]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall 84 (io.io-linux-ptr-arg path)))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall 84 (io.io-linux-ptr-arg path))))))
 
 ;: Linux `rename` via the `rename` syscall (number 82).
 (define (fs-linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall
-        82
-        (io.io-linux-ptr-arg source)
-        (io.io-linux-ptr-arg destination)))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall
+          82
+          (io.io-linux-ptr-arg source)
+          (io.io-linux-ptr-arg destination))))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (fs-linux-syscall-getpid) : i64
-  (unsafe
-    (syscall 39)))
+  (cfg
+    windows
+    -1
+    (unsafe
+      (syscall 39))))
 
 ;: Linux `getcwd` via the `getcwd` syscall (number 79).
 ;: Returns the buffer pointer on success or a null pointer on error, matching
 ;: the C `getcwd` contract the callers expect.
 (define (fs-linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
-  (let
-    [ptr : i64
-      (io.io-linux-ptr-arg
+  (cfg
+    windows
+    (unsafe
+      (int->ptr (cast 0 : u64) : (Ptr u8)))
+    (let
+      [ptr : i64
+        (io.io-linux-ptr-arg
+          (unsafe
+            (ptr-cast buf : (Ptr u8))))]
+      [result : i64
+        (io.io-linux-syscall-status
+          (unsafe
+            (syscall 79 ptr size)))]
+      (if (< result 0)
         (unsafe
-          (ptr-cast buf : (Ptr u8))))]
-    [result : i64
-      (io.io-linux-syscall-status
+          (int->ptr (cast 0 : u64) : (Ptr u8)))
         (unsafe
-          (syscall 79 ptr size)))]
-    (if (< result 0)
-      (unsafe
-        (int->ptr (cast 0 : u64) : (Ptr u8)))
-      (unsafe
-        (int->ptr (cast ptr : u64) : (Ptr u8))))))
+          (int->ptr (cast ptr : u64) : (Ptr u8)))))))
 
 ;: Linux `openat` syscall (number 257), used for directory enumeration.
 (define (fs-linux-syscall-openat
@@ -94,24 +113,30 @@
   [path : (Ptr u8)]
   [flags : i64]
   [mode : i64]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall 257 dirfd (io.io-linux-ptr-arg path) flags mode))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall 257 dirfd (io.io-linux-ptr-arg path) flags mode)))))
 
 ;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
 (define (fs-linux-syscall-getdents64
   [fd : i64]
   [buf : (MutPtr u8)]
   [count : i64]) : i64
-  (io.io-linux-syscall-status
-    (unsafe
-      (syscall
-        217
-        fd
-        (io.io-linux-ptr-arg
-          (unsafe
-            (ptr-cast buf : (Ptr u8))))
-        count))))
+  (cfg
+    windows
+    -1
+    (io.io-linux-syscall-status
+      (unsafe
+        (syscall
+          217
+          fd
+          (io.io-linux-ptr-arg
+            (unsafe
+              (ptr-cast buf : (Ptr u8))))
+          count)))))
 
 ;: Windows kernel32 bindings backing the directory/file primitives (#2142
 ;: slice 1), replacing the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.

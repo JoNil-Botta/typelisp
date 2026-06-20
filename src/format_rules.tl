@@ -658,23 +658,111 @@
       (format-rules-delimited-doc "[" (box-get items) "]")]
     [(FmtCstForms items) (format-rules-forms-doc (box-get items))]))
 
+;; Streaming source renderer for the normal `fmt`/LSP path. It preserves the
+;; existing nested layout rules but avoids allocating one full-file Doc tree:
+;; top-level CST forms and their separators are emitted incrementally into the
+;; render buffer.
+(define (format-rules-render-hard-line-into [indent : i64] [buf : FmtRenderBuf]) : i64
+  (begin
+    (render-newline-into! buf indent)
+    indent))
+
+(define (format-rules-render-gap-into [indent : i64] [buf : FmtRenderBuf]) : i64
+  (format-rules-render-hard-line-into
+    (format-rules-render-hard-line-into indent buf)
+    buf))
+
+(define (format-rules-render-forms-separator-into
+  [previous : FormatCst]
+  [node : FormatCst]
+  [indent : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (format-rules-node-comment? previous)
+    (format-rules-render-hard-line-into indent buf)
+    (if (format-rules-adjacent-top-forms? previous node)
+      (format-rules-render-hard-line-into indent buf)
+      (format-rules-render-gap-into indent buf))))
+
+(define (format-rules-render-node-fragment-into
+  [node : FormatCst]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [buf : FmtRenderBuf]) : i64
+  (render-doc-into (format-rules-cst-doc node) width indent col false buf))
+
+(define (format-rules-render-forms-tail-into
+  [previous : FormatCst]
+  [items : FormatCstList]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (let
+        [after-separator : i64
+          (format-rules-render-forms-separator-into previous node indent buf)]
+        [after-node : i64
+          (format-rules-render-node-fragment-into
+            node
+            width
+            indent
+            after-separator
+            buf)]
+        (format-rules-render-forms-tail-into
+          node
+          (box-get rest)
+          width
+          indent
+          after-node
+          buf))]))
+
+(define (format-rules-render-forms-into
+  [items : FormatCstList]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (format-rules-render-forms-tail-into
+        node
+        (box-get rest)
+        width
+        indent
+        (format-rules-render-node-fragment-into node width indent col buf)
+        buf)]))
+
+(define (format-rules-render-cst-width [node : FormatCst] [width : i64]) : String
+  (let
+    [buf : FmtRenderBuf (fmt-render-buf-new)]
+    (begin
+      (match node
+        [(FmtCstForms items)
+          (format-rules-render-forms-into (box-get items) width 0 0 buf)]
+        [_ (format-rules-render-node-fragment-into node width 0 0 buf)])
+      (fmt-render-buf-string buf))))
+
 (define (format-rules-source-doc [src : String]) : Doc
   (format-rules-cst-doc (parse-format-source src)))
 
 (define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
   (match (parse-format-source-result src)
     [(OkFormatCst tree)
-      (OkFormatString (render-doc-width (format-rules-cst-doc tree) width))]
+      (OkFormatString (format-rules-render-cst-width tree width))]
     [(ErrFormatCst err) (ErrFormatString err)]))
 
 (define (format-rules-render [node : FormatCst]) : String
-  (render-doc (format-rules-cst-doc node)))
+  (format-rules-render-cst-width node (format-width)))
 
 (define (format-rules-render-width [node : FormatCst] [width : i64]) : String
-  (render-doc-width (format-rules-cst-doc node) width))
+  (format-rules-render-cst-width node width))
 
 (define (format-rules-render-source [src : String]) : String
-  (render-doc (format-rules-source-doc src)))
+  (format-rules-render-source-width src (format-width)))
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (format-rules-render-source-width-result src width)
@@ -770,6 +858,31 @@
   "(defmacro (all [first : bool] [rest : bool ...]) : bool
   first)")
 
+(define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
+  (let
+    [tree : FormatCst (parse-format-source src)]
+    (string-eq
+      (format-rules-render-cst-width tree width)
+      (render-doc-width (format-rules-cst-doc tree) width))))
+
+(define (format-rules-streaming-doc-fixtures-ok?) : bool
+  (and
+    (format-rules-streaming-matches-doc? (format-rules-decls-source) 80)
+    (format-rules-streaming-matches-doc? (format-rules-flow-source) 80)
+    (format-rules-streaming-matches-doc? (format-rules-comments-source) 80)
+    (format-rules-streaming-matches-doc? (format-rules-quote-source) 80)
+    (format-rules-streaming-matches-doc? (format-rules-unsafe-source) 80)
+    (format-rules-streaming-matches-doc?
+      (format-rules-define-metadata-source)
+      80)
+    (format-rules-streaming-matches-doc?
+      (format-rules-define-metadata-long-source)
+      48)
+    (format-rules-streaming-matches-doc?
+      (format-rules-variadic-macro-source)
+      80)
+    (format-rules-streaming-matches-doc? "(: 1 2) (foo a b c d e f g h)" 12)))
+
 (define (format-rules-self-test) : i64
   (let
     [decls : String
@@ -807,4 +920,5 @@
       (unless
         (string-eq variadic (format-rules-variadic-macro-expected))
         (return 8))
+      (unless (format-rules-streaming-doc-fixtures-ok?) (return 9))
       42)))

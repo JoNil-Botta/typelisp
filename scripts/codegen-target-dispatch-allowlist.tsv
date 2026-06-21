@@ -40,7 +40,7 @@ src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	BackendTarget(L
 src/compiler_backend.tl	compiler-backend-outgoing-frame-space	abi	BackendTarget(Linux|Windows)	2	Frame outgoing space includes Win64 shadow and stack-argument reservations.
 src/compiler_backend.tl	compiler-backend-outgoing-shadow-space	abi	BackendTarget(Linux|Windows)	2	Win64 requires caller shadow space and System V does not.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	BackendTarget(Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
-src/compiler_backend.tl	compiler-backend-emit-call-args	abi	compiler-backend-target-windows[?]	2	Win64 call argument slot and stack layout differs from System V.
+src/compiler_backend.tl	compiler-backend-emit-call-args-with-assignments	abi	compiler-backend-target-windows[?]	2	Win64 call argument slot and stack layout differs from System V.
 src/compiler_backend.tl	compiler-backend-group-word-arg-reg	abi	compiler-backend-target-windows[?]	2	Register-group argument homes follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-emit-param-spills	abi	compiler-backend-target-windows[?]	2	Parameter spill homes follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.

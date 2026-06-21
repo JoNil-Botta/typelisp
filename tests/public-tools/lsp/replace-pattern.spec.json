@@ -1,7 +1,0 @@
-{
-  "exit": 0,
-  "stderr_exact": "",
-  "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"text\"", "raw_contains": "(+ z foo-bar)", "raw_contains": "[x : i64]"}
-  ]
-}

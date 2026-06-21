@@ -3368,75 +3368,6 @@
         (LspContinue docs))]))
 
 ;; tl/structuralReplace - legacy method name routed to position-based replacement
-;; tl/insertFunction - Insert a function after another
-(define (lsp-handle-tl-insert-function
-  [id : Json]
-  [params : Json]
-  [docs : LspDocuments]) : LspHandleResult
-  (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
-      (match (lsp-json-string-field params "after")
-        [(OkLspJsonText after-name)
-          (match (lsp-json-string-field params "newText")
-            [(OkLspJsonText new-text)
-              (let
-                [text-copy : String (string-copy-borrowed (& text))]
-                [decls : LspDeclList (lsp-scan-decls text-copy)]
-                [i : i64 0]
-                [n : i64 (lsp-decl-list-len decls)]
-                [found : bool false]
-                [result : String ""]
-                (begin
-                  (while (and (< i n) (not found))
-                    (let
-                      [entry : LspDeclEntry
-                        (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
-                      (if (string-eq (struct-get entry name) after-name)
-                        (begin
-                          (set!
-                            result
-                            (lsp-edit-at-pos
-                              text
-                              (struct-get entry form-end-line)
-                              (struct-get entry form-end-col)
-                              (struct-get entry form-end-line)
-                              (struct-get entry form-end-col)
-                              (string-append "\n\n" new-text)))
-                          (set! found true)
-                          unit)
-                        (begin
-                          (set! i (+ i 1))
-                          unit))))
-                  (if found
-                    (let
-                      [formatted : String
-                        (format-rules-render-source-width result 80)]
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (JsonBool true)
-                            "text"
-                            (JsonString formatted)))
-                        (LspContinue docs)))
-                    (begin
-                      (lsp-write-error id -32600 "Declaration not found")
-                      (LspContinue docs)))))]
-            [(MissingLspJsonText)
-              (begin
-                (lsp-write-error id -32600 "Missing newText parameter")
-                (LspContinue docs))])]
-        [(MissingLspJsonText)
-          (begin
-            (lsp-write-error id -32600 "Missing after parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocument)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
-
-;; tl/deleteFunction - legacy method name routed to position-based deletion
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start [text : String] [entry : LspDeclEntry]) : i64
   (lsp-offset-at-position
@@ -4176,24 +4107,6 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/insertFunction"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-insert-function id params docs))]
-                        [(JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
-            unit)
           (if (and (not handled) (string-eq method "tl/deleteFunction"))
             (begin
               (set! handled true)
@@ -4367,7 +4280,7 @@
                         [(JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-replace-pattern id params docs))]
+                            (lsp-handle-tl-replace-pattern-at id params docs))]
                         [(JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))

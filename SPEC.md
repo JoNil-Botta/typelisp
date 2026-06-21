@@ -801,6 +801,10 @@ expression that must typecheck as `bool`. A fixed slot declared `Expr` accepts
 any ordinary operand expression without checking its produced type before
 expansion; the macro receives the syntax as an `Expr`, and ordinary
 typechecking validates the expanded expression afterward.
+The macro may call `(expr-type expr)` to query the captured expression's
+produced type when ordinary typechecking can determine it; the query does not
+evaluate the runtime expression and reports a macro-time diagnostic for syntax
+that cannot be typed in the caller context.
 
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions preserved
@@ -4235,14 +4239,16 @@ TypeLisp types and emit concrete declarations instead of using source-level
 generics or traits. Reflection is intentionally a comptime metadata API, not a
 runtime type-object API.
 
-All reflection primitives take `type-expr` operands that must evaluate at
-compile time to a type value, usually `(type T)` or a `[comptime T : type]`
-parameter. Reflection primitives are valid only in compile-time-required
-contexts: explicit `(comptime ...)` folds, comptime parameter evaluation, and
-generated declaration evaluation. Any direct runtime use must be rejected before
-lowering. A generator that wants a runtime literal derived from reflection must
-emit that literal into generated source; the reflection metadata itself never
-becomes a runtime value.
+Except for `expr-type`, reflection primitives take `type-expr` operands that
+must evaluate at compile time to a type value, usually `(type T)` or a
+`[comptime T : type]` parameter. `expr-type` takes an `Expr` captured by a macro
+and returns the expression's produced type as the same compile-time type value.
+Reflection primitives are valid only in compile-time-required contexts: explicit
+`(comptime ...)` folds, comptime parameter evaluation, macro transformer
+evaluation, and generated declaration evaluation. Any direct runtime use must be
+rejected before lowering. A generator that wants a runtime literal derived from
+reflection must emit that literal into generated source; the reflection metadata
+itself never becomes a runtime value.
 
 Reflection returns CTFE metadata values. `i64` metadata is an integer in the
 comptime evaluator. `type` metadata is a type value. `String` metadata is a
@@ -4261,6 +4267,7 @@ V1 primitive names and signatures are fixed as follows:
 
 | Primitive | Result | Notes |
 | --- | --- | --- |
+| `(expr-type expr)` | `type` | Produced type of a macro-captured `Expr`; does not evaluate the runtime expression. |
 | `(type-kind type-expr)` | `String` | One of the fixed kind strings below. |
 | `(type-key type-expr)` | `String` | Opaque deterministic key for generated declarations. |
 | `(type-nominal-module type-expr)` | `String` | Canonical module identity for a struct/enum type. |

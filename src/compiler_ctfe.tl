@@ -33,6 +33,37 @@
   (CtfeExprClause AstExprClause)
   (CtfeExprClauseList AstExprClauseList))
 
+(define (ctfe-untyped-expr-type-name) : String
+  "__typelisp_untyped_expr")
+
+(define (ctfe-untyped-expr-type) : AstType
+  (AstTyVar (intern (ctfe-untyped-expr-type-name))))
+
+(define (ctfe-untyped-expr-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyVar name)
+      (string-eq (intern-str name) (ctfe-untyped-expr-type-name))]
+    [_ false]))
+
+(define (ctfe-captured-expr-type-name) : String
+  "__typelisp_captured_expr")
+
+(define (ctfe-captured-expr-type [ty : AstType]) : AstType
+  (AstTyRegion (ctfe-captured-expr-type-name) (ty-node-push ty)))
+
+(define (ctfe-captured-expr-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyRegion name _) (string-eq name (ctfe-captured-expr-type-name))]
+    [_ false]))
+
+(define (ctfe-captured-expr-type-inner [ty : AstType]) : AstType
+  (match ty
+    [(AstTyRegion name inner)
+      (if (string-eq name (ctfe-captured-expr-type-name))
+        (ty-node-get inner)
+        ty)]
+    [_ ty]))
+
 (defenum CtfeValueList
   (CtfeValueNil)
   (CtfeValueCons CompilerCtfeValue (Box CtfeValueList)))
@@ -2858,8 +2889,11 @@
   (or
     (string-eq name base)
     (string-eq name (string-append "comptime." base))
+    (string-eq name (string-append "comptime/" base))
     (string-eq name (string-append "stdlib.comptime." base))
-    (string-eq name (string-append "stdlib.comptime/" base))))
+    (string-eq name (string-append "stdlib.comptime/" base))
+    (string-eq name (string-append "stdlib/comptime." base))
+    (string-eq name (string-append "stdlib/comptime/" base))))
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (cond
@@ -2868,6 +2902,7 @@
     [(ctfe-stdlib-comptime-helper-name? name "expr-var") "expr-var"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-splice") "expr-splice"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-if") "expr-if"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-type") "expr-type"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool?") "expr-bool?"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool-value")
       "expr-bool-value"]
@@ -3017,7 +3052,7 @@
                 (match value
                   [(CtfeString name)
                     (OkCtfe
-                      (CtfeExpr (ctfe-expr-var name) (AstTyExpr))
+                      (CtfeExpr (ctfe-expr-var name) (ctfe-untyped-expr-type))
                       arg-fuel)]
                   [_
                     (ErrCtfe
@@ -3038,6 +3073,46 @@
     (string-eq name "expr-if-cond")
     (string-eq name "expr-if-then")
     (string-eq name "expr-if-else")))
+
+(define (ctfe-eval-expr-type-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeExpr _ ty)
+                    (let
+                      [actual-ty : AstType (ctfe-captured-expr-type-inner ty)]
+                      (if (ctfe-untyped-expr-type? actual-ty)
+                        (ErrCtfe
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-type requires a typechecked Expr"))
+                        (OkCtfe
+                          (CtfeType
+                            (ctfe-reflect-resolve-type
+                              (ctfe-env-reflections env)
+                              actual-ty))
+                          arg-fuel)))]
+                  [_
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr expr "expr-type expects Expr"))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg"))]))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
   (or
@@ -3088,7 +3163,9 @@
                         expr
                         "expr-list-nth index out of range"))
                     (OkCtfe
-                      (CtfeExpr (ctfe-expr-list-nth nodes index) (AstTyExpr))
+                      (CtfeExpr
+                        (ctfe-expr-list-nth nodes index)
+                        (ctfe-untyped-expr-type))
                       index-fuel))])]
             [_
               (ErrCtfe
@@ -3214,7 +3291,9 @@
                               (string-append name " expects non-empty ExprList")))]
                         [(string-eq name "expr-list-head")
                           (OkCtfe
-                            (CtfeExpr (ctfe-expr-list-head nodes) (AstTyExpr))
+                            (CtfeExpr
+                              (ctfe-expr-list-head nodes)
+                              (ctfe-untyped-expr-type))
                             arg-fuel)]
                         [(string-eq name "expr-list-tail")
                           (OkCtfe
@@ -3257,13 +3336,15 @@
                   [(CtfeExprClause clause)
                     (if (string-eq name "expr-clause-first")
                       (OkCtfe
-                        (CtfeExpr (ctfe-expr-clause-first clause) (AstTyExpr))
+                        (CtfeExpr
+                          (ctfe-expr-clause-first clause)
+                          (ctfe-untyped-expr-type))
                         arg-fuel)
                       (if (string-eq name "expr-clause-second")
                         (OkCtfe
                           (CtfeExpr
                             (ctfe-expr-clause-second clause)
-                            (AstTyExpr))
+                            (ctfe-untyped-expr-type))
                           arg-fuel)
                         (ctfe-unsupported-form expr)))]
                   [_
@@ -3551,6 +3632,8 @@
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(string-eq call-name "expr-if")
             (ctfe-eval-expr-if-call args expr env fuel)]
+          [(string-eq call-name "expr-type")
+            (ctfe-eval-expr-type-call args expr env fuel)]
           [(ctfe-expr-inspector-name? call-name)
             (ctfe-eval-expr-inspector-call call-name args expr env fuel)]
           [(ctfe-expr-list-inspector-name? call-name)
@@ -3821,7 +3904,7 @@
         (ctfe-match-pattern-list
           args
           (ctfe-value-list2
-            (CtfeExpr callee (AstTyExpr))
+            (CtfeExpr callee (ctfe-untyped-expr-type))
             (CtfeExprList args-list))
           env)
         (CtfeNoPatternMatch))]
@@ -3836,28 +3919,28 @@
       (if (ctfe-pattern-variant-name? variant "ExprQuote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
           env)
         (CtfeNoPatternMatch))]
     [(AstExprQuasiquote inner)
       (if (ctfe-pattern-variant-name? variant "ExprQuasiquote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
           env)
         (CtfeNoPatternMatch))]
     [(AstExprUnquote inner)
       (if (ctfe-pattern-variant-name? variant "ExprUnquote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
           env)
         (CtfeNoPatternMatch))]
     [(AstExprUnquoteSplicing inner)
       (if (ctfe-pattern-variant-name? variant "ExprUnquoteSplicing")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (AstTyExpr)))
+          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
           env)
         (CtfeNoPatternMatch))]
     [_ (CtfeNoPatternMatch)]))

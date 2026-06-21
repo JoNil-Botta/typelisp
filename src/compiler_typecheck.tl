@@ -6815,6 +6815,48 @@
     (expr-list-nth args 1)))
 (define (main) : bool (second 42 true))")
 
+(define (compiler-typecheck-macro-expr-type-source) : String
+  "(defstruct Point (x i64))
+(defmacro (kind-code [value : Expr]) : i64
+  (let [T : Expr (expr-type value)]
+    (if (string-eq (type-kind T) \"i64\")
+      (expr-int 1)
+      (if (string-eq (type-kind T) \"bool\")
+        (expr-int 2)
+        (if (string-eq (type-kind T) \"struct\")
+          (if (string-eq (type-nominal-name T) \"Point\")
+            (expr-int 3)
+            (expr-int 0))
+          (if (string-eq (type-kind T) \"array\")
+            (if (string-eq (type-kind (array-element-type T)) \"i64\")
+              (expr-int 4)
+              (expr-int 0))
+            (if (string-eq (type-kind T) \"function\")
+              (if (string-eq (type-kind (function-return-type T)) \"i64\")
+                (expr-int 5)
+                (expr-int 0))
+              (expr-int 0))))))))
+(define (main [flag : bool] [items : (Array i64 4)] [f : (-> i64 i64)]) : i64
+  (+ (kind-code (ann 1 : i64))
+     (+ (kind-code flag)
+        (+ (kind-code (Point 1))
+           (+ (kind-code items)
+              (kind-code f))))))")
+
+(define (compiler-typecheck-macro-qualified-expr-type-source) : String
+  "(defmacro (kind-code [value : Expr]) : i64
+  (if (string-eq (type-kind (comptime.expr-type value)) \"i64\")
+    (expr-int 1)
+    (expr-int 0)))
+(define (main) : i64 (kind-code 42))")
+
+(define (compiler-typecheck-macro-expr-type-untyped-source) : String
+  "(defmacro (needs-type [value : Expr]) : i64
+  (if (string-eq (type-kind (expr-type value)) \"i64\")
+    (expr-int 1)
+    (expr-int 0)))
+(define (main) : i64 (needs-type missing))")
+
 (define (compiler-typecheck-macro-expand-depth-source) : String
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
@@ -7345,6 +7387,12 @@
       (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
       "typecheck: if branches must match")
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-list-nth-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expr-type-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-expr-type-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expr-type-untyped-source)
+      "expr-type requires a typechecked Expr")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expand-depth-source)
       "macro expansion exceeded depth limit")

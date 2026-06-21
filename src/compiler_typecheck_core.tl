@@ -3693,8 +3693,40 @@
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
+      (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
+      (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
+      (set! out (tc-bind out "type-nominal-name" (tc-fn1 expr (AstTyString))))
+      (set! out (tc-bind out "struct-field-count" (tc-fn1 expr (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "struct-field-name" (tc-fn2 expr (AstTyI64) (AstTyString))))
+      (set! out (tc-bind out "struct-field-type" (tc-fn2 expr (AstTyI64) expr)))
+      (set! out (tc-bind out "enum-variant-count" (tc-fn1 expr (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "enum-variant-name" (tc-fn2 expr (AstTyI64) (AstTyString))))
+      (set!
+        out
+        (tc-bind
+          out
+          "enum-variant-payload-count"
+          (tc-fn2 expr (AstTyI64) (AstTyI64))))
+      (set!
+        out
+        (tc-bind
+          out
+          "enum-variant-payload-type"
+          (tc-fn3 expr (AstTyI64) (AstTyI64) expr)))
+      (set! out (tc-bind out "array-element-type" (tc-fn1 expr expr)))
+      (set! out (tc-bind out "array-length" (tc-fn1 expr (AstTyI64))))
+      (set! out (tc-bind out "array-dynamic?" (tc-fn1 expr (AstTyBool))))
+      (set! out (tc-bind out "function-param-count" (tc-fn1 expr (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "function-param-type" (tc-fn2 expr (AstTyI64) expr)))
+      (set! out (tc-bind out "function-return-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-bool?" (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-bool-value" (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-if?" (tc-fn1 expr (AstTyBool))))
@@ -3741,6 +3773,26 @@
           "expr-clause-list->expr-list"
           (tc-fn1 clause-list (AstTyExprList))))
       out)))
+
+(define tc-macro-helper-env-cache-ready : bool
+  false)
+(define tc-macro-helper-env-cache-value : TcTypeEnv
+  (TcTypeNil))
+
+(define (tc-macro-helper-env-cache-reset!) : unit
+  (begin
+    (set! tc-macro-helper-env-cache-ready false)
+    (set! tc-macro-helper-env-cache-value (TcTypeNil))))
+
+(define (tc-macro-helper-env-cached [env : TcTypeEnv]) : TcTypeEnv
+  (if tc-macro-helper-env-cache-ready
+    tc-macro-helper-env-cache-value
+    (let
+      [helper-env : TcTypeEnv (tc-macro-helper-env env)]
+      (begin
+        (set! tc-macro-helper-env-cache-value helper-env)
+        (set! tc-macro-helper-env-cache-ready true)
+        tc-macro-helper-env-cache-value))))
 
 (define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (match env
@@ -5426,6 +5478,7 @@
     (string-eq name "expr-var")
     (string-eq name "expr-splice")
     (string-eq name "expr-if")
+    (string-eq name "expr-type")
     (ctfe-expr-inspector-name? name)
     (ctfe-expr-list-inspector-name? name)
     (ctfe-expr-clause-inspector-name? name)
@@ -24821,6 +24874,19 @@
         [(AstNoType) ty])]
     [_ ty]))
 
+(define (tc-macro-produced-type-compatible?
+  [ctx : TcContext]
+  [ret : AstType]
+  [produced : AstType]) : bool
+  (let
+    [expected : AstType (tc-resolve-type ctx (tc-macro-signature-type ret))]
+    (or
+      (tc-type-eq expected (AstTyExpr))
+      (tc-type-eq produced (AstTyExpr))
+      (ctfe-untyped-expr-type? produced)
+      (ctfe-captured-expr-type? produced)
+      (tc-type-compatible? expected (tc-resolve-type ctx produced)))))
+
 (define (tc-check-defmacro-produced-type
   [ctx : TcContext]
   [ret : AstType]
@@ -24835,11 +24901,7 @@
         [_ (ErrTcUnit "typecheck: Decls macro body must return Expr")])
       (match value
         [(CtfeExpr _ produced)
-          (if (or
-            (tc-type-eq produced (AstTyExpr))
-            (tc-type-compatible?
-              (tc-resolve-type ctx (tc-macro-signature-type ret))
-              (tc-resolve-type ctx produced)))
+          (if (tc-macro-produced-type-compatible? ctx ret produced)
             OkTcUnit
             (ErrTcUnit
               "typecheck: macro body produced type does not match declaration"))]
@@ -24927,6 +24989,7 @@
       [(string-eq call-name "expr-var") true]
       [(string-eq call-name "expr-splice") true]
       [(string-eq call-name "expr-if") true]
+      [(string-eq call-name "expr-type") true]
       [(ctfe-expr-inspector-name? call-name) true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-inspector-name? call-name) true]
@@ -26083,7 +26146,7 @@
   [body : AstExpr]) : ResultTcUnit
   (let
     [macro-env : TcTypeEnv
-      (tc-bind-macro-params ctx (tc-macro-helper-env top-env) params)]
+      (tc-bind-macro-params ctx (tc-macro-helper-env-cached top-env) params)]
     (match (tc-expr ctx macro-env body)
       [(OkTcType got)
         (match (tc-check-defmacro-purity ctx macro-env name params body)
@@ -31659,6 +31722,11 @@
 (define macro-expand-macro-names : TcStringList
   (TcStringNil))
 
+;; Macro names whose transformer bodies can call `expr-type`. Only those macros
+;; need fixed `Expr` operands to carry produced type metadata.
+(define macro-expand-expr-type-macro-names : TcStringList
+  (TcStringNil))
+
 ;; Cached program export table for the current expansion run. `macro-qualified-
 ;; call-decl` previously rebuilt the entire export table on EVERY qualified macro
 ;; call; combined with the recursive re-expansion of variadic core macros, that
@@ -32844,6 +32912,56 @@
       (macro-collect-macro-names
         (box-get rest)
         (macro-collect-decl-name decl acc))]))
+
+(define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
+  (or
+    (tc-expr-uses-free-name? expr "expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "comptime.expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "comptime/expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "stdlib.comptime.expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "stdlib.comptime/expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "stdlib/comptime.expr-type" TcStringNil)
+    (tc-expr-uses-free-name? expr "stdlib/comptime/expr-type" TcStringNil)))
+
+(define (macro-collect-expr-type-decl-name
+  [decl : AstDecl]
+  [module : String]
+  [acc : TcStringList]) : TcStringList
+  (match decl
+    [(AstDeclDefMacro name _ _ body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        [name-str : String (intern-str name)]
+        (if (macro-expr-uses-expr-type? body)
+          (tc-string-list-add acc (compiler-symbol-module-key module name-str))
+          acc))]
+    [(AstDeclUnsafe inner-box)
+      (macro-collect-expr-type-decl-name (box-get inner-box) module acc)]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-collect-expr-type-decl-name (box-get template-box) module acc)]
+    [_ acc]))
+
+(define (macro-collect-expr-type-macro-names-in
+  [decls : AstDeclList]
+  [module : String]
+  [acc : TcStringList]) : TcStringList
+  (match decls
+    [(AstDeclNil) acc]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule next-module)
+          (macro-collect-expr-type-macro-names-in
+            (box-get rest)
+            (intern-str next-module)
+            acc)]
+        [_
+          (macro-collect-expr-type-macro-names-in
+            (box-get rest)
+            module
+            (macro-collect-expr-type-decl-name decl module acc))])]))
+
+(define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
+  (macro-collect-expr-type-macro-names-in decls "" TcStringNil))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name : String]) : TcMaybeString
   (match env
@@ -34218,6 +34336,21 @@
   (tc-macro-expr-clause-type?
     (tc-resolve-type ctx (tc-macro-signature-type ty))))
 
+(define (macro-captured-expr-produced-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [resolved-expected : AstType]
+  [capture-expr-types : bool]
+  [arg : AstExpr]) : AstType
+  (if (tc-type-eq resolved-expected (AstTyExpr))
+    (if capture-expr-types
+      (match (tc-expr ctx env arg)
+        [(OkTcType actual)
+          (ctfe-captured-expr-type (tc-resolve-type ctx actual))]
+        [(ErrTcType _) (ctfe-untyped-expr-type)])
+      (ctfe-untyped-expr-type))
+    resolved-expected))
+
 (define (macro-bind-variadic-param
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -34249,6 +34382,7 @@
   [ty : AstType]
   [arg-id : i64]
   [arg-expr : AstExpr]
+  [capture-expr-types : bool]
   [env : CtfeEnv]) : ResultMacroEnv
   (if (tc-macro-type-param-kind? ty)
     (match (macro-type-arg ctx arg-expr)
@@ -34262,16 +34396,24 @@
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
         [(ErrMacroClause diag) (ErrMacroEnv diag)])
-      (match (macro-check-operand ctx type-env ty arg-expr)
-        [(OkMacroCheck)
-          (OkMacroEnv
-            (ctfe-env-extend
-              env
-              (intern-str name)
-              (CtfeExpr
-                arg-id
-                (tc-resolve-type ctx (tc-macro-signature-type ty)))))]
-        [(ErrMacroCheck diag) (ErrMacroEnv diag)]))))
+      (let
+        [resolved-expected : AstType
+          (tc-resolve-type ctx (tc-macro-signature-type ty))]
+        (match (macro-check-operand ctx type-env ty arg-expr)
+          [(OkMacroCheck)
+            (OkMacroEnv
+              (ctfe-env-extend
+                env
+                (intern-str name)
+                (CtfeExpr
+                  arg-id
+                  (macro-captured-expr-produced-type
+                    ctx
+                    type-env
+                    resolved-expected
+                    capture-expr-types
+                    arg-expr))))]
+          [(ErrMacroCheck diag) (ErrMacroEnv diag)])))))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
@@ -34281,6 +34423,7 @@
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
+  [capture-expr-types : bool]
   [call-expr : AstExpr]) : ResultMacroEnv
   (match params
     [(AstMacroParamNil)
@@ -34315,6 +34458,7 @@
                       pty
                       arg
                       arg-expr
+                      capture-expr-types
                       env)
                       [(OkMacroEnv next-env)
                         (macro-bind-params
@@ -34323,6 +34467,7 @@
                           rest-params
                           rest-args
                           next-env
+                          capture-expr-types
                           call-expr)]
                       [(ErrMacroEnv diag) (ErrMacroEnv diag)]))]))]))]))
 
@@ -34332,7 +34477,7 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
-  [_macro-name : String]
+  [macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
   [args : AstExprList]
@@ -34350,6 +34495,7 @@
         params
         expanded-args
         (tc-ctfe-env ctx)
+        (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
         call-expr)
         [(OkMacroEnv env)
           (begin
@@ -34362,13 +34508,13 @@
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-macro-profile-finish _macro-name expanded-args))
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
                   (OkMacroValue value))]
               [(ErrCtfe diag)
                 (begin
                   (cfg
                     compile-profile
-                    (compiler-tc-macro-profile-finish _macro-name expanded-args))
+                    (compiler-tc-macro-profile-finish macro-name expanded-args))
                   (ErrMacroValue diag))]))]
         [(ErrMacroEnv diag) (ErrMacroValue diag)])]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
@@ -34410,11 +34556,7 @@
         [(OkMacroValue value)
           (match value
             [(CtfeExpr expanded produced)
-              (if (or
-                (tc-type-eq produced (AstTyExpr))
-                (tc-type-compatible?
-                  (tc-resolve-type ctx (tc-macro-signature-type ret))
-                  (tc-resolve-type ctx produced)))
+              (if (tc-macro-produced-type-compatible? ctx ret produced)
                 (macro-expand-expr
                   ctx
                   type-env
@@ -36146,6 +36288,9 @@
 ;; can't appear in runtime code). So a program with no type literal never queries
 ;; the CTFE metadata, and `tc-ctfe-env` can hand back an empty env instead of
 ;; building the whole-program reflection + layout tables (tens of MB, O(types^2)).
+;; Macro `expr-type` calls also need metadata, but macro expansion tracks those
+;; from defmacro bodies instead of making this whole-program scan normalize every
+;; call head.
 ;; Conservative: any unrecognized expression returns `true` (build), so a future
 ;; node that could host a type literal is never silently skipped.
 (define (ctfe-node-has-type-literal? [id : i64]) : bool
@@ -36552,6 +36697,14 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         [has-defmacro : bool (macro-program-has-defmacro? decls)]
+        [expr-type-macro-names : TcStringList
+          (if has-defmacro
+            (macro-collect-expr-type-macro-names decls)
+            TcStringNil)]
+        [has-expr-type-macros : bool
+          (match expr-type-macro-names
+            [(TcStringNil) false]
+            [_ true])]
         (begin
           ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
           ;; (or the next program in a multi-program process) never reuses a stale
@@ -36564,10 +36717,13 @@
           ;; the (module, qualifier) -> target mapping is derived from this
           ;; program's declarations.
           (macro-alias-cache-reset!)
+          (set! macro-expand-expr-type-macro-names expr-type-macro-names)
           ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
           ;; the program actually contains a `(type T)` literal -- the sole entry
           ;; point for every CTFE reflection/layout query.
-          (set! ctfe-needs-metadata (ctfe-program-has-type-literal? decls))
+          (set!
+            ctfe-needs-metadata
+            (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
           (if (or has-defmacro (macro-program-needs-expansion? decls))
             (begin
               (cfg compile-profile (compiler-tc-profile-start))
@@ -37923,6 +38079,7 @@
                                       (tc-hygiene-reset-active-top-env! top-env)
                                       (tc-context-capture-active-pools! ctx)
                                       (tc-clone-able-cache-populate! ctx)
+                                      (tc-macro-helper-env-cache-reset!)
                                       (match (tc-check-decls-with-paths
                                         ctx
                                         top-env

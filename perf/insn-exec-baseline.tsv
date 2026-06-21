@@ -19,4 +19,4 @@ benchmark/typelisp/opt_crc32	2831047200
 benchmark/c/opt_crc32	400812903
 benchmark/typelisp/opt_bytecode_vm	3296002913
 benchmark/c/opt_bytecode_vm	716120437
-self_compile/compile_cli_opt1	61913253561
+self_compile/compile_cli_opt1	62843703140

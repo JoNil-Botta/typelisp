@@ -3423,7 +3423,7 @@
         [name : String
           (let
             [pos-key : String "position"]
-            (match (json-object-get params (& pos-key))
+            (match (json.json-object-get params (& pos-key))
               [(JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -4592,7 +4592,7 @@
         [old-name : String
           (let
             [pos-key : String "position"]
-            (match (json-object-get params (& pos-key))
+            (match (json.json-object-get params (& pos-key))
               [(JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]

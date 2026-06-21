@@ -1,6 +1,5 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
 (import "../doc_html.tl")
-(import "../../stdlib/io.tl")
 
 (define (doc-html-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.
@@ -108,38 +107,6 @@
     "(defstruct Point (x i64))\n"
     "(defenum Shape (Circle i64))\n"))
 
-(define (doc-html-vscode-grammar-expected-patterns) : String
-  (str-cat
-    "  \"patterns\": [\n"
-    "    { \"include\": \"#comments\" },\n"
-    "    { \"include\": \"#strings\" },\n"
-    "    { \"include\": \"#char-literals\" },\n"
-    "    { \"include\": \"#numbers\" },\n"
-    "    { \"include\": \"#keywords\" },\n"
-    "    { \"include\": \"#builtins\" },\n"
-    "    { \"include\": \"#operators\" },\n"
-    "    { \"include\": \"#constants\" },\n"
-    "    { \"include\": \"#types\" },\n"
-    "    { \"include\": \"#definition-name\" },\n"
-    "    { \"include\": \"#bindings\" },\n"
-    "    { \"include\": \"#user-types\" },\n"
-    "    { \"include\": \"#function-call\" }\n"
-    "  ],"))
-
-(define (doc-html-vscode-grammar-drift-ok?) : bool
-  (let
-    [grammar : String
-      (read-file "tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json")]
-    (and
-      (doc-html-require-contains
-        grammar
-        (doc-html-vscode-grammar-expected-patterns)
-        "doc-html: VS Code grammar categories changed; update docs highlighter")
-      (doc-html-require-contains
-        grammar
-        "\"name\": \"string.quoted.single.typelisp\""
-        "doc-html: VS Code char literal scope changed; update docs highlighter"))))
-
 (define (doc-html-syntax-smoke) : bool
   (let
     [html : String (doc-html-code-block (doc-html-syntax-smoke-source))]
@@ -226,8 +193,7 @@
       (doc-html-require-contains
         plain-html
         "<pre><code class=\"language-text\" data-meta=\"m&lt;&gt;&amp;\">(define x : i64 1)\n</code></pre>\n"
-        "doc-html: non-TypeLisp code fence behavior changed")
-      (doc-html-vscode-grammar-drift-ok?))))
+        "doc-html: non-TypeLisp code fence behavior changed"))))
 
 (define (main) : i64
   (if (and (= (doc-html-smoke) 42) (doc-html-syntax-smoke))

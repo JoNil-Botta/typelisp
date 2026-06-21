@@ -2128,6 +2128,28 @@ EOF
     assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
     assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
     assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
+    case_name=doc-highlight-vscode-grammar
+    DOC_HIGHLIGHT_PATTERNS=$(cat <<'EOF'
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#char-literals" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#builtins" },
+    { "include": "#operators" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#definition-name" },
+    { "include": "#bindings" },
+    { "include": "#user-types" },
+    { "include": "#function-call" }
+  ],
+EOF
+)
+    DOC_VSCODE_GRAMMAR="$ROOT/tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json"
+    assert_contains "$DOC_VSCODE_GRAMMAR" "$DOC_HIGHLIGHT_PATTERNS"
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"name": "string.quoted.single.typelisp"'
 else
     fail "doc generation requires host-action drivers"
 fi

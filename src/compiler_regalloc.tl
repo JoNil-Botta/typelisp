@@ -1233,6 +1233,60 @@
           point)
         (set! index (+ index 1))))))
 
+;; #3489 (PR1): note a live point into the per-var SEGMENTS only, WITHOUT
+;; touching the coarse [start,end] interval. Bridges pass-through liveness so a
+;; value live ACROSS an instruction is one continuous segment. Coarse already
+;; spans this interior point (min..max), so leaving it untouched keeps the
+;; linear-scan placement byte-identical -- only segment-precise interference
+;; (consumed by coalescing) is corrected.
+(define (compiler-reg-segment-note-set-word-bits!
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [bits : i64]
+  [var : i64]
+  [point : i64]) : unit
+  (if (= bits 0)
+    unit
+    (let
+      [index : i64 (compiler-reg-low-bit-index bits)]
+      [item-var : i64 (+ var index)]
+      (begin
+        (compiler-reg-segment-note-point!
+          segments
+          segment-starts
+          segment-ends
+          item-var
+          point)
+        (compiler-reg-segment-note-set-word-bits!
+          segments
+          segment-starts
+          segment-ends
+          (bit-and bits (- bits 1))
+          var
+          point)))))
+
+(define (compiler-reg-segment-note-set-words!
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [point : i64]) : unit
+  (let
+    [index : i64 word-index]
+    [word-count : i64 (compiler-live-set-word-count set)]
+    (while (< index word-count)
+      (begin
+        (compiler-reg-segment-note-set-word-bits!
+          segments
+          segment-starts
+          segment-ends
+          (compiler-live-set-word-at set index)
+          (* index (compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
+
 (define (compiler-reg-extend-segment-instr!
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -1259,6 +1313,20 @@
       segment-starts
       segment-ends
       (compiler-live-instr-uses instr)
+      0
+      point)
+    ;; #3489 (PR1): bridge live-after values into the SEGMENT at `point` (LLVM
+    ;; SlotIndex semantics: a value live-OUT of this instruction is live AT it),
+    ;; making a pass-through value one continuous segment instead of degenerate
+    ;; single-point segments that wrongly fail the half-open overlap test. A value
+    ;; whose LAST use is here is NOT in live-after, so it still ends at `point`,
+    ;; preserving the def/use touch that lets a copy/two-address result coalesce.
+    ;; Defs are already marked at `point` above, so this never extends a def back.
+    (compiler-reg-segment-note-set-words!
+      segments
+      segment-starts
+      segment-ends
+      live-after
       0
       point)
     (compiler-reg-extend-segment-set-words!

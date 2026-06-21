@@ -117,17 +117,16 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   compiler-specialized symbol tables where their value domain or lifecycle is
   deliberately narrower. Import it with
   `(import "stdlib/hashmap.tl")`.
-- `set.tl`: generated concrete hash set family over the same explicit key
-  descriptor policy and open-addressing storage model as `hashmap.tl`.
-  Generated `StringSet` and `I64Set` expose `*-set-with-capacity`,
-  `*-set-new`, `*-set-insert`, `*-set-contains?`, `*-set-remove`,
-  `*-set-len`, `*-set-capacity`, and deterministic bucket-order iteration
-  through `*-set-next-occupied` / `*-set-entry-at`. String-key sets also expose
-  borrowed-key containment and removal wrappers:
-  `string-set-contains-borrowed?` and `string-set-remove-borrowed`. Use a set
+- `set.tl`: module-emitting `(set T)` macro over the same open-addressing
+  storage model as `hashmap.tl`. Generated modules currently support `i64` and
+  `String` keys and expose `Set`, `with-capacity`, `new`, immutable-ref
+  `contains?` / `len` / `capacity`, mutable-ref `insert` / `remove`,
+  and bucket-order cursor helpers `next-occupied`, `entry-at`, and
+  `entry-key-or`. String-key modules also expose borrowed-key containment and
+  removal wrappers. Use a set
   when only key membership matters; use a map when each key carries a meaningful
   value rather than modeling membership with dummy map values. Import it with
-  `(import "stdlib/set.tl")`.
+  `(import "stdlib/set.tl")` and instantiate with `(import (set i64) as iset)`.
 - `sort.tl`: generated stable deterministic in-place insertion sort helpers for
   `(vector T)` modules. `(sort-vec T)` extends the matching generated vector
   module with `sort!`; scalar element types use built-in `<`, while String and
@@ -181,11 +180,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `profile-alloc-live`, `profile-alloc-peak`, and
   `profile-alloc-reset-peak`. Import it with
   `(import "stdlib/profile.tl")`.
-- `queue.tl`: growable `i64` queue/deque (collections v1, #1549) over a
-  circular `(Array i64)`: `i64-deque-with-capacity` / `-new` / `-push-back` /
-  `-push-front` / `-pop-front` / `-pop-back` / `-peek-front` / `-peek-back` /
-  `-get` / `-len` / `-capacity`, with wraparound growth and explicit empty-pop
-  results. Import it with `(import "stdlib/queue.tl")`.
+- `queue.tl`: generated growable deque family (collections v1, #1549/#2797)
+  over a circular `(Array T)`. Import `(deque T)` with a module alias, such as
+  `(import (deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
+  `with-capacity`, `push-back`, `push-front`, `pop-front`, `pop-back`,
+  `peek-front`, `peek-back`, `get`, `len`, `capacity`, and `is-empty?` in that
+  generated module namespace. Mutators take `&mut` and update in place; reads
+  take `&`, peeks/get use caller fallbacks, and empty pops return `Pop.Empty`.
+  Import the macro with `(import "stdlib/queue.tl")`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
   OS-entropy seed source. Import it with `(import "stdlib/random.tl")`.
@@ -408,7 +410,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
 | `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path. |
-| `string-set-*`, `i64-set-*` helpers in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
+| `(set T)` generated modules in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Mutators take `&mut` and update the stored set in place. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `(sort-vec T)` generated `sort!` helpers and `string-less*` comparators in `sort.tl` | Stable insertion sort helpers extend the matching generated `(vector T)` module, mutate the existing vector backing array in place through a mutable reference, and do not allocate. Scalar instantiations compare values directly with `<`; String and aggregate instantiations use the caller-supplied less-than function and shift only strictly-less values, preserving the relative order of equal elements. |
 | `ChannelI64`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel-i64-close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |

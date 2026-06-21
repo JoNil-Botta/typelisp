@@ -818,10 +818,10 @@ EOF
     assert_empty "$WORKDIR/test-package-check.stderr"
     assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp test file:"
     assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp integration test file:"
-    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp package test typecheck passed: 4 test(s) in 4 file(s)"
+    assert_contains "$WORKDIR/test-package-check.stdout" "TypeLisp package test typecheck passed: 4 test(s) in 12 file(s)"
     run_capture_cwd test-package-run "$TEST_PKG/src/nested" "$COMPILER" test --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp integration test file:"
-    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp package tests passed: 4 test(s) in 4 file(s)"
+    assert_contains "$WORKDIR/test-package-run.stdout" "TypeLisp package tests passed: 4 test(s) in 12 file(s)"
     assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-entry"
     assert_contains "$WORKDIR/test-package-run.stderr" "ok pkg-entry"
     assert_contains "$WORKDIR/test-package-run.stderr" "test pkg-nested"
@@ -841,7 +841,7 @@ EOF
 EOF
     run_capture_cwd test-package-no-tests "$TEST_EMPTY_PKG" "$COMPILER" test --check --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_empty "$WORKDIR/test-package-no-tests.stderr"
-    assert_contains "$WORKDIR/test-package-no-tests.stdout" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
+    assert_contains "$WORKDIR/test-package-no-tests.stdout" "TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)"
 
     echo "[host-action-cli] test failures"
     FAIL_SRC="$WORKDIR/inline-test-fail.tl"

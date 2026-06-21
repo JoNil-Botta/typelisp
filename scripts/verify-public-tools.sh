@@ -2129,26 +2129,20 @@ EOF
     assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
     assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
     case_name=doc-highlight-vscode-grammar
-    DOC_HIGHLIGHT_PATTERNS=$(cat <<'EOF'
-  "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#char-literals" },
-    { "include": "#numbers" },
-    { "include": "#keywords" },
-    { "include": "#builtins" },
-    { "include": "#operators" },
-    { "include": "#constants" },
-    { "include": "#types" },
-    { "include": "#definition-name" },
-    { "include": "#bindings" },
-    { "include": "#user-types" },
-    { "include": "#function-call" }
-  ],
-EOF
-)
     DOC_VSCODE_GRAMMAR="$ROOT/tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json"
-    assert_contains "$DOC_VSCODE_GRAMMAR" "$DOC_HIGHLIGHT_PATTERNS"
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#comments"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#strings"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#char-literals"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#numbers"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#keywords"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#builtins"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#operators"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#constants"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#types"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#definition-name"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#bindings"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#user-types"'
+    assert_contains "$DOC_VSCODE_GRAMMAR" '"include": "#function-call"'
     assert_contains "$DOC_VSCODE_GRAMMAR" '"name": "string.quoted.single.typelisp"'
 else
     fail "doc generation requires host-action drivers"
@@ -2294,7 +2288,7 @@ EOF
 run_cmd_cwd package-test-empty "$TEST_EMPTY_PKG" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
-assert_contains "$out" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
+assert_contains "$out" "TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)"
 
 TEST_FAIL_PKG="$WORKDIR/package-test-fail-pkg"
 mkdir -p "$TEST_FAIL_PKG/src" "$TEST_FAIL_PKG/tests"

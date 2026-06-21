@@ -5978,7 +5978,7 @@
           (match tail
             [(SpSNil _)
               (parse-ast-import-spec
-                (AstImportMacro call-expr)
+                (AstImportMacro call-expr AstNoModuleName)
                 ""
                 AstNoModuleName
                 AstNoImportAlias
@@ -5988,7 +5988,7 @@
                 [(SpSSym head _)
                   (if (or (string-eq head "as") (string-eq head ":as"))
                     (parse-ast-import-alias
-                      (AstImportMacro call-expr)
+                      (AstImportMacro call-expr AstNoModuleName)
                       ""
                       AstNoModuleName
                       tail
@@ -6557,7 +6557,7 @@
       (match (ast-expr-unspan (ast-node-pool-context-expr-get pools call-expr))
         [(AstExprCall _ _)
           (parse-ast-import-spec
-            (AstImportMacroDecls call-expr)
+            (AstImportMacroDecls call-expr AstNoModuleName)
             ""
             AstNoModuleName
             AstNoImportAlias
@@ -6780,7 +6780,7 @@
   (match decl
     [(AstDeclImport
         (AstImportSpec
-          (AstImportMacroDecls _)
+          (AstImportMacroDecls _ _)
           path
           (AstNoModuleName)
           (AstNoImportAlias)
@@ -7138,7 +7138,7 @@
           [(AstDeclCons
               (AstDeclImport
                 (AstImportSpec
-                  (AstImportMacroDecls call-expr)
+                  (AstImportMacroDecls call-expr _)
                   path
                   (AstNoModuleName)
                   (AstNoImportAlias)
@@ -7164,7 +7164,7 @@
           [(AstDeclCons
               (AstDeclImport
                 (AstImportSpec
-                  (AstImportMacro call-expr)
+                  (AstImportMacro call-expr _)
                   path
                   (AstNoModuleName)
                   (AstSomeImportAlias alias)

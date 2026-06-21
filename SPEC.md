@@ -2009,7 +2009,7 @@ surface until those helpers land.
 `TextBuf` is intentionally separate. It is an append-oriented text builder over
 owned or borrowed string chunks whose render operation materializes an immutable
 `String`; it is not a random-access mutable byte buffer and must not become the
-binary slice contract by accident. Generated slices such as `I64Slice` in
+binary slice contract by accident. Generated modules such as `(slice i64)` in
 `stdlib/vector_slice.tl` remain typed collection views. `bytes` is the
 language-wide raw byte-slice referent for binary data and FFI/IO boundaries.
 

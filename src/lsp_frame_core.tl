@@ -5429,6 +5429,26 @@
                       ""
                       (substring text name-start (- name-end name-start)))))))))))))
 
+;; Helper: Search outward from a position to find a define/defmacro form and extract its name.
+(define (lsp-find-define-name-outward [text : String] [search-offset : i64]) : String
+  (if (< search-offset 0)
+    ""
+    (let
+      [form-start : i64 (lsp-find-form-at-offset text search-offset)]
+      (if (= form-start -1)
+        ""
+        (let
+          [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
+          (if (= form-end -1)
+            ""
+            (let
+              [form-text : String
+                (substring text form-start (- form-end form-start))]
+              [name : String (lsp-extract-define-name form-text)]
+              (if (= (string-length name) 0)
+                (lsp-find-define-name-outward text (- form-start 1))
+                name))))))))
+
 ;; Helper: Find form at position and extract its name.
 (define (lsp-find-and-extract-name [text : String] [line : i64] [col : i64]) : String
   (if (or (< line 0) (< col 0))
@@ -5437,18 +5457,7 @@
       [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string-length text))
         ""
-        (let
-          [form-start : i64 (lsp-find-form-at-offset text offset)]
-          (if (= form-start -1)
-            ""
-            (let
-              [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
-              (if (= form-end -1)
-                ""
-                (let
-                  [form-text : String
-                    (substring text form-start (- form-end form-start))]
-                  (lsp-extract-define-name form-text))))))))))
+        (lsp-find-define-name-outward text offset)))))
 
 ;; tl/replaceBodyAt - Replace body of function at a given position
 (define (lsp-handle-tl-replace-body-at

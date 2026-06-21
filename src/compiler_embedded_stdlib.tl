@@ -16,6 +16,7 @@
 (include-str compiler-embedded-stdlib-hash "stdlib/hash.tl")
 (include-str compiler-embedded-stdlib-hashmap "stdlib/hashmap.tl")
 (include-str compiler-embedded-stdlib-io "stdlib/io.tl")
+(include-str compiler-embedded-stdlib-iterator "stdlib/iterator.tl")
 (include-str compiler-embedded-stdlib-json "stdlib/json.tl")
 (include-str compiler-embedded-stdlib-list "stdlib/list.tl")
 (include-str compiler-embedded-stdlib-math "stdlib/math.tl")
@@ -58,10 +59,12 @@
 (include-str compiler-embedded-stdlib-tests-time-api "stdlib/tests/time_api.tl")
 (include-str compiler-embedded-stdlib-tests-text-buf-api "stdlib/tests/text_buf_api.tl")
 (include-str compiler-embedded-stdlib-tests-vector-api "stdlib/tests/vector_api.tl")
+(include-str compiler-embedded-stdlib-tests-vector-slice-escape "stdlib/tests/vector_slice_escape.tl")
 (include-str compiler-embedded-stdlib-text-buf "stdlib/text_buf.tl")
 (include-str compiler-embedded-stdlib-text-buf-borrowed "stdlib/text_buf_borrowed.tl")
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
 (include-str compiler-embedded-stdlib-vector-family "stdlib/vector_family.tl")
+(include-str compiler-embedded-stdlib-vector-slice "stdlib/vector_slice.tl")
 
 (define (compiler-embedded-stdlib-lookup-modules [suffix : String]) : CompilerEmbeddedStdlibSource
   (cond
@@ -91,6 +94,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)]
     [(string-eq suffix "io.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)]
+    [(string-eq suffix "iterator.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-iterator)]
     [(string-eq suffix "json.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
     [(string-eq suffix "list.tl")
@@ -133,6 +138,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [(string-eq suffix "vector_family.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-family)]
+    [(string-eq suffix "vector_slice.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-slice)]
     [else (CompilerEmbeddedStdlibNoSource)]))
 
 (define (compiler-embedded-stdlib-lookup-tests [suffix : String]) : CompilerEmbeddedStdlibSource
@@ -294,6 +301,12 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-vector-api))
+        unit)
+      (if (string-eq suffix "tests/vector_slice_escape.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-vector-slice-escape))
         unit)
       source)))
 

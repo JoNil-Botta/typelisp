@@ -50,6 +50,13 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   can return a borrow of the caller fallback or owned file contents. Import it
   with `(import "stdlib/io_caller_result.tl")`; it remains separate from
   `io.tl` while the compatibility wrapper keeps the owned `String` API.
+- `iterator.tl`: stdlib iterator protocol conventions plus the first scalar
+  value/range iterator, `I64RangeIter`. The protocol is module-level rather than
+  trait-based: a collection exposes an iterator constructor, and iterator state
+  exposes `next` as a mutable-state step returning an option-like result. The
+  current flat compatibility names are `i64-range-iterator` and
+  `i64-range-next`; repeated `next` after exhaustion returns `I64RangeDone`.
+  Import it with `(import "stdlib/iterator.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list/vector
   helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
   target-cfg-derived `env-path-separator` wrappers. Lookups are implemented
@@ -268,8 +275,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `vector_slice.tl`: lifetime-scoped `I64Slice` views over `I64Vec` and
   `(Array i64)` live prefixes. Slice constructors take the backing handle plus a
   matching owner borrow such as `(& v)` / `(& items)`, return empty views for
-  invalid ranges, and provide explicit `to-array` / `to-vec` copy boundaries.
-  Import it with `(import "stdlib/vector_slice.tl")`.
+  invalid ranges, provide explicit `to-array` / `to-vec` copy boundaries, and
+  expose the first slice-derived iterator via `i64-slice-iterator` /
+  `i64-slice-next`, which snapshots the slice range and yields copied `i64`
+  values. Import it with `(import "stdlib/vector_slice.tl")`.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
   environment) from a configured Developer Command Prompt. Import it with
   `(import "stdlib/msvc.tl")`.
@@ -414,9 +423,10 @@ owned stdlib imports keep the compatibility wrappers.
 | `(set T)` generated modules in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Mutators take `&mut` and update the stored set in place. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `(sort-vec T)` generated `sort!` helpers and `string-less*` comparators in `sort.tl` | Stable insertion sort helpers extend the matching generated `(vector T)` module, mutate the existing vector backing array in place through a mutable reference, and do not allocate. Scalar instantiations compare values directly with `<`; String and aggregate instantiations use the caller-supplied less-than function and shift only strictly-less values, preserving the relative order of equal elements. |
+| `i64-range-*` helpers in `iterator.tl` | `i64-range-iterator` constructs non-allocating iterator state for a half-open `i64` range. `i64-range-next` mutates only the iterator's current index and returns an `I64RangeNext` option-like value; exhaustion and repeated exhaustion do not allocate. |
 | `ChannelI64`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel-i64-close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
-| `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
+| `i64-slice-*` helpers in `vector_slice.tl` | `I64Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `i64-slice-iterator` snapshots the slice backing handle/start/len, `i64-slice-next` mutates only iterator cursor state, and exhausted iterators return `I64SliceIterDone`. `i64-slice-to-array` and `i64-slice-to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent ordinary arena handle, `arena-make-atomic` creates an independent atomic arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
@@ -483,6 +493,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/hash.tl")
 (import "stdlib/hashmap.tl")
 (import "stdlib/io.tl")
+(import "stdlib/iterator.tl")
 (import "stdlib/json.tl")
 (import "stdlib/list.tl")
 (import "stdlib/math.tl")
@@ -495,6 +506,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/test.tl")
 (import "stdlib/time.tl")
 (import "stdlib/text_buf.tl")
+(import "stdlib/vector_slice.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

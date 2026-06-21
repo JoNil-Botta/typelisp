@@ -306,7 +306,7 @@
         (if (= code 13)
           \"\r\"
           (if (and (>= code 32) (<= code 126))
-            (substring __tl_repl_ascii_printable_table (- code 32) 1)
+            (string.substring __tl_repl_ascii_printable_table (- code 32) 1)
             \"?\"))))))
 
 (define (__tl_repl_print_char [c : char]) : unit
@@ -331,7 +331,7 @@
   (if (= divisor 0)
     unit
     (begin
-      (print-string (int->string (/ value divisor)))
+      (print-string (string.int->string (/ value divisor)))
       (__tl_repl_print_fraction_digits (% value divisor) (/ divisor 10)))))
 
 (define (__tl_repl_print_f64_positive [x : f64]) : unit
@@ -343,7 +343,7 @@
     [shown-whole : i64 (if carry (+ whole 1) whole)]
     [scaled : i64 (if carry 0 raw-scaled)]
     (begin
-      (print-string (int->string shown-whole))
+      (print-string (string.int->string shown-whole))
       (if (= scaled 0)
         unit
         (let
@@ -417,7 +417,7 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          "(import \"stdlib/io.tl\")\n"
+          "(import \"stdlib/io.tl\")\n(import stdlib.string)\n"
           (string-append
             session-source
             (string-append

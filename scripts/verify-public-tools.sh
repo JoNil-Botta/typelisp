@@ -758,7 +758,15 @@ EOF
     assert_not_contains "$target_dir/main.s" "    .globl _start"
     assert_contains_any "$target_dir/main.s" "    .extern WriteFile" ".extern WriteFile"
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
-    runtime_write_body="$(awk -v label="_tl_stdlib_runtime_runtime_os_write:" '$0 == label { found = 1; next } found && /^_tl_/ && /:$/ { exit } found { print }' "$target_dir/main.s")"
+    runtime_write_body="$(awk '
+      $0 == "_tl_stdlib_runtime_runtime_os_write:" ||
+      $0 == "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write:" {
+        found = 1
+        next
+      }
+      found && /^_tl_/ && /:$/ { exit }
+      found { print }
+    ' "$target_dir/main.s")"
     [ -n "$runtime_write_body" ] || fail "$target_alias runtime-os-write body missing"
     printf '%s\n' "$runtime_write_body" | grep -q "    call tl_alloc" && fail "$target_alias runtime-os-write still calls tl_alloc"
     printf '%s\n' "$runtime_write_body" | grep -q "    leaq -" || fail "$target_alias runtime-os-write missing stack address for WriteFile out-param"
@@ -1345,6 +1353,7 @@ EOF
     else
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
 (import "stdlib/io.tl")
+(import stdlib.string)
 
 (define (fixture-cstr-len [p : (Ptr u8)]) : i64
   (let
@@ -1363,7 +1372,7 @@ EOF
 (define (main) : i64
   (begin
     (fixture-stdout-write (fixture-arg 1))
-    (if (string-eq (fixture-arg 2) "colon:arg") 13 2)))
+    (if (string.string-eq (fixture-arg 2) "colon:arg") 13 2)))
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
@@ -2335,9 +2344,15 @@ cat > "$PKG/src/math.tl" <<'EOF'
 EOF
 cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define dependency-exported-value : i64 5)
+(defstruct DependencyPoint
+  (x i64)
+  (y i64))
+(defmacro (dependency-macro [expr : Expr]) : Expr expr)
 (define (add-one [x : i64]) : i64 (+ x 1))
 (export
-  (value dependency-exported-value))
+  (value dependency-exported-value)
+  (type DependencyPoint)
+  (macro dependency-macro))
 EOF
 cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -2366,20 +2381,23 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset=0 bytes=0"
     assert_contains "$out" "exports:"
-    assert_contains "$out" "  value public-tool-value signature=i64"
-    assert_contains "$out" "  type PublicToolPoint layout=size=16 align=8"
-    assert_contains "$out" "  macro public-tool-macro signature=(macro (Expr) -> Expr)"
+    assert_contains "$out" "  (none)"
+    assert_not_contains "$out" "public-tool-value"
+    assert_not_contains "$out" "PublicToolPoint"
+    assert_not_contains "$out" "public-tool-macro"
     assert_not_contains "$out" "PublicToolTagA"
     assert_not_contains "$out" "constructor"
     assert_not_contains "$out" "field"
     assert_not_contains "$out" "dependency-exported-value"
-    assert_not_contains "$out" "  (none)"
     run_cmd package-inspect-dependency-tlci "$COMPILER" inspect "$MATH_TLCI"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: math"
     assert_contains "$out" "  value dependency-exported-value signature=i64"
+    assert_contains "$out" "  type DependencyPoint layout=size=16 align=8"
+    assert_contains "$out" "  macro dependency-macro signature=(macro (Expr) -> Expr)"
+    assert_not_contains "$out" "  (none)"
     BAD_TLCI="$WORKDIR/bad.tlci"
     printf 'bad' > "$BAD_TLCI"
     run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
@@ -2400,7 +2418,9 @@ else
         '    movl $41, %edi'
     assert_contains "$PKG_ASM" "add_one"
     assert_contains "$PKG_ASM" "_tl_math_src_lib_add_one"
-    assert_contains "$PKG_ASM" "_tl_stdlib_runtime_runtime_os_write"
+    assert_contains_any "$PKG_ASM" \
+        "_tl_stdlib_runtime_runtime_os_write" \
+        "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write"
     assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_vendor_math"
 fi
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then

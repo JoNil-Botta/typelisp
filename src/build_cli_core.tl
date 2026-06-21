@@ -3484,12 +3484,11 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        (match (compiler-driver-load-package-file-with-runtime-owned
+        (match (compiler-driver-load-package-file-with-runtime
           entry-path
           target
           stdlib-roots
           manifest-dir
-          name
           (struct-get manifest deps)
           emit-entry)
           [(ErrCompilerLoadWithPaths diag)
@@ -3498,6 +3497,14 @@
               1)]
           [(OkCompilerLoadWithPaths decls paths _ _)
             (let
+              [owned-paths : AstDeclPathList
+                (compiler-load-package-owned-paths-for-decls
+                  name
+                  manifest-dir
+                  stdlib-roots
+                  entry-path
+                  decls
+                  paths)]
               [doctest-status : i64
                 (build-doctest-typecheck-package-paths
                   (build-package-doctest-paths name paths)
@@ -3534,7 +3541,7 @@
                     emit-entry
                     crt-entry
                     decls
-                    paths)
+                    owned-paths)
                     [(ErrCompilerDriver diag)
                       (begin
                         (print-error (compiler-diagnostic-render diag))
@@ -3567,7 +3574,7 @@
                                 tlci-path
                                 manifest
                                 decls
-                                paths)
+                                owned-paths)
                                 [(SourceToolCommandErr message)
                                   (begin
                                     (print-error message)

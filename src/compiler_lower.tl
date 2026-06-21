@@ -15698,6 +15698,26 @@
                   (lower-diagnostic-at-expr
                     origin
                     "ExprList value is compile-time only"))]
+              [(CtfeExprClause _)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    "ExprClause value is compile-time only"))]
+              [(CtfeExprClauseList _)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    "ExprClauseList value is compile-time only"))]
+              [(CtfeExprBindingClause _)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    "ExprBindingClause value is compile-time only"))]
+              [(CtfeExprBindingClauseList _)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    "ExprBindingClauseList value is compile-time only"))]
               [_
                 (lower-materialize
                   state
@@ -44831,7 +44851,7 @@
         (set! ok false))
       (if (compiler-lower-error-ok?
         (compiler-lower-bracket-ordinary-call-error-source)
-        "typecheck: bracket clause is only valid as an ExprClause macro operand")
+        "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")
         unit
         (set! ok false))
       (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))

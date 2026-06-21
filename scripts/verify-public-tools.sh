@@ -8,16 +8,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Retry transient Windows crashes (#1204): `is_crash_code` lets the run_* helpers
-# retry only a segfault-class exit (132/134/139), since public-tool cases may
-# legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
-. "$ROOT/scripts/lib-retry.sh"
+# A segfault-class exit from a `typelisp` invocation is a real compiler bug, not
+# a flake — the run_* helpers below run it exactly once and let the crash fail CI
+# (see the no-retry policy in scripts/ci-verify.sh).
 . "$ROOT/scripts/lib-linux-entry.sh"
-# Default 6 (not 3): this gate runs many CLI invocations, so the #1204 Windows
-# segfault can exhaust 3 attempts on one of them (observed on PR #1249:
-# inline-test-fail crashed 134/134/segfault); more headroom keeps the
-# crash-only retry effective.
-PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-6}"
 
 HOST_OS=linux
 HOST_TARGET=linux-x86_64
@@ -91,19 +85,10 @@ run_cmd() {
     shift
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    _rc_attempt=0
-    while :; do
-        _rc_attempt=$((_rc_attempt + 1))
-        set +e
-        TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 > "$out" 2> "$err"
-        code=$?
-        set -e
-        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
-            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
-        else
-            break
-        fi
-    done
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 > "$out" 2> "$err"
+    code=$?
+    set -e
 }
 
 run_cmd_cwd() {
@@ -112,19 +97,10 @@ run_cmd_cwd() {
     shift 2
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    _rc_attempt=0
-    while :; do
-        _rc_attempt=$((_rc_attempt + 1))
-        set +e
-        (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$out" 2> "$err"
-        code=$?
-        set -e
-        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
-            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
-        else
-            break
-        fi
-    done
+    set +e
+    (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$out" 2> "$err"
+    code=$?
+    set -e
 }
 
 run_stdin() {
@@ -133,19 +109,10 @@ run_stdin() {
     shift 2
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    _rc_attempt=0
-    while :; do
-        _rc_attempt=$((_rc_attempt + 1))
-        set +e
-        TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input_file" > "$out" 2> "$err"
-        code=$?
-        set -e
-        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
-            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
-        else
-            break
-        fi
-    done
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input_file" > "$out" 2> "$err"
+    code=$?
+    set -e
 }
 
 assert_code() {

@@ -10,6 +10,7 @@
 (module stdlib.array)
 
 ;: Allocate a dynamic array with `count` live elements initialized under ZII.
+;; lint-allow: unused-variable
 (defmacro (make-array [T : type] [count : Expr]) : Expr
   `(__tl_make-array ,T ,count))
 

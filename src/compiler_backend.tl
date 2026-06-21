@@ -407,7 +407,8 @@
 
 (defenum CompilerBackendEmitInstrsMode
   (CompilerBackendEmitInstrsModeNormal)
-  (CompilerBackendEmitInstrsModeRax i64 AstType))
+  (CompilerBackendEmitInstrsModeRax i64 AstType)
+  (CompilerBackendEmitInstrsModeCallRax i64 AstType))
 
 (define compiler-backend-emit-instrs-loop-active : bool
   false)
@@ -11266,9 +11267,9 @@
               (OkCompilerBackend (str-cat head "    movq %r11, " slot ""))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
 
-(define (compiler-backend-emit-call-args
+(define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
-  [assignments : CompilerRegAssignmentList]
+  [arg-assignments : CompilerRegAssignmentList]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [c-abi? : bool]
@@ -11319,14 +11320,14 @@
         [(> memory-size 0)
           (match (compiler-backend-emit-c-memory-stack-arg
             target
-            assignments
+            arg-assignments
             value
             stack-idx
             memory-size)
             [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
+              (match (compiler-backend-emit-call-args-with-assignments
                 target
-                assignments
+                arg-assignments
                 args
                 (compiler-backend-skip-c-memory-marker-types rest-types)
                 c-abi?
@@ -11378,7 +11379,7 @@
                 (+ position 1))]
             (match (compiler-backend-emit-group-word-call-arg
               target
-              assignments
+              arg-assignments
               value
               0
               int-idx
@@ -11392,7 +11393,7 @@
               [(OkCompilerBackend head0)
                 (match (compiler-backend-emit-group-word-call-arg
                   target
-                  assignments
+                  arg-assignments
                   value
                   1
                   int1
@@ -11404,9 +11405,9 @@
                   program-index
                   func-diag)
                   [(OkCompilerBackend head1)
-                    (match (compiler-backend-emit-call-args
+                    (match (compiler-backend-emit-call-args-with-assignments
                       target
-                      assignments
+                      arg-assignments
                       args
                       rest-types
                       c-abi?
@@ -11439,15 +11440,15 @@
             position)
           (match (compiler-backend-emit-scalar-stack-call-arg
             target
-            assignments
+            arg-assignments
             value
             arg-ty
             is-float
             stack-idx)
             [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
+              (match (compiler-backend-emit-call-args-with-assignments
                 target
-                assignments
+                arg-assignments
                 args
                 rest-types
                 c-abi?
@@ -11478,18 +11479,18 @@
             [(OkBackendReg reg)
               (match (if is-float
                 (compiler-backend-emit-load-float-value-with-plan
-                  assignments
+                  arg-assignments
                   value
                   arg-ty
                   reg)
                 (compiler-backend-emit-load-value-with-plan
-                  assignments
+                  arg-assignments
                   value
                   reg))
                 [(OkCompilerBackend head)
-                  (match (compiler-backend-emit-call-args
+                  (match (compiler-backend-emit-call-args-with-assignments
                     target
-                    assignments
+                    arg-assignments
                     args
                     rest-types
                     c-abi?
@@ -11508,6 +11509,68 @@
             [(ErrBackendReg message)
               (ErrCompilerBackend
                 (compiler-diagnostic-with-message func-diag message))])]))))
+
+(define (compiler-backend-emit-call-args
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [c-abi? : bool]
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [func-diag : CompilerDiagnostic]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (compiler-backend-emit-call-args-with-assignments
+    target
+    assignments
+    args
+    types
+    c-abi?
+    arg-index
+    int-idx
+    float-idx
+    position
+    stack-idx
+    func-diag
+    program-index
+    vars))
+
+(define (compiler-backend-call-leading-arg-uses-var?
+  [args : CompilerIrCallArgs]
+  [var : i64]) : bool
+  ;; Keep call-result forwarding to the first user argument. Earlier argument
+  ;; setup can use %rax as scratch for aggregate/memory copies.
+  (if (> (compiler-backend-call-args-count args) 0)
+    (compiler-backend-branch-uses-var?
+      (compiler-backend-call-arg-at args 0)
+      var)
+    false))
+
+(define (compiler-backend-rax-call-arg-eligible?
+  [program-index : CompilerBackendProgramIndex]
+  [ty : AstType]) : bool
+  (and
+    (= (compiler-backend-type-size ty) 8)
+    (not (compiler-backend-float-type? ty))
+    (not (compiler-backend-group-type? program-index ty))))
+
+(define (compiler-backend-rax-call-arg-assignments
+  [assignments : CompilerRegAssignmentList]
+  [program-index : CompilerBackendProgramIndex]
+  [rax-var : i64]
+  [rax-ty : AstType]) : CompilerRegAssignmentList
+  (if (and
+    (>= rax-var 0)
+    (compiler-backend-rax-call-arg-eligible? program-index rax-ty))
+    (compiler-reg-assignment-insert
+      assignments
+      rax-var
+      (CompilerRegRegister "%rax"))
+    assignments))
 
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
@@ -13615,9 +13678,10 @@
     (compiler-backend-atomic-inline-asm target symbol)
     "    ret\n"))
 
-(define (compiler-backend-emit-inline-atomic-call
+(define (compiler-backend-emit-inline-atomic-call-with-arg-assignments
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
+  [arg-assignments : CompilerRegAssignmentList]
   [dst : i64]
   [name : String]
   [args : CompilerIrCallArgs]
@@ -13647,7 +13711,7 @@
         program-index)]
     (match (compiler-backend-emit-call-args
       target
-      assignments
+      arg-assignments
       args
       param-types
       c-abi?
@@ -13683,6 +13747,164 @@
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-inline-atomic-call
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (compiler-backend-emit-inline-atomic-call-with-arg-assignments
+    target
+    assignments
+    assignments
+    dst
+    name
+    args
+    ty
+    types
+    global-types
+    externs
+    program-index
+    vars
+    instr-diag))
+
+(define (compiler-backend-emit-direct-call-with-arg-assignments
+  [target : CompilerBackendTarget]
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [arg-assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [plan : CompilerBackendRuntimePlan]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
+    [call-symbol : String
+      (compiler-backend-call-symbol-index name plan program-index)]
+    (if (and
+      (> fast-alloc-size 0)
+      (compiler-builtin-backend-tl-alloc-id?
+        (compiler-backend-runtime-helper-name-id name))
+      (compiler-backend-plan-provides? plan "tl_alloc")
+      (compiler-builtin-backend-tl-alloc-id?
+        (compiler-backend-runtime-helper-name-id call-symbol)))
+      (OkCompilerBackend
+        (string-append
+          (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
+            (compiler-backend-emit-inline-fast-alloc
+              target
+              function
+              current-label
+              dst
+              fast-alloc-size
+              (compiler-backend-plan-provides? plan "tl_profile_alloc_total"))
+            (str-cat
+              "    call "
+              (compiler-backend-fast-alloc-label fast-alloc-size)
+              "\n"
+              ""
+              ""))
+          (compiler-backend-emit-store-typed-var-with-plan
+            assignments
+            dst
+            "%rax"
+            ty)))
+      (if (compiler-backend-atomic-call-name? call-symbol)
+        (compiler-backend-emit-inline-atomic-call-with-arg-assignments
+          target
+          assignments
+          arg-assignments
+          dst
+          call-symbol
+          args
+          ty
+          types
+          global-types
+          externs
+          program-index
+          vars
+          instr-diag)
+        (let
+          [param-types : AstTypeList
+            (compiler-backend-call-param-types-for-call
+              name
+              args
+              types
+              global-types
+              externs
+              program-index)]
+          [c-abi? : bool
+            (compiler-backend-c-aggregate-extern-call? externs name)]
+          [call-space : i64
+            (compiler-backend-call-arg-space
+              target
+              args
+              param-types
+              c-abi?
+              program-index)]
+          (match (compiler-backend-emit-call-args-with-assignments
+            target
+            arg-assignments
+            args
+            param-types
+            c-abi?
+            0
+            0
+            0
+            0
+            0
+            instr-diag
+            program-index
+            vars)
+            [(OkCompilerBackend args-asm)
+              (match (compiler-backend-emit-call-result-store
+                assignments
+                dst
+                ty
+                vars
+                program-index)
+                [(OkCompilerBackend result-store)
+                  (OkCompilerBackend
+                    (string-append
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (string-append
+                        args-asm
+                        (string-append
+                          (compiler-backend-varargs-pre-call
+                            target
+                            name
+                            externs
+                            param-types)
+                          (str-cat
+                            "    call "
+                            call-symbol
+                            "\n"
+                            (string-append
+                              (compiler-backend-emit-call-space-add call-space)
+                              result-store)
+                            "")))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))]))))))
 
 (define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
   (if (= idx 0)
@@ -14237,124 +14459,23 @@
       [(IrInstrSyscall dst args)
         (compiler-backend-emit-syscall target assignments dst args)]
       [(IrInstrCall dst name args ty)
-        (let
-          [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
-          [call-symbol : String
-            (compiler-backend-call-symbol-index name plan program-index)]
-          (if (and
-            (> fast-alloc-size 0)
-            (compiler-builtin-backend-tl-alloc-id?
-              (compiler-backend-runtime-helper-name-id name))
-            (compiler-backend-plan-provides? plan "tl_alloc")
-            (compiler-builtin-backend-tl-alloc-id?
-              (compiler-backend-runtime-helper-name-id call-symbol)))
-            (OkCompilerBackend
-              (string-append
-                (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
-                  (compiler-backend-emit-inline-fast-alloc
-                    target
-                    function
-                    current-label
-                    dst
-                    fast-alloc-size
-                    (compiler-backend-plan-provides?
-                      plan
-                      "tl_profile_alloc_total"))
-                  (str-cat
-                    "    call "
-                    (compiler-backend-fast-alloc-label fast-alloc-size)
-                    "\n"
-                    ""
-                    ""))
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%rax"
-                  ty)))
-            (if (compiler-backend-atomic-call-name? call-symbol)
-              (compiler-backend-emit-inline-atomic-call
-                target
-                assignments
-                dst
-                call-symbol
-                args
-                ty
-                types
-                global-types
-                externs
-                program-index
-                vars
-                instr-diag)
-              (let
-                [param-types : AstTypeList
-                  (compiler-backend-call-param-types-for-call
-                    name
-                    args
-                    types
-                    global-types
-                    externs
-                    program-index)]
-                [c-abi? : bool
-                  (compiler-backend-c-aggregate-extern-call? externs name)]
-                [call-space : i64
-                  (compiler-backend-call-arg-space
-                    target
-                    args
-                    param-types
-                    c-abi?
-                    program-index)]
-                (match (compiler-backend-emit-call-args
-                  target
-                  assignments
-                  args
-                  param-types
-                  c-abi?
-                  0
-                  0
-                  0
-                  0
-                  0
-                  instr-diag
-                  program-index
-                  vars)
-                  [(OkCompilerBackend args-asm)
-                    (match (compiler-backend-emit-call-result-store
-                      assignments
-                      dst
-                      ty
-                      vars
-                      program-index)
-                      [(OkCompilerBackend result-store)
-                        (OkCompilerBackend
-                          (string-append
-                            (compiler-backend-emit-call-space-sub call-space)
-                            (string-append
-                              args-asm
-                              (string-append
-                                (compiler-backend-varargs-pre-call
-                                  target
-                                  name
-                                  externs
-                                  param-types)
-                                (str-cat
-                                  "    call "
-                                  call-symbol
-                                  "\n"
-                                  (string-append
-                                    (compiler-backend-emit-call-space-add
-                                      call-space)
-                                    result-store)
-                                  "")))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend
-                          (compiler-backend-apply-instr-diagnostic
-                            message
-                            instr-diag))])]
-                  [(ErrCompilerBackend message)
-                    (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])))))]
+        (compiler-backend-emit-direct-call-with-arg-assignments
+          target
+          function
+          current-label
+          dst
+          name
+          args
+          ty
+          assignments
+          assignments
+          types
+          global-types
+          plan
+          externs
+          program-index
+          vars
+          instr-diag)]
       [(IrInstrCallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
@@ -15106,6 +15227,271 @@
       (OkCompilerBackend (text-buf-render (text-buf-append buf asm)))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-emit-instr-with-call-rax
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [assignments : CompilerRegAssignmentList]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [arg-assignments : CompilerRegAssignmentList
+      (compiler-backend-rax-call-arg-assignments
+        assignments
+        program-index
+        rax-var
+        rax-ty)]
+    [instr-diag : CompilerDiagnostic
+      (compiler-backend-instr-diagnostic
+        spans
+        source-function
+        instr
+        func-diag
+        "")]
+    (match instr
+      [(IrInstrCall dst name args ty)
+        (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
+          (compiler-backend-emit-direct-call-with-arg-assignments
+            target
+            function
+            current-label
+            dst
+            name
+            args
+            ty
+            assignments
+            arg-assignments
+            types
+            global-types
+            plan
+            externs
+            program-index
+            vars
+            instr-diag)
+          (compiler-backend-emit-instr
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            instr
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag))]
+      [(IrInstrCallIndirect dst func args ty)
+        (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
+          (compiler-backend-emit-indirect-call-with-arg-assignments
+            target
+            dst
+            func
+            args
+            ty
+            assignments
+            arg-assignments
+            types
+            functions
+            externs
+            program-index
+            vars
+            instr-diag)
+          (compiler-backend-emit-instr
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            instr
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag))]
+      [_
+        (compiler-backend-emit-instr
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          instr
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag)])))
+
+(define (compiler-backend-call-rax-forwardable-instr?
+  [instr : CompilerIrInstr]
+  [program-index : CompilerBackendProgramIndex]
+  [rax-var : i64]
+  [rax-ty : AstType]) : bool
+  (and
+    (compiler-backend-rax-call-arg-eligible? program-index rax-ty)
+    (match instr
+      [(IrInstrCall _ _ args _)
+        (compiler-backend-call-leading-arg-uses-var? args rax-var)]
+      [(IrInstrCallIndirect _ _ args _)
+        (compiler-backend-call-leading-arg-uses-var? args rax-var)]
+      [_ false])))
+
+(define (compiler-backend-emit-instrs-after-emitted
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [rest : CompilerIrInstrList]
+  [head : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (let
+    [next-buf : TextBuf (text-buf-append buf head)]
+    (match instr
+      [(IrInstrCall dst _ _ ty)
+        (compiler-backend-emit-instrs-with-call-rax
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          dst
+          ty
+          rest
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          next-buf)]
+      [(IrInstrCallIndirect dst _ _ ty)
+        (compiler-backend-emit-instrs-with-call-rax
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          dst
+          ty
+          rest
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          next-buf)]
+      [(IrInstrCallIndirectC dst _ _ ty)
+        (compiler-backend-emit-instrs-with-call-rax
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          dst
+          ty
+          rest
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          next-buf)]
+      [_
+        (compiler-backend-emit-instrs
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          rest
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          next-buf)])))
+
 (define (compiler-backend-emit-instrs-normal
   [target : CompilerBackendTarget]
   [function : String]
@@ -15150,14 +15536,16 @@
     spans
     func-diag)
     [(OkCompilerBackend head)
-      (compiler-backend-emit-instrs
+      (compiler-backend-emit-instrs-after-emitted
         target
         function
         source-function
         blocks
         current-label
         fallthrough
+        instr
         rest
+        head
         assignments
         vars
         types
@@ -15170,7 +15558,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        buf)]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-fused-result-rest
@@ -15607,6 +15995,107 @@
             func-diag
             use-counts
             buf)])]))
+
+(define (compiler-backend-emit-instrs-with-call-rax-step
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (match instrs
+    [(IrInstrNil) (OkCompilerBackend (text-buf-render buf))]
+    [(IrInstrCons instr rest)
+      (if (compiler-backend-call-rax-forwardable-instr?
+        instr
+        program-index
+        rax-var
+        rax-ty)
+        (match (compiler-backend-emit-instr-with-call-rax
+          target
+          function
+          source-function
+          blocks
+          current-label
+          (match (box-get rest)
+            [(IrInstrNil) fallthrough]
+            [_ (CompilerBackendNoLabel)])
+          instr
+          assignments
+          rax-var
+          rax-ty
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag)
+          [(OkCompilerBackend head)
+            (compiler-backend-emit-instrs-after-emitted
+              target
+              function
+              source-function
+              blocks
+              current-label
+              fallthrough
+              instr
+              (box-get rest)
+              head
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              buf)]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (compiler-backend-emit-instrs
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          instrs
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts
+          buf))]))
 
 (define (compiler-backend-emit-fused-compare-branch-rest
   [target : CompilerBackendTarget]
@@ -16514,13 +17003,14 @@
       program-index)
     0))
 
-(define (compiler-backend-emit-indirect-call
+(define (compiler-backend-emit-indirect-call-with-arg-assignments
   [target : CompilerBackendTarget]
   [dst : i64]
   [func : CompilerIrValue]
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
+  [arg-assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -16543,7 +17033,7 @@
         program-index)]
     (match (compiler-backend-emit-call-args
       target
-      assignments
+      arg-assignments
       args
       param-types
       false
@@ -16622,6 +17112,34 @@
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
+(define (compiler-backend-emit-indirect-call
+  [target : CompilerBackendTarget]
+  [dst : i64]
+  [func : CompilerIrValue]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (compiler-backend-emit-indirect-call-with-arg-assignments
+    target
+    dst
+    func
+    args
+    ty
+    assignments
+    assignments
+    types
+    functions
+    externs
+    program-index
+    vars
+    instr-diag))
 
 (define (compiler-backend-emit-tail-indirect-call
   [target : CompilerBackendTarget]
@@ -19242,6 +19760,30 @@
                     spans
                     func-diag
                     use-counts
+                    current-buf)]
+                [(CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
+                  (compiler-backend-emit-instrs-with-call-rax-step
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    rax-var
+                    rax-ty
+                    current-instrs
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
                     current-buf)]))]
           (match step-result
             [(OkCompilerBackend asm)
@@ -19297,6 +19839,57 @@
       current-label
       fallthrough
       (CompilerBackendEmitInstrsModeNormal)
+      instrs
+      assignments
+      vars
+      types
+      global-types
+      ret-ty
+      plan
+      functions
+      externs
+      program-index
+      spans
+      func-diag
+      use-counts
+      buf)))
+
+(define (compiler-backend-emit-instrs-with-call-rax
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [rax-var : i64]
+  [rax-ty : AstType]
+  [instrs : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (if compiler-backend-emit-instrs-loop-active
+    (compiler-backend-emit-instrs-set-continue!
+      (CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
+      instrs
+      buf)
+    (compiler-backend-emit-instrs-loop
+      target
+      function
+      source-function
+      blocks
+      current-label
+      fallthrough
+      (CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
       instrs
       assignments
       vars

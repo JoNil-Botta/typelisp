@@ -15804,7 +15804,8 @@
 
 (defenum OptRangeFact
   (OptRangeFactNonnegative String OptLoopBceExpr)
-  (OptRangeFactLessThan String OptLoopBceExpr OptLoopBceExpr))
+  (OptRangeFactLessThan String OptLoopBceExpr OptLoopBceExpr)
+  (OptRangeFactLessThanOrEq String OptLoopBceExpr OptLoopBceExpr))
 
 (defenum OptRangeFacts
   (OptRangeFactsNil)
@@ -15946,6 +15947,86 @@
             (opt-range-less-than-contains? (box-get rest) label lhs rhs))]
         [_ (opt-range-less-than-contains? (box-get rest) label lhs rhs)])]))
 
+(define (opt-range-less-than-or-eq-contains?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (match facts
+    [(OptRangeFactsNil) false]
+    [(OptRangeFactsCons fact rest)
+      (match fact
+        [(OptRangeFactLessThanOrEq fact-label fact-lhs fact-rhs)
+          (if (and
+            (string-eq fact-label label)
+            (opt-loop-bce-expr-eq fact-lhs lhs)
+            (opt-loop-bce-expr-eq fact-rhs rhs))
+            true
+            (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs))]
+        [_ (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs)])]))
+
+(define (opt-range-proves-less-than-or-eq?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (or
+    (opt-loop-bce-expr-eq lhs rhs)
+    (opt-range-less-than-contains? facts label lhs rhs)
+    (opt-range-less-than-or-eq-contains? facts label lhs rhs)))
+
+(define (opt-range-proves-less-than-through-one-bound-from?
+  [all-facts : OptRangeFacts]
+  [scan : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (match scan
+    [(OptRangeFactsNil) false]
+    [(OptRangeFactsCons fact rest)
+      (match fact
+        [(OptRangeFactLessThan fact-label fact-lhs fact-mid)
+          (if (and
+            (string-eq fact-label label)
+            (opt-loop-bce-expr-eq fact-lhs lhs)
+            (opt-range-proves-less-than-or-eq? all-facts label fact-mid rhs))
+            true
+            (opt-range-proves-less-than-through-one-bound-from?
+              all-facts
+              (box-get rest)
+              label
+              lhs
+              rhs))]
+        [_
+          (opt-range-proves-less-than-through-one-bound-from?
+            all-facts
+            (box-get rest)
+            label
+            lhs
+            rhs)])]))
+
+(define (opt-range-proves-less-than-through-one-bound?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (opt-range-proves-less-than-through-one-bound-from? facts facts label lhs rhs))
+
+(define (opt-range-proves-less-than?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : bool
+  (or
+    (opt-range-less-than-contains? facts label lhs rhs)
+    (opt-range-proves-less-than-through-one-bound? facts label lhs rhs)))
+
+(define (opt-range-proves-nonnegative?
+  [facts : OptRangeFacts]
+  [label : String]
+  [expr : OptLoopBceExpr]) : bool
+  (opt-range-nonnegative-contains? facts label expr))
+
 (define (opt-range-facts-add-nonnegative
   [facts : OptRangeFacts]
   [label : String]
@@ -15962,6 +16043,15 @@
   (if (opt-range-less-than-contains? facts label lhs rhs)
     facts
     (OptRangeFactsCons (OptRangeFactLessThan label lhs rhs) (box facts))))
+
+(define (opt-range-facts-add-less-than-or-eq
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : OptRangeFacts
+  (if (opt-range-less-than-or-eq-contains? facts label lhs rhs)
+    facts
+    (OptRangeFactsCons (OptRangeFactLessThanOrEq label lhs rhs) (box facts))))
 
 (define (opt-range-facts-propagate-label-from
   [source : OptRangeFacts]
@@ -15983,6 +16073,10 @@
               [(OptRangeFactLessThan label lhs rhs)
                 (if (string-eq label parent-label)
                   (opt-range-facts-add-less-than out child-label lhs rhs)
+                  out)]
+              [(OptRangeFactLessThanOrEq label lhs rhs)
+                (if (string-eq label parent-label)
+                  (opt-range-facts-add-less-than-or-eq out child-label lhs rhs)
                   out)])]
           (opt-range-facts-propagate-label-from
             (box-get rest)
@@ -16107,6 +16201,28 @@
         facts)]
     [_ facts]))
 
+(define (opt-range-add-less-than-or-eq-from-compare
+  [facts : OptRangeFacts]
+  [sources : I64I64Map]
+  [label : String]
+  [op : CompilerIrBinOp]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : OptRangeFacts
+  (match op
+    [(IrBinLe)
+      (if (and
+        (opt-range-expr-stable? sources lhs)
+        (opt-range-expr-stable? sources rhs))
+        (opt-range-facts-add-less-than-or-eq facts label lhs rhs)
+        facts)]
+    [(IrBinGe)
+      (if (and
+        (opt-range-expr-stable? sources lhs)
+        (opt-range-expr-stable? sources rhs))
+        (opt-range-facts-add-less-than-or-eq facts label rhs lhs)
+        facts)]
+    [_ facts]))
+
 (define (opt-range-add-edge-facts
   [facts : OptRangeFacts]
   [sources : I64I64Map]
@@ -16121,9 +16237,11 @@
       (opt-range-compare-operand-type types lhs rhs fallback-ty)]
     [less : OptRangeFacts
       (opt-range-add-less-than-from-compare facts sources label op lhs rhs)]
+    [less-or-eq : OptRangeFacts
+      (opt-range-add-less-than-or-eq-from-compare less sources label op lhs rhs)]
     [nonnegative : OptRangeFacts
       (opt-range-add-nonnegative-from-compare
-        less
+        less-or-eq
         sources
         label
         op
@@ -16380,6 +16498,10 @@
   (match fact
     [(OptRangeFactNonnegative _ expr) (opt-loop-bce-expr-uses-var? expr var)]
     [(OptRangeFactLessThan _ lhs rhs)
+      (or
+        (opt-loop-bce-expr-uses-var? lhs var)
+        (opt-loop-bce-expr-uses-var? rhs var))]
+    [(OptRangeFactLessThanOrEq _ lhs rhs)
       (or
         (opt-loop-bce-expr-uses-var? lhs var)
         (opt-loop-bce-expr-uses-var? rhs var))]))
@@ -17180,8 +17302,8 @@
       (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
     [ranges : OptRangeFacts (struct-get state ranges)]
     (and
-      (opt-range-nonnegative-contains? ranges block-label index-expr)
-      (opt-range-less-than-contains? ranges block-label index-expr length-expr))))
+      (opt-range-proves-nonnegative? ranges block-label index-expr)
+      (opt-range-proves-less-than? ranges block-label index-expr length-expr))))
 
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]
@@ -27662,6 +27784,69 @@
           (opt-loop-bce-string-test-split-tail)
           (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))
 
+(define (opt-loop-bce-string-test-transitive-entry) : CompilerIrBlock
+  (compiler-ir-block
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrGep 3 (IrValueVar 2) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 3) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 40 (IrValueI64 3) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                41
+                (IrBinGe)
+                (IrValueVar 0)
+                (IrValueI64 0)
+                (AstTyBool))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 41) "upper" "exit")
+                (IrInstrNil)))))))))
+
+(define (opt-loop-bce-string-test-transitive-upper [with-upper : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "upper"
+    (if with-upper
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 42 (IrBinLe) (IrValueVar 40) (IrValueVar 1) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 42) "header" "exit")
+          (IrInstrNil)))
+      (compiler-ir-instr-cons (IrInstrJump "header") (IrInstrNil)))))
+
+(define (opt-loop-bce-string-test-transitive-header) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 43 (IrBinLt) (IrValueVar 0) (IrValueVar 40) (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 43) "body" "exit")
+        (IrInstrNil)))))
+
+(define (opt-loop-bce-string-test-transitive-body) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (opt-loop-bce-string-test-ref-instrs
+      2
+      50
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 57)))
+        (IrInstrNil)))))
+
+(define (opt-loop-bce-string-test-transitive-blocks [with-upper : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-string-test-transitive-entry)
+    (compiler-ir-block-cons
+      (opt-loop-bce-string-test-transitive-upper with-upper)
+      (compiler-ir-block-cons
+        (opt-loop-bce-string-test-transitive-header)
+        (compiler-ir-block-cons
+          (opt-loop-bce-string-test-transitive-body)
+          (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))
+
 (define (opt-loop-bce-test-count
   [blocks : CompilerIrBlockList]
   [summaries : OptLoopBceSummaries]) : i64
@@ -27790,6 +27975,14 @@
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-split-blocks)
         (opt-loop-bce-test-summaries false false))]
+    [string-transitive : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-transitive-blocks true)
+        (opt-loop-bce-test-summaries false false))]
+    [string-transitive-missing-upper : i64
+      (opt-loop-bce-string-test-count
+        (opt-loop-bce-string-test-transitive-blocks false)
+        (opt-loop-bce-test-summaries false false))]
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsNil)
@@ -27825,6 +28018,8 @@
       [(not (= string-split 0)) 22]
       [(not (= (opt-count-bounds-instrs index-cast) 1)) 23]
       [(not (= (opt-count-bounds-instrs index-cast-redef) 2)) 24]
+      [(not (= string-transitive 0)) 25]
+      [(not (= string-transitive-missing-upper 1)) 26]
       [else 42])))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already

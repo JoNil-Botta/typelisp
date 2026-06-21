@@ -11,100 +11,27 @@ concurrency:
 permissions:
   contents: read
 
+# DEBUG #1204 BRANCH: this workflow is temporarily reduced to a Windows-only,
+# amplified reproduction of the transient borrowed-str segfault. It builds one
+# instrumented compiler and loops the crash-prone workloads (self-compile +
+# doctest gate + many per-file invocations) under self-poison until the crash
+# surfaces, then uploads the minidump + binary. REVERT this file to the full
+# fail-closed gate (Linux + Windows ci-verify) once the root cause is fixed.
 jobs:
-  # TypeLisp is self-hosted. The single verification flow fetches the published
-  # stage0 (cli.tl), runs the one compiler build of the flow (the
-  # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl), and then
-  # runs every gate on the resulting stage2 compiler.
-  # The gate is fail-closed: Linux and Windows must run every applicable gate.
-  # Do not add skip flags; compiler/runtime capability changes should land first,
-  # then a follow-up PR can use the new capability.
-  ci:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    strategy:
-      # DEBUG #1204: keep the Windows job running even if Linux fails, so the
-      # Windows crash dump is always captured. REVERT to true with the rest.
-      fail-fast: false
-      matrix:
-        include:
-          - name: Test + Integration
-            os: ubuntu-latest
-            timeout_minutes: 120
-          - name: Test + Integration (windows-latest)
-            os: windows-latest
-            timeout_minutes: 120
+  repro:
+    name: Reproduce #1204 (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check implementation language allowlist
-        shell: bash
-        run: scripts/check-implementation-languages.sh
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: tools/vs-code-extension/package-lock.json
-
-      - name: VS Code extension smoke
-        shell: bash
-        working-directory: tools/vs-code-extension
-        run: |
-          npm ci
-          npm run check
-          npm run package
 
       - name: Check native toolchain
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            Linux)
-              command -v as
-              command -v ld
-              ;;
-            Windows)
-              command -v clang
-              command -v lld-link || command -v lld-link.exe
-              ;;
-            *)
-              echo "unsupported runner OS: $RUNNER_OS" >&2
-              exit 1
-              ;;
-          esac
+          command -v clang
+          command -v lld-link || command -v lld-link.exe
 
-      - name: Install Linux instruction-count tools
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # cachegrind only needs valgrind itself; skipping Recommends drops the
-          # gdb + libc6-dbg + source-highlight tree that dominated install time.
-          # Install against the runner's preinstalled apt index first, and only
-          # refresh it (apt-get update) if a stale index 404s on a package.
-          sudo apt-get install -y --no-install-recommends valgrind \
-            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
-
-      - name: Add Linux swap headroom
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # Large selfhost inline-test harnesses can exceed physical runner RAM
-          # while still passing locally and with full coverage; add swap instead
-          # of weakening the required CI gates.
-          sudo fallocate -l 8G /typelisp-swap
-          sudo chmod 600 /typelisp-swap
-          sudo mkswap /typelisp-swap
-          sudo swapon /typelisp-swap
-          free -h
-
-      # DEBUG #1204: capture Windows crash minidumps. Configure WER LocalDumps to
-      # write a minidump (thread context + stack) for every crashing process into
-      # target/dumps before the gates run. Paired with the artifact upload below
-      # so a transient Windows segfault produces a mappable dump + the exact
-      # binary. REVERT with the rest of the debug instrumentation.
-      - name: Configure crash dumps (Windows)
-        if: runner.os == 'Windows'
+      - name: Configure crash dumps (WER LocalDumps -> target/dumps)
         shell: pwsh
         run: |
           $dir = Join-Path $env:GITHUB_WORKSPACE 'target\dumps'
@@ -113,28 +40,22 @@ jobs:
           New-Item -Path $key -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpFolder -Value $dir -PropertyType ExpandString -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $key -Name DumpCount -Value 30 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpCount -Value 50 -PropertyType DWord -Force | Out-Null
           Write-Host "WER LocalDumps configured -> $dir (DumpType=1 mini)"
 
-      - name: CI verification
+      - name: Amplified #1204 reproduction
         shell: bash
-        run: scripts/ci-verify.sh
+        run: scripts/debug-1204-repro.sh
 
-      # DEBUG #1204: upload crash dumps and the exact bootstrapped binaries so the
-      # dump's faulting RIP + stack can be mapped to a function offline. Runs even
-      # when the gate fails (the masking removal makes a crash fail the gate).
-      - name: Upload Windows crash debug artifacts
-        if: always() && runner.os == 'Windows'
+      - name: Upload crash dumps + binary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-1204-debug
           path: |
             target/dumps/**
-            target/bootstrap-fixpoint/stage1.s
-            target/bootstrap-fixpoint/stage1.obj
-            target/bootstrap-fixpoint/stage1.exe
-            target/bootstrap-fixpoint/stage2.s
-            target/bootstrap-fixpoint/stage2.obj
-            target/bootstrap-fixpoint/stage2.exe
+            target/dbg1204/stage1.s
+            target/dbg1204/stage1.obj
+            target/dbg1204/stage1.exe
           if-no-files-found: warn
           retention-days: 7

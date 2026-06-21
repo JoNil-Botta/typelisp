@@ -24,7 +24,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
-      fail-fast: true
+      # DEBUG #1204: keep the Windows job running even if Linux fails, so the
+      # Windows crash dump is always captured. REVERT to true with the rest.
+      fail-fast: false
       matrix:
         include:
           - name: Test + Integration

@@ -1236,6 +1236,32 @@
 (import (int-box) as ib)
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
+(define (compiler-typecheck-smoke-module-macro-generated-import-source) : String
+  "(defmacro (vector [T : type]) : Module
+  `(begin
+    (module generated.vector)
+    (defstruct Vec (len i64))
+    (define (new) : Vec
+      (Vec 1))
+    (define (len [v : (& v Vec)]) : i64
+      (struct-get v len))
+    (export (type Vec))
+    (export (value new))
+    (export (value len))))
+(defmacro (sliceish) : Module
+  `(begin
+    (module generated.sliceish)
+    (import (vector i64) as vec)
+    (define (len-of [v : vec.Vec]) : i64
+      (vec.len (& v)))
+    (export (value len-of))))
+(import (vector i64) as vec)
+(import (sliceish) as sliceish)
+(define (main) : i64
+  (let
+    [v : vec.Vec (vec.new)]
+    (sliceish.len-of v)))")
+
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
   "(defstruct Pair (value i64))
 (defmacro (emit-pair [T : type]) : Decls
@@ -1262,7 +1288,9 @@
 (define (compiler-typecheck-smoke-decl-macro-body-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-smoke-decls-macro-body-source))
-    (compiler-typecheck-ok? (compiler-typecheck-smoke-module-macro-body-source))))
+    (compiler-typecheck-ok? (compiler-typecheck-smoke-module-macro-body-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-generated-import-source))))
 
 (define (compiler-typecheck-smoke-prefix-cache-cfg-source) : String
   "(cfg feature (define (shared-helper [x : i64]) : i64 (+ x 2)))

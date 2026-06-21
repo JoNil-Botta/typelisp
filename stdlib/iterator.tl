@@ -14,17 +14,17 @@
 ;# these monomorphic `*Next` enums when it lands.
 ;#
 ;# ```typelisp
-;# (import stdlib.iterator)
+;# (import stdlib.iterator as iter)
 ;# (define (main) : i64
 ;#   (let
-;#     [it : I64RangeIter (i64-range-iterator 0 3)]
+;#     [it : iter.I64RangeIter (iter.i64-range-iterator 0 3)]
 ;#     [sum : i64 0]
 ;#     [done : bool false]
 ;#     (begin
 ;#       (while (not done)
-;#         (match (i64-range-next (&mut it))
-;#           [(I64RangeItem value) (set! sum (+ sum value))]
-;#           [(I64RangeDone) (set! done true)]))
+;#         (match (iter.i64-range-next (&mut it))
+;#           [(iter.I64RangeItem value) (set! sum (+ sum value))]
+;#           [(iter.I64RangeDone) (set! done true)]))
 ;#       sum)))
 ;# ```
 (module stdlib.iterator)

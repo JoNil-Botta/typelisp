@@ -98,7 +98,7 @@ are intentionally migrated.
 [`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
 auto-discovers top-level inline tests under `src/`, `stdlib/`, `tools/`,
 `tests/integration/`, `tests/inline/`, and `examples/`. It runs
-one batched `typelisp test --check --batch <listfile>` process first, then
+batched `typelisp test --check --batch <listfile>` checks first, then
 per-file `typelisp test` executions, so malformed, untyped, unbuildable, and
 failing inline tests all fail CI without a hand-maintained manifest update.
 
@@ -471,7 +471,7 @@ Linux and Windows.
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
 `(test ...)` items under `src/`, `stdlib/`, `tests/integration/`,
 `tools/`, `tests/inline/`, and `examples/`. It type-checks the discovered files
-with one batched `test --check --batch` invocation, preserving per-file counts,
+with batched `test --check --batch` invocations, preserving per-file counts,
 then runs each generated inline-test harness with `--stdlib-root`, reporting the
 source path and test-runner output in CI logs. This gate is separate from
 doctests, manifest corpora, and smoke drivers so source-owned checks can be

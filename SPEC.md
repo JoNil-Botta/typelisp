@@ -897,12 +897,15 @@ categories:
 
 - `: Module` means the macro body produces exactly one `(module ...)`
   declaration. It is called only through import syntax:
-  `(import (macro args))` or `(import (macro args) as alias)`. Without `as`,
-  the generated module is anonymous and all exported items are imported
-  unqualified into the current module. With `as`, only qualified access through
-  the alias is bound. The macro operand is always the nested call form; a flat
-  import such as `(import vector i64)` is not a module macro import. The
-  generated module participates in ordinary
+  `(import (macro args) as alias)`, `(import (macro args).*)`,
+  `(import (macro args).item)`, or `(import (macro args).item as alias)`.
+  A generated module has no inherent final identity segment, so bare
+  `(import (macro args))` is rejected. `as` binds a qualified module alias;
+  `.*` imports every exported item unqualified; `.item` imports exactly one
+  exported item unqualified and may combine with `as` to rename that item.
+  `.*` cannot combine with `as`. The macro operand is always the nested call
+  form; a flat import such as `(import vector i64)` is not a module macro
+  import. The generated module participates in ordinary
   dot-qualified lookup, export checking, typechecking, lowering, tests, docs,
   and diagnostics after expansion.
 - `: Decls` means the macro body produces a declaration list. A call at module
@@ -934,10 +937,10 @@ name such as `(stdlib.vector.vector i64)`. A macro with `: Module` used outside
 `import`, a macro with `: Decls` used in expression position or import syntax,
 and an expression macro used at module scope are diagnostics.
 
-Two unqualified generated module imports that export the same name create the
-same kind of namespace collision as hand-written imports. The diagnostic should
-name both generated module identities and suggest qualified access using either
-an explicit alias or the full generated module identity.
+Two unqualified generated module imports, whether through `.*` or `.item`, that
+export the same name create the same kind of namespace collision as hand-written
+imports. The diagnostic should name both generated module identities and suggest
+qualified access through an explicit alias.
 
 Generated module identity and deduplication are keyed by the canonical macro
 module identity, macro name, and evaluated argument-key strings. Repeating the
@@ -2258,20 +2261,47 @@ platform path separators and package-root spellings. A `pkg:<alias>/...` import
 contributes the package alias to the loader identity, but an explicit `(module
 ...)` declaration inside the file remains the public source-level identity.
 
-Importing a module loads it and binds a module alias; it does not merge exported
-declarations into the local unqualified namespace by default. The default alias
-is the final segment of the imported module identity. If that alias would
-collide with an existing module alias, the import is rejected unless the source
-uses an explicit alias:
+Importing a named module loads it and, by default, binds a qualified module
+alias. It does not merge exported declarations into the local unqualified
+namespace by default. The default alias is the final segment of the imported
+module identity. If that alias would collide with an existing module alias, the
+import is rejected unless the source uses an explicit alias:
 
 ```lisp test=ignore name=module-import-alias-syntax reason="selfhost module aliases are tracked by #952"
-(import "math/vector.tl" module math.vector :as vec)
-(import "io/vector.tl" module io.vector :as io-vec)
+(import math.vector as vec)
+(import io.vector as io-vec)
 ```
 
-Selected imports remain deferred in v1. Spellings such as
-`(import "math/vector.tl" :only (dot norm))` are reserved and must be rejected
-until a follow-up specifies their shadowing and re-export rules.
+The named module import forms are:
+
+```lisp test=ignore name=module-import-final-syntax reason="parser/resolver suffix work is tracked by #2454"
+(import stdlib.io)             ; binds alias `io`; use `io.write`
+(import stdlib.io as io2)      ; binds alias `io2`; use `io2.write`
+(import stdlib.io.*)           ; imports all exported items unqualified
+(import stdlib.io.write)       ; imports exported item `write` unqualified
+(import stdlib.io.write as w)  ; imports exported item `write` as `w`
+```
+
+`.*` and `.item` are the only ways to pull exported items into the unqualified
+namespace. `.*` imports every exported item and cannot combine with `as`.
+`.item` imports one exported item and may combine with `as` to rename the local
+binding. The resolver uses the longest dotted prefix that names a loadable
+module; if exactly one segment remains, that segment is treated as the selected
+exported item. The import is rejected if more than one segment remains or if the
+remaining segment is not exported by the resolved module.
+
+Two unqualified imports, whether through `.*` or `.item`, that bring in the
+same name are a namespace collision. The diagnostic must name both module
+identities and suggest alias-qualified access instead. Prelude bare names such
+as `panic`, `print*`, and the deliberately retained prelude exceptions are not
+affected by these import rules; they come from the implicit prelude.
+
+Multi-item selected imports remain deferred in v1. Spellings such as
+`(import stdlib.io :only (read write))` are reserved and must be rejected until a
+follow-up specifies their shadowing and re-export rules. Parser and resolver
+implementation for `.*`, `.item`, `.item as alias`, and rejected bare macro
+imports is tracked by #2454; that implementation should add parser probes or
+fixtures for each accepted suffix shape and for `(import (macro args))`.
 
 #### 4.4.2 Exports and visibility
 
@@ -6315,9 +6345,10 @@ extern-meta   ::= "(" ":abi" "c" ")"
                 | "(" ":link-search" string ")"
                 | "(" ":link-arg" string ")"
 module-decl   ::= "(" "module" module-ident ")"
-import-decl   ::= "(" "import" string ["module" module-ident] [import-alias] ")"
-                | "(" "import" module-ident [import-alias] ")"
-                | "(" "import" macro-call [import-alias] ")"
+import-decl   ::= "(" "import" string ["module" module-ident] [import-alias] ")"   ; legacy, migration only
+                | "(" "import" module-ident [item-suffix] [import-alias] ")"
+                | "(" "import" macro-call [item-suffix] [import-alias] ")"
+item-suffix   ::= ".*" | "." ident
 import-alias  ::= ("as" | ":as") ident
 export-decl   ::= "(" "export" export-item+ ")"
 export-item   ::= "(" "value" ident ")"
@@ -6465,6 +6496,23 @@ char-payload  ::= any source character except "'" "\\" newline carriage-return
 char-escape   ::= "n" | "t" | "r" | "0" | "\\" | "'"
 string        ::= \"...\"
 ```
+
+Import grammar constraints:
+
+- A bare `module-ident` import binds the final-segment default alias and gives
+  qualified access only.
+- `.*` imports all exported items unqualified and cannot combine with `as`.
+- `.item` imports that single exported item unqualified and may combine with
+  `as` to rename the bound item.
+- A `macro-call` whole-module import requires `as alias`; otherwise it must use
+  `.*` or `.item`. Bare `(import (macro args))` is rejected, and `.item` may
+  combine with `as` to rename the selected item.
+- For named modules, item resolution uses the longest module prefix; a single
+  remaining segment is the selected exported item. For macro-call imports, the
+  parenthesized macro call is the module expression and an optional suffix
+  selects items from its exports.
+- Multi-segment item paths and multi-item `:only` selected imports are
+  rejected/reserved.
 
 ---
 

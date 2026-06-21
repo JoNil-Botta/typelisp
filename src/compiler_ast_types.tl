@@ -1657,6 +1657,17 @@
   (AstExprClauseNil)
   (AstExprClauseCons AstExprClause (Box AstExprClauseList)))
 
+(defstruct AstExprBindingClause
+  (name i64)
+  (has-type bool)
+  (ty i64)
+  (init i64)
+  (span AstSourceSpan))
+
+(defenum AstExprBindingClauseList
+  (AstExprBindingClauseNil)
+  (AstExprBindingClauseCons AstExprBindingClause (Box AstExprBindingClauseList)))
+
 (defenum AstMaybeModuleName
   (AstNoModuleName)
   (AstSomeModuleName String))
@@ -1989,6 +2000,27 @@
 
 (define (ast-expr-clause-cons [head : AstExprClause] [rest : AstExprClauseList]) : AstExprClauseList
   (AstExprClauseCons head (box rest)))
+
+(define (ast-expr-binding-clause
+  [name : String]
+  [has-type : bool]
+  [ty : i64]
+  [init : i64]
+  [span : AstSourceSpan]) : AstExprBindingClause
+  (AstExprBindingClause (intern name) has-type ty init span))
+
+(define (ast-expr-binding-clause-id
+  [name : i64]
+  [has-type : bool]
+  [ty : i64]
+  [init : i64]
+  [span : AstSourceSpan]) : AstExprBindingClause
+  (AstExprBindingClause name has-type ty init span))
+
+(define (ast-expr-binding-clause-cons
+  [head : AstExprBindingClause]
+  [rest : AstExprBindingClauseList]) : AstExprBindingClauseList
+  (AstExprBindingClauseCons head (box rest)))
 
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
   (ast-node-push (AstExprSpanned inner span)))

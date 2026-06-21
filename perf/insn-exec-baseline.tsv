@@ -11,7 +11,7 @@ benchmark/typelisp/hashmap_grow	17023152
 benchmark/c/hashmap_grow	2048611
 benchmark/typelisp/hashmap_insert	321415956
 benchmark/c/hashmap_insert	66066561
-benchmark/typelisp/spmd_reduce	18437884558
+benchmark/typelisp/spmd_reduce	17208180459
 benchmark/c/spmd_reduce	1693929378
 benchmark/typelisp/opt_quicksort	3040208196
 benchmark/c/opt_quicksort	398486841

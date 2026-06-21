@@ -230,12 +230,18 @@
           "%r15"
           (compiler-reg-string-cons "%rbx" CompilerRegStringNil))))))
 
-;; Conservative caller-saved extension for the scalar opt2 pass. %r9 is
-;; caller-saved on both SysV and Win64 and is not a backend hard scratch register
-;; outside call/syscall argument setup, so it is safe only for intervals that do
-;; not span a modeled caller-clobber point.
+;; Conservative caller-saved extension for the scalar opt2 pass. These registers
+;; are caller-saved on both SysV and Win64, are not callee-saved registers that
+;; would need prologue/epilogue save/restore, and are used only for intervals
+;; that do not span a modeled backend caller-clobber point. %r8 stays reserved as
+;; the backend's primary integer scratch, %rax is the result/scratch register,
+;; and %r10/%r11 are backend address/division scratch registers.
 (define (compiler-reg-zero-call-caller-saved-integer-registers) : CompilerRegStringList
-  (compiler-reg-string-cons "%r9" CompilerRegStringNil))
+  (compiler-reg-string-cons
+    "%r9"
+    (compiler-reg-string-cons
+      "%rcx"
+      (compiler-reg-string-cons "%rdx" CompilerRegStringNil))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -4214,6 +4220,42 @@
           [_ false])]
       [(CompilerRegNoLocation) true])))
 
+(define (compiler-reg-first-safe-caller-saved-zero-call-register
+  [regs : CompilerRegStringList]
+  [active : CompilerRegActiveList]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [clobber-points : CompilerLiveI64Set]
+  [var : i64]
+  [start : i64]
+  [end : i64]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringNil) CompilerRegNoString]
+    [(CompilerRegStringCons reg rest)
+      (if (and
+        (not (compiler-reg-active-contains-register? active reg))
+        (compiler-reg-caller-saved-zero-call-candidate?
+          assignments
+          interval-index
+          group-vars
+          clobber-points
+          var
+          start
+          end
+          reg))
+        (CompilerRegSomeString reg)
+        (compiler-reg-first-safe-caller-saved-zero-call-register
+          (box-get rest)
+          active
+          assignments
+          interval-index
+          group-vars
+          clobber-points
+          var
+          start
+          end))]))
+
 (define (compiler-reg-assign-caller-saved-zero-call-candidates
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
@@ -4230,19 +4272,17 @@
           (let
             [expired : CompilerRegActiveList
               (compiler-reg-expire-active active start)]
-            [reg : String (compiler-reg-first-free-register regs expired)]
-            (if (compiler-reg-caller-saved-zero-call-candidate?
+            (match (compiler-reg-first-safe-caller-saved-zero-call-register
+              regs
+              expired
               assignments
               interval-index
               group-vars
               clobber-points
               var
               start
-              end
-              reg)
-              (if (=
-                (compiler-reg-active-count expired)
-                (compiler-reg-string-list-count regs))
+              end)
+              [(CompilerRegNoString)
                 (compiler-reg-assign-caller-saved-zero-call-candidates
                   (box-get rest)
                   regs
@@ -4250,7 +4290,8 @@
                   assignments
                   interval-index
                   group-vars
-                  clobber-points)
+                  clobber-points)]
+              [(CompilerRegSomeString reg)
                 (compiler-reg-assign-caller-saved-zero-call-candidates
                   (box-get rest)
                   regs
@@ -4263,15 +4304,7 @@
                     (CompilerRegRegister reg))
                   interval-index
                   group-vars
-                  clobber-points))
-              (compiler-reg-assign-caller-saved-zero-call-candidates
-                (box-get rest)
-                regs
-                expired
-                assignments
-                interval-index
-                group-vars
-                clobber-points)))])]))
+                  clobber-points)]))])]))
 
 (define (compiler-reg-direct-call-points-seq
   [instrs : CompilerIrInstrSeq]
@@ -8231,6 +8264,105 @@
               (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
       IrBlockNil)))
 
+(define (compiler-reg-zero-call-param-conflict-function) : CompilerIrFunction
+  (let
+    [instrs : CompilerIrInstrList IrInstrNil]
+    (begin
+      (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "p5" (IrValueVar 5) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g12" (IrValueVar 12) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g11" (IrValueVar 11) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g10" (IrValueVar 10) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g9" (IrValueVar 9) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g8" (IrValueVar 8) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g7" (IrValueVar 7) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 12 (IrValueI64 12) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 11 (IrValueI64 11) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 10 (IrValueI64 10) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 9 (IrValueI64 9) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 8 (IrValueI64 8) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 7 (IrValueI64 7) (compiler-reg-i64-ty))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+          instrs))
+      (IrFunction
+        "zero_call_param_conflict"
+        (compiler-ir-param-cons
+          (IrParam "a" (compiler-reg-i64-ty) 0)
+          (compiler-ir-param-cons
+            (IrParam "b" (compiler-reg-i64-ty) 1)
+            (compiler-ir-param-cons
+              (IrParam "c" (compiler-reg-i64-ty) 2)
+              (compiler-ir-param-cons
+                (IrParam "d" (compiler-reg-i64-ty) 3)
+                (compiler-ir-param-cons
+                  (IrParam "e" (compiler-reg-i64-ty) 4)
+                  (compiler-ir-param-cons
+                    (IrParam "f" (compiler-reg-i64-ty) 5)
+                    IrParamNil))))))
+        (AstTyUnit)
+        13
+        (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)))))
+
 (define (compiler-reg-param-clobber-function) : CompilerIrFunction
   (IrFunction
     "param_clobber"
@@ -8880,13 +9012,30 @@
     [(CompilerRegPlan assignments _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 7)
-        (= (compiler-reg-spill-count assignments) 1)
+        (= (compiler-reg-spill-count assignments) 0)
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 5)
           "%r9")
-        (compiler-reg-location-spill-offset?
+        (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 6)
-          (compiler-reg-stack-slot-offset 6)))]))
+          "%rcx"))]))
+
+(define (compiler-reg-scalar-zero-call-param-conflict-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegAbiLinux
+    (compiler-reg-zero-call-param-conflict-function))
+    [(CompilerRegPlan assignments _ _ _ _)
+      (and
+        (= (compiler-reg-spill-count assignments) 0)
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 5)
+          "%r9")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 11)
+          "%rcx")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 12)
+          "%rdx"))]))
 
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -9468,12 +9617,12 @@
           zero-census
           0
           (compiler-reg-call-span-outcome-register)
-          6)
+          7)
         (compiler-reg-call-span-census-count?
           zero-census
           0
           (compiler-reg-call-span-outcome-spill)
-          1)
+          0)
         (compiler-reg-call-span-census-count?
           one-census
           1
@@ -9966,14 +10115,26 @@
       (compiler-reg-string-list-contains?
         (compiler-reg-sysv-integer-registers)
         "%r12")
-      ;; The scalar zero-call extension is deliberately narrow: %r9 is
-      ;; caller-saved on both supported x64 ABIs and is not a hard scratch in
-      ;; ordinary non-call emission. Keep %r8 out because the backend uses it as
-      ;; a per-instruction scratch register.
-      (= (compiler-reg-string-list-count zero-call-callers) 1)
+      ;; The scalar zero-call extension only admits registers that are
+      ;; caller-saved under both supported x64 ABIs and safe behind the backend
+      ;; clobber-point filter. Keep backend hard scratch registers and Win64
+      ;; callee-saved %rsi/%rdi out of this pool.
+      (= (compiler-reg-string-list-count zero-call-callers) 3)
       (compiler-reg-string-list-contains? zero-call-callers "%r9")
+      (compiler-reg-string-list-contains? zero-call-callers "%rcx")
+      (compiler-reg-string-list-contains? zero-call-callers "%rdx")
+      (compiler-reg-string-list-contains? sysv-callers "%rcx")
+      (compiler-reg-string-list-contains? sysv-callers "%rdx")
+      (compiler-reg-string-list-contains? sysv-callers "%r9")
+      (compiler-reg-string-list-contains? win-callers "%rcx")
+      (compiler-reg-string-list-contains? win-callers "%rdx")
+      (compiler-reg-string-list-contains? win-callers "%r9")
+      (not (compiler-reg-string-list-contains? zero-call-callers "%rax"))
       (not (compiler-reg-string-list-contains? zero-call-callers "%r8"))
+      (not (compiler-reg-string-list-contains? zero-call-callers "%r10"))
+      (not (compiler-reg-string-list-contains? zero-call-callers "%r11"))
       (not (compiler-reg-string-list-contains? zero-call-callers "%rdi"))
+      (not (compiler-reg-string-list-contains? zero-call-callers "%rsi"))
       (not
         (compiler-reg-string-list-contains?
           (compiler-reg-sysv-integer-registers)
@@ -10261,6 +10422,7 @@
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)
     (compiler-reg-scalar-zero-call-caller-saved-ok?)
+    (compiler-reg-scalar-zero-call-param-conflict-ok?)
     (compiler-reg-scalar-caller-saved-clobber-ok?)
     (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)

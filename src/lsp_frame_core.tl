@@ -3309,7 +3309,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/findPosition - Find the position {line, character} of a named top-level form
+;; tl/findPosition - Find the name position {line, character} of a top-level form
 (define (lsp-handle-tl-find-position
   [id : Json]
   [params : Json]
@@ -3320,7 +3320,8 @@
         [(OkLspJsonText name)
           (let
             [decls : LspDeclList (lsp-scan-decls text)]
-            [kind-param : String (lsp-json-string-field-default params "kind" "")]
+            [kind-param : String
+              (lsp-json-string-field-default params "kind" "")]
             [i : i64 0]
             [n : i64 (lsp-decl-list-len decls)]
             [found : bool false]
@@ -3332,10 +3333,10 @@
                   [entry : LspDeclEntry
                     (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
                   (if (and
-                        (string-eq (struct-get entry name) name)
-                        (or
-                          (= (string-length kind-param) 0)
-                          (string-eq (struct-get entry kind) kind-param)))
+                    (string-eq (struct-get entry name) name)
+                    (or
+                      (= (string-length kind-param) 0)
+                      (string-eq (struct-get entry kind) kind-param)))
                     (begin
                       (set! result-line (struct-get entry name-line))
                       (set! result-col (struct-get entry name-col))
@@ -3366,7 +3367,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/structuralReplace - Replace a top-level form by name
+;; tl/structuralReplace - legacy method name routed to position-based replacement
 ;; tl/insertFunction - Insert a function after another
 (define (lsp-handle-tl-insert-function
   [id : Json]
@@ -3435,7 +3436,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/deleteFunction - Delete a function by name
+;; tl/deleteFunction - legacy method name routed to position-based deletion
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start [text : String] [entry : LspDeclEntry]) : i64
   (lsp-offset-at-position
@@ -3941,7 +3942,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/replaceBody - Replace the body of a function, keeping its signature
+;; tl/replaceBody - legacy method name routed to position-based body replacement
 (define (lsp-handle-message
   [message : Json]
   [docs : LspDocuments]
@@ -4204,9 +4205,7 @@
                       [params-key : String "params"]
                       (match (json-object-get message (& params-key))
                         [(JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-delete-at id params docs))]
+                          (set! result (lsp-handle-tl-delete-at id params docs))]
                         [(JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))

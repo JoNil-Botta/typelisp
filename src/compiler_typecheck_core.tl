@@ -21018,23 +21018,6 @@
         (ErrTcEnv "typecheck: literal pattern type mismatch"))]
     [(ErrTcType message) (ErrTcEnv message)]))
 
-(define (tc-bind-scalar-match-pattern
-  [env : TcTypeEnv]
-  [scrut-ty : AstType]
-  [pattern : AstPattern]) : ResultTcEnv
-  (match pattern
-    [(AstPatWildcard) (OkTcEnv env)]
-    [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
-    [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
-    [(AstPatVariant name _)
-      (if (tc-box-pattern-name? name)
-        (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
-        (ErrTcEnv
-          "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
-    [_
-      (ErrTcEnv
-        "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
-
 (define (tc-bind-sub-pattern-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21653,7 +21636,19 @@
               [_
                 (ErrTcEnv
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
-          [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
+          [_
+            (match pattern
+              [(AstPatWildcard) (OkTcEnv env)]
+              [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+              [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+              [(AstPatVariant name _)
+                (if (tc-box-pattern-name? name)
+                  (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+                  (ErrTcEnv
+                    "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+              [_
+                (ErrTcEnv
+                  "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))]
     [(AstTyEnum enum-name)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -21734,9 +21729,21 @@
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
     [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(AstTyVar name)
-      (if (= name (intern "ExprClause"))
-        (tc-bind-expr-clause-match-pattern ctx env pattern)
-        (tc-bind-scalar-match-pattern env scrut-ty pattern))]
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding bind-name)
+          (OkTcEnv (tc-bind-id env bind-name scrut-ty))]
+        [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+        [(AstPatVariant variant-name _)
+          (if (= name (intern "ExprClause"))
+            (tc-bind-expr-clause-match-pattern ctx env pattern)
+            (if (tc-box-pattern-name? variant-name)
+              (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+              (ErrTcEnv
+                "typecheck: scalar match only supports literal, binding, or wildcard patterns")))]
+        [_
+          (ErrTcEnv
+            "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
     [(AstTyBox inner-ty)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -21750,7 +21757,19 @@
               (ErrTcEnv
                 "typecheck: Box match only supports (box ...), binding, or wildcard patterns")))]
         [_ (ErrTcEnv "typecheck: unsupported Box match pattern")])]
-    [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
+    [_
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+        [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+        [(AstPatVariant name _)
+          (if (tc-box-pattern-name? name)
+            (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+            (ErrTcEnv
+              "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+        [_
+          (ErrTcEnv
+            "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))
 
 (define (tc-match-arm-type
   [ctx : TcContext]
@@ -22408,12 +22427,14 @@
             (box-get args-box))]
         [_ false])]
     [(AstTyVar name)
-      (if (= name (intern "ExprClause"))
-        (tc-expr-clause-pattern-irrefutable? ctx pattern)
-        (match pattern
-          [(AstPatWildcard) true]
-          [(AstPatBinding _) true]
-          [_ false]))]
+      (match pattern
+        [(AstPatWildcard) true]
+        [(AstPatBinding _) true]
+        [(AstPatVariant _ _)
+          (if (= name (intern "ExprClause"))
+            (tc-expr-clause-pattern-irrefutable? ctx pattern)
+            false)]
+        [_ false])]
     [_
       (match pattern
         [(AstPatWildcard) true]

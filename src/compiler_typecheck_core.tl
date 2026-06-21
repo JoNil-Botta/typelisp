@@ -5818,9 +5818,7 @@
   [found : bool]
   [handle : i64]) : unit
   (begin
-    (set!
-      tc-resolve-type-name-cache-key
-      (substring lookup-name 0 (string-length lookup-name)))
+    (set! tc-resolve-type-name-cache-key (intern-persistent-copy lookup-name))
     (set! tc-resolve-type-name-cache-found found)
     (set! tc-resolve-type-name-cache-handle handle)
     (set! tc-resolve-type-name-cache-valid true)))
@@ -37895,64 +37893,68 @@
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
-  (match (build-compiler-symbols-with-paths program paths)
-    [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries-with-symbols program symbols)
-        [(OkCompilerRegistries registries)
-          (match (build-compiler-exports-with program symbols registries)
-            [(OkCompilerExports _)
-              (let
-                [ctx : TcContext
-                  (TcContext
-                    program
-                    symbols
-                    registries
-                    ""
-                    (ast-node-pool-context-capture-active))]
-                (match (tc-stdlib-comptime-surface-ok ctx)
-                  [(OkTcUnit)
-                    (match (tc-program-source-types-policy-ok ctx program)
-                      [(OkTcUnit)
-                        (match (tc-build-top-env ctx program)
-                          [(OkTcEnv top-env)
-                            (match program
-                              [(AstProgram decls-box)
-                                (let
-                                  [decls : AstDeclList (box-get decls-box)]
-                                  (begin
-                                    (tc-hygiene-reset-active-top-env! top-env)
-                                    (tc-context-capture-active-pools! ctx)
-                                    (tc-clone-able-cache-populate! ctx)
-                                    (match (tc-check-decls-with-paths
-                                      ctx
-                                      top-env
-                                      decls
-                                      paths
-                                      (CompilerTypecheckSummary 0 0 0)
-                                      stdlib-roots
-                                      cache-scope)
-                                      [(OkCompilerTypecheck summary)
-                                        (begin
-                                          (tc-context-capture-active-pools! ctx)
-                                          (OkCompilerTypecheckChecked
-                                            summary
-                                            ctx
-                                            top-env))]
-                                      [(ErrCompilerTypecheck diag)
-                                        (ErrCompilerTypecheckChecked diag)])))])]
-                          [(ErrTcEnv message)
-                            (ErrCompilerTypecheckChecked
-                              (tc-diag-at-start message))])]
-                      [(ErrTcUnit message)
-                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-                  [(ErrTcUnit message)
-                    (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
-            [(ErrCompilerExports message)
-              (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-        [(ErrCompilerRegistries message)
-          (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-    [(ErrCompilerSymbols message)
-      (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (match (build-compiler-symbols-with-paths program paths)
+      [(OkCompilerSymbols symbols)
+        (match (build-compiler-registries-with-symbols program symbols)
+          [(OkCompilerRegistries registries)
+            (match (build-compiler-exports-with program symbols registries)
+              [(OkCompilerExports _)
+                (let
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
+                  (match (tc-stdlib-comptime-surface-ok ctx)
+                    [(OkTcUnit)
+                      (match (tc-program-source-types-policy-ok ctx program)
+                        [(OkTcUnit)
+                          (match (tc-build-top-env ctx program)
+                            [(OkTcEnv top-env)
+                              (match program
+                                [(AstProgram decls-box)
+                                  (let
+                                    [decls : AstDeclList (box-get decls-box)]
+                                    (begin
+                                      (tc-hygiene-reset-active-top-env! top-env)
+                                      (tc-context-capture-active-pools! ctx)
+                                      (tc-clone-able-cache-populate! ctx)
+                                      (match (tc-check-decls-with-paths
+                                        ctx
+                                        top-env
+                                        decls
+                                        paths
+                                        (CompilerTypecheckSummary 0 0 0)
+                                        stdlib-roots
+                                        cache-scope)
+                                        [(OkCompilerTypecheck summary)
+                                          (begin
+                                            (tc-context-capture-active-pools!
+                                              ctx)
+                                            (OkCompilerTypecheckChecked
+                                              summary
+                                              ctx
+                                              top-env))]
+                                        [(ErrCompilerTypecheck diag)
+                                          (ErrCompilerTypecheckChecked diag)])))])]
+                            [(ErrTcEnv message)
+                              (ErrCompilerTypecheckChecked
+                                (tc-diag-at-start message))])]
+                        [(ErrTcUnit message)
+                          (ErrCompilerTypecheckChecked
+                            (tc-diag-at-start message))])]
+                    [(ErrTcUnit message)
+                      (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
+              [(ErrCompilerExports message)
+                (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+          [(ErrCompilerRegistries message)
+            (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+      [(ErrCompilerSymbols message)
+        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]

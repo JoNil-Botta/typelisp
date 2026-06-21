@@ -932,6 +932,13 @@
     names
     (string-i64-map-put names name 1)))
 
+(define (tltest-reach-mark-source-name [names : StringI64Map] [name : String]) : StringI64Map
+  (let
+    [marked : StringI64Map (tltest-reach-mark-name names name)]
+    (if (tc-name-qualified? name)
+      (tltest-reach-mark-name marked (tc-qualified-name-base name))
+      marked)))
+
 (define (tltest-reach-mark-string-snapshot-runtime [names : StringI64Map]) : StringI64Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
   ;; so keep the TypeLisp runtime body whenever a reachable test path may
@@ -1033,7 +1040,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExprLiteral _) names]
-    [(AstExprVar name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstExprVar name) (tltest-reach-mark-source-name names (intern-str name))]
     [(AstExprBinary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -1126,7 +1133,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
-          (tltest-reach-mark-name names (intern-str name))))]
+          (tltest-reach-mark-source-name names (intern-str name))))]
     [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1706,6 +1713,73 @@
       (if (string-eq (tltest-decl-name decl) name)
         true
         (tltest-decl-list-has-name? (box-get rest) name))]))
+
+(define (tltest-import-alias-call-retained-self-test?) : bool
+  (let
+    [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
+    [dep-path : String "stdlib/string.tl"]
+    [source : String "stdlib/args.tl"]
+    [dep-fn : AstDecl
+      (ast-decl-def-fn
+        "string-eq"
+        AstParamNil
+        (AstTyBool)
+        (ast-node-push (AstExprLiteral (AstLitBool true))))]
+    [dep-export : AstDecl
+      (AstDeclExport
+        (ast-export-item-cons (AstExportValue "string-eq") AstExportItemNil))]
+    [source-import : AstDecl
+      (AstDeclImport
+        (AstImportSpec
+          (AstImportModule)
+          dep-path
+          (AstSomeModuleName "stdlib.string")
+          (AstSomeImportAlias "string")
+          span))]
+    [decls : AstDeclList
+      (ast-decl-cons
+        (ast-decl-module "stdlib.string")
+        (ast-decl-cons
+          dep-fn
+          (ast-decl-cons
+            dep-export
+            (ast-decl-cons
+              (ast-decl-module "stdlib.args")
+              (ast-decl-cons
+                source-import
+                (ast-decl-cons
+                  (ast-decl-test
+                    "owned"
+                    (tltest-call-expr "string.string-eq")
+                    span)
+                  AstDeclNil))))))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        dep-path
+        (ast-decl-path-cons
+          dep-path
+          (ast-decl-path-cons
+            dep-path
+            (ast-decl-path-cons
+              source
+              (ast-decl-path-cons
+                source
+                (ast-decl-path-cons source AstDeclPathNil))))))]
+    (match (tltest-build-harness source decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (and
+              (= count 1)
+              (tltest-decl-list-has-name?
+                (box-get harness-decls-box)
+                "string-eq"))])])))
+
+(test
+  test-cli-inline-harness-keeps-alias-qualified-base
+  (if (tltest-import-alias-call-retained-self-test?)
+    unit
+    (panic "test CLI alias-qualified reachability mismatch")))
 
 (define (tltest-vector-builders-self-test?) : bool
   (let
@@ -2346,7 +2420,11 @@
     (panic "test CLI spawn error diagnostic did not preserve artifacts")))
 
 (define (tltest-stdlib-env-fixture-source? [source : String]) : bool
-  (string-eq (compiler-load-normalize-path source) "stdlib/env.tl"))
+  (let
+    [normalized : String (compiler-load-normalize-path source)]
+    (or
+      (string-eq normalized "stdlib/env.tl")
+      (string-eq normalized "stdlib/tests/env_api.tl"))))
 
 (define (tltest-stdlib-env-fixture-path [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -2382,6 +2460,8 @@
   (and
     (tltest-stdlib-env-fixture-source? "stdlib/env.tl")
     (tltest-stdlib-env-fixture-source? "stdlib\\env.tl")
+    (tltest-stdlib-env-fixture-source? "stdlib/tests/env_api.tl")
+    (tltest-stdlib-env-fixture-source? "stdlib\\tests\\env_api.tl")
     (not (tltest-stdlib-env-fixture-source? "stdlib/process.tl"))
     (string-eq
       (tltest-stdlib-env-fixture-path (BackendTargetWindows))

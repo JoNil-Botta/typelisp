@@ -96,7 +96,7 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 
 Inline stdlib coverage:
 
-- `args.tl` owns inline tests for reusable argv parsing: empty argv,
+- `args_api.tl` owns standalone tests for reusable argv parsing: empty argv,
   positional-only argv, flags before and after positionals, `--`
   end-of-options handling, missing-value and unknown-option diagnostics,
   repeated short/long options, and the intentionally unsupported
@@ -121,7 +121,7 @@ Inline stdlib coverage:
   deterministic finite f64/f32 number conversion, serializer helpers, and
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
-- `env.tl` owns inline tests for missing, empty, and present environment
+- `env_api.tl` owns standalone tests for missing, empty, and present environment
   variables, host-separator PATH splitting/joining, vector-backed PATH
   split/list/join helpers, and explicit Windows `;` path-list behavior. The
   inline-test verifier sets the `TYPELISP_STDLIB_TEST_*` environment variables
@@ -178,11 +178,12 @@ Inline stdlib coverage:
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through
   `ffi-c-string-alloc` / `ffi-cstr`.
-- `fs.tl` owns inline tests for variadic path joins, dirname/basename/extension
-  helpers, path normalization, safe relative paths, temp-dir creation,
-  recoverable cleanup helpers, Linux file/directory rename behavior, directory
-  iteration through list and vector wrappers, read-dir split order, metadata
-  helpers, current directory helpers, and Windows rename coverage.
+- `fs.tl` owns inline tests for variadic path joins.
+- `fs_api.tl` owns standalone tests for dirname/basename/extension helpers,
+  path normalization, safe relative paths, temp-dir creation, recoverable
+  cleanup helpers, Linux file/directory rename behavior, directory iteration
+  through list and vector wrappers, read-dir split order, metadata helpers,
+  current directory helpers, and Windows rename coverage.
 - `string_caller_result.tl` owns inline tests for borrowed no-match results,
   owned replacement results, the branch-selecting `string-replace-result`
   helper, and explicit owned materialization.
@@ -194,10 +195,10 @@ Inline stdlib coverage:
 - `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
   env, and stdin fields, validation diagnostics, and explicit conversion to
   owned `ProcessCommand` before the runtime boundary.
-- `process.tl` owns inline tests for owned command construction, argv append
-  helpers, vector-backed argv conversion/builders, cwd/stdin/env accessors,
-  vector-backed env override construction, validation, duplicate-name order,
-  list conversion, and result/error predicates.
+- `process_api.tl` owns standalone tests for owned command construction, argv
+  append helpers, vector-backed argv conversion/builders, cwd/stdin/env
+  accessors, vector-backed env override construction, validation,
+  duplicate-name order, list conversion, and result/error predicates.
 - `sync.tl` owns inline tests for invalid bounded channel capacities and raw
   handle field-count constants. Native blocking send/recv and mutex behavior
   remains in `sync_api.tl`.
@@ -210,6 +211,6 @@ Inline stdlib coverage:
   counter monotonicity around an observable allocation.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp
   shape, and structured `ResultTimeMs` error/fallback helpers.
-- `msvc.tl` owns inline tests for pure MSVC discovery helpers with fake
-  temp-directory toolset and SDK trees, including newest-usable candidate
+- `msvc_api.tl` owns standalone tests for pure MSVC discovery helpers with
+  fake temp-directory toolset and SDK trees, including newest-usable candidate
   selection through the vector-backed scanners.

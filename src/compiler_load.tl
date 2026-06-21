@@ -3220,6 +3220,8 @@
   [entry-path : String]
   [decl-path : String]) : String
   (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
     [base : String (compiler-load-dirname entry-path)]
     [base-len : i64 (string-length base)]
     [decl-len : i64 (string-length decl-path)]
@@ -3231,7 +3233,11 @@
   [entry-path : String]
   [decl-path : String]
   [source-name : String]) : String
-  (if (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+  (if (and
+    (string-eq
+      (compiler-load-normalize-path decl-path)
+      (compiler-load-normalize-path entry-path))
+    (string-eq source-name "main"))
     "main"
     (string-append
       (string-append
@@ -3245,9 +3251,10 @@
   [module : String]
   [source-name : String]) : bool
   (and
-    (string-eq decl-path entry-path)
-    (string-eq source-name "main")
-    (or (string-eq module "") (string-eq module "main"))))
+    (string-eq
+      (compiler-load-normalize-path decl-path)
+      (compiler-load-normalize-path entry-path))
+    (string-eq source-name "main")))
 
 (define (compiler-load-root-prefix [root : String]) : String
   (compiler-load-join-root-path root ""))
@@ -4399,6 +4406,31 @@
         (compiler-load-two-modules? modules "app.main")
         (sym-i64-contains seen "app.main"))]
     [(ErrCompilerLoadWithPaths _) false]))
+
+(define (compiler-load-entry-moduled-main-ok?) : bool
+  (and
+    (compiler-load-package-entry-main?
+      "src/app.tl"
+      "src/app.tl"
+      "app.main"
+      "main")
+    (compiler-load-package-entry-main?
+      "src\\app.tl"
+      "src/app.tl"
+      "app.main"
+      "main")
+    (not
+      (compiler-load-package-entry-main?
+        "src/app.tl"
+        "src/lib.tl"
+        "app.main"
+        "main"))
+    (not
+      (compiler-load-package-entry-main?
+        "src/app.tl"
+        "src/app.tl"
+        "app.main"
+        "helper"))))
 
 (define (compiler-load-expected-module-conflict-ok?) : bool
   (match (compiler-load-source-with-paths-and-roots-expect
@@ -7399,6 +7431,13 @@
       (return
         (begin
           (panic "compiler-load: source provenance smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-entry-moduled-main-ok?)
+      (return
+        (begin
+          (panic "compiler-load: entry moduled main smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

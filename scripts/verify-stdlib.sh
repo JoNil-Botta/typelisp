@@ -251,8 +251,11 @@ stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/args_api.tl|pass|-
 stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
+stdlib/tests/env_api.tl|pass|-
+stdlib/tests/fs_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
 stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else
 stdlib/tests/core_macros_cond_else_not_final.tl|fail|core-cond-else-must-be-final
@@ -261,6 +264,7 @@ stdlib/tests/core_macros_cond_branch_mismatch.tl|fail|typecheck: if branches mus
 stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/msvc_api.tl|pass|-
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot assign to borrowed place `m`
 stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot assign to borrowed place `m`

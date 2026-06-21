@@ -5261,6 +5261,42 @@
           (= (compiler-diagnostic-col diag) want-col))]
       [(OkCompilerBackend _) false])))
 
+(define (compiler-backend-switch-test-instr) : CompilerIrInstr
+  (IrInstrSwitch
+    (IrValueVar 0)
+    0
+    (compiler-ir-switch-case-cons 0 "zero" IrSwitchCaseNil)
+    "other"))
+
+(define (compiler-backend-switch-test-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        1
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (compiler-backend-switch-test-instr)
+              IrInstrNil))
+          IrBlockNil))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-switch-object-diagnostic-ok?) : bool
+  (match (compiler-backend-emit-program-object-image-linux
+    (compiler-backend-switch-test-program)
+    (compiler-source-spans-empty))
+    [(ErrCompilerBackendObject diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        (compiler-backend-switch-before-lowering-message))]
+    [(OkCompilerBackendObject _) false]))
+
 (define (compiler-backend-instr-diagnostics-ok?) : bool
   (and
     (compiler-backend-instr-diagnostic-case-ok?
@@ -5292,6 +5328,12 @@
       "backend: unsupported f64 unary op"
       40
       11)
+    (compiler-backend-instr-diagnostic-case-ok?
+      (compiler-backend-switch-test-instr)
+      (compiler-backend-switch-before-lowering-message)
+      10
+      2)
+    (compiler-backend-switch-object-diagnostic-ok?)
     (compiler-backend-instr-diagnostic-case-ok?
       (ir-instr-vector-bin-op
         3

@@ -900,13 +900,13 @@
       (match b
         [(AstImportModule) true]
         [_ false])]
-    [(AstImportMacro _)
+    [(AstImportMacro _ _)
       (match b
-        [(AstImportMacro _) true]
+        [(AstImportMacro _ _) true]
         [_ false])]
-    [(AstImportMacroDecls _)
+    [(AstImportMacroDecls _ _)
       (match b
-        [(AstImportMacroDecls _) true]
+        [(AstImportMacroDecls _ _) true]
         [_ false])]))
 
 (define (gen-maybe-module-name-eq?

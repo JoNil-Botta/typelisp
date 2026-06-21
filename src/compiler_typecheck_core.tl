@@ -31611,6 +31611,10 @@
   (OkMacroCallDecl MacroMaybeDecl)
   (ErrMacroCallDecl CompilerDiagnostic))
 
+(defenum ResultMacroCallDeclModule
+  (OkMacroCallDeclModule MacroMaybeDecl String)
+  (ErrMacroCallDeclModule CompilerDiagnostic))
+
 (defenum ResultMacroExpr
   (OkMacroExpr i64)
   (ErrMacroExpr CompilerDiagnostic))
@@ -31971,6 +31975,53 @@
       (ast-decl-cons
         (macro-wrap-generated-decl decl generator key)
         (macro-wrap-generated-decls (box-get rest) generator key))]))
+
+(define (macro-generated-context-import-kind
+  [kind : AstImportKind]
+  [definition-module : String]) : AstImportKind
+  (match kind
+    [(AstImportMacro call-id context)
+      (match context
+        [(AstNoModuleName)
+          (AstImportMacro call-id (AstSomeModuleName definition-module))]
+        [_ kind])]
+    [(AstImportMacroDecls call-id context)
+      (match context
+        [(AstNoModuleName)
+          (AstImportMacroDecls call-id (AstSomeModuleName definition-module))]
+        [_ kind])]
+    [_ kind]))
+
+(define (macro-generated-context-decl
+  [decl : AstDecl]
+  [definition-module : String]) : AstDecl
+  (match decl
+    [(AstDeclImport (AstImportSpec kind path target alias span))
+      (AstDeclImport
+        (AstImportSpec
+          (macro-generated-context-import-kind kind definition-module)
+          path
+          target
+          alias
+          span))]
+    [(AstDeclUnsafe inner-box)
+      (ast-decl-unsafe
+        (macro-generated-context-decl (box-get inner-box) definition-module))]
+    [(AstDeclComptimeDecl meta inner-box)
+      (ast-decl-comptime-decl-with-meta
+        meta
+        (macro-generated-context-decl (box-get inner-box) definition-module))]
+    [_ decl]))
+
+(define (macro-generated-context-decls
+  [decls : AstDeclList]
+  [definition-module : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (ast-decl-cons
+        (macro-generated-context-decl decl definition-module)
+        (macro-generated-context-decls (box-get rest) definition-module))]))
 
 (define (macro-decl-generated-key? [decl : AstDecl] [key : String]) : bool
   (match decl
@@ -34200,6 +34251,38 @@
           call-expr))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
 
+(define (macro-call-decl-with-context
+  [ctx : TcContext]
+  [func : AstExpr]
+  [decls : AstDeclList]
+  [module : String]
+  [context : AstMaybeModuleName]
+  [call-expr : AstExpr]) : ResultMacroCallDeclModule
+  (let
+    [primary-ctx : TcContext (tc-context-with-module ctx module)]
+    (match (macro-call-decl primary-ctx func decls call-expr)
+      [(OkMacroCallDecl maybe-decl)
+        (match maybe-decl
+          [(MacroNoDecl)
+            (match context
+              [(AstSomeModuleName context-module)
+                (if (string-eq context-module module)
+                  (OkMacroCallDeclModule maybe-decl module)
+                  (match (macro-call-decl
+                    (tc-context-with-module ctx context-module)
+                    func
+                    decls
+                    call-expr)
+                    [(OkMacroCallDecl context-decl)
+                      (match context-decl
+                        [(MacroNoDecl)
+                          (OkMacroCallDeclModule maybe-decl module)]
+                        [_ (OkMacroCallDeclModule context-decl context-module)])]
+                    [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
+              [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
+          [_ (OkMacroCallDeclModule maybe-decl module)])]
+      [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)])))
+
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str-cat
     "typecheck: macro operand type mismatch: expected "
@@ -35319,9 +35402,9 @@
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
       [(AstDeclImport (AstImportSpec kind _ _ _ _))
         (match kind
-          [(AstImportMacro call-id)
+          [(AstImportMacro call-id _)
             (macro-expand-module-call-position ctx decls call-id true)]
-          [(AstImportMacroDecls call-id)
+          [(AstImportMacroDecls call-id _)
             (macro-expand-module-call-position ctx decls call-id false)]
           [_ (OkMacroDecl decl)])]
       [(AstDeclUnsafe inner-box)
@@ -35533,51 +35616,68 @@
   [orig-decls : AstDeclList]
   [module : String]
   [call-id : i64]
+  [context : AstMaybeModuleName]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
     [call-expr : AstExpr (ast-node-get call-id)]
     (match (ast-expr-unspan call-expr)
       [(AstExprCall func-box args)
         (let
-          [decl-ctx : TcContext (tc-context-with-module ctx module)]
           [func : AstExpr (ast-node-get func-box)]
           [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
-          (match (macro-call-decl decl-ctx func orig-decls call-expr)
-            [(OkMacroCallDecl maybe-decl)
-              (match maybe-decl
-                [(MacroSomeDecl macro-name _ params ret body)
-                  (if (tc-macro-result-decls? ret)
-                    (match (macro-eval-transformer
-                      decl-ctx
-                      global-env
-                      orig-decls
-                      macro-name
-                      params
-                      body
-                      args
-                      0
-                      call-expr)
-                      [(OkMacroValue value)
-                        (match (macro-decls-from-ctfe-value value call-expr)
-                          [(OkMacroParsedDecls generated)
-                            (OkMacroDeclExpansion
-                              generated
-                              (macro-paths-for-decls generated decl-path))]
-                          [(ErrMacroParsedDecls diag)
-                            (ErrMacroDeclExpansion diag)])]
-                      [(ErrMacroValue diag) (ErrMacroDeclExpansion diag)])
-                    (if (tc-macro-result-module? ret)
-                      (ErrMacroDeclExpansion
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Module macro can only be used in import position"))
-                      (ErrMacroDeclExpansion
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: expression macro cannot be used at module scope"))))]
-                [(MacroNoDecl)
-                  (ErrMacroDeclExpansion (macro-call-not-macro-diag call-expr))])]
-            [(ErrMacroCallDecl diag) (ErrMacroDeclExpansion diag)]))]
+          (match (macro-call-decl-with-context
+            ctx
+            func
+            orig-decls
+            module
+            context
+            call-expr)
+            [(OkMacroCallDeclModule maybe-decl lookup-module)
+              (let
+                [decl-ctx : TcContext
+                  (tc-context-with-module ctx lookup-module)]
+                (match maybe-decl
+                  [(MacroSomeDecl macro-name definition-module params ret body)
+                    (if (tc-macro-result-decls? ret)
+                      (match (macro-eval-transformer
+                        decl-ctx
+                        global-env
+                        orig-decls
+                        macro-name
+                        params
+                        body
+                        args
+                        0
+                        call-expr)
+                        [(OkMacroValue value)
+                          (match (macro-decls-from-ctfe-value value call-expr)
+                            [(OkMacroParsedDecls generated)
+                              (let
+                                [contextual-generated : AstDeclList
+                                  (macro-generated-context-decls
+                                    generated
+                                    definition-module)]
+                                (OkMacroDeclExpansion
+                                  contextual-generated
+                                  (macro-paths-for-decls
+                                    contextual-generated
+                                    decl-path)))]
+                            [(ErrMacroParsedDecls diag)
+                              (ErrMacroDeclExpansion diag)])]
+                        [(ErrMacroValue diag) (ErrMacroDeclExpansion diag)])
+                      (if (tc-macro-result-module? ret)
+                        (ErrMacroDeclExpansion
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Module macro can only be used in import position"))
+                        (ErrMacroDeclExpansion
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used at module scope"))))]
+                  [(MacroNoDecl)
+                    (ErrMacroDeclExpansion
+                      (macro-call-not-macro-diag call-expr))]))]
+            [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
       [_
         (ErrMacroDeclExpansion
           (ctfe-diagnostic-at-expr
@@ -35590,6 +35690,7 @@
   [orig-decls : AstDeclList]
   [module : String]
   [call-id : i64]
+  [context : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]
   [decl-path : String]) : ResultMacroDeclExpansion
@@ -35598,73 +35699,84 @@
     (match (ast-expr-unspan call-expr)
       [(AstExprCall func-box args)
         (let
-          [decl-ctx : TcContext (tc-context-with-module ctx module)]
           [func : AstExpr (ast-node-get func-box)]
           [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
-          (match (macro-call-decl decl-ctx func orig-decls call-expr)
-            [(OkMacroCallDecl maybe-decl)
-              (match maybe-decl
-                [(MacroSomeDecl macro-name definition-module params ret body)
-                  (if (tc-macro-result-module? ret)
-                    (match (macro-expand-exprs
-                      decl-ctx
-                      global-env
-                      orig-decls
-                      0
-                      args)
-                      [(OkMacroExprList expanded-args)
-                        (match (macro-module-identity
-                          decl-ctx
-                          macro-name
-                          definition-module
-                          params
-                          expanded-args
-                          (tc-ctfe-env decl-ctx)
-                          call-expr)
-                          [(OkGenKey identity _)
-                            (match (macro-eval-transformer
-                              decl-ctx
-                              global-env
-                              orig-decls
-                              macro-name
-                              params
-                              body
-                              args
-                              0
-                              call-expr)
-                              [(OkMacroValue value)
-                                (match (macro-module-decls-from-ctfe-value
-                                  value
-                                  call-expr)
-                                  [(OkMacroParsedDecls generated)
-                                    (macro-expand-module-generated-decls
-                                      orig-decls
-                                      module
-                                      alias
-                                      span
-                                      decl-path
-                                      macro-name
-                                      identity
-                                      generated
-                                      call-expr)]
-                                  [(ErrMacroParsedDecls diag)
-                                    (ErrMacroDeclExpansion diag)])]
-                              [(ErrMacroValue diag)
-                                (ErrMacroDeclExpansion diag)])]
-                          [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
-                      [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
-                    (if (tc-macro-result-decls? ret)
-                      (ErrMacroDeclExpansion
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Decls macro cannot be used in import position"))
-                      (ErrMacroDeclExpansion
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: expression macro cannot be used as module import"))))]
-                [(MacroNoDecl)
-                  (ErrMacroDeclExpansion (macro-call-not-macro-diag call-expr))])]
-            [(ErrMacroCallDecl diag) (ErrMacroDeclExpansion diag)]))]
+          (match (macro-call-decl-with-context
+            ctx
+            func
+            orig-decls
+            module
+            context
+            call-expr)
+            [(OkMacroCallDeclModule maybe-decl lookup-module)
+              (let
+                [decl-ctx : TcContext
+                  (tc-context-with-module ctx lookup-module)]
+                (match maybe-decl
+                  [(MacroSomeDecl macro-name definition-module params ret body)
+                    (if (tc-macro-result-module? ret)
+                      (match (macro-expand-exprs
+                        decl-ctx
+                        global-env
+                        orig-decls
+                        0
+                        args)
+                        [(OkMacroExprList expanded-args)
+                          (match (macro-module-identity
+                            decl-ctx
+                            macro-name
+                            definition-module
+                            params
+                            expanded-args
+                            (tc-ctfe-env decl-ctx)
+                            call-expr)
+                            [(OkGenKey identity _)
+                              (match (macro-eval-transformer
+                                decl-ctx
+                                global-env
+                                orig-decls
+                                macro-name
+                                params
+                                body
+                                args
+                                0
+                                call-expr)
+                                [(OkMacroValue value)
+                                  (match (macro-module-decls-from-ctfe-value
+                                    value
+                                    call-expr)
+                                    [(OkMacroParsedDecls generated)
+                                      (macro-expand-module-generated-decls
+                                        orig-decls
+                                        module
+                                        alias
+                                        span
+                                        decl-path
+                                        macro-name
+                                        identity
+                                        (macro-generated-context-decls
+                                          generated
+                                          definition-module)
+                                        call-expr)]
+                                    [(ErrMacroParsedDecls diag)
+                                      (ErrMacroDeclExpansion diag)])]
+                                [(ErrMacroValue diag)
+                                  (ErrMacroDeclExpansion diag)])]
+                            [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
+                        [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
+                      (if (tc-macro-result-decls? ret)
+                        (ErrMacroDeclExpansion
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Decls macro cannot be used in import position"))
+                        (ErrMacroDeclExpansion
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used as module import"))))]
+                  [(MacroNoDecl)
+                    (ErrMacroDeclExpansion
+                      (macro-call-not-macro-diag call-expr))]))]
+            [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
       [_
         (ErrMacroDeclExpansion
           (ctfe-diagnostic-at-expr
@@ -35681,23 +35793,25 @@
   (match decl
     [(AstDeclImport (AstImportSpec kind _ _ alias span))
       (match kind
-        [(AstImportMacro call-id)
+        [(AstImportMacro call-id context)
           (macro-expand-module-import
             ctx
             top-env
             orig-decls
             module
             call-id
+            context
             alias
             span
             decl-path)]
-        [(AstImportMacroDecls call-id)
+        [(AstImportMacroDecls call-id context)
           (macro-expand-decls-splice
             ctx
             top-env
             orig-decls
             module
             call-id
+            context
             decl-path)]
         [_ (macro-single-decl-expansion decl decl-path)])]
     [_
@@ -36276,8 +36390,8 @@
     [(AstDeclTest _ expr-box _) (macro-node-uses-macro? ctx decls expr-box)]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _) true]
-        [(AstImportMacroDecls _) true]
+        [(AstImportMacro _ _) true]
+        [(AstImportMacroDecls _ _) true]
         [_ false])]
     [(AstDeclUnsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
@@ -36507,7 +36621,7 @@
             (match decl
               [(AstDeclImport (AstImportSpec kind _ _ _ _))
                 (match kind
-                  [(AstImportMacro _)
+                  [(AstImportMacro _ _)
                     (match (macro-expand-decl-with-path
                       ctx
                       top-env
@@ -36523,7 +36637,7 @@
                             rest-paths))]
                       [(ErrMacroDeclExpansion diag)
                         (ErrMacroDeclsWithPaths diag)])]
-                  [(AstImportMacroDecls _)
+                  [(AstImportMacroDecls _ _)
                     (match (macro-expand-decl-with-path
                       ctx
                       top-env
@@ -36621,8 +36735,8 @@
         (macro-expr-needs-compat-expansion? body))]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _) true]
-        [(AstImportMacroDecls _) true]
+        [(AstImportMacro _ _) true]
+        [(AstImportMacroDecls _ _) true]
         [_ false])]
     [(AstDeclUnsafe inner-box)
       (let
@@ -36670,8 +36784,8 @@
   (match decl
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _) true]
-        [(AstImportMacroDecls _) true]
+        [(AstImportMacro _ _) true]
+        [(AstImportMacroDecls _ _) true]
         [_ false])]
     [(AstDeclUnsafe inner-box)
       (macro-decl-has-module-placeholder? (box-get inner-box))]

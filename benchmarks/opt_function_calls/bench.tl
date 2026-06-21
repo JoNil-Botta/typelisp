@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define (mix [x : i64] [y : i64]) : i64
   (% (+ (* x 33) (+ (* y 7) 11)) 1000000007))

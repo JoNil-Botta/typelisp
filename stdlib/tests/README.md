@@ -165,10 +165,10 @@ Inline stdlib coverage:
   functions and scalar-capturing lambdas, `StringVec`
   growth/mutation/pop/snapshot/reverse paths, and fixture-local generated
   enum/struct vector witnesses for nominal element metadata.
-- `vector_slice.tl` owns inline tests for the lifetime-scoped `I64Slice` view
-  API, including vector and array constructors, invalid ranges producing empty
-  views, sub-slicing, fallback reads, and explicit array/vector copy
-  boundaries.
+- `vector_slice.tl` owns inline tests for the lifetime-scoped `(slice i64)`
+  generated module API, including vector and array constructors, invalid ranges
+  producing empty views, sub-slicing, fallback reads, value-threaded iteration,
+  duplicate module-macro imports, and explicit array/vector copy boundaries.
 - `sort.tl` owns inline tests for generated stable in-place insertion sort over
   `(vector T)` modules, including scalar, String, and aggregate comparator
   cases, repeated generation deduplication, empty, single, already sorted,

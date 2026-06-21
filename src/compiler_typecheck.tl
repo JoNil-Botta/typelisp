@@ -6843,6 +6843,13 @@
            (+ (kind-code items)
               (kind-code f))))))")
 
+(define (compiler-typecheck-macro-qualified-expr-type-source) : String
+  "(defmacro (kind-code [value : Expr]) : i64
+  (if (string-eq (type-kind (comptime.expr-type value)) \"i64\")
+    (expr-int 1)
+    (expr-int 0)))
+(define (main) : i64 (kind-code 42))")
+
 (define (compiler-typecheck-macro-expr-type-untyped-source) : String
   "(defmacro (needs-type [value : Expr]) : i64
   (if (string-eq (type-kind (expr-type value)) \"i64\")
@@ -7381,6 +7388,8 @@
       "typecheck: if branches must match")
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-list-nth-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-type-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-qualified-expr-type-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expr-type-untyped-source)
       "expr-type requires a typechecked Expr")

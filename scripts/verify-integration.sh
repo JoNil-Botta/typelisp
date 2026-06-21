@@ -38,16 +38,12 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Retry transient compiler crashes (#1204, #3150): long manifest runs can hit
-# signal-shaped failures that pass immediately in isolation. `is_crash_code`
-# (132/134/139 and Windows NTSTATUS crash codes) lets us retry ONLY those
-# transient crashes, never a genuine non-zero exit (so an expected failure still
-# fails).
+# A #1204/#3150 signal-shaped crash from a manifest binary is a real compiler
+# memory-safety bug, not a transient to retry away. The build/run helpers below
+# run once by default (INTEGRATION_ATTEMPTS=1) so such a crash fails CI loudly.
+# See scripts/lib-retry.sh for the policy; ATTEMPTS>1 is an opt-in local override.
 . "$ROOT/scripts/lib-retry.sh"
-# Default 6 (not 3): large corpus binaries like compiler_lower_smoke hit the
-# crash path at a high enough rate that 3 attempts can all crash (observed 3/3
-# on PR #1225), so the crash-only retry needs more headroom.
-INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-6}"
+INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-1}"
 
 # Run a `typelisp build`/`compile` invocation, retrying a transient crash.
 # Output flows to the caller's streams; sets `build_rc` to the final exit code.

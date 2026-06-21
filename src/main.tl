@@ -374,7 +374,16 @@ Options:
         (print-error "\n\n")
         (cli-print-help 1))]))
 
+;; DEBUG #1204: self-enable arena poison so any use-after-reset in the compiler
+;; crashes deterministically (reads 0xA5A5A5A5A5A5A5A5) instead of silently
+;; returning stale data. Paired with the Windows region_reset poison fill and
+;; the CI crash-dump capture to pinpoint the borrowed-str corruption. REVERT
+;; before merging the real fix.
+(extern (tl_arena_poison_enable) : unit)
+
 (define (main) : i64
-  (if (< (arg-count) 2)
-    (cli-print-help 1)
-    (cli-dispatch (arg 1) (arg-count))))
+  (begin
+    (tl_arena_poison_enable)
+    (if (< (arg-count) 2)
+      (cli-print-help 1)
+      (cli-dispatch (arg 1) (arg-count)))))

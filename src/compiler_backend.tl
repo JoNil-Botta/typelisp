@@ -24215,6 +24215,7 @@ tl_arena_set:
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
+    movq $1, .L_tl_arena_poison_enabled(%rip)
     ret
 
     .globl tl_arena_make
@@ -24798,7 +24799,19 @@ tl_region_reset:
     (string-append
       (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
       (string-append
-        "    movq 32(%r11), %rax
+        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_win_drop_poison_done
+    push %rdi
+    movq 8(%r14), %rdi
+    movq 24(%r14), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_region_reset_win_drop_poison_pop
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_win_drop_poison_pop:
+    pop %rdi
+.L_tl_region_reset_win_drop_poison_done:
+    movq 32(%r11), %rax
     movq %rax, 32(%r14)
     movq $0, 0(%r14)
     movq %r14, 32(%r11)
@@ -24813,7 +24826,19 @@ tl_region_reset:
             "%rax"
             profile)
           (string-append
-            "    movq %r12, 16(%r13)
+            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_win_restore_poison_done
+    push %rdi
+    movq %r12, %rdi
+    movq 16(%r13), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_region_reset_win_restore_poison_pop
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_win_restore_poison_pop:
+    pop %rdi
+.L_tl_region_reset_win_restore_poison_done:
+    movq %r12, 16(%r13)
     testq $1, 48(%r11)
     jz .L_tl_region_reset_win_restore_current_ready
     movq %r13, 56(%r11)

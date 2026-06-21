@@ -1,13 +1,18 @@
-# lib-retry.sh — shared POSIX-sh retry helper for CI verify-* scripts.
+# lib-retry.sh — shared POSIX-sh run helper for CI verify-* scripts.
 #
-# Long verify-* loops can hit transient compiler/process crashes (#1204, #3150):
-# an arbitrary `typelisp` invocation exits non-zero with no useful output, then
-# passes immediately in isolation. Scripts that loop one invocation per fixture
-# therefore have a high cumulative chance of a spurious failure on an
-# otherwise-green PR. This helper retries an invocation that exits non-zero: a
-# transient crash clears on a later attempt, while a genuine failure reproduces
-# across every attempt and still fails (retries only mask transients, never real
-# failures).
+# HISTORY / POLICY (#1204): these helpers used to retry a `typelisp` invocation
+# up to 6 times when it crashed (segfault / Windows access violation), on the
+# theory that #1204 crashes are "transient" infra flake. They are not. The
+# crashes are a real compiler memory-safety bug — an access violation reading a
+# small integer as a pointer (see target/dumps minidumps: all 0xC0000005 reads
+# of a near-null pointer at a stable instruction). Retrying masked that bug and
+# let it accumulate behind green CI runs for months.
+#
+# The retry has been removed: every verify-* gate now defaults to a single
+# attempt (VERIFY_*_ATTEMPTS=1), so a #1204 crash fails CI loudly and forces a
+# root-cause fix instead of being hidden. The ATTEMPTS knob and the helpers
+# below are kept only as an explicit, opt-in local override (set the env var
+# >1); CI must run with the default of 1.
 #
 # Source it (not exec): `. "$ROOT/scripts/lib-retry.sh"`. POSIX sh only — no
 # `local`, arrays, or bashisms.
@@ -16,6 +21,8 @@
 #   Run CMD up to ATTEMPTS times, sending stdout->OUT_FILE and stderr->ERR_FILE.
 #   Returns 0 as soon as an attempt exits 0; otherwise returns the last attempt's
 #   non-zero exit code after exhausting ATTEMPTS. Retries log to stderr.
+#   NOTE: callers pass ATTEMPTS=1 by default (no retry) — see the policy note
+#   above. ATTEMPTS>1 is a deliberate, opt-in local override only.
 run_with_retry() {
     _rwr_out=$1
     _rwr_err=$2
@@ -52,8 +59,8 @@ run_with_retry() {
 #   violation (-1073741819, or 3221225477 unsigned) or 0xC000001D illegal
 #   instruction (-1073741795, or 3221225501 unsigned) rather than a 128+signal
 #   value.
-#   Use this to retry ONLY transient crashes in scripts whose cases may
-#   legitimately exit non-zero (so retry-on-any-non-zero would be wrong).
+#   Retained for the opt-in ATTEMPTS>1 override; with the default ATTEMPTS=1 the
+#   crash-gated retry loops in the verify-* scripts run exactly once.
 is_crash_code() {
     case "$1" in
         132 | 134 | 139) return 0 ;;

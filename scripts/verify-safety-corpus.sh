@@ -68,7 +68,10 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 WORKDIR=${TYPELISP_SAFETY_WORKDIR:-target/safety-corpus-verify}
-ATTEMPTS=${VERIFY_SAFETY_CORPUS_ATTEMPTS:-6}
+# Single attempt by default: a #1204 crash from a corpus case is a real compiler
+# memory-safety bug, not a transient to retry away (see scripts/lib-retry.sh).
+# ATTEMPTS>1 is an opt-in local override only.
+ATTEMPTS=${VERIFY_SAFETY_CORPUS_ATTEMPTS:-1}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"

@@ -13,7 +13,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Retry transient Windows segfaults (#1204) around each `typelisp` invocation.
+# Run each `typelisp` invocation exactly once (no #1204 crash-retry): a crash is
+# a real compiler memory-safety bug, not a flake, and must fail CI. See
+# scripts/lib-retry.sh for the policy.
 . "$ROOT/scripts/lib-retry.sh"
 
 HOST_OS=linux
@@ -121,10 +123,10 @@ run_doc_tests_per_file() {
         requires_symbol=$(staged_symbol_for "$source")
 
         echo "[doc-tests] $source"
-        # Default 6 (not 3): some stdlib doc-tests (text_buf.tl, hash.tl) hit the
-        # #1204 Windows segfault often enough that 3 attempts can all crash
-        # (observed on PR #1225), so the crash-retry needs more headroom.
-        if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
+        # Single attempt by default: a #1204 crash here is a real bug, not a
+        # transient to retry away. VERIFY_DOC_TESTS_ATTEMPTS>1 is an opt-in
+        # local override only (see scripts/lib-retry.sh).
+        if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-1}" \
             "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
             if should_skip_staged "$requires_symbol" "$stderr"; then
                 echo "[doc-tests] SKIP $source (awaiting stage0 compiler support for '$requires_symbol')"
@@ -159,7 +161,7 @@ BATCH_STDOUT="$WORKDIR/batch.stdout"
 BATCH_STDERR="$WORKDIR/batch.stderr"
 
 echo "[doc-tests] batch $count file(s)"
-if run_with_retry "$BATCH_STDOUT" "$BATCH_STDERR" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
+if run_with_retry "$BATCH_STDOUT" "$BATCH_STDERR" "${VERIFY_DOC_TESTS_ATTEMPTS:-1}" \
     "$COMPILER" doc --test --batch "$DISCOVERED" --stdlib-root "$ROOT/stdlib"; then
     summaries=$(grep -c '^Doc tests passed:' "$BATCH_STDOUT" || true)
     if [ "$summaries" -ne "$count" ]; then

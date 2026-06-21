@@ -96,6 +96,43 @@ jobs:
           sudo swapon /typelisp-swap
           free -h
 
+      # DEBUG #1204: capture Windows crash minidumps. Configure WER LocalDumps to
+      # write a minidump (thread context + stack) for every crashing process into
+      # target/dumps before the gates run. Paired with the artifact upload below
+      # so a transient Windows segfault produces a mappable dump + the exact
+      # binary. REVERT with the rest of the debug instrumentation.
+      - name: Configure crash dumps (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:GITHUB_WORKSPACE 'target\dumps'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value $dir -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpCount -Value 30 -PropertyType DWord -Force | Out-Null
+          Write-Host "WER LocalDumps configured -> $dir (DumpType=1 mini)"
+
       - name: CI verification
         shell: bash
         run: scripts/ci-verify.sh
+
+      # DEBUG #1204: upload crash dumps and the exact bootstrapped binaries so the
+      # dump's faulting RIP + stack can be mapped to a function offline. Runs even
+      # when the gate fails (the masking removal makes a crash fail the gate).
+      - name: Upload Windows crash debug artifacts
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-1204-debug
+          path: |
+            target/dumps/**
+            target/bootstrap-fixpoint/stage1.s
+            target/bootstrap-fixpoint/stage1.obj
+            target/bootstrap-fixpoint/stage1.exe
+            target/bootstrap-fixpoint/stage2.s
+            target/bootstrap-fixpoint/stage2.obj
+            target/bootstrap-fixpoint/stage2.exe
+          if-no-files-found: warn
+          retention-days: 7

@@ -81,18 +81,13 @@ reject_diag() {
     esac
 }
 
-# Each witness is a separate selfhost cli `check` binary invocation, and
-# the Windows build intermittently SEGFAULTs mid-compile (#1204). A segfault
-# exits non-zero with no diagnostic, which would otherwise look like "a
-# positive witness was rejected" or "a reject witness rejected without its
-# diagnostic" and spuriously fail this gate. Retry an UNEXPECTED outcome a few
-# times: a transient segfault
-# clears on retry, while a genuine regression reproduces across every attempt and
-# still fails.
-# Default 6 (not 3): this gate makes ~23 separate check.tl invocations, so the
-# #1204 Windows segfault can exhaust 3 attempts on one of them (observed on PR
-# #1246); more headroom keeps the crash-only retry effective.
-ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"
+# Each witness is a separate selfhost cli `check` binary invocation. The Windows
+# build intermittently SEGFAULTs mid-compile (#1204) — but that segfault is a
+# real compiler memory-safety bug, not a transient to retry away. This gate runs
+# each witness once by default (ATTEMPTS=1) so a #1204 crash fails CI loudly
+# instead of being hidden. See scripts/lib-retry.sh for the policy;
+# VERIFY_STDLIB_SELFHOST_ATTEMPTS>1 is an opt-in local override only.
+ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-1}"
 
 WORKDIR="$ROOT/target/stdlib-selfhost-verify"
 rm -rf "$WORKDIR"

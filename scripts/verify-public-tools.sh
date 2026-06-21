@@ -8,16 +8,13 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Retry transient Windows crashes (#1204): `is_crash_code` lets the run_* helpers
-# retry only a segfault-class exit (132/134/139), since public-tool cases may
-# legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
+# A #1204 segfault-class exit from a `typelisp` invocation is a real compiler
+# memory-safety bug, not a transient to retry away. The run_* helpers below run
+# once by default (PUBLIC_TOOLS_ATTEMPTS=1) so such a crash fails CI loudly. See
+# scripts/lib-retry.sh for the policy; ATTEMPTS>1 is an opt-in local override.
 . "$ROOT/scripts/lib-retry.sh"
 . "$ROOT/scripts/lib-linux-entry.sh"
-# Default 6 (not 3): this gate runs many CLI invocations, so the #1204 Windows
-# segfault can exhaust 3 attempts on one of them (observed on PR #1249:
-# inline-test-fail crashed 134/134/segfault); more headroom keeps the
-# crash-only retry effective.
-PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-6}"
+PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-1}"
 
 HOST_OS=linux
 HOST_TARGET=linux-x86_64

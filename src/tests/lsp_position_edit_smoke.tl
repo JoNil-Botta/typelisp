@@ -90,9 +90,6 @@
       (string-eq (lsp-find-and-extract-name text 0 5) "foo")
       (string-eq (lsp-find-and-extract-name text 1 5) "bar"))))
 
-;; --------------------------------------------------------------------------
-;; main
-;; --------------------------------------------------------------------------
 (define (main) : i64
   (begin
     (unless (lsp-find-form-at-offset-ok?) (return 1))

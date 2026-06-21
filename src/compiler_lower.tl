@@ -36743,6 +36743,56 @@
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")
 
+;; #3447: payload offset lookup must not depend on earlier enum families or on
+;; helper/constructor ordering when String and i64 payload result enums coexist.
+(define (compiler-lower-inline-enum-layout-cache-order-source-a) : String
+  "(defenum FirstResult
+  (FirstErr String)
+  (FirstOk i64))
+(defenum SecondResult
+  (SecondOk i64)
+  (SecondErr String))
+(define (first-helper [flag : bool]) : FirstResult
+  (if flag
+    (FirstOk 1)
+    (FirstErr \"first failed\")))
+(define (second-helper [value : i64]) : SecondResult
+  (SecondOk value))
+(define (second-value-or [result : SecondResult] [fallback : i64]) : i64
+  (match result
+    [(SecondErr _) fallback]
+    [(SecondOk value) value]))
+(define (main) : i64
+  (+
+    (match (first-helper false)
+      [(FirstErr message) (string-length message)]
+      [(FirstOk value) value])
+    (second-value-or (second-helper 40) 0)))")
+
+(define (compiler-lower-inline-enum-layout-cache-order-source-b) : String
+  "(defenum SecondResult
+  (SecondErr String)
+  (SecondOk i64))
+(defenum FirstResult
+  (FirstOk i64)
+  (FirstErr String))
+(define (second-value-or [result : SecondResult] [fallback : i64]) : i64
+  (match result
+    [(SecondOk value) value]
+    [(SecondErr _) fallback]))
+(define (first-helper [flag : bool]) : FirstResult
+  (if flag
+    (FirstOk 2)
+    (FirstErr \"first failed\")))
+(define (second-helper [value : i64]) : SecondResult
+  (SecondOk value))
+(define (main) : i64
+  (+
+    (second-value-or (second-helper 40) 0)
+    (match (first-helper false)
+      [(FirstOk value) value]
+      [(FirstErr message) (string-length message)])))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
@@ -36985,6 +37035,13 @@
               0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-enum-layout-cache-order-ok?) : bool
+  (and
+    (compiler-lower-ok?
+      (compiler-lower-inline-enum-layout-cache-order-source-a))
+    (compiler-lower-ok?
+      (compiler-lower-inline-enum-layout-cache-order-source-b))))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -36996,6 +37053,7 @@
     (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
     (compiler-lower-inline-direct-store-copy-shape-ok?)
+    (compiler-lower-inline-enum-layout-cache-order-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)
       "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))

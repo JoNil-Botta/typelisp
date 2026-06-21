@@ -3,7 +3,7 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
-(import "../stdlib/io.tl")
+(import "../stdlib/fs.tl")
 (import "../stdlib/json.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
@@ -3771,7 +3771,126 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/evalAtPoint - Evaluate expression at cursor
+(define (lsp-tl-source-file-name? [entry : String]) : bool
+  (let
+    [entry-len : i64 (string-length entry)]
+    (if (< entry-len 3)
+      false
+      (and
+        (= (string-ref entry (- entry-len 3)) '.')
+        (= (string-ref entry (- entry-len 2)) 't')
+        (= (string-ref entry (- entry-len 1)) 'l')))))
+
+(define (lsp-decls-contain-name? [decls : LspDeclList] [needle : String]) : bool
+  (let
+    [n : i64 (lsp-decl-list-len decls)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (let
+          [entry : LspDeclEntry
+            (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+          (if (string-eq (struct-get entry name) needle)
+            (set! found true)
+            (set! i (+ i 1)))))
+      found)))
+
+;; tl/projectSearch - Search for a declaration name across .tl files in a directory
+(define (lsp-handle-tl-project-search
+  [id : Json]
+  [params : Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-json-string-field params "name")
+    [(OkLspJsonText name)
+      (if (string-eq name "")
+        (begin
+          (lsp-write-error id -32600 "name cannot be empty")
+          (LspContinue docs))
+        (let
+          [td-key : String "textDocument"]
+          (match (json-object-get params (& td-key))
+            [(JsonFound document)
+              (match (lsp-json-string-field document "uri")
+                [(OkLspJsonText uri)
+                  (match (lsp-file-uri-to-path uri)
+                    [(OkLspUriPath path)
+                      (match (try-read-dir-vec (& path))
+                        [(OkIoStringVec entries)
+                          (let
+                            [n : i64 (string-vec-len entries)]
+                            [i : i64 0]
+                            [results : JsonList JsonListNil]
+                            (begin
+                              (while (< i n)
+                                (let
+                                  [entry : String (string-vec-get entries i "")]
+                                  (begin
+                                    (if (lsp-tl-source-file-name? entry)
+                                      (let
+                                        [entry-path : String
+                                          (fs-path-join (& path) (& entry))]
+                                        (match (try-read-file (& entry-path))
+                                          [(OkIoString source)
+                                            (if (lsp-decls-contain-name?
+                                              (lsp-scan-decls source)
+                                              name)
+                                              (let
+                                                [entry-uri : String
+                                                  (lsp-path-to-file-uri
+                                                    (fs-path-normalize
+                                                      (& entry-path)))]
+                                                (set!
+                                                  results
+                                                  (lsp-json-list-cons
+                                                    (lsp-json-object2
+                                                      "uri"
+                                                      (JsonString entry-uri)
+                                                      "name"
+                                                      (JsonString name))
+                                                    results)))
+                                              unit)]
+                                          [(ErrIoString _) unit]))
+                                      unit)
+                                    (set! i (+ i 1)))))
+                              (lsp-write-response
+                                id
+                                (lsp-json-object2
+                                  "success"
+                                  (JsonBool true)
+                                  "results"
+                                  (lsp-json-array results)))
+                              (LspContinue docs)))]
+                        [(ErrIoStringVec message)
+                          (begin
+                            (lsp-write-error
+                              id
+                              -32600
+                              (str-cat
+                                "Failed to read directory: "
+                                (io-error-message message)))
+                            (LspContinue docs))])]
+                    [(ErrLspUriPath message)
+                      (begin
+                        (lsp-write-error id -32600 message)
+                        (LspContinue docs))])]
+                [(MissingLspJsonText)
+                  (begin
+                    (lsp-write-error
+                      id
+                      -32600
+                      "Missing uri in textDocument parameter")
+                    (LspContinue docs))])]
+            [(JsonMissing)
+              (begin
+                (lsp-write-error id -32600 "Missing textDocument parameter")
+                (LspContinue docs))])))]
+    [(MissingLspJsonText)
+      (begin
+        (lsp-write-error id -32600 "Missing name parameter")
+        (LspContinue docs))]))
+
+;; tl/signatureHelp - Parameter types for function at cursor
 (define (lsp-handle-tl-eval-at-point
   [id : Json]
   [params : Json]
@@ -4462,6 +4581,24 @@
                           (set!
                             result
                             (lsp-handle-tl-batch-edit id params docs))]
+                        [(JsonMissing)
+                          (lsp-write-error id -32600 "Missing params")]))]
+                  [(JsonMissing) unit])))
+            unit)
+          (if (and (not handled) (string-eq method "tl/projectSearch"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json-object-get message (& id-key))
+                  [(JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json-object-get message (& params-key))
+                        [(JsonFound params)
+                          (set!
+                            result
+                            (lsp-handle-tl-project-search id params docs))]
                         [(JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(JsonMissing) unit])))

@@ -549,7 +549,6 @@ contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:
 contains|_tl_doc_html_render_source:
 contains|_tl_doc_html_escape:
-contains|_tl_doc_html_smoke:
 contains|_tl_doc_render_anchor:
 contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
@@ -557,8 +556,6 @@ contains|<!doctype html>
 contains|typelisp-docs.css
 contains|tl-doc-module-nav
 contains|&quot;
-contains|tl-smoke-60-38-62-46tl
-contains|doc-html: item anchor missing
 contains|No documented declarations.
 end
 

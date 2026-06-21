@@ -1107,10 +1107,10 @@
         import-root
         import-path
         stdlib-roots)]
-    [(AstImportMacro _)
+    [(AstImportMacro _ _)
       (ErrPkgResolve
         "compiler-load: module macro imports must be expanded before import resolution")]
-    [(AstImportMacroDecls _)
+    [(AstImportMacroDecls _ _)
       (ErrPkgResolve
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
@@ -1176,10 +1176,10 @@
         manifest-dir
         deps
         stdlib-roots)]
-    [(AstImportMacro _)
+    [(AstImportMacro _ _)
       (ErrPkgResolve
         "compiler-load: module macro imports must be expanded before import resolution")]
-    [(AstImportMacroDecls _)
+    [(AstImportMacroDecls _ _)
       (ErrPkgResolve
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
@@ -1198,13 +1198,13 @@
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadSomePath _) true]
             [(CompilerLoadNoPath) false])))]
-    [(AstImportMacro _) false]
-    [(AstImportMacroDecls _) false]))
+    [(AstImportMacro _ _) false]
+    [(AstImportMacroDecls _ _) false]))
 
 (define (compiler-load-macro-import-kind? [kind : AstImportKind]) : bool
   (match kind
-    [(AstImportMacro _) true]
-    [(AstImportMacroDecls _) true]
+    [(AstImportMacro _ _) true]
+    [(AstImportMacroDecls _ _) true]
     [_ false]))
 
 (define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl

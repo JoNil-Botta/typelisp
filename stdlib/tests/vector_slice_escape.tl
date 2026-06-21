@@ -1,8 +1,12 @@
 (import stdlib.vector)
 (import stdlib.vector_slice)
+(import (stdlib.vector.vector i64) as vec)
+(import (stdlib.vector_slice.slice i64) as slice)
 
 ; Must fail: the returned slice is tied to `inner`, not `outer`.
-(define (main [outer : vector.I64Vec]) : (vector_slice.I64Slice outer)
+(define (main [outer : vec.Vec]) : (slice.Slice outer)
   (let
-    [inner : vector.I64Vec (vector.i64-vec-push (vector.i64-vec-new) 10)]
-    (vector_slice.i64-slice-from-vec inner (& inner) 0 1)))
+    [inner : vec.Vec (vec.new)]
+    (begin
+      (vec.push (&mut inner) 10)
+      (slice.from-vec (& inner) 0 1))))

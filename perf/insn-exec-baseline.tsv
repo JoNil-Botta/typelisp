@@ -13,10 +13,10 @@ benchmark/typelisp/hashmap_insert	321415956
 benchmark/c/hashmap_insert	66066561
 benchmark/typelisp/spmd_reduce	17208180459
 benchmark/c/spmd_reduce	1693929378
-benchmark/typelisp/opt_quicksort	3040208196
+benchmark/typelisp/opt_quicksort	2860270068
 benchmark/c/opt_quicksort	398486841
 benchmark/typelisp/opt_crc32	2831047200
 benchmark/c/opt_crc32	400812903
 benchmark/typelisp/opt_bytecode_vm	3296002913
 benchmark/c/opt_bytecode_vm	716120437
-self_compile/compile_cli_opt1	61142411441
+self_compile/compile_cli_opt1	61603424728

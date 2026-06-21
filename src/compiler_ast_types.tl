@@ -1668,8 +1668,8 @@
 (defenum AstImportKind
   (AstImportPath)
   (AstImportModule)
-  (AstImportMacro i64)
-  (AstImportMacroDecls i64))
+  (AstImportMacro i64 AstMaybeModuleName)
+  (AstImportMacroDecls i64 AstMaybeModuleName))
 
 (defenum AstImportSpec
   (AstImportSpec

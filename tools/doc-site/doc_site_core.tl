@@ -675,6 +675,51 @@ pre {
   padding: 1rem;
   border-radius: 6px;
 }
+.tl-syn-doc-comment {
+  color: #93c5fd;
+  font-style: italic;
+}
+.tl-syn-comment {
+  color: #94a3b8;
+}
+.tl-syn-string {
+  color: #fbbf24;
+}
+.tl-syn-escape {
+  color: #fde68a;
+  font-weight: 700;
+}
+.tl-syn-char {
+  color: #fcd34d;
+}
+.tl-syn-number {
+  color: #c4b5fd;
+}
+.tl-syn-keyword {
+  color: #f472b6;
+}
+.tl-syn-builtin {
+  color: #67e8f9;
+}
+.tl-syn-operator {
+  color: #f9a8d4;
+}
+.tl-syn-boolean {
+  color: #fca5a5;
+}
+.tl-syn-type {
+  color: #86efac;
+}
+.tl-syn-definition {
+  color: #bfdbfe;
+  font-weight: 700;
+}
+.tl-syn-binding {
+  color: #a7f3d0;
+}
+.tl-syn-call {
+  color: #93c5fd;
+}
 .tl-doc-site-nav,
 .tl-doc-module-nav,
 .tl-doc-item-nav,
@@ -1456,12 +1501,12 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: language repo link rewrite missing")
       (doc-html-require-contains
         language-page
-        "<pre><code class=\"language-typelisp\">(define answer : i64 42)"
+        "<pre><code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)"
         "doc-site: language code fence missing")
       (doc-html-require-contains
         (doc-site-css)
-        ".tl-doc-header"
-        "doc-site: css marker missing")
+        ".tl-syn-keyword"
+        "doc-site: syntax css marker missing")
       (doc-site-require
         (doc-site-output-list-has-duplicate?
           (let

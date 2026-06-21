@@ -424,51 +424,61 @@
       recorded)))
 
 (define (compiler-load-session-note-persistent!) : unit
-  (begin
-    (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ast-floor)
-        0
-        (ast-node-pool-len))
-      unit)
-    (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ty-floor)
-        0
-        (ty-node-pool-len))
-      unit)
-    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state intern-floor)
-        0
-        (intern-pool-len))
-      unit)))
+  (let
+    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [new-intern-floor : i64 (intern-pool-len)]
+    (begin
+      (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ast-floor)
+          0
+          (ast-node-pool-len))
+        unit)
+      (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ty-floor)
+          0
+          (ty-node-pool-len))
+        unit)
+      (if (> new-intern-floor old-intern-floor)
+        (begin
+          (intern-persist-range! old-intern-floor new-intern-floor)
+          (array-set!
+            (struct-get compiler-load-active-session-state intern-floor)
+            0
+            new-intern-floor))
+        unit))))
 
 (define (compiler-load-session-note-persistent-with-pools!
   [pools : AstNodePoolContext]) : unit
-  (begin
-    (if (>
-      (ast-node-pool-context-expr-len pools)
-      (compiler-load-session-ast-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ast-floor)
-        0
-        (ast-node-pool-context-expr-len pools))
-      unit)
-    (if (>
-      (ast-node-pool-context-type-len pools)
-      (compiler-load-session-ty-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ty-floor)
-        0
-        (ast-node-pool-context-type-len pools))
-      unit)
-    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state intern-floor)
-        0
-        (intern-pool-len))
-      unit)))
+  (let
+    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [new-intern-floor : i64 (intern-pool-len)]
+    (begin
+      (if (>
+        (ast-node-pool-context-expr-len pools)
+        (compiler-load-session-ast-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ast-floor)
+          0
+          (ast-node-pool-context-expr-len pools))
+        unit)
+      (if (>
+        (ast-node-pool-context-type-len pools)
+        (compiler-load-session-ty-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ty-floor)
+          0
+          (ast-node-pool-context-type-len pools))
+        unit)
+      (if (> new-intern-floor old-intern-floor)
+        (begin
+          (intern-persist-range! old-intern-floor new-intern-floor)
+          (array-set!
+            (struct-get compiler-load-active-session-state intern-floor)
+            0
+            new-intern-floor))
+        unit))))
 
 (define (compiler-load-session-ast-floor-value) : i64
   (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
@@ -4881,6 +4891,28 @@
         (compiler-load-session-cache-disable-for-test!)
         ok))))
 
+(define (compiler-load-session-persistent-floor-interns-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
+    (let
+      [id : i64
+        (with-scratch
+          (let
+            [name : String (string-append "cache.floor." "transient")]
+            [interned : i64 (intern name)]
+            (begin
+              (compiler-load-session-note-persistent!)
+              interned)))]
+      (begin
+        (compiler-load-session-reset-interns!)
+        (let
+          [again : i64 (intern "cache.floor.transient")]
+          [ok : bool (= id again)]
+          (begin
+            (compiler-load-session-cache-disable-for-test!)
+            ok))))))
+
 (define (compiler-load-session-cache-local-common-dep-ok?) : bool
   (let
     [dir : String "target/cl_cache_local"]
@@ -7507,6 +7539,14 @@
         (begin
           (panic
             "compiler-load: disabled program cache left persistent intern storage on")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-persistent-floor-interns-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: session cache intern floor kept scratch storage")
           ;; lint-allow: unreachable-code
           0)))
     (unless

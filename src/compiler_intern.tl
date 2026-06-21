@@ -207,6 +207,15 @@
     text
     (intern-persistent-substring text 0 (string-length text))))
 
+(define (intern-persist-range! [index : i64] [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [name : String (array-ref intern-pool-slots index)]
+      (begin
+        (array-set! intern-pool-slots index (intern-persistent-copy name))
+        (intern-persist-range! (+ index 1) count)))))
+
 (define (intern-string-slice-eq?
   [name : String]
   [text : String]

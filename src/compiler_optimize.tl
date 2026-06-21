@@ -5155,6 +5155,62 @@
           rest2
           (OptBoundsCons fact (box rest2))))]))
 
+;; #930 index canonicalization: an array index is lowered to a fresh
+;; `Cast(idx, I64->U64)` per access (see `lower-array-element-addr`), so two
+;; bounds checks on the *same* logical index (e.g. read-then-write `xs[i]` in a
+;; swap) carry distinct cast vars and never match by `opt-value-eq`. The cast is
+;; a bit-preserving reinterpret, so the unsigned bounds comparison is identical
+;; and keying the fact on the pre-cast source value is sound. `OptBoundsCastEnv`
+;; maps each `I64->U64` cast dst back to its source; entries are dropped when the
+;; dst or the source var is redefined, and the whole env is cleared wherever the
+;; bounds facts are (calls/stores/CF/phi), so it can never outlive a redefinition
+;; of the source.
+(defenum OptBoundsCastEnv
+  (OptBoundsCastNil)
+  (OptBoundsCastCons i64 CompilerIrValue (Box OptBoundsCastEnv)))
+
+(define (opt-bounds-cast-unbind [env : OptBoundsCastEnv] [var : i64]) : OptBoundsCastEnv
+  (match env
+    [(OptBoundsCastNil) (OptBoundsCastNil)]
+    [(OptBoundsCastCons dst src rest)
+      (let
+        [tail : OptBoundsCastEnv (opt-bounds-cast-unbind (box-get rest) var)]
+        (if (or (= dst var) (opt-value-is-var? src var))
+          tail
+          (OptBoundsCastCons dst src (box tail))))]))
+
+(define (opt-bounds-cast-bind
+  [env : OptBoundsCastEnv]
+  [dst : i64]
+  [src : CompilerIrValue]) : OptBoundsCastEnv
+  (OptBoundsCastCons dst src (box (opt-bounds-cast-unbind env dst))))
+
+;; Resolve `value` back through one `I64->U64` reinterpret cast, if recorded.
+(define (opt-bounds-cast-canon
+  [env : OptBoundsCastEnv]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar var)
+      (match env
+        [(OptBoundsCastNil) value]
+        [(OptBoundsCastCons dst src rest)
+          (if (= dst var)
+            src
+            (opt-bounds-cast-canon (box-get rest) value))])]
+    [_ value]))
+
+;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
+;; so its dst canonicalizes to the source; other casts only invalidate the dst.
+(define (opt-bounds-cast-update
+  [env : OptBoundsCastEnv]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : OptBoundsCastEnv
+  (if (and (opt-type-eq from-ty (AstTyI64)) (opt-type-eq to-ty (AstTyU64)))
+    (opt-bounds-cast-bind env dst src)
+    (opt-bounds-cast-unbind env dst)))
+
 (define (opt-object-length-invalidate-var
   [fact : OptObjectLengthFact]
   [var : i64]) : OptObjectLengthFact
@@ -5257,6 +5313,7 @@
   [facts : OptBoundsFacts]
   [lengths : OptObjectLengthFact]
   [ptrs : OptObjectLengthFact]
+  [casts : OptBoundsCastEnv]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
@@ -5264,16 +5321,23 @@
       (match instr
         [(IrInstrBoundsCheck index length _)
           (let
+            [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
             [length-key : CompilerIrValue
               (opt-bounds-length-value lengths length)]
-            (if (opt-bounds-contains facts index length-key)
-              (opt-bounds-instrs-with-object facts lengths ptrs (box-get rest))
+            (if (opt-bounds-contains facts index-key length-key)
+              (opt-bounds-instrs-with-object
+                facts
+                lengths
+                ptrs
+                casts
+                (box-get rest))
               (compiler-ir-instr-cons
                 instr
                 (opt-bounds-instrs-with-object
-                  (opt-bounds-add facts index length-key)
+                  (opt-bounds-add facts index-key length-key)
                   lengths
                   ptrs
+                  casts
                   (box-get rest)))))]
         [(IrInstrGep dst base offset ty)
           (let
@@ -5295,6 +5359,7 @@
                 facts2
                 lengths2
                 ptrs3
+                (opt-bounds-cast-unbind casts dst)
                 (box-get rest))))]
         [(IrInstrLoad dst src ty)
           (let
@@ -5319,6 +5384,7 @@
                 facts2
                 lengths3
                 ptrs2
+                (opt-bounds-cast-unbind casts dst)
                 (box-get rest))))]
         [(IrInstrCast dst src from-ty to-ty)
           (let
@@ -5345,15 +5411,20 @@
                 facts2
                 lengths3
                 ptrs2
+                (opt-bounds-cast-update casts dst src from-ty to-ty)
                 (box-get rest))))]
         [_
           (let
             [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
+            [casts2 : OptBoundsCastEnv
+              (match (opt-instr-def-var instr)
+                [(OptSomeI64 dst) (opt-bounds-cast-unbind casts dst)]
+                [(OptNoI64) casts])]
             (match next-facts
               [(OptBoundsNil)
                 (compiler-ir-instr-cons
                   instr
-                  (opt-bounds-instrs next-facts (box-get rest)))]
+                  (opt-bounds-instrs next-facts casts2 (box-get rest)))]
               [_
                 (match (opt-instr-def-var instr)
                   [(OptSomeI64 dst)
@@ -5363,6 +5434,7 @@
                         next-facts
                         (opt-object-length-invalidate-var lengths dst)
                         (opt-object-length-invalidate-var ptrs dst)
+                        casts2
                         (box-get rest)))]
                   [(OptNoI64)
                     (compiler-ir-instr-cons
@@ -5371,26 +5443,32 @@
                         next-facts
                         lengths
                         ptrs
+                        casts2
                         (box-get rest)))])]))])]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
+  [casts : OptBoundsCastEnv]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (match instr
         [(IrInstrBoundsCheck index length _)
-          (if (opt-bounds-contains facts index length)
-            (opt-bounds-instrs facts (box-get rest))
-            (compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs
-                (opt-bounds-add facts index length)
-                (box-get rest))))]
+          (let
+            [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
+            (if (opt-bounds-contains facts index-key length)
+              (opt-bounds-instrs facts casts (box-get rest))
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs
+                  (opt-bounds-add facts index-key length)
+                  casts
+                  (box-get rest)))))]
         [(IrInstrGep dst base offset ty)
           (let
             [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+            [casts2 : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
             (if (opt-bounds-object-length-slot? offset ty)
               (compiler-ir-instr-cons
                 instr
@@ -5404,15 +5482,26 @@
                         dst
                         object-var)]
                     [_ (OptObjectLengthNone)])
+                  casts2
                   (box-get rest)))
               (compiler-ir-instr-cons
                 instr
-                (opt-bounds-instrs next-facts (box-get rest)))))]
+                (opt-bounds-instrs next-facts casts2 (box-get rest)))))]
+        [(IrInstrCast dst src from-ty to-ty)
+          (compiler-ir-instr-cons
+            instr
+            (opt-bounds-instrs
+              (opt-bounds-update-facts facts instr)
+              (opt-bounds-cast-update casts dst src from-ty to-ty)
+              (box-get rest)))]
         [_
           (compiler-ir-instr-cons
             instr
             (opt-bounds-instrs
               (opt-bounds-update-facts facts instr)
+              (match (opt-instr-def-var instr)
+                [(OptSomeI64 dst) (opt-bounds-cast-unbind casts dst)]
+                [(OptNoI64) casts])
               (box-get rest)))])]))
 
 ;; --- conservative CFG simplification (#926) ---------------------------------
@@ -17662,6 +17751,7 @@
         label
         (opt-bounds-instrs
           (OptBoundsNil)
+          (OptBoundsCastNil)
           (opt-copy-instrs
             (OptCopyNil)
             (opt-load-cse-instrs
@@ -25250,7 +25340,8 @@
       (opt-dce-instrs
         (opt-collect-instrs-uses (i64-i64-map-with-capacity 64) instrs)
         instrs)]
-    [bounds : CompilerIrInstrList (opt-bounds-instrs (OptBoundsNil) instrs)]
+    [bounds : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (OptBoundsCastNil) instrs)]
     [vector-cse : CompilerIrInstrList
       (opt-cse-instrs (OptExprNil) (opt-vector-cse-instrs))]
     [vector-reduce-cse : CompilerIrInstrList
@@ -27129,6 +27220,68 @@
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
         (IrInstrNil)))))
 
+;; #930 index-cast canonicalization: two accesses to the same logical index
+;; (var0) and array (var1) each emit a fresh `Cast(_, I64->U64)` of var0 and a
+;; fresh length load; the second bounds check is redundant. Without
+;; canonicalization the distinct cast vars (10 vs 14) never match, so this case
+;; pins the optimization (count 1).
+(define (opt-bounds-index-cast-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast 10 (IrValueVar 0) (AstTyI64) (AstTyU64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 11 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 12 (IrValueVar 11) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrCast 13 (IrValueVar 12) (AstTyI64) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrBoundsCheck (IrValueVar 10) (IrValueVar 13) "bounds_ok.0")
+            (compiler-ir-instr-cons
+              (IrInstrCast 14 (IrValueVar 0) (AstTyI64) (AstTyU64))
+              (compiler-ir-instr-cons
+                (IrInstrGep 15 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrLoad 16 (IrValueVar 15) (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrCast 17 (IrValueVar 16) (AstTyI64) (AstTyU64))
+                    (compiler-ir-instr-cons
+                      (IrInstrBoundsCheck
+                        (IrValueVar 14)
+                        (IrValueVar 17)
+                        "bounds_ok.1")
+                      (IrInstrNil))))))))))))
+
+;; Adversarial: redefining the index source (var0) between the two checks must
+;; invalidate the canonicalized fact, so the second check is kept (count 2). A
+;; `<=`-into-`<` or stale-source bug would wrongly drop it.
+(define (opt-bounds-index-cast-redef-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCast 10 (IrValueVar 0) (AstTyI64) (AstTyU64))
+    (compiler-ir-instr-cons
+      (IrInstrGep 11 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 12 (IrValueVar 11) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrCast 13 (IrValueVar 12) (AstTyI64) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrBoundsCheck (IrValueVar 10) (IrValueVar 13) "bounds_ok.0")
+            (compiler-ir-instr-cons
+              (IrInstrMov 0 (IrValueI64 7) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrCast 14 (IrValueVar 0) (AstTyI64) (AstTyU64))
+                (compiler-ir-instr-cons
+                  (IrInstrGep 15 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (IrInstrLoad 16 (IrValueVar 15) (AstTyI64))
+                    (compiler-ir-instr-cons
+                      (IrInstrCast 17 (IrValueVar 16) (AstTyI64) (AstTyU64))
+                      (compiler-ir-instr-cons
+                        (IrInstrBoundsCheck
+                          (IrValueVar 14)
+                          (IrValueVar 17)
+                          "bounds_ok.1")
+                        (IrInstrNil)))))))))))))
+
 (define (opt-bounds-cross-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -27523,18 +27676,34 @@
 (define (compiler-optimize-bounds-self-test) : i64
   (let
     [duplicate : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-duplicate-instrs))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-duplicate-instrs))]
     [different : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-different-instrs))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-different-instrs))]
     [redef : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-redef-instrs))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-redef-instrs))]
     [call : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-call-instrs))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-call-instrs))]
     [branch : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-branch-instrs))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-branch-instrs))]
     [copy : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsNil)
+        (OptBoundsCastNil)
         (opt-copy-instrs (OptCopyNil) (opt-bounds-copy-instrs)))]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
@@ -27621,6 +27790,16 @@
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-split-blocks)
         (opt-loop-bce-test-summaries false false))]
+    [index-cast : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-index-cast-instrs))]
+    [index-cast-redef : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (opt-bounds-index-cast-redef-instrs))]
     (cond
       [(not (= (opt-count-bounds-instrs duplicate) 1)) 1]
       [(not (= (opt-count-bounds-instrs different) 2)) 2]
@@ -27644,6 +27823,8 @@
       [(not (= string-off-by-one 1)) 20]
       [(not (= string-reassign 1)) 21]
       [(not (= string-split 0)) 22]
+      [(not (= (opt-count-bounds-instrs index-cast) 1)) 23]
+      [(not (= (opt-count-bounds-instrs index-cast-redef) 2)) 24]
       [else 42])))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already

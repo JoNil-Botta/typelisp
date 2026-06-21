@@ -153,6 +153,10 @@
 (define (expr-if [cond : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
   (expr-if cond then-expr else-expr))
 
+;: Return the produced type of a captured expression during macro CTFE.
+(define (expr-type [value : Expr]) : Expr
+  value)
+
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
   (expr-bool? value))
@@ -306,6 +310,7 @@
   (value int->string)
   (value expr-splice)
   (value expr-if)
+  (value expr-type)
   (value expr-bool?)
   (value expr-bool-value)
   (value expr-if?)

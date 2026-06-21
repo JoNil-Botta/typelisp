@@ -1,7 +1,7 @@
 name	ir_count
 benchmark/typelisp/arith_loop	7000000086
 benchmark/c/arith_loop	500115543
-benchmark/typelisp/array_sum	15609044449
+benchmark/typelisp/array_sum	16809286458
 benchmark/c/array_sum	2101425108
 benchmark/typelisp/hashmap_churn	25203181
 benchmark/c/hashmap_churn	4430221
@@ -13,10 +13,10 @@ benchmark/typelisp/hashmap_insert	325295651
 benchmark/c/hashmap_insert	66066561
 benchmark/typelisp/spmd_reduce	17208464078
 benchmark/c/spmd_reduce	1693929378
-benchmark/typelisp/opt_quicksort	2817980677
+benchmark/typelisp/opt_quicksort	2813900677
 benchmark/c/opt_quicksort	398486841
-benchmark/typelisp/opt_crc32	2523784384
+benchmark/typelisp/opt_crc32	2585224384
 benchmark/c/opt_crc32	400812903
-benchmark/typelisp/opt_bytecode_vm	3280002754
+benchmark/typelisp/opt_bytecode_vm	3288002754
 benchmark/c/opt_bytecode_vm	716120437
-self_compile/compile_cli_opt1	61869414780
+self_compile/compile_cli_opt1	63046295225

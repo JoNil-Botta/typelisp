@@ -2738,31 +2738,41 @@
         (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
 
-;; #3489 (PR4, hole-aware): is `reg` held by an active value that INTERFERES with
-;; `var` (their live SEGMENTS overlap)? An active value whose hole covers `var`'s
-;; range does NOT conflict -- `var` may reuse its register during the hole. This
-;; is what lets a merged loop class (which carries the union of its members'
-;; segments, with the loop body as a hole between the back-edge def and the next
-;; read) share its register with a value that lives only inside that hole.
+;; #3489 (PR4, hole-aware): is `reg` held by an active value that conflicts with
+;; `var`? Segment holes are trusted only when both same-register values are
+;; non-singleton coalesce roots: those roots carry the explicitly merged union of
+;; their class members' segments. Ordinary values keep the old conservative "same
+;; active register conflicts" rule, preventing incomplete per-value segments from
+;; becoming register aliases.
 (define (compiler-reg-active-register-conflicts?
   [active : CompilerRegActiveList]
   [reg : String]
   [index : CompilerRegIntervalIndex]
-  [var : i64]) : bool
+  [var : i64]
+  [hole-aware-vars : CompilerLiveI64Set]) : bool
   (match active
     [(CompilerRegActiveNil) false]
     [(CompilerRegActiveCons item rest)
       (match item
         [(CompilerRegActive aid _ areg)
-          (if (and
-            (string-eq reg areg)
-            (compiler-reg-vars-interfere-segmented-index? index var aid))
-            true
+          (if (string-eq reg areg)
+            (if (and
+              (compiler-live-set-contains? hole-aware-vars var)
+              (compiler-live-set-contains? hole-aware-vars aid)
+              (not (compiler-reg-vars-interfere-segmented-index? index var aid)))
+              (compiler-reg-active-register-conflicts?
+                (box-get rest)
+                reg
+                index
+                var
+                hole-aware-vars)
+              true)
             (compiler-reg-active-register-conflicts?
               (box-get rest)
               reg
               index
-              var))])]))
+              var
+              hole-aware-vars))])]))
 
 ;; #3489 (PR4): first register not in conflict with `var` over its live segments
 ;; (CompilerRegNoString if every register is occupied by an interfering value).
@@ -2770,12 +2780,23 @@
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
   [index : CompilerRegIntervalIndex]
-  [var : i64]) : CompilerRegMaybeString
+  [var : i64]
+  [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegMaybeString
   (match regs
     [(CompilerRegStringNil) (CompilerRegNoString)]
     [(CompilerRegStringCons reg rest)
-      (if (compiler-reg-active-register-conflicts? active reg index var)
-        (compiler-reg-first-free-register-holes (box-get rest) active index var)
+      (if (compiler-reg-active-register-conflicts?
+        active
+        reg
+        index
+        var
+        hole-aware-vars)
+        (compiler-reg-first-free-register-holes
+          (box-get rest)
+          active
+          index
+          var
+          hole-aware-vars)
         (CompilerRegSomeString reg))]))
 
 (define (compiler-reg-active-max [active : CompilerRegActiveList]) : CompilerRegMaybeActive
@@ -3699,7 +3720,8 @@
   [assignments : CompilerRegAssignmentTable]
   [group-vars : CompilerLiveI64Set]
   [ref-counts : (Array i64)]
-  [index : CompilerRegIntervalIndex]) : CompilerRegAssignState
+  [index : CompilerRegIntervalIndex]
+  [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegAssignState
   (match interval
     [(CompilerRegInterval var _ end)
       (match (compiler-reg-spill-victim active group-vars ref-counts end)
@@ -3723,7 +3745,8 @@
                 (compiler-reg-active-remove-var active spill-var)
                 spill-reg
                 index
-                var)
+                var
+                hole-aware-vars)
                 (CompilerRegAssignState
                   active
                   (compiler-reg-assignment-table-insert
@@ -3752,6 +3775,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [use-fixpoint-coalesce : bool]
   [interval-index : CompilerRegIntervalIndex]
+  [hole-aware-vars : CompilerLiveI64Set]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
   [ref-counts : (Array i64)]) : CompilerRegAssignState
@@ -3803,6 +3827,7 @@
                       coalesce
                       use-fixpoint-coalesce
                       interval-index
+                      hole-aware-vars
                       types
                       group-vars
                       ref-counts)]
@@ -3825,6 +3850,7 @@
                       coalesce
                       use-fixpoint-coalesce
                       interval-index
+                      hole-aware-vars
                       types
                       group-vars
                       ref-counts)]
@@ -3841,6 +3867,7 @@
                       coalesce
                       use-fixpoint-coalesce
                       interval-index
+                      hole-aware-vars
                       types
                       group-vars
                       ref-counts)])]
@@ -3864,6 +3891,7 @@
                       coalesce
                       use-fixpoint-coalesce
                       interval-index
+                      hole-aware-vars
                       types
                       group-vars
                       ref-counts)
@@ -3895,6 +3923,7 @@
                           coalesce
                           use-fixpoint-coalesce
                           interval-index
+                          hole-aware-vars
                           types
                           group-vars
                           ref-counts))
@@ -3913,6 +3942,7 @@
                         coalesce
                         use-fixpoint-coalesce
                         interval-index
+                        hole-aware-vars
                         types
                         group-vars
                         ref-counts)))
@@ -3925,7 +3955,8 @@
                     regs
                     expired
                     interval-index
-                    var)
+                    var
+                    hole-aware-vars)
                     [(CompilerRegSomeString reg)
                       (compiler-reg-assign-candidates
                         (box-get rest)
@@ -3941,6 +3972,7 @@
                         coalesce
                         use-fixpoint-coalesce
                         interval-index
+                        hole-aware-vars
                         types
                         group-vars
                         ref-counts)]
@@ -3951,7 +3983,8 @@
                         assignments
                         group-vars
                         ref-counts
-                        interval-index)
+                        interval-index
+                        hole-aware-vars)
                         [(CompilerRegAssignState next-active next-assignments)
                           (compiler-reg-assign-candidates
                             (box-get rest)
@@ -3962,6 +3995,7 @@
                             coalesce
                             use-fixpoint-coalesce
                             interval-index
+                            hole-aware-vars
                             types
                             group-vars
                             ref-counts)])]))]))])]))
@@ -5614,6 +5648,34 @@
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex root-starts root-ends root-segs))))
 
+;; Non-singleton coalesce roots are the only values whose segment holes are
+;; intentionally widened by class merging, so only they may drive hole-aware
+;; register reuse.
+(define (compiler-reg-coalesce-merged-root-set-from
+  [parents : (Array i64)]
+  [index : i64]
+  [out : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (if (>= index (array-length parents))
+    out
+    (let
+      [root : i64 (array-ref parents index)]
+      (compiler-reg-coalesce-merged-root-set-from
+        parents
+        (+ index 1)
+        (if (and
+          (>= root 0)
+          (< root (array-length parents))
+          (not (= root index)))
+          (compiler-live-set-insert out root)
+          out)))))
+
+(define (compiler-reg-coalesce-merged-root-set
+  [coalesce : CompilerRegCoalesceMap]) : CompilerLiveI64Set
+  (compiler-reg-coalesce-merged-root-set-from
+    (struct-get coalesce parents)
+    0
+    (compiler-live-set-empty)))
+
 ;; #3489 (PR2): expand a per-root assignment table to all original vars -- every
 ;; member of a coalesce class inherits its root's location (register or spill
 ;; slot). This realises the coalesce: the copy `member <- root` becomes
@@ -5740,6 +5802,10 @@
         intervals)]
     [eff-coalesce : CompilerRegCoalesceMap
       (CompilerRegCoalesceMap (make-array i64 0))]
+    [hole-aware-vars : CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (compiler-reg-coalesce-merged-root-set coalesce)
+        (compiler-live-set-empty))]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -5764,6 +5830,7 @@
         eff-coalesce
         allow-caller-saved-zero-call
         eff-index
+        hole-aware-vars
         type-info
         group-vars
         eviction-ref-counts)]
@@ -5816,6 +5883,7 @@
         eff-coalesce
         allow-caller-saved-zero-call
         eff-index
+        hole-aware-vars
         type-info
         (compiler-live-set-empty)
         (make-array i64 0))]
@@ -10190,6 +10258,125 @@
         (compiler-reg-vars-interfere-segmented-index? segment-index 0 3)
         (compiler-reg-vars-interfere-segmented-index? segment-index 1 2)))))
 
+(define (compiler-reg-hole-aware-register-reuse-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 5)]
+    [ends : (Array i64) (make-array i64 5)]
+    [segments : (Array CompilerRegIntervalList)
+      (make-array CompilerRegIntervalList 5)]
+    [segment-index : CompilerRegIntervalIndex
+      (CompilerRegIntervalIndex starts ends segments)]
+    [one-reg : CompilerRegStringList
+      (compiler-reg-string-cons "%r12" CompilerRegStringNil)]
+    [active-root : CompilerRegActiveList
+      (compiler-reg-active-cons
+        (CompilerRegActive 0 10 "%r12")
+        CompilerRegActiveNil)]
+    [active-ordinary : CompilerRegActiveList
+      (compiler-reg-active-cons
+        (CompilerRegActive 1 10 "%r12")
+        CompilerRegActiveNil)]
+    [hole-aware : CompilerLiveI64Set (compiler-live-set3 0 2 3)]
+    [parents : (Array i64) (make-array i64 5)]
+    (begin
+      (compiler-reg-fill-i64-array starts -1)
+      (compiler-reg-fill-i64-array ends -1)
+      (array-set! starts 0 0)
+      (array-set! ends 0 10)
+      (array-set! starts 1 4)
+      (array-set! ends 1 6)
+      (array-set! starts 2 4)
+      (array-set! ends 2 6)
+      (array-set! starts 3 1)
+      (array-set! ends 3 3)
+      (array-set! starts 4 8)
+      (array-set! ends 4 9)
+      (array-set!
+        segments
+        0
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 0 0 2)
+          CompilerRegIntervalNil))
+      (array-set!
+        segments
+        1
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 1 4 6)
+          CompilerRegIntervalNil))
+      (array-set!
+        segments
+        2
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 2 4 6)
+          CompilerRegIntervalNil))
+      (array-set!
+        segments
+        3
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 3 1 3)
+          CompilerRegIntervalNil))
+      (array-set!
+        segments
+        4
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 4 8 9)
+          CompilerRegIntervalNil))
+      (array-set! parents 0 0)
+      (array-set! parents 1 0)
+      (array-set! parents 2 2)
+      (array-set! parents 3 2)
+      (array-set! parents 4 4)
+      (let
+        [ordinary-root-conflicts : bool
+          (match (compiler-reg-first-free-register-holes
+            one-reg
+            active-root
+            segment-index
+            1
+            hole-aware)
+            [(CompilerRegNoString) true]
+            [(CompilerRegSomeString _) false])]
+        [root-hole-reuses : bool
+          (match (compiler-reg-first-free-register-holes
+            one-reg
+            active-root
+            segment-index
+            2
+            hole-aware)
+            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegNoString) false])]
+        [root-overlap-conflicts : bool
+          (match (compiler-reg-first-free-register-holes
+            one-reg
+            active-root
+            segment-index
+            3
+            hole-aware)
+            [(CompilerRegNoString) true]
+            [(CompilerRegSomeString _) false])]
+        [ordinary-ordinary-conflicts : bool
+          (match (compiler-reg-first-free-register-holes
+            one-reg
+            active-ordinary
+            segment-index
+            4
+            hole-aware)
+            [(CompilerRegNoString) true]
+            [(CompilerRegSomeString _) false])]
+        [roots : CompilerLiveI64Set
+          (compiler-reg-coalesce-merged-root-set
+            (CompilerRegCoalesceMap parents))]
+        (and
+          ordinary-root-conflicts
+          root-hole-reuses
+          root-overlap-conflicts
+          ordinary-ordinary-conflicts
+          (compiler-live-set-contains? roots 0)
+          (compiler-live-set-contains? roots 2)
+          (not (compiler-live-set-contains? roots 1))
+          (not (compiler-live-set-contains? roots 3))
+          (not (compiler-live-set-contains? roots 4)))))))
+
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : CompilerRegVarTypes
   (let
     [present : (Array i64) (make-array i64 vars)]
@@ -10747,7 +10934,8 @@
     (compiler-reg-xmm-clobbers-ok?)
     (compiler-reg-coalesce-ok?)
     (compiler-reg-vector-mask-homes-ok?)
-    (compiler-reg-segmented-interference-ok?)))
+    (compiler-reg-segmented-interference-ok?)
+    (compiler-reg-hole-aware-register-reuse-ok?)))
 
 (define (compiler-regalloc-scalar-self-test?) : bool
   (and

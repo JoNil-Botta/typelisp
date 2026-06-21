@@ -3273,15 +3273,8 @@
           (OkBuildPackageTlciText
             (tlci-bytes->string bytes 0 (array-length bytes)))])]))
 
-(define (build-package-write-tlci
-  [path : String]
-  [manifest : CompilerPkgManifest]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : SourceToolCommandStatus
-  (match (build-package-tlci-text manifest decls paths)
-    [(ErrBuildPackageTlciText message) (SourceToolCommandErr message)]
-    [(OkBuildPackageTlciText text)
-      (source-tool-write-file path text "build: failed to write package tlci")]))
+(define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
+  (source-tool-write-file path text "build: failed to write package tlci"))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
@@ -3587,10 +3580,9 @@
                                     (print-error message)
                                     1)]
                                 [(SourceToolCommandOk)
-                                  (match (source-tool-write-file
+                                  (match (build-package-write-tlci
                                     tlci-path
-                                    tlci-text
-                                    "build: failed to write package tlci")
+                                    tlci-text)
                                     [(SourceToolCommandErr message)
                                       (begin
                                         (print-error message)

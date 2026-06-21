@@ -53,10 +53,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
   aliasing entries, value borrows, puts, and resizes.
-- `stdlib/set.tl` inline tests cover generated `StringSet` and `I64Set`
-  families, descriptor identities, borrowed string-key contains/remove wrappers,
-  duplicate insert, collision chains, tombstone reuse, growth/rehash, missing
-  remove, and deterministic bucket-order iteration.
+- `stdlib/set.tl` inline tests cover generated `(set String)` and `(set i64)`
+  modules, borrowed string-key contains/remove wrappers, duplicate insert,
+  collision chains, tombstone reuse, growth/rehash, missing remove,
+  deterministic bucket-order iteration, and duplicate macro-request type
+  identity.
 - `sync_api.tl` keeps the standalone native synchronization runtime coverage:
   blocking send/recv success paths in a single thread, FIFO wraparound, raw
   handle packing, atomic-arena string transfer, resource close, `MutexI64`

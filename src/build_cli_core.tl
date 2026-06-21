@@ -3484,34 +3484,31 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        (match (compiler-driver-load-package-file-with-runtime
-          entry-path
-          target
-          stdlib-roots
-          manifest-dir
-          (struct-get manifest deps)
-          emit-entry)
-          [(ErrCompilerLoadWithPaths diag)
-            (begin
-              (print-error (compiler-diagnostic-render diag))
-              1)]
-          [(OkCompilerLoadWithPaths decls paths _ _)
-            (let
-              [owned-paths : AstDeclPathList
-                (compiler-load-package-owned-paths-for-decls
-                  name
-                  manifest-dir
-                  stdlib-roots
-                  entry-path
-                  decls
-                  paths)]
-              [doctest-status : i64
-                (build-doctest-typecheck-package-paths
-                  (build-package-doctest-paths name paths)
-                  stdlib-roots
-                  manifest-dir
-                  (struct-get manifest deps))]
-              (if (= doctest-status 0)
+        [doctest-status : i64
+          (build-package-closure-doctest-status
+            name
+            entry-path
+            target
+            stdlib-roots
+            manifest-dir
+            (struct-get manifest deps)
+            emit-entry)]
+        (if (= doctest-status 0)
+          (begin
+            (compiler-driver-reset-file-state!)
+            (match (compiler-driver-load-package-file-with-runtime-owned
+              entry-path
+              target
+              stdlib-roots
+              manifest-dir
+              name
+              (struct-get manifest deps)
+              emit-entry)
+              [(ErrCompilerLoadWithPaths diag)
+                (begin
+                  (print-error (compiler-diagnostic-render diag))
+                  1)]
+              [(OkCompilerLoadWithPaths decls paths _ _)
                 (let
                   [metadata-link-inputs : SourceToolLinkInputs
                     (source-tool-link-inputs-from-decls
@@ -3541,7 +3538,7 @@
                     emit-entry
                     crt-entry
                     decls
-                    owned-paths)
+                    paths)
                     [(ErrCompilerDriver diag)
                       (begin
                         (print-error (compiler-diagnostic-render diag))
@@ -3574,7 +3571,7 @@
                                 tlci-path
                                 manifest
                                 decls
-                                owned-paths)
+                                paths)
                                 [(SourceToolCommandErr message)
                                   (begin
                                     (print-error message)
@@ -3589,8 +3586,8 @@
                                       (string-append
                                         "Built "
                                         (string-append tlci-path "\n")))
-                                    0)])])])]))
-                doctest-status))])))))
+                                    0)])])])]))]))
+          doctest-status)))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

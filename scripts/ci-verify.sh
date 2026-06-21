@@ -122,6 +122,15 @@ required_gate_unavailable() {
 # a new compiler/runtime capability. Split that work instead: first land the
 # compiler/runtime support, then land a follow-up PR that uses the new feature.
 # A short green run caused by skipped gates is a CI bug, not a successful check.
+#
+# NO-RETRY POLICY (#1204): the verify-* gates run each `typelisp` invocation
+# exactly once. A crash (segfault / Windows access violation / illegal
+# instruction) is a real compiler/runtime bug, NOT transient infra flake — fix
+# the bug. Do NOT re-introduce a retry loop or a `VERIFY_*_ATTEMPTS`-style knob
+# to retry crashing invocations: that only hides the bug behind a green run, as
+# the old #1204 retry masking did for months. (The release-republish retry in
+# fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
+# race, not a compiler crash.)
 
 stage2_safety_corpus_supported() {
     compiler=$1

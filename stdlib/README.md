@@ -88,6 +88,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(cond test expr ... fallback)` calls are rejected. Repository code should use
   the bare prelude forms; the explicit qualified API surface is covered by
   `tests/core_macros_api.tl`.
+- `array.tl`: public dynamic/fixed array helper macros that expand to
+  compiler-private array intrinsics during the #3421 migration. Import it with
+  `(import "stdlib/array.tl")` when new code should depend on the stdlib-owned
+  array surface instead of transitional compiler-public aliases.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, coarse file-kind probes,

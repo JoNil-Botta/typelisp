@@ -4808,17 +4808,19 @@ checks should use `stdlib/cpu.tl`.
 
 The table below records the remaining transitional string/array compatibility
 surface that is still recognized by the compiler while the stdlib migration in
-#3079 continues.
+#3079 continues. `stdlib/array.tl` now provides public array macro wrappers that
+expand to compiler-private array intrinsics, but the compiler still accepts the
+public aliases during the in-tree import migration.
 
 | Compatibility builtin | Signature | Description |
 |-----------------------|-----------|-------------|
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
-| `array-length` | `(Array t) → i64` | Get dynamic array length |
-| `make-array` | `type i64 → (Array type)` | Allocate a dynamic array and initialize every live element under ZII; invalid lengths trap |
-| `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element, including through an immutable or mutable reference receiver (bounds checked) |
-| `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element through an owned array or mutable reference receiver (bounds checked) |
-| `array-push!` | `(Array t) t → unit` | Append to a dynamic array through an owned array or mutable reference receiver |
+| `array-length` | `(Array t) → i64` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array length |
+| `make-array` | `type i64 → (Array type)` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array allocation; initializes every live element under ZII and traps invalid lengths |
+| `array-ref` | `(Array t) i64 → t` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic/fixed array read, including immutable or mutable reference receivers (bounds checked) |
+| `array-set!` | `(Array t) i64 t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic/fixed array write through an owned array or mutable reference receiver (bounds checked) |
+| `array-push!` | `(Array t) t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array append through an owned array or mutable reference receiver |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |

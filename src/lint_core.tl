@@ -1805,9 +1805,9 @@
       (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-field-def-list-uses-import? fields alias module-name))]
-    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr) _ _ _ _))
+    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
       (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
-    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr) _ _ _ _))
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr _) _ _ _ _))
       (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
     [(AstDeclImport _) false]
     [(AstDeclIncludeStr _ _) false]
@@ -1865,8 +1865,8 @@
       (match expected
         [(AstSomeModuleName _) true]
         [(AstNoModuleName) false])]
-    [(AstImportMacro _) false]
-    [(AstImportMacroDecls _) false]))
+    [(AstImportMacro _ _) false]
+    [(AstImportMacroDecls _ _) false]))
 
 (define (lint-unused-import-finding
   [module-name : String]

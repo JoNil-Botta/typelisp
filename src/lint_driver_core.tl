@@ -1329,11 +1329,11 @@
           fields
           (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
         false)]
-    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr) _ _ _ _))
+    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
         (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (string-vec-new)))]
-    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr) _ _ _ _))
+    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
         (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (string-vec-new)))]

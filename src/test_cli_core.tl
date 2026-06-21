@@ -2969,6 +2969,32 @@
         (print-error (compiler-diagnostic-render diag))
         (ErrTestPackageTotals 1))]))
 
+(define (tltest-package-run-integration-source-isolated-count
+  [source : String]
+  [target : String]
+  [roots : StringVec]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]) : i64
+  (with-scratch
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (tltest-package-run-integration-source
+        source
+        target
+        roots
+        opt-level
+        test-mode
+        backend-target
+        manifest-dir
+        package-owner
+        deps)
+        [(ErrTestPackageTotals status) (- 0 status)]
+        [(OkTestPackageTotals _ tests) tests]))))
+
 (define (tltest-package-run-source
   [source : String]
   [target : String]
@@ -3012,6 +3038,32 @@
           (ErrTestPackageTotals 1))])
     (OkTestPackageTotals 0 0)))
 
+(define (tltest-package-run-source-isolated-count
+  [source : String]
+  [target : String]
+  [roots : StringVec]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [backend-target : CompilerBackendTarget]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]) : i64
+  (with-scratch
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (tltest-package-run-source
+        source
+        target
+        roots
+        opt-level
+        test-mode
+        backend-target
+        manifest-dir
+        package-owner
+        deps)
+        [(ErrTestPackageTotals status) (- 0 status)]
+        [(OkTestPackageTotals _ tests) tests]))))
+
 (define (tltest-package-run-sources-from
   [sources : StringVec]
   [index : i64]
@@ -3045,18 +3097,20 @@
           deps
           file-count
           test-count)
-        (match (tltest-package-run-source
-          source
-          target
-          roots
-          opt-level
-          test-mode
-          backend-target
-          manifest-dir
-          package-owner
-          deps)
-          [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
-          [(OkTestPackageTotals source-files source-tests)
+        (let
+          [source-tests : i64
+            (tltest-package-run-source-isolated-count
+              source
+              target
+              roots
+              opt-level
+              test-mode
+              backend-target
+              manifest-dir
+              package-owner
+              deps)]
+          (if (< source-tests 0)
+            (ErrTestPackageTotals (- 0 source-tests))
             (tltest-package-run-sources-from
               sources
               (+ index 1)
@@ -3069,8 +3123,10 @@
               manifest-dir
               package-owner
               deps
-              (+ file-count source-files)
-              (+ test-count source-tests))])))))
+              (if (= source-tests 0)
+                file-count
+                (+ file-count 1))
+              (+ test-count source-tests))))))))
 
 (define (tltest-package-run-sources
   [sources : StringVec]
@@ -3119,18 +3175,20 @@
     (let
       [source : String (string-vec-get sources index "")]
       (if (tltest-package-integration-source? source tests-prefix)
-        (match (tltest-package-run-integration-source
-          source
-          target
-          roots
-          opt-level
-          test-mode
-          backend-target
-          manifest-dir
-          package-owner
-          deps)
-          [(ErrTestPackageTotals status) (ErrTestPackageTotals status)]
-          [(OkTestPackageTotals source-files source-tests)
+        (let
+          [source-tests : i64
+            (tltest-package-run-integration-source-isolated-count
+              source
+              target
+              roots
+              opt-level
+              test-mode
+              backend-target
+              manifest-dir
+              package-owner
+              deps)]
+          (if (< source-tests 0)
+            (ErrTestPackageTotals (- 0 source-tests))
             (tltest-package-run-integration-sources-from
               sources
               (+ index 1)
@@ -3143,8 +3201,8 @@
               manifest-dir
               package-owner
               deps
-              (+ file-count source-files)
-              (+ test-count source-tests))])
+              (+ file-count 1)
+              (+ test-count source-tests))))
         (tltest-package-run-integration-sources-from
           sources
           (+ index 1)

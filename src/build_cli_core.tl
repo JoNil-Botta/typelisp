@@ -3216,24 +3216,15 @@
   [manifest : CompilerPkgManifest]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTlciMetadata
-  (match (struct-get manifest kind)
-    [(CompilerPkgKindBin)
+  (match (build-package-tlci-exports (struct-get manifest name) decls paths)
+    [(ErrTlciExportList message) (ErrTlciMetadata message)]
+    [(OkTlciExportList exports)
       (OkTlciMetadata
         (TlciMetadata
           tlci-metadata-version
           (struct-get manifest name)
           (struct-get manifest version)
-          TlciExportNil))]
-    [(CompilerPkgKindLib)
-      (match (build-package-tlci-exports (struct-get manifest name) decls paths)
-        [(ErrTlciExportList message) (ErrTlciMetadata message)]
-        [(OkTlciExportList exports)
-          (OkTlciMetadata
-            (TlciMetadata
-              tlci-metadata-version
-              (struct-get manifest name)
-              (struct-get manifest version)
-              exports))])]))
+          exports))]))
 
 (define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
   (TlciImage
@@ -3391,7 +3382,7 @@
                         emitted
                         "stdlib.core_macros"))))]))])]))
 
-(define (build-package-tlci-bin-metadata-empty-ok?) : bool
+(define (build-package-tlci-bin-metadata-exports-ok?) : bool
   (match (parse-ast-source (build-package-tlci-export-test-source))
     [(ErrAstProgram _) false]
     [(OkAstProgram program)
@@ -3415,18 +3406,15 @@
                   (build-package-tlci-string-contains?
                     emitted
                     "(package (name \"tlci_meta\")")
-                  (not
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "exported-value"))
-                  (not
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "ExportedPoint"))
-                  (not
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "exported-macro"))))])])]))
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")))])])]))
 
 (test
   build-package-tlci-export-metadata-smoke
@@ -3435,10 +3423,10 @@
     (panic "build package tlci export metadata smoke failed")))
 
 (test
-  build-package-tlci-bin-metadata-empty
+  build-package-tlci-bin-metadata-exports
   (unless
-    (build-package-tlci-bin-metadata-empty-ok?)
-    (panic "build package tlci bin metadata empty failed")))
+    (build-package-tlci-bin-metadata-exports-ok?)
+    (panic "build package tlci bin metadata exports failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]

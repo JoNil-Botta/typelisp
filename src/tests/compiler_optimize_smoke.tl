@@ -153,7 +153,12 @@
         "bounds_ok.1"
         (IrInstrNil)))))
 
-(define (smoke-bounds-object-store-barrier) : CompilerIrInstrList
+;; #930 element-store survival: a `StorePtr` whose target is the object's tracked
+;; length-slot pointer (var 10) changes the length and must clear the facts (the
+;; 2nd check survives -> count 2). A `StorePtr` to any other pointer (var 99, an
+;; array element) cannot change the length, so the facts survive and the 2nd
+;; check is removed (-> count 1).
+(define (smoke-bounds-object-store-barrier [store-ptr : CompilerIrValue]) : CompilerIrInstrList
   (smoke-bounds-object-length-check-fragment
     10
     11
@@ -164,7 +169,7 @@
     (IrValueVar 0)
     "bounds_ok.0"
     (compiler-ir-instr-cons
-      (IrInstrStorePtr (IrValueVar 99) (IrValueI64 7) (AstTyI64))
+      (IrInstrStorePtr store-ptr (IrValueI64 7) (AstTyI64))
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -202,13 +207,19 @@
       (opt-bounds-instrs
         (OptBoundsNil)
         (OptBoundsCastNil)
-        (smoke-bounds-object-store-barrier))]
+        (smoke-bounds-object-store-barrier (IrValueVar 10)))]
+    [object-element-store : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (smoke-bounds-object-store-barrier (IrValueVar 99)))]
     (cond
       [(not (= (opt-count-bounds-instrs object-array) 1)) 1]
       [(not (= (opt-count-bounds-instrs object-string) 1)) 2]
       [(not (= (opt-count-bounds-instrs object-mismatch) 2)) 3]
       [(not (= (opt-count-bounds-instrs object-call) 2)) 4]
       [(not (= (opt-count-bounds-instrs object-store) 2)) 5]
+      [(not (= (opt-count-bounds-instrs object-element-store) 1)) 6]
       [else 42])))
 
 (define (smoke-range-bce-entry [with-nonnegative : bool]) : CompilerIrBlock

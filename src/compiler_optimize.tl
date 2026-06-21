@@ -5413,6 +5413,34 @@
                 ptrs2
                 (opt-bounds-cast-update casts dst src from-ty to-ty)
                 (box-get rest))))]
+        ;; #930: an array element store cannot change any array's LENGTH (in TL a
+        ;; length slot is only ever written by make-array, and user code cannot
+        ;; obtain a raw pointer to it), so the (index, length-token) bounds facts
+        ;; survive it. Only a store whose target is a tracked length-slot pointer
+        ;; (the make-array length write) clears the facts; element stores -- which
+        ;; never alias a length slot -- keep object mode and its facts. This lets a
+        ;; read-then-write of the same slot (qs-swap) drop the write's check.
+        [(IrInstrStorePtr ptr _ _)
+          (match ptr
+            [(IrValueVar ptr-var)
+              (match (opt-object-length-lookup ptrs ptr-var)
+                [(OptSomeI64 _)
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-bounds-instrs (OptBoundsNil) casts (box-get rest)))]
+                [(OptNoI64)
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-bounds-instrs-with-object
+                      facts
+                      lengths
+                      ptrs
+                      casts
+                      (box-get rest)))])]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs (OptBoundsNil) casts (box-get rest)))])]
         [_
           (let
             [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]

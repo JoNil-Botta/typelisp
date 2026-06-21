@@ -317,6 +317,70 @@
       [(not (= redefined-index 1)) 5]
       [else 42])))
 
+(define (smoke-nonlength-guard-header [op : CompilerIrBinOp]) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (IrInstrBinOp 43 op (IrValueVar 0) (IrValueVar 40) (AstTyBool))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 43) "body" "exit")
+        (IrInstrNil)))))
+
+(define (smoke-nonlength-guard-body [object-var : i64] [redefine-bound : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (let
+      [tail : CompilerIrInstrList
+        (opt-loop-bce-string-test-ref-instrs
+          object-var
+          50
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 57)))
+            (IrInstrNil)))]
+      (if redefine-bound
+        (compiler-ir-instr-cons (IrInstrMov 40 (IrValueI64 0) (AstTyI64)) tail)
+        tail))))
+
+(define (smoke-nonlength-guard-blocks
+  [with-upper : bool]
+  [op : CompilerIrBinOp]
+  [object-var : i64]
+  [redefine-bound : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-loop-bce-string-test-transitive-entry)
+    (compiler-ir-block-cons
+      (opt-loop-bce-string-test-transitive-upper with-upper)
+      (compiler-ir-block-cons
+        (smoke-nonlength-guard-header op)
+        (compiler-ir-block-cons
+          (smoke-nonlength-guard-body object-var redefine-bound)
+          (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))
+
+(define (smoke-nonlength-guard-count
+  [with-upper : bool]
+  [op : CompilerIrBinOp]
+  [object-var : i64]
+  [redefine-bound : bool]) : i64
+  (opt-loop-bce-string-test-count
+    (smoke-nonlength-guard-blocks with-upper op object-var redefine-bound)
+    (opt-loop-bce-test-summaries false false)))
+
+(define (smoke-nonlength-guard-bce-self-test) : i64
+  (let
+    [positive : i64 (smoke-nonlength-guard-count true (IrBinLt) 2 false)]
+    [missing-upper : i64 (smoke-nonlength-guard-count false (IrBinLt) 2 false)]
+    [mismatched-object : i64
+      (smoke-nonlength-guard-count true (IrBinLt) 20 false)]
+    [redefined-bound : i64 (smoke-nonlength-guard-count true (IrBinLt) 2 true)]
+    [off-by-one : i64 (smoke-nonlength-guard-count true (IrBinLe) 2 false)]
+    (cond
+      [(not (= positive 0)) 1]
+      [(not (= missing-upper 1)) 2]
+      [(not (= mismatched-object 1)) 3]
+      [(not (= redefined-bound 1)) 4]
+      [(not (= off-by-one 1)) 5]
+      [else 42])))
+
 (define (smoke-additive-ref-index-instrs
   [object-var : i64]
   [index-var : i64]
@@ -542,6 +606,7 @@
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
     (unless (= (smoke-object-bounds-self-test) 42) (return 1))
     (unless (= (smoke-range-bce-self-test) 42) (return 1))
+    (unless (= (smoke-nonlength-guard-bce-self-test) 42) (return 1))
     (unless (= (smoke-additive-bce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))

@@ -3252,25 +3252,36 @@
   [needle : String]) : bool
   (string-contains (& haystack) (& needle)))
 
+(defenum ResultBuildPackageTlciText
+  (OkBuildPackageTlciText String)
+  (ErrBuildPackageTlciText String))
+
+(define (build-package-tlci-text
+  [manifest : CompilerPkgManifest]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultBuildPackageTlciText
+  (match (build-package-tlci-metadata manifest decls paths)
+    [(ErrTlciMetadata message)
+      (ErrBuildPackageTlciText
+        (str-cat "build: failed to build package tlci metadata: " message))]
+    [(OkTlciMetadata metadata)
+      (match (tlci-emit-image (build-package-tlci-image metadata))
+        [(ErrTlciBytes message)
+          (ErrBuildPackageTlciText
+            (str-cat "build: failed to emit package tlci: " message))]
+        [(OkTlciBytes bytes)
+          (OkBuildPackageTlciText
+            (tlci-bytes->string bytes 0 (array-length bytes)))])]))
+
 (define (build-package-write-tlci
   [path : String]
   [manifest : CompilerPkgManifest]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : SourceToolCommandStatus
-  (match (build-package-tlci-metadata manifest decls paths)
-    [(ErrTlciMetadata message)
-      (SourceToolCommandErr
-        (str-cat "build: failed to build package tlci metadata: " message))]
-    [(OkTlciMetadata metadata)
-      (match (tlci-emit-image (build-package-tlci-image metadata))
-        [(ErrTlciBytes message)
-          (SourceToolCommandErr
-            (str-cat "build: failed to emit package tlci: " message))]
-        [(OkTlciBytes bytes)
-          (source-tool-write-file
-            path
-            (tlci-bytes->string bytes 0 (array-length bytes))
-            "build: failed to write package tlci")])]))
+  (match (build-package-tlci-text manifest decls paths)
+    [(ErrBuildPackageTlciText message) (SourceToolCommandErr message)]
+    [(OkBuildPackageTlciText text)
+      (source-tool-write-file path text "build: failed to write package tlci")]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
@@ -3484,110 +3495,118 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        [doctest-status : i64
-          (build-package-closure-doctest-status
-            name
-            entry-path
-            target
-            stdlib-roots
-            manifest-dir
-            (struct-get manifest deps)
-            emit-entry)]
-        (if (= doctest-status 0)
-          (begin
-            (compiler-driver-reset-file-state!)
-            (match (compiler-driver-load-package-file-with-runtime-owned
-              entry-path
-              target
-              stdlib-roots
-              manifest-dir
-              name
-              (struct-get manifest deps)
-              emit-entry)
-              [(ErrCompilerLoadWithPaths diag)
-                (begin
-                  (print-error (compiler-diagnostic-render diag))
-                  1)]
-              [(OkCompilerLoadWithPaths decls paths _ _)
-                (let
-                  [metadata-link-inputs : SourceToolLinkInputs
-                    (source-tool-link-inputs-from-decls
-                      decls
-                      (source-tool-link-inputs-empty))]
-                  ;; Merge order: manifest all-target/target inputs, source extern
-                  ;; metadata, then dependency archives (kept positional after the
-                  ;; requested libraries/args).
-                  [effective-link-inputs : SourceToolLinkInputs
-                    (source-tool-link-inputs-merge
-                      (source-tool-link-inputs-merge
-                        manifest-link-inputs
-                        metadata-link-inputs)
-                      dep-link-inputs)]
-                  [crt-entry : bool
-                    (and
-                      emit-entry
-                      (source-tool-linux-crt-entry?
-                        target
-                        effective-link-inputs))]
-                  (match (compiler-driver-emit-package-loaded
-                    ""
-                    target
-                    true
-                    opt-level
-                    mode
-                    emit-entry
-                    crt-entry
-                    decls
-                    paths)
-                    [(ErrCompilerDriver diag)
+        (match (compiler-driver-load-package-file-with-runtime
+          entry-path
+          target
+          stdlib-roots
+          manifest-dir
+          (struct-get manifest deps)
+          emit-entry)
+          [(ErrCompilerLoadWithPaths diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)]
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (let
+              [owned-paths : AstDeclPathList
+                (compiler-load-package-owned-paths-for-decls
+                  name
+                  manifest-dir
+                  stdlib-roots
+                  entry-path
+                  decls
+                  paths)]
+              [metadata-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-from-decls
+                  decls
+                  (source-tool-link-inputs-empty))]
+              ;; Merge order: manifest all-target/target inputs, source extern
+              ;; metadata, then dependency archives (kept positional after the
+              ;; requested libraries/args).
+              [effective-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-merge
+                  (source-tool-link-inputs-merge
+                    manifest-link-inputs
+                    metadata-link-inputs)
+                  dep-link-inputs)]
+              [crt-entry : bool
+                (and
+                  emit-entry
+                  (source-tool-linux-crt-entry? target effective-link-inputs))]
+              (match (compiler-driver-emit-package-loaded
+                ""
+                target
+                true
+                opt-level
+                mode
+                emit-entry
+                crt-entry
+                decls
+                owned-paths)
+                [(ErrCompilerDriver diag)
+                  (begin
+                    (print-error (compiler-diagnostic-render diag))
+                    1)]
+                [(OkCompilerDriver asm)
+                  (match (build-package-tlci-text manifest decls owned-paths)
+                    [(ErrBuildPackageTlciText message)
                       (begin
-                        (print-error (compiler-diagnostic-render diag))
+                        (print-error message)
                         1)]
-                    [(OkCompilerDriver asm)
-                      (match (source-tool-write-file
-                        asm-path
-                        (source-tool-augment-assembly-for-target asm target)
-                        "build: failed to write package assembly")
-                        [(SourceToolCommandErr message)
-                          (begin
-                            (print-error message)
-                            1)]
-                        [(SourceToolCommandOk)
-                          (match (build-package-artifact-status
-                            kind
-                            target
+                    [(OkBuildPackageTlciText tlci-text)
+                      (let
+                        [_reset-before-doctests : unit
+                          (compiler-driver-reset-file-state!)]
+                        [doctest-status : i64
+                          (build-doctest-typecheck-package-paths
+                            (build-package-doctest-paths name paths)
+                            stdlib-roots
+                            manifest-dir
+                            (struct-get manifest deps))]
+                        (if (= doctest-status 0)
+                          (match (source-tool-write-file
                             asm-path
-                            obj-path
-                            artifact-path
-                            effective-link-inputs
-                            (SourceToolDirectObjectUnavailable
-                              "package assembly already emitted"))
+                            (source-tool-augment-assembly-for-target asm target)
+                            "build: failed to write package assembly")
                             [(SourceToolCommandErr message)
                               (begin
                                 (print-error message)
                                 1)]
                             [(SourceToolCommandOk)
-                              (match (build-package-write-tlci
-                                tlci-path
-                                manifest
-                                decls
-                                paths)
+                              (match (build-package-artifact-status
+                                kind
+                                target
+                                asm-path
+                                obj-path
+                                artifact-path
+                                effective-link-inputs
+                                (SourceToolDirectObjectUnavailable
+                                  "package assembly already emitted"))
                                 [(SourceToolCommandErr message)
                                   (begin
                                     (print-error message)
                                     1)]
                                 [(SourceToolCommandOk)
-                                  (begin
-                                    (print-string
-                                      (string-append
-                                        "Built "
-                                        (string-append artifact-path "\n")))
-                                    (print-string
-                                      (string-append
-                                        "Built "
-                                        (string-append tlci-path "\n")))
-                                    0)])])])]))]))
-          doctest-status)))))
+                                  (match (source-tool-write-file
+                                    tlci-path
+                                    tlci-text
+                                    "build: failed to write package tlci")
+                                    [(SourceToolCommandErr message)
+                                      (begin
+                                        (print-error message)
+                                        1)]
+                                    [(SourceToolCommandOk)
+                                      (begin
+                                        (print-string
+                                          (string-append
+                                            "Built "
+                                            (string-append artifact-path "\n")))
+                                        (print-string
+                                          (string-append
+                                            "Built "
+                                            (string-append tlci-path "\n")))
+                                        0)])])])
+                          doctest-status))])]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

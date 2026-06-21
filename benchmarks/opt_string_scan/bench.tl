@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define (scan-once [text : String]) : i64
   (let

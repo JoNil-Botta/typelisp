@@ -9,6 +9,7 @@
 ;# whole computation cannot be constant-folded. Results stay in `[0, prime)` so
 ;# the printed decimal matches the C baseline's `%lld`.
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define qs-modulus : i64
   1000000007)

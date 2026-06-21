@@ -134,9 +134,10 @@ Inline stdlib coverage:
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.
-- `queue.tl` owns inline tests for the growable `i64` queue/deque API:
-  capacity clamping, push/pop from both ends, fallback reads, wraparound
-  growth, reuse after draining, and explicit empty-pop results.
+- `queue.tl` owns inline tests for the generated `(deque i64)` module API:
+  capacity clamping, push/pop from both ends through `&mut`, fallback reads,
+  wraparound growth, reuse after draining, duplicate generated-module imports,
+  and explicit empty-pop results.
 - `test.tl` owns inline tests for successful assertion helpers, including the
   borrowed `assert-string-eq` path with explicit borrows.
 - `arena.tl` owns inline tests for first-class arena helpers, including safe

@@ -181,11 +181,14 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `profile-alloc-live`, `profile-alloc-peak`, and
   `profile-alloc-reset-peak`. Import it with
   `(import "stdlib/profile.tl")`.
-- `queue.tl`: growable `i64` queue/deque (collections v1, #1549) over a
-  circular `(Array i64)`: `i64-deque-with-capacity` / `-new` / `-push-back` /
-  `-push-front` / `-pop-front` / `-pop-back` / `-peek-front` / `-peek-back` /
-  `-get` / `-len` / `-capacity`, with wraparound growth and explicit empty-pop
-  results. Import it with `(import "stdlib/queue.tl")`.
+- `queue.tl`: generated growable deque family (collections v1, #1549/#2797)
+  over a circular `(Array T)`. Import `(deque T)` with a module alias, such as
+  `(import (deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
+  `with-capacity`, `push-back`, `push-front`, `pop-front`, `pop-back`,
+  `peek-front`, `peek-back`, `get`, `len`, `capacity`, and `is-empty?` in that
+  generated module namespace. Mutators take `&mut` and update in place; reads
+  take `&`, peeks/get use caller fallbacks, and empty pops return `Pop.Empty`.
+  Import the macro with `(import "stdlib/queue.tl")`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
   OS-entropy seed source. Import it with `(import "stdlib/random.tl")`.

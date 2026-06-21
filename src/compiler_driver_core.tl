@@ -217,6 +217,7 @@
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (compiler-builtin-reset!)
+    (compiler-typecheck-reset-file-state!)
     ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
     ;; the escaped IR stays alive until the next file reset.
     (lower-arenas-release!)))
@@ -231,6 +232,7 @@
       (compiler-load-session-reset-interns!)
       (compiler-driver-state-install-transients! state)
       (compiler-builtin-reset!)
+      (compiler-typecheck-reset-file-state!)
       ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
       ;; the escaped IR stays alive until the next file reset.
       (lower-arenas-release!)

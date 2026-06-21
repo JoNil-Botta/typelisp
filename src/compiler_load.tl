@@ -536,7 +536,8 @@
     (array-set! (struct-get state program-admission-ready) 0 false)
     (array-set! (struct-get state program-cache-hit-count) 0 0)
     (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)))
+    (array-set! (struct-get state program-cache-store-count) 0 0)
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
   (begin
@@ -544,7 +545,8 @@
       (struct-get compiler-load-active-session-state program-cache-enabled)
       0
       false)
-    (compiler-load-program-cache-clear!)))
+    (compiler-load-program-cache-clear!)
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-state-program-cache-set-enabled!
   [state : CompilerLoadSessionState]
@@ -4869,6 +4871,16 @@
         (compiler-load-session-cache-disable-for-test!)
         ok))))
 
+(define (compiler-load-session-program-cache-disable-persistent-off-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
+    (let
+      [ok : bool (not (intern-persistent-storage-on?))]
+      (begin
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
 (define (compiler-load-session-cache-local-common-dep-ok?) : bool
   (let
     [dir : String "target/cl_cache_local"]
@@ -7487,6 +7499,14 @@
       (return
         (begin
           (panic "compiler-load: session cache entry cold smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-program-cache-disable-persistent-off-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: disabled program cache left persistent intern storage on")
           ;; lint-allow: unreachable-code
           0)))
     (unless

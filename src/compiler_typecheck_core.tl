@@ -13449,7 +13449,9 @@
   (clone-name-set-empty))
 
 (define (tc-clone-able-cache-reset!) : unit
-  (set! tc-clone-able-cache-ready false))
+  (begin
+    (set! tc-clone-able-cache-ready false)
+    (set! tc-clone-able-cache (clone-name-set-empty))))
 
 (define (tc-clone-able-set-build [ctx : TcContext]) : CloneNameSet
   (match (tc-context-program ctx)
@@ -37357,6 +37359,14 @@
         scratch))
     tc-fn-scratch-arena))
 
+(define (tc-fn-scratch-arena-release!) : unit
+  (if (= tc-fn-scratch-arena 0)
+    unit
+    (begin
+      (unsafe
+        (arena-destroy tc-fn-scratch-arena))
+      (set! tc-fn-scratch-arena 0))))
+
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta; #2596) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -38153,3 +38163,33 @@
     paths
     (string-vec-new)
     (tc-prefix-default-cache-scope)))
+
+(define (compiler-typecheck-reset-file-state!) : unit
+  (begin
+    (tc-fn-scratch-arena-release!)
+    (tc-clone-able-cache-reset!)
+    (tc-macro-helper-env-cache-reset!)
+    (tc-spmd-inline-helper-stack-reset!)
+    (tc-agg-caches-reset!)
+    (tc-nominal-owner-cache-reset!)
+    (macro-alias-cache-reset!)
+    (ctfe-build-seen-reset!)
+    (set! tc-hygiene-active-top-env-ready false)
+    (set! tc-hygiene-active-top-env (tc-empty-type-env))
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+    (if (= tc-hygiene-module-env-cache-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena-destroy tc-hygiene-module-env-cache-arena))
+        (set! tc-hygiene-module-env-cache-arena 0)))
+    (set! macro-expand-active-module "")
+    (set! macro-expand-macro-names (TcStringNil))
+    (set! macro-expand-expr-type-macro-names (TcStringNil))
+    (set! macro-expand-exports-ready false)
+    (set!
+      macro-expand-exports-value
+      (CompilerExports (i64-i64-map-with-capacity 1)))
+    (set! macro-expand-ctfe-env-ready false)
+    (set! macro-expand-ctfe-env-value (ctfe-env-empty))
+    (set! ctfe-needs-metadata true)))

@@ -8943,10 +8943,10 @@
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                        (tc-macro-signature-type-resolved ctx ty)))
                     (tc-macro-expr-clause-list-type)]
                   [(tc-macro-expr-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                      (tc-macro-signature-type-resolved ctx ty))
                     (tc-macro-expr-clause-type)]
                   [variadic (AstTyExprList)]
                   [else (AstTyExpr)]))
@@ -8973,11 +8973,11 @@
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
-                        (tc-resolve-type ctx (tc-macro-signature-type ty))))
+                        (tc-macro-signature-type-resolved ctx ty)))
                     (CtfeExprClauseList AstExprClauseNil)]
                   [variadic (CtfeExprList AstExprNil)]
                   [(tc-macro-expr-clause-type?
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))
+                      (tc-macro-signature-type-resolved ctx ty))
                     (CtfeExprClause
                       (ast-expr-clause
                         (ast-node-push
@@ -8989,7 +8989,7 @@
                   [else
                     (CtfeExpr
                       (ast-node-push (AstExprVar name))
-                      (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
+                      (tc-macro-signature-type-resolved ctx ty))]))
               rest)]))]))
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
@@ -21728,6 +21728,21 @@
           (ErrTcEnv
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
     [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
+    [(AstTyVar _)
+      (if (tc-macro-expr-clause-type? (tc-resolve-type ctx scrut-ty))
+        (tc-bind-expr-clause-match-pattern ctx env pattern)
+        (match pattern
+          [(AstPatWildcard) (OkTcEnv env)]
+          [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+          [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+          [(AstPatVariant name _)
+            (if (tc-box-pattern-name? name)
+              (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+              (ErrTcEnv
+                "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+          [_
+            (ErrTcEnv
+              "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))]
     [(AstTyBox inner-ty)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -22026,6 +22041,51 @@
         [args : AstPatternList (box-get args-box)]
         (tc-bind-expr-variant-pattern ctx env (intern-str variant-name) args))]
     [_ (ErrTcEnv "typecheck: unsupported Expr match pattern")]))
+
+(define (tc-expr-clause-pattern-name? [ctx : TcContext] [pattern-name : String]) : bool
+  (or
+    (string-eq pattern-name "ExprClause")
+    (string-eq pattern-name (tc-stdlib-comptime-type-key "ExprClause"))
+    (match (tc-source-type-name-lookup-key ctx pattern-name)
+      [(OkTcString lookup-name)
+        (string-eq lookup-name (tc-stdlib-comptime-type-key "ExprClause"))]
+      [(ErrTcString _) false])))
+
+(define (tc-bind-expr-clause-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPatWildcard) (OkTcEnv env)]
+    [(AstPatBinding name)
+      (OkTcEnv (tc-bind-id env name (tc-macro-expr-clause-type)))]
+    [(AstPatVariant variant-name args-box)
+      (if (tc-expr-clause-pattern-name? ctx (intern-str variant-name))
+        (tc-bind-sub-pattern-list
+          ctx
+          env
+          (box-get args-box)
+          (tc-type-list2 (AstTyExpr) (AstTyExpr)))
+        (ErrTcEnv
+          (str-cat
+            "typecheck: unknown ExprClause constructor "
+            (intern-str variant-name))))]
+    [_ (ErrTcEnv "typecheck: unsupported ExprClause match pattern")]))
+
+(define (tc-expr-clause-pattern-irrefutable?
+  [ctx : TcContext]
+  [pattern : AstPattern]) : bool
+  (match pattern
+    [(AstPatWildcard) true]
+    [(AstPatBinding _) true]
+    [(AstPatVariant name args-box)
+      (if (tc-expr-clause-pattern-name? ctx (intern-str name))
+        (tc-pattern-list-irrefutable?
+          ctx
+          (box-get args-box)
+          (tc-type-list2 (AstTyExpr) (AstTyExpr)))
+        false)]
+    [_ false]))
 
 (define (tc-enum-has-single-variant?
   [ctx : TcContext]
@@ -22371,6 +22431,13 @@
             (intern-str name)
             (box-get args-box))]
         [_ false])]
+    [(AstTyVar _)
+      (if (tc-macro-expr-clause-type? (tc-resolve-type ctx scrut-ty))
+        (tc-expr-clause-pattern-irrefutable? ctx pattern)
+        (match pattern
+          [(AstPatWildcard) true]
+          [(AstPatBinding _) true]
+          [_ false]))]
     [_
       (match pattern
         [(AstPatWildcard) true]
@@ -24874,12 +24941,48 @@
         [(AstNoType) ty])]
     [_ ty]))
 
+(define (tc-stdlib-comptime-source-syntax-type
+  [ctx : TcContext]
+  [name : String]) : AstMaybeType
+  (match (tc-stdlib-comptime-syntax-type name)
+    [(AstSomeType syntax-ty) (AstSomeType syntax-ty)]
+    [(AstNoType)
+      (match (tc-source-type-name-lookup-key ctx name)
+        [(OkTcString lookup-name) (tc-stdlib-comptime-syntax-type lookup-name)]
+        [(ErrTcString _) (AstNoType)])]))
+
+(define (tc-macro-signature-type-resolved [ctx : TcContext] [ty : AstType]) : AstType
+  (let
+    [signature-ty : AstType (tc-macro-signature-type ty)]
+    (match signature-ty
+      [(AstTyVar name)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [(AstTyVarArgs name _)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [(AstTyEnum name)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [(AstTyEnumArgs name _)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [(AstTyStruct name)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [(AstTyStructArgs name _)
+        (tc-macro-signature-type-resolve-name ctx signature-ty name)]
+      [_ (tc-resolve-type ctx signature-ty)])))
+
+(define (tc-macro-signature-type-resolve-name
+  [ctx : TcContext]
+  [fallback-ty : AstType]
+  [name : i64]) : AstType
+  (match (tc-stdlib-comptime-source-syntax-type ctx (intern-str name))
+    [(AstSomeType syntax-ty) syntax-ty]
+    [(AstNoType) (tc-resolve-type ctx fallback-ty)]))
+
 (define (tc-macro-produced-type-compatible?
   [ctx : TcContext]
   [ret : AstType]
   [produced : AstType]) : bool
   (let
-    [expected : AstType (tc-resolve-type ctx (tc-macro-signature-type ret))]
+    [expected : AstType (tc-macro-signature-type-resolved ctx ret)]
     (or
       (tc-type-eq expected (AstTyExpr))
       (tc-type-eq produced (AstTyExpr))
@@ -34388,7 +34491,7 @@
       [(ErrMacroTypeArg diag) (ErrMacroCheck diag)])
     (let
       [resolved-expected : AstType
-        (tc-resolve-type ctx (tc-macro-signature-type expected))]
+        (tc-macro-signature-type-resolved ctx expected)]
       (if (tc-macro-expr-clause-type? resolved-expected)
         (match (macro-expr-clause-from-arg arg)
           [(OkMacroClause _) OkMacroCheck]
@@ -34416,8 +34519,7 @@
           [(ErrMacroCheck diag) (ErrMacroCheck diag)]))]))
 
 (define (macro-param-expr-clause? [ctx : TcContext] [ty : AstType]) : bool
-  (tc-macro-expr-clause-type?
-    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+  (tc-macro-expr-clause-type? (tc-macro-signature-type-resolved ctx ty)))
 
 (define (macro-captured-expr-produced-type
   [ctx : TcContext]
@@ -34480,8 +34582,7 @@
             (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
         [(ErrMacroClause diag) (ErrMacroEnv diag)])
       (let
-        [resolved-expected : AstType
-          (tc-resolve-type ctx (tc-macro-signature-type ty))]
+        [resolved-expected : AstType (tc-macro-signature-type-resolved ctx ty)]
         (match (macro-check-operand ctx type-env ty arg-expr)
           [(OkMacroCheck)
             (OkMacroEnv

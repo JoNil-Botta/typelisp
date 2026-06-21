@@ -3945,6 +3945,20 @@
         (CtfeNoPatternMatch))]
     [_ (CtfeNoPatternMatch)]))
 
+(define (ctfe-match-expr-clause-variant
+  [variant : i64]
+  [args : AstPatternList]
+  [clause : AstExprClause]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (if (ctfe-pattern-variant-name? variant "ExprClause")
+    (ctfe-match-pattern-list
+      args
+      (ctfe-value-list2
+        (CtfeExpr (ctfe-expr-clause-first clause) (ctfe-untyped-expr-type))
+        (CtfeExpr (ctfe-expr-clause-second clause) (ctfe-untyped-expr-type)))
+      env)
+    (CtfeNoPatternMatch)))
+
 (define (ctfe-match-pattern
   [pattern : AstPattern]
   [value : CompilerCtfeValue]
@@ -3972,6 +3986,8 @@
         (match value
           [(CtfeExpr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
+          [(CtfeExprClause clause)
+            (ctfe-match-expr-clause-variant variant args clause env)]
           [_ (CtfeNoPatternMatch)]))]
     [(AstPatTuple _) (CtfeNoPatternMatch)]))
 
@@ -8077,10 +8093,48 @@
           [_ false])]
       [(ErrCtfe _) false])))
 
+(define (compiler-ctfe-expr-clause-pattern-match-ok?) : bool
+  (let
+    [test-node : i64 (ast-node-push (AstExprVar (intern "else")))]
+    [result-node : i64 (ast-node-push (AstExprLiteral (ast-lit-int 11)))]
+    [subject : CompilerCtfeValue
+      (CtfeExprClause (ast-expr-clause test-node result-node))]
+    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
+    [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
+    [clause-pattern : AstPattern
+      (ast-pat-variant
+        "ExprClause"
+        (ast-pattern-cons
+          (ast-pat-binding "test")
+          (ast-pattern-cons (ast-pat-binding "result") AstPatternNil)))]
+    [clause-arm : AstMatchArm
+      (ast-match-arm
+        clause-pattern
+        (ast-node-push (AstExprVar (intern "result"))))]
+    [fallback-arm : AstMatchArm
+      (ast-match-arm
+        AstPatWildcard
+        (compiler-ctfe-call1
+          "expr-int"
+          (ast-node-push (AstExprLiteral (ast-lit-int 0)))))]
+    [match-expr : i64
+      (ast-expr-match
+        scrutinee
+        (ast-match-arm-cons
+          clause-arm
+          (ast-match-arm-cons fallback-arm AstMatchArmNil)))]
+    (match (compiler-ctfe-eval (ast-node-get match-expr) env (ctfe-fuel-limit))
+      [(OkCtfe value _)
+        (match value
+          [(CtfeExpr node _) (ctfe-test-expr-eq node result-node)]
+          [_ false])]
+      [(ErrCtfe _) false])))
+
 (define (compiler-ctfe-expr-pattern-match-ok?) : bool
   (and
     (compiler-ctfe-expr-pattern-match-int-ok?)
-    (compiler-ctfe-expr-pattern-match-if-ok?)))
+    (compiler-ctfe-expr-pattern-match-if-ok?)
+    (compiler-ctfe-expr-clause-pattern-match-ok?)))
 
 (define (compiler-ctfe-self-test) : i64
   (begin

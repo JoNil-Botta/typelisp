@@ -820,6 +820,16 @@
       instr-diag
       "backend: vector/mask IR emission is not implemented")))
 
+(define (compiler-backend-switch-before-lowering-message) : String
+  "backend: IrInstrSwitch reached before switch lowering")
+
+(define (compiler-backend-switch-before-lowering
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      (compiler-backend-switch-before-lowering-message))))
+
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
     [(BackendModeAvx2) "    vzeroupper\n"]
@@ -14747,7 +14757,9 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])])))
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrSwitch _ _ _ _)
+        (compiler-backend-switch-before-lowering instr-diag)])))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -14957,7 +14969,9 @@
     [(IrInstrEntryArgc _) unit]
     [(IrInstrEntryArgv _) unit]
     [(IrInstrEntryEnvp _) unit]
-    [(IrInstrJump _) unit]))
+    [(IrInstrJump _) unit]
+    [(IrInstrSwitch index _ _ _)
+      (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
@@ -21533,7 +21547,9 @@
     [(IrInstrEntryArgc _) collections]
     [(IrInstrEntryArgv _) collections]
     [(IrInstrEntryEnvp _) collections]
-    [(IrInstrJump _) collections]))
+    [(IrInstrJump _) collections]
+    [(IrInstrSwitch index _ _ _)
+      (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]
@@ -27000,7 +27016,11 @@ tl_memcpy:
     [(IrInstrLaneId _ _ _) parts]
     [(IrInstrEntryArgc _) parts]
     [(IrInstrEntryArgv _) parts]
-    [(IrInstrEntryEnvp _) parts]))
+    [(IrInstrEntryEnvp _) parts]
+    ;; Public object emission preflights switch and returns a diagnostic before
+    ;; this builder runs. Keep this arm explicit so direct helper use is visibly
+    ;; unsupported until #3549 lowers switch.
+    [(IrInstrSwitch _ _ _ _) parts]))
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]
@@ -28054,6 +28074,47 @@ tl_memcpy:
       (compiler-backend-object-image-symbols parts emit-manifest-resource)
       (compiler-backend-object-image-relocations parts emit-manifest-resource))))
 
+(define (compiler-backend-instr-has-switch? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrSwitch _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-backend-instr-seq-has-switch?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (compiler-backend-instr-has-switch?
+      (compiler-ir-instr-seq-ref instrs index))
+      true
+      (compiler-backend-instr-seq-has-switch? instrs (+ index 1)))))
+
+(define (compiler-backend-blocks-have-switch? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (compiler-backend-instr-seq-has-switch? instrs 0)
+            true
+            (compiler-backend-blocks-have-switch? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-blocks-have-switch? (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-backend-functions-have-switch?
+  [functions : CompilerIrFunctionList]) : bool
+  (match functions
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (if (compiler-backend-blocks-have-switch? blocks)
+            true
+            (compiler-backend-functions-have-switch? (box-get rest)))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-functions-have-switch?
+        (compiler-ir-function-seq-to-list seq))]))
+
 (define (compiler-backend-object-image-after-index
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -28146,18 +28207,24 @@ tl_memcpy:
                   plan
                   program-index)
                   [(OkCompilerBackendSymbolValidation _)
-                    (OkCompilerBackendObject
-                      (compiler-backend-object-image-after-index
-                        program
-                        target
-                        mode
-                        entry-functions
-                        globals
-                        externs
-                        plan
-                        program-index
-                        emit-entry
-                        crt-entry))]
+                    (if (compiler-backend-functions-have-switch?
+                      entry-functions)
+                      (ErrCompilerBackendObject
+                        (compiler-diagnostic-at-start
+                          ""
+                          (compiler-backend-switch-before-lowering-message)))
+                      (OkCompilerBackendObject
+                        (compiler-backend-object-image-after-index
+                          program
+                          target
+                          mode
+                          entry-functions
+                          globals
+                          externs
+                          plan
+                          program-index
+                          emit-entry
+                          crt-entry)))]
                   [(ErrCompilerBackendSymbolValidation message)
                     (ErrCompilerBackendObject message)]))])
           (ErrCompilerBackendObject

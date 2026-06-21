@@ -1,4 +1,6 @@
 (import "stdlib/json.tl")
+(import "stdlib/str_cat.tl")
+(import "stdlib/string.tl")
 
 (defstruct Address
   (zip i64)
@@ -90,7 +92,7 @@
     [person : Person
       (Person "Ada\nLovelace" (cast 36 : i32) true (Address 12345 "London"))]
     [json : Json (person-to-json person)]
-    [encoded : String (json-stringify json)]
+    [encoded : String (stdlib.json.json-stringify json)]
     (and
       (string-eq
         encoded

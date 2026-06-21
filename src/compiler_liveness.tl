@@ -645,14 +645,14 @@
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
-    [(IrInstrSwitch index _ _ _) (compiler-live-value-vars index)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]
     [(IrInstrPhi _ inputs _) (compiler-live-phi-input-vars inputs)]
     [(IrInstrPack _ words _) (compiler-live-value-list-vars words)]
     [(IrInstrWord _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrJump _) (compiler-live-set-empty)]
     [(IrInstrTailCallIndirect func args _)
-      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]))
+      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
+    [(IrInstrSwitch index _ _ _) (compiler-live-value-vars index)]))
 
 (define (compiler-live-instr-defs [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
@@ -700,7 +700,6 @@
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
     [(IrInstrPack dst _ _) (compiler-live-set1 dst)]
     [(IrInstrWord dst _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrSwitch _ _ _ _) (compiler-live-set-empty)]
     [_ (compiler-live-set-empty)]))
 
 (define (compiler-live-block-use-def-instrs

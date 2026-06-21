@@ -7357,12 +7357,6 @@
         (compiler-reg-remap-value remap cond)
         true-label
         false-label)]
-    [(IrInstrSwitch index base cases default-label)
-      (IrInstrSwitch
-        (compiler-reg-remap-value remap index)
-        base
-        cases
-        default-label)]
     [(IrInstrReturn value)
       (IrInstrReturn (compiler-reg-remap-maybe-value remap value))]
     [(IrInstrPhi dst inputs ty)
@@ -7380,7 +7374,13 @@
         (compiler-reg-remap-id remap dst)
         (compiler-reg-remap-value remap src)
         index
-        ty)]))
+        ty)]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (compiler-reg-remap-value remap index)
+        base
+        cases
+        default-label)]))
 
 (define (compiler-reg-remap-instr-list
   [remap : (Array i64)]

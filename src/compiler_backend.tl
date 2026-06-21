@@ -14707,8 +14707,6 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-      [(IrInstrSwitch _ _ _ _)
-        (compiler-backend-switch-before-lowering instr-diag)]
       [(IrInstrReturn value)
         (match (compiler-backend-emit-return
           source-function
@@ -14759,7 +14757,9 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])])))
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrSwitch _ _ _ _)
+        (compiler-backend-switch-before-lowering instr-diag)])))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -14950,8 +14950,6 @@
         (compiler-backend-count-call-args-uses counts args))]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
     [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
-    [(IrInstrSwitch index _ _ _)
-      (compiler-backend-count-value-use counts index)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrNoValue) unit]
@@ -14971,7 +14969,9 @@
     [(IrInstrEntryArgc _) unit]
     [(IrInstrEntryArgv _) unit]
     [(IrInstrEntryEnvp _) unit]
-    [(IrInstrJump _) unit]))
+    [(IrInstrJump _) unit]
+    [(IrInstrSwitch index _ _ _)
+      (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (Array i64)]
@@ -21433,8 +21433,6 @@
       (compiler-backend-collect-value-collections collections value)]
     [(IrInstrBranch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
-    [(IrInstrSwitch index _ _ _)
-      (compiler-backend-collect-value-collections collections index)]
     [(IrInstrReturn maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(IrInstrPhi _ inputs _)
@@ -21549,7 +21547,9 @@
     [(IrInstrEntryArgc _) collections]
     [(IrInstrEntryArgv _) collections]
     [(IrInstrEntryEnvp _) collections]
-    [(IrInstrJump _) collections]))
+    [(IrInstrJump _) collections]
+    [(IrInstrSwitch index _ _ _)
+      (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
   [collections : CompilerBackendProgramCollections]
@@ -26857,10 +26857,6 @@ tl_memcpy:
             (ObjectRelocBranch)
             false-symbol)
           (ObjectX64Branch true-symbol false-symbol)))]
-    ;; Public object emission preflights switch and returns a diagnostic before
-    ;; this builder runs. Keep this arm explicit so direct helper use is visibly
-    ;; unsupported until #3549 lowers switch.
-    [(IrInstrSwitch _ _ _ _) parts]
     [(IrInstrReturn value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -27020,7 +27016,11 @@ tl_memcpy:
     [(IrInstrLaneId _ _ _) parts]
     [(IrInstrEntryArgc _) parts]
     [(IrInstrEntryArgv _) parts]
-    [(IrInstrEntryEnvp _) parts]))
+    [(IrInstrEntryEnvp _) parts]
+    ;; Public object emission preflights switch and returns a diagnostic before
+    ;; this builder runs. Keep this arm explicit so direct helper use is visibly
+    ;; unsupported until #3549 lowers switch.
+    [(IrInstrSwitch _ _ _ _) parts]))
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]

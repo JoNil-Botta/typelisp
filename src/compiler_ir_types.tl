@@ -209,7 +209,6 @@
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
-  (IrInstrSwitch CompilerIrValue i64 CompilerIrSwitchCaseList String)
   (IrInstrReturn CompilerIrMaybeValue)
   (IrInstrPhi i64 CompilerIrPhiInputList AstType)
   ;; #2386 multi-word register-resident aggregates: a small (<=16 B) inline
@@ -223,7 +222,8 @@
   ;; through memory.
   (IrInstrPack i64 CompilerIrValueList AstType)
   (IrInstrWord i64 CompilerIrValue i64 AstType)
-  (IrInstrTailCallIndirect CompilerIrValue CompilerIrCallArgs AstType))
+  (IrInstrTailCallIndirect CompilerIrValue CompilerIrCallArgs AstType)
+  (IrInstrSwitch CompilerIrValue i64 CompilerIrSwitchCaseList String))
 
 (define (ir-instr-vector-bin-op
   [dst : i64]
@@ -1021,12 +1021,6 @@
         (compiler-ir-clone-value cond)
         (clone true-label)
         (clone false-label))]
-    [(IrInstrSwitch index base cases default-label)
-      (IrInstrSwitch
-        (compiler-ir-clone-value index)
-        base
-        (compiler-ir-clone-switch-case-list cases)
-        (clone default-label))]
     [(IrInstrReturn value)
       (IrInstrReturn (compiler-ir-clone-maybe-value value))]
     [(IrInstrPhi dst inputs ty)
@@ -1049,7 +1043,13 @@
       (IrInstrTailCallIndirect
         (compiler-ir-clone-value callee)
         (compiler-ir-clone-call-args args)
-        (compiler-ir-clone-type ty))]))
+        (compiler-ir-clone-type ty))]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (compiler-ir-clone-value index)
+        base
+        (compiler-ir-clone-switch-case-list cases)
+        (clone default-label))]))
 
 (define (compiler-ir-clone-instr-list-acc
   [instrs : CompilerIrInstrList]
@@ -1695,11 +1695,11 @@
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
     [(IrInstrBranch _ _ _) IrEffectControlFlow]
-    [(IrInstrSwitch _ _ _ _) IrEffectControlFlow]
     [(IrInstrReturn _) IrEffectControlFlow]
     [(IrInstrPack _ _ _) IrEffectPure]
     [(IrInstrWord _ _ _ _) IrEffectPure]
-    [(IrInstrTailCallIndirect _ _ _) IrEffectControlFlow]))
+    [(IrInstrTailCallIndirect _ _ _) IrEffectControlFlow]
+    [(IrInstrSwitch _ _ _ _) IrEffectControlFlow]))
 
 ;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
 ;;
@@ -2000,7 +2000,6 @@
         span)]
     ;; Tail-indirect is control flow and does not define a destination value.
     [(IrInstrTailCallIndirect _ _ _) spans]
-    [(IrInstrSwitch _ _ _ _) spans]
     [(IrInstrStore name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -2166,7 +2165,6 @@
             (compiler-source-spans-value-key function dst))]
         ;; Tail-indirect is control flow and does not define a destination value.
         [(IrInstrTailCallIndirect _ _ _) (CompilerNoSourceSpan)]
-        [(IrInstrSwitch _ _ _ _) (CompilerNoSourceSpan)]
         [(IrInstrStore name _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries

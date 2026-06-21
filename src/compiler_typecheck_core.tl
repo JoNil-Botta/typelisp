@@ -47,7 +47,12 @@
     (Box TcTypeEnv)))
 
 (defenum TcContext
-  (TcContext AstProgram CompilerSymbols CompilerRegistries String))
+  (TcContext
+    AstProgram
+    CompilerSymbols
+    CompilerRegistries
+    String
+    AstNodePoolContext))
 
 (defenum ResultTcType
   (OkTcType AstType)
@@ -516,12 +521,22 @@
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _)
-      (TcContext program symbols registries module)]))
+    [(TcContext program symbols registries _ pools)
+      (TcContext program symbols registries module pools)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module) module]))
+    [(TcContext _ _ _ module _) module]))
+
+(define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
+  (match ctx
+    [(TcContext _ _ _ _ pools) pools]))
+
+(define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
+  (ast-node-pool-context-capture-active! (tc-context-pools ctx)))
+
+(define (tc-context-type-get [ctx : TcContext] [id : i64]) : AstType
+  (ast-node-pool-context-type-get (tc-context-pools ctx) id))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
@@ -5338,7 +5353,7 @@
 
 (define (tc-imported-module-identity? [ctx : TcContext] [module-name : String]) : bool
   (match ctx
-    [(TcContext program _ _ current-module)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (tc-imported-module-identity-ids?
@@ -5360,7 +5375,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ current-module)
+          [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (match (macro-import-alias-target-ids
@@ -5462,7 +5477,7 @@
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
     (match ctx
-      [(TcContext _ _ registries module)
+      [(TcContext _ _ registries module _)
         (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
           (let
             [module-key : String (compiler-symbol-module-key module name)]
@@ -5535,7 +5550,7 @@
   [ctx : TcContext]
   [qualifier : String]) : String
   (match ctx
-    [(TcContext program _ _ current-module)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -6026,7 +6041,7 @@
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx
-        [(TcContext program symbols _ _)
+        [(TcContext program symbols _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -6042,7 +6057,7 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6122,7 +6137,7 @@
   [name : String]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6206,7 +6221,7 @@
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols name)
         [(SomeI64 handle)
           (match (compiler-symbols-decl-at-index
@@ -10778,7 +10793,7 @@
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols registries module)
+    [(TcContext _ symbols registries module _)
       (let
         [lookup-name : String
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -13388,7 +13403,9 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [pools : AstNodePoolContext (tc-context-pools ctx)]
         (clone-fixpoint
+          pools
           decls
           (clone-all-type-names decls (clone-name-set-empty))))]))
 
@@ -13404,6 +13421,7 @@
 
 (define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
   (clone-field-type-able?
+    (tc-context-pools ctx)
     (tc-type-without-regions (tc-resolve-type ctx ty))
     (tc-clone-able-set ctx)))
 
@@ -14707,7 +14725,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -18287,15 +18305,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _) program]))
+    [(TcContext program _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _) symbols]))
+    [(TcContext _ symbols _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _) registries]))
+    [(TcContext _ _ registries _ _) registries]))
 
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
@@ -18846,7 +18864,7 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -18873,7 +18891,7 @@
 
 (define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols enum-name)
         [(SomeI64 handle)
           (if (=
@@ -18931,7 +18949,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-finite-ok ctx head stack)
           [(OkTcUnit) (tc-inline-aggregate-type-list-finite-ok ctx rest stack)]
@@ -19010,7 +19028,10 @@
     [(AstTyTuple elems)
       (tc-inline-aggregate-type-list-finite-ok ctx (box-get elems) stack)]
     [(AstTyArray elem _)
-      (tc-inline-aggregate-type-finite-ok ctx (ty-node-get elem) stack)]
+      (tc-inline-aggregate-type-finite-ok
+        ctx
+        (tc-context-type-get ctx elem)
+        stack)]
     [(AstTyEnum name)
       (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
     [(AstTyEnumArgs name _)
@@ -19060,7 +19081,7 @@
       (OkTcLayoutInfo (tc-inline-aggregate-finish-layout cursor max-align))]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
@@ -19146,7 +19167,7 @@
             (TcInlinePayloadFieldsLayout size align TcInlinePayloadLayoutNil))])]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
@@ -19436,7 +19457,10 @@
     [(AstTyMutRef _ _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyRegion _ inner)
-      (tc-inline-aggregate-type-layout-with-stack ctx (ty-node-get inner) stack)]
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (tc-context-type-get ctx inner)
+        stack)]
     [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyBytes)
@@ -19450,7 +19474,7 @@
     [(AstTyArray elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx
-        (ty-node-get elem)
+        (tc-context-type-get ctx elem)
         stack)
         [(OkTcLayoutInfo elem-info)
           (OkTcLayoutInfo
@@ -20092,7 +20116,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -20174,7 +20198,7 @@
   (match fields
     [(AstTypeCons field tail)
       (let
-        [field : AstType (ty-node-get field)]
+        [field : AstType (tc-context-type-get ctx field)]
         [tail : AstTypeList (box-get tail)]
         (match tail
           [(AstTypeNil) (OkTcType (tc-resolve-type ctx field))]
@@ -36571,7 +36595,12 @@
                                   "unless")))
                             (let
                               [ctx : TcContext
-                                (TcContext program symbols registries "")]
+                                (TcContext
+                                  program
+                                  symbols
+                                  registries
+                                  ""
+                                  (ast-node-pool-context-capture-active))]
                               (match (tc-stdlib-comptime-surface-ok ctx)
                                 [(OkTcUnit)
                                   (match (tc-build-top-env ctx program)
@@ -36579,6 +36608,7 @@
                                       (begin
                                         (tc-hygiene-reset-active-top-env!
                                           top-env)
+                                        (tc-context-capture-active-pools! ctx)
                                         (cfg
                                           compile-profile
                                           (compiler-tc-profile-finish
@@ -37779,6 +37809,7 @@
           [(AstDeclModule next-module)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-start-section))
+              (tc-context-capture-active-pools! ctx)
               (match (tc-module-local-env-cached
                 ctx
                 top-env
@@ -37824,6 +37855,7 @@
                   (tc-unused-unsafe-set-current-path! decl-path)]
                 (begin
                   (cfg compile-profile (compiler-tc-decl-profile-start-section))
+                  (tc-context-capture-active-pools! decl-ctx)
                   (match (tc-check-decl-with-global-env
                     decl-ctx
                     local-env
@@ -37863,7 +37895,13 @@
           (match (build-compiler-exports-with program symbols registries)
             [(OkCompilerExports _)
               (let
-                [ctx : TcContext (TcContext program symbols registries "")]
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
                 (match (tc-stdlib-comptime-surface-ok ctx)
                   [(OkTcUnit)
                     (match (tc-program-source-types-policy-ok ctx program)
@@ -37876,6 +37914,7 @@
                                   [decls : AstDeclList (box-get decls-box)]
                                   (begin
                                     (tc-hygiene-reset-active-top-env! top-env)
+                                    (tc-context-capture-active-pools! ctx)
                                     (tc-clone-able-cache-populate! ctx)
                                     (match (tc-check-decls-with-paths
                                       ctx
@@ -37886,10 +37925,12 @@
                                       stdlib-roots
                                       cache-scope)
                                       [(OkCompilerTypecheck summary)
-                                        (OkCompilerTypecheckChecked
-                                          summary
-                                          ctx
-                                          top-env)]
+                                        (begin
+                                          (tc-context-capture-active-pools! ctx)
+                                          (OkCompilerTypecheckChecked
+                                            summary
+                                            ctx
+                                            top-env))]
                                       [(ErrCompilerTypecheck diag)
                                         (ErrCompilerTypecheckChecked diag)])))])]
                           [(ErrTcEnv message)

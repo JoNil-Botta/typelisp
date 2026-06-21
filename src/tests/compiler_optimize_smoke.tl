@@ -317,6 +317,7 @@
     (unless (= (compiler-optimize-dce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-mem-self-test) 42) (return 1))
     (unless (= (compiler-optimize-divrem-safety-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-const-divisor-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cse-self-test) 42) (return 1))
     (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))

@@ -100,11 +100,20 @@
       (= (clone-name-set-len grown) 11)
       (> (clone-name-set-capacity grown) seed-capacity))))
 
+(define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
+  (ast-node-pool-context-type-get pools id))
+
+(define (clone-expr-push [pools : AstNodePoolContext] [expr : AstExpr]) : i64
+  (ast-node-pool-context-expr-push pools expr))
+
 ;; A field type is clone-able given the current clone-able-name set: scalars,
 ;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a
 ;; named type (parsed as AstTyVar, or resolved to AstTyEnum/AstTyStruct) is
 ;; clone-able iff it is in `names`; everything else is not.
-(define (clone-field-type-able? [ty : AstType] [names : CloneNameSet]) : bool
+(define (clone-field-type-able?
+  [pools : AstNodePoolContext]
+  [ty : AstType]
+  [names : CloneNameSet]) : bool
   (match ty
     [(AstTyI64) true]
     [(AstTyI32) true]
@@ -121,30 +130,37 @@
     [(AstTyUnit) true]
     [(AstTyNever) true]
     [(AstTyString) true]
-    [(AstTyTuple elems) (clone-field-type-list-able? (box-get elems) names)]
-    [(AstTyArray elem _) (clone-field-type-able? (ty-node-get elem) names)]
-    [(AstTyDynArray elem) (clone-field-type-able? (ty-node-get elem) names)]
-    [(AstTyBox elem) (clone-field-type-able? (ty-node-get elem) names)]
-    [(AstTyRegion _ inner) (clone-field-type-able? (ty-node-get inner) names)]
+    [(AstTyTuple elems)
+      (clone-field-type-list-able? pools (box-get elems) names)]
+    [(AstTyArray elem _)
+      (clone-field-type-able? pools (clone-type-get pools elem) names)]
+    [(AstTyDynArray elem)
+      (clone-field-type-able? pools (clone-type-get pools elem) names)]
+    [(AstTyBox elem)
+      (clone-field-type-able? pools (clone-type-get pools elem) names)]
+    [(AstTyRegion _ inner)
+      (clone-field-type-able? pools (clone-type-get pools inner) names)]
     [(AstTyVar name) (clone-name-set-contains-type? names (intern-str name))]
     [(AstTyEnum name) (clone-name-set-contains-type? names (intern-str name))]
     [(AstTyStruct name) (clone-name-set-contains-type? names (intern-str name))]
     [_ false]))
 
 (define (clone-field-type-list-able?
+  [pools : AstNodePoolContext]
   [types : AstTypeList]
   [names : CloneNameSet]) : bool
   (match types
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (clone-type-get pools head)]
         [rest : AstTypeList (box-get rest)]
-        (if (clone-field-type-able? head names)
-          (clone-field-type-list-able? rest names)
+        (if (clone-field-type-able? pools head names)
+          (clone-field-type-list-able? pools rest names)
           false))]))
 
 (define (clone-variant-list-able?
+  [pools : AstNodePoolContext]
   [variants : AstVariantDefList]
   [names : CloneNameSet]) : bool
   (match variants
@@ -154,11 +170,12 @@
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef _ field-types _)
-            (if (clone-field-type-list-able? field-types names)
-              (clone-variant-list-able? rest names)
+            (if (clone-field-type-list-able? pools field-types names)
+              (clone-variant-list-able? pools rest names)
               false)]))]))
 
 (define (clone-struct-fields-able?
+  [pools : AstNodePoolContext]
   [fields : AstFieldDefList]
   [names : CloneNameSet]) : bool
   (match fields
@@ -168,14 +185,15 @@
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef _ ty _)
-            (if (clone-field-type-able? ty names)
-              (clone-struct-fields-able? rest names)
+            (if (clone-field-type-able? pools ty names)
+              (clone-struct-fields-able? pools rest names)
               false)]))]))
 
 ;; One fixpoint step: keep only names whose declaration's fields are all
 ;; clone-able under the current `names` set. Repeats until the set stops
 ;; shrinking (monotone decreasing, so it terminates).
 (define (clone-fixpoint-step
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [names : CloneNameSet]
   [acc : CloneNameSet]) : CloneNameSet
@@ -187,19 +205,21 @@
         (match decl
           [(AstDeclDefEnum name _ variants)
             (clone-fixpoint-step
+              pools
               rest
               names
-              (if (clone-variant-list-able? variants names)
+              (if (clone-variant-list-able? pools variants names)
                 (clone-name-set-insert acc (intern-str name))
                 acc))]
           [(AstDeclDefStruct name _ _ fields)
             (clone-fixpoint-step
+              pools
               rest
               names
-              (if (clone-struct-fields-able? fields names)
+              (if (clone-struct-fields-able? pools fields names)
                 (clone-name-set-insert acc (intern-str name))
                 acc))]
-          [_ (clone-fixpoint-step rest names acc)]))]))
+          [_ (clone-fixpoint-step pools rest names acc)]))]))
 
 ;; Initial over-approximation: every enum/struct name is assumed clone-able.
 (define (clone-all-type-names [decls : AstDeclList] [acc : CloneNameSet]) : CloneNameSet
@@ -219,22 +239,27 @@
               (clone-name-set-insert acc (intern-str name)))]
           [_ (clone-all-type-names rest acc)]))]))
 
-(define (clone-fixpoint [decls : AstDeclList] [names : CloneNameSet]) : CloneNameSet
+(define (clone-fixpoint
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [names : CloneNameSet]) : CloneNameSet
   (let
     [next : CloneNameSet
       (clone-fixpoint-step
+        pools
         decls
         names
         (clone-name-set-with-capacity (clone-name-set-capacity names)))]
     (if (= (clone-name-set-len next) (clone-name-set-len names))
       next
-      (clone-fixpoint decls next))))
+      (clone-fixpoint pools decls next))))
 
 ;; --- code generation ---------------------------------------------------------
 ;; `(clone <expr>)`
-(define (clone-call-expr [inner : i64]) : i64
-  (ast-expr-call
-    (ast-node-push (AstExprVar (intern "clone")))
+(define (clone-call-expr [pools : AstNodePoolContext] [inner : i64]) : i64
+  (ast-expr-call-with-pools
+    pools
+    (clone-expr-push pools (AstExprVar (intern "clone")))
     (ast-expr-cons inner AstExprNil)))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
@@ -250,13 +275,17 @@
       (clone-variant-pat-args count (+ i 1)))))
 
 ;; Constructor args (clone tlc0) (clone tlc1) ... for `count` fields.
-(define (clone-variant-ctor-args [count : i64] [i : i64]) : AstExprList
+(define (clone-variant-ctor-args
+  [pools : AstNodePoolContext]
+  [count : i64]
+  [i : i64]) : AstExprList
   (if (>= i count)
     AstExprNil
     (ast-expr-cons
       (clone-call-expr
-        (ast-node-push (AstExprVar (intern (clone-binder-name i)))))
-      (clone-variant-ctor-args count (+ i 1)))))
+        pools
+        (clone-expr-push pools (AstExprVar (intern (clone-binder-name i)))))
+      (clone-variant-ctor-args pools count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
   (match types
@@ -267,29 +296,36 @@
         (+ 1 (clone-type-list-len rest)))]))
 
 ;; One match arm: [(V f...) (V (clone f)...)], or [(V) (V)] for nullary variants.
-(define (clone-variant-arm [variant : AstVariantDef]) : AstMatchArm
+(define (clone-variant-arm
+  [pools : AstNodePoolContext]
+  [variant : AstVariantDef]) : AstMatchArm
   (match variant
     [(AstVariantDef vname field-types _)
       (let
         [count : i64 (clone-type-list-len field-types)]
         (ast-match-arm
           (ast-pat-variant-id vname (clone-variant-pat-args count 0))
-          (ast-expr-call
-            (ast-node-push (AstExprVar vname))
-            (clone-variant-ctor-args count 0))))]))
+          (ast-expr-call-with-pools
+            pools
+            (clone-expr-push pools (AstExprVar vname))
+            (clone-variant-ctor-args pools count 0))))]))
 
-(define (clone-variant-arms [variants : AstVariantDefList]) : AstMatchArmList
+(define (clone-variant-arms
+  [pools : AstNodePoolContext]
+  [variants : AstVariantDefList]) : AstMatchArmList
   (match variants
     [(AstVariantDefNil) AstMatchArmNil]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (ast-match-arm-cons
-          (clone-variant-arm variant)
-          (clone-variant-arms rest)))]))
+          (clone-variant-arm pools variant)
+          (clone-variant-arms pools rest)))]))
 
 ;; Struct constructor args: (clone (struct-get x f0)) (clone (struct-get x f1)) ...
-(define (clone-struct-ctor-args [fields : AstFieldDefList]) : AstExprList
+(define (clone-struct-ctor-args
+  [pools : AstNodePoolContext]
+  [fields : AstFieldDefList]) : AstExprList
   (match fields
     [(AstFieldDefNil) AstExprNil]
     [(AstFieldDefCons field rest)
@@ -299,10 +335,12 @@
           [(AstFieldDef fname _ _)
             (ast-expr-cons
               (clone-call-expr
-                (ast-expr-struct-get-id
-                  (ast-node-push (AstExprVar (intern "x")))
+                pools
+                (ast-expr-struct-get-id-with-pools
+                  pools
+                  (clone-expr-push pools (AstExprVar (intern "x")))
                   fname))
-              (clone-struct-ctor-args rest))]))]))
+              (clone-struct-ctor-args pools rest))]))]))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
 (define (clone-make-helper-decl [type-name : String] [body : i64]) : AstDecl
@@ -344,37 +382,28 @@
     [_ false]))
 
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
-(define (clone-tail-is-self? [tail : AstType] [self-name : String]) : bool
+(define (clone-tail-is-self?
+  [pools : AstNodePoolContext]
+  [tail : AstType]
+  [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? (ty-node-get inner) self-name)]
+    [(AstTyBox inner)
+      (clone-type-is-name? (clone-type-get pools inner) self-name)]
     [_ (clone-type-is-name? tail self-name)]))
 
-(define (clone-tail-is-boxed-self? [tail : AstType] [self-name : String]) : bool
+(define (clone-tail-is-boxed-self?
+  [pools : AstNodePoolContext]
+  [tail : AstType]
+  [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? (ty-node-get inner) self-name)]
+    [(AstTyBox inner)
+      (clone-type-is-name? (clone-type-get pools inner) self-name)]
     [_ false]))
 
 ;; True iff `v` is a two-field variant whose SECOND field is the enum itself
 ;; (the `(Cons element Self)` or `(Cons element (Box Self))` shape).
-(define (clone-variant-cons-tail-self? [v : AstVariantDef] [self-name : String]) : bool
-  (match v
-    [(AstVariantDef _ field-types _)
-      (match field-types
-        [(AstTypeCons _ tail)
-          (let
-            [tail : AstTypeList (box-get tail)]
-            (match tail
-              [(AstTypeCons tail-ty rest)
-                (let
-                  [tail-ty : AstType (ty-node-get tail-ty)]
-                  [rest : AstTypeList (box-get rest)]
-                  (match rest
-                    [(AstTypeNil) (clone-tail-is-self? tail-ty self-name)]
-                    [_ false]))]
-              [_ false]))]
-        [_ false])]))
-
-(define (clone-variant-cons-tail-boxed?
+(define (clone-variant-cons-tail-self?
+  [pools : AstNodePoolContext]
   [v : AstVariantDef]
   [self-name : String]) : bool
   (match v
@@ -386,31 +415,57 @@
             (match tail
               [(AstTypeCons tail-ty rest)
                 (let
-                  [tail-ty : AstType (ty-node-get tail-ty)]
+                  [tail-ty : AstType (clone-type-get pools tail-ty)]
                   [rest : AstTypeList (box-get rest)]
                   (match rest
-                    [(AstTypeNil) (clone-tail-is-boxed-self? tail-ty self-name)]
+                    [(AstTypeNil) (clone-tail-is-self? pools tail-ty self-name)]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]))
+
+(define (clone-variant-cons-tail-boxed?
+  [pools : AstNodePoolContext]
+  [v : AstVariantDef]
+  [self-name : String]) : bool
+  (match v
+    [(AstVariantDef _ field-types _)
+      (match field-types
+        [(AstTypeCons _ tail)
+          (let
+            [tail : AstTypeList (box-get tail)]
+            (match tail
+              [(AstTypeCons tail-ty rest)
+                (let
+                  [tail-ty : AstType (clone-type-get pools tail-ty)]
+                  [rest : AstTypeList (box-get rest)]
+                  (match rest
+                    [(AstTypeNil)
+                      (clone-tail-is-boxed-self? pools tail-ty self-name)]
                     [_ false]))]
               [_ false]))]
         [_ false])]))
 
 ;; If (nil-v, cons-v) form a Nil/Cons pair, return the list shape; else NotList.
 (define (clone-list-shape-try
+  [pools : AstNodePoolContext]
   [nil-v : AstVariantDef]
   [cons-v : AstVariantDef]
   [self-name : String]) : CloneListShape
   (if (= (clone-variant-field-count nil-v) 0)
-    (if (clone-variant-cons-tail-self? cons-v self-name)
+    (if (clone-variant-cons-tail-self? pools cons-v self-name)
       (CloneIsList
         (clone-variant-name nil-v)
         (clone-variant-name cons-v)
-        (clone-variant-cons-tail-boxed? cons-v self-name))
+        (clone-variant-cons-tail-boxed? pools cons-v self-name))
       (CloneNotList))
     (CloneNotList)))
 
 ;; A list-shaped enum is exactly two variants: one nullary (Nil) and one
 ;; `(Cons element Self)` or `(Cons element (Box Self))`, in either source order.
-(define (clone-list-shape [variants : AstVariantDefList] [self-name : String]) : CloneListShape
+(define (clone-list-shape
+  [pools : AstNodePoolContext]
+  [variants : AstVariantDefList]
+  [self-name : String]) : CloneListShape
   (match variants
     [(AstVariantDefCons v1 tail)
       (let
@@ -421,9 +476,10 @@
               [rest : AstVariantDefList (box-get rest)]
               (match rest
                 [(AstVariantDefNil)
-                  (match (clone-list-shape-try v1 v2 self-name)
+                  (match (clone-list-shape-try pools v1 v2 self-name)
                     [(CloneIsList n c boxed) (CloneIsList n c boxed)]
-                    [(CloneNotList) (clone-list-shape-try v2 v1 self-name)])]
+                    [(CloneNotList)
+                      (clone-list-shape-try pools v2 v1 self-name)])]
                 [_ (CloneNotList)]))]
           [_ (CloneNotList)]))]
     [_ (CloneNotList)]))
@@ -435,18 +491,29 @@
   (string-append (clone-helper-name type-name) "$rev"))
 
 ;; `(Nil)` - a nullary constructor is a zero-arg call, as in clone-variant-arm.
-(define (clone-nil-expr [nil-ctor : String]) : i64
-  (ast-expr-call (ast-node-push (AstExprVar (intern nil-ctor))) AstExprNil))
+(define (clone-nil-expr [pools : AstNodePoolContext] [nil-ctor : String]) : i64
+  (ast-expr-call-with-pools
+    pools
+    (clone-expr-push pools (AstExprVar (intern nil-ctor)))
+    AstExprNil))
 
-(define (clone-list-tail-next-expr [boxed-tail : bool]) : i64
+(define (clone-list-tail-next-expr
+  [pools : AstNodePoolContext]
+  [boxed-tail : bool]) : i64
   (if boxed-tail
-    (ast-expr-box-get (ast-node-push (AstExprVar (intern "t"))))
-    (ast-node-push (AstExprVar (intern "t")))))
+    (ast-expr-box-get-with-pools
+      pools
+      (clone-expr-push pools (AstExprVar (intern "t"))))
+    (clone-expr-push pools (AstExprVar (intern "t")))))
 
-(define (clone-list-tail-acc-expr [boxed-tail : bool]) : i64
+(define (clone-list-tail-acc-expr
+  [pools : AstNodePoolContext]
+  [boxed-tail : bool]) : i64
   (if boxed-tail
-    (ast-expr-box (ast-node-push (AstExprVar (intern "acc"))))
-    (ast-node-push (AstExprVar (intern "acc")))))
+    (ast-expr-box-with-pools
+      pools
+      (clone-expr-push pools (AstExprVar (intern "acc"))))
+    (clone-expr-push pools (AstExprVar (intern "acc")))))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
 (define (clone-make-list-fn
@@ -467,6 +534,7 @@
 ;; `head-expr` is the head placed into the rebuilt cons (cloned for acc, bare
 ;; for rev). `fn-name` is the function to tail-call.
 (define (clone-list-step-arm
+  [pools : AstNodePoolContext]
   [fn-name : String]
   [cons-ctor : String]
   [boxed-tail : bool]
@@ -477,37 +545,44 @@
       (ast-pattern-cons
         (ast-pat-binding "h")
         (ast-pattern-cons (ast-pat-binding "t") AstPatternNil)))
-    (ast-expr-call
-      (ast-node-push (AstExprVar (intern fn-name)))
+    (ast-expr-call-with-pools
+      pools
+      (clone-expr-push pools (AstExprVar (intern fn-name)))
       (ast-expr-cons
-        (clone-list-tail-next-expr boxed-tail)
+        (clone-list-tail-next-expr pools boxed-tail)
         (ast-expr-cons
-          (ast-expr-call
-            (ast-node-push (AstExprVar (intern cons-ctor)))
+          (ast-expr-call-with-pools
+            pools
+            (clone-expr-push pools (AstExprVar (intern cons-ctor)))
             (ast-expr-cons
               head-expr
-              (ast-expr-cons (clone-list-tail-acc-expr boxed-tail) AstExprNil)))
+              (ast-expr-cons
+                (clone-list-tail-acc-expr pools boxed-tail)
+                AstExprNil)))
           AstExprNil)))))
 
 ;; (match x [(Nil) acc] [(Cons h t) (fn t (Cons head-expr acc))])
 (define (clone-list-fold-body
+  [pools : AstNodePoolContext]
   [fn-name : String]
   [nil-ctor : String]
   [cons-ctor : String]
   [boxed-tail : bool]
   [head-expr : i64]) : i64
-  (ast-expr-match
-    (ast-node-push (AstExprVar (intern "x")))
+  (ast-expr-match-with-pools
+    pools
+    (clone-expr-push pools (AstExprVar (intern "x")))
     (ast-match-arm-cons
       (ast-match-arm
         (ast-pat-variant nil-ctor AstPatternNil)
-        (ast-node-push (AstExprVar (intern "acc"))))
+        (clone-expr-push pools (AstExprVar (intern "acc"))))
       (ast-match-arm-cons
-        (clone-list-step-arm fn-name cons-ctor boxed-tail head-expr)
+        (clone-list-step-arm pools fn-name cons-ctor boxed-tail head-expr)
         AstMatchArmNil))))
 
 ;; clone$L$acc: tail-recursively clone each element into a reversed accumulator.
 (define (clone-list-acc-decl
+  [pools : AstNodePoolContext]
   [type-name : String]
   [nil-ctor : String]
   [cons-ctor : String]
@@ -518,14 +593,18 @@
       fn-name
       type-name
       (clone-list-fold-body
+        pools
         fn-name
         nil-ctor
         cons-ctor
         boxed-tail
-        (clone-call-expr (ast-node-push (AstExprVar (intern "h"))))))))
+        (clone-call-expr
+          pools
+          (clone-expr-push pools (AstExprVar (intern "h"))))))))
 
 ;; clone$L$rev: tail-recursively reverse (no cloning) to restore source order.
 (define (clone-list-rev-decl
+  [pools : AstNodePoolContext]
   [type-name : String]
   [nil-ctor : String]
   [cons-ctor : String]
@@ -536,52 +615,65 @@
       fn-name
       type-name
       (clone-list-fold-body
+        pools
         fn-name
         nil-ctor
         cons-ctor
         boxed-tail
-        (ast-node-push (AstExprVar (intern "h")))))))
+        (clone-expr-push pools (AstExprVar (intern "h")))))))
 
 ;; clone$L: reverse(acc(x, Nil), Nil) - both folds run in O(1) stack frames.
-(define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
+(define (clone-list-entry-decl
+  [pools : AstNodePoolContext]
+  [type-name : String]
+  [nil-ctor : String]) : AstDecl
   (clone-make-helper-decl
     type-name
-    (ast-expr-call
-      (ast-node-push (AstExprVar (intern (clone-list-rev-name type-name))))
+    (ast-expr-call-with-pools
+      pools
+      (clone-expr-push
+        pools
+        (AstExprVar (intern (clone-list-rev-name type-name))))
       (ast-expr-cons
-        (ast-expr-call
-          (ast-node-push (AstExprVar (intern (clone-list-acc-name type-name))))
+        (ast-expr-call-with-pools
+          pools
+          (clone-expr-push
+            pools
+            (AstExprVar (intern (clone-list-acc-name type-name))))
           (ast-expr-cons
-            (ast-node-push (AstExprVar (intern "x")))
-            (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))
-        (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))))
+            (clone-expr-push pools (AstExprVar (intern "x")))
+            (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprNil)))
+        (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprNil)))))
 
 ;; Emit the clone helper(s) for one clone-able enum: three tail-recursive
 ;; functions for a list shape, otherwise the single naive match-reconstruct.
 (define (clone-emit-enum-clone
+  [pools : AstNodePoolContext]
   [name : String]
   [variants : AstVariantDefList]
   [acc : AstDeclList]) : AstDeclList
-  (match (clone-list-shape variants name)
+  (match (clone-list-shape pools variants name)
     [(CloneIsList nil-ctor cons-ctor boxed-tail)
       (ast-decl-cons
-        (clone-list-entry-decl name nil-ctor)
+        (clone-list-entry-decl pools name nil-ctor)
         (ast-decl-cons
-          (clone-list-acc-decl name nil-ctor cons-ctor boxed-tail)
+          (clone-list-acc-decl pools name nil-ctor cons-ctor boxed-tail)
           (ast-decl-cons
-            (clone-list-rev-decl name nil-ctor cons-ctor boxed-tail)
+            (clone-list-rev-decl pools name nil-ctor cons-ctor boxed-tail)
             acc)))]
     [(CloneNotList)
       (ast-decl-cons
         (clone-make-helper-decl
           name
-          (ast-expr-match
-            (ast-node-push (AstExprVar (intern "x")))
-            (clone-variant-arms variants)))
+          (ast-expr-match-with-pools
+            pools
+            (clone-expr-push pools (AstExprVar (intern "x")))
+            (clone-variant-arms pools variants)))
         acc)]))
 
 ;; Generate clone$ helpers for every clone-able enum/struct, prepended in order.
 (define (clone-generate-decls
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [acc : AstDeclList]) : AstDeclList
@@ -595,27 +687,30 @@
             (let
               [name-str : String (intern-str name)]
               (clone-generate-decls
+                pools
                 rest
                 able
                 (if (clone-name-set-contains? able name-str)
-                  (clone-emit-enum-clone name-str variants acc)
+                  (clone-emit-enum-clone pools name-str variants acc)
                   acc)))]
           [(AstDeclDefStruct name _ _ fields)
             (let
               [name-str : String (intern-str name)]
               (clone-generate-decls
+                pools
                 rest
                 able
                 (if (clone-name-set-contains? able name-str)
                   (ast-decl-cons
                     (clone-make-helper-decl
                       name-str
-                      (ast-expr-call
-                        (ast-node-push (AstExprVar name))
-                        (clone-struct-ctor-args fields)))
+                      (ast-expr-call-with-pools
+                        pools
+                        (clone-expr-push pools (AstExprVar name))
+                        (clone-struct-ctor-args pools fields)))
                     acc)
                   acc)))]
-          [_ (clone-generate-decls rest able acc)]))]))
+          [_ (clone-generate-decls pools rest able acc)]))]))
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (match left
@@ -626,6 +721,7 @@
         (ast-decl-cons head (clone-decl-list-append rest right)))]))
 
 (define (clone-root-add-type-list
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
@@ -634,15 +730,17 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (clone-type-get pools head)]
         [rest : AstTypeList (box-get rest)]
         (clone-root-add-type-list
+          pools
           decls
           able
-          (clone-root-add-type decls able roots head)
+          (clone-root-add-type pools decls able roots head)
           rest))]))
 
 (define (clone-root-add-fields
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
@@ -655,12 +753,14 @@
         (match field
           [(AstFieldDef _ ty _)
             (clone-root-add-fields
+              pools
               decls
               able
-              (clone-root-add-type decls able roots ty)
+              (clone-root-add-type pools decls able roots ty)
               rest)]))]))
 
 (define (clone-root-add-variants
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
@@ -673,12 +773,14 @@
         (match variant
           [(AstVariantDef _ fields _)
             (clone-root-add-variants
+              pools
               decls
               able
-              (clone-root-add-type-list decls able roots fields)
+              (clone-root-add-type-list pools decls able roots fields)
               rest)]))]))
 
 (define (clone-root-add-name-deps
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [cursor : AstDeclList]
   [able : CloneNameSet]
@@ -692,15 +794,16 @@
         (match decl
           [(AstDeclDefEnum decl-name _ variants)
             (if (string-eq (intern-str decl-name) name)
-              (clone-root-add-variants decls able roots variants)
-              (clone-root-add-name-deps decls rest able roots name))]
+              (clone-root-add-variants pools decls able roots variants)
+              (clone-root-add-name-deps pools decls rest able roots name))]
           [(AstDeclDefStruct decl-name _ _ fields)
             (if (string-eq (intern-str decl-name) name)
-              (clone-root-add-fields decls able roots fields)
-              (clone-root-add-name-deps decls rest able roots name))]
-          [_ (clone-root-add-name-deps decls rest able roots name)]))]))
+              (clone-root-add-fields pools decls able roots fields)
+              (clone-root-add-name-deps pools decls rest able roots name))]
+          [_ (clone-root-add-name-deps pools decls rest able roots name)]))]))
 
 (define (clone-root-add-name
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
@@ -709,6 +812,7 @@
     (if (clone-name-list-contains? roots name)
       roots
       (clone-root-add-name-deps
+        pools
         decls
         decls
         able
@@ -717,27 +821,32 @@
     roots))
 
 (define (clone-root-add-type
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
   [ty : AstType]) : CloneNameList
   (match ty
     [(AstTyTuple elems)
-      (clone-root-add-type-list decls able roots (box-get elems))]
+      (clone-root-add-type-list pools decls able roots (box-get elems))]
     [(AstTyArray elem _)
-      (clone-root-add-type decls able roots (ty-node-get elem))]
+      (clone-root-add-type pools decls able roots (clone-type-get pools elem))]
     [(AstTyDynArray elem)
-      (clone-root-add-type decls able roots (ty-node-get elem))]
-    [(AstTyBox elem) (clone-root-add-type decls able roots (ty-node-get elem))]
+      (clone-root-add-type pools decls able roots (clone-type-get pools elem))]
+    [(AstTyBox elem)
+      (clone-root-add-type pools decls able roots (clone-type-get pools elem))]
     [(AstTyRegion _ inner)
-      (clone-root-add-type decls able roots (ty-node-get inner))]
-    [(AstTyVar name) (clone-root-add-name decls able roots (intern-str name))]
-    [(AstTyEnum name) (clone-root-add-name decls able roots (intern-str name))]
+      (clone-root-add-type pools decls able roots (clone-type-get pools inner))]
+    [(AstTyVar name)
+      (clone-root-add-name pools decls able roots (intern-str name))]
+    [(AstTyEnum name)
+      (clone-root-add-name pools decls able roots (intern-str name))]
     [(AstTyStruct name)
-      (clone-root-add-name decls able roots (intern-str name))]
+      (clone-root-add-name pools decls able roots (intern-str name))]
     [_ roots]))
 
 (define (clone-root-expand
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
@@ -746,11 +855,13 @@
     [(CloneNameNil) roots]
     [(CloneNameCons name rest)
       (let
-        [with-name : CloneNameList (clone-root-add-name decls able roots name)]
+        [with-name : CloneNameList
+          (clone-root-add-name pools decls able roots name)]
         (clone-root-expand
+          pools
           decls
           able
-          (clone-root-add-name-deps decls decls able with-name name)
+          (clone-root-add-name-deps pools decls decls able with-name name)
           (box-get rest)))]))
 
 (define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
@@ -763,38 +874,92 @@
 ;; declarations keep their source paths (the generated helpers, being last, get
 ;; the empty path on lookup). Top-level functions are mutually visible, so the
 ;; helpers can forward-reference the type constructors and each other.
-(define (clone-augment-decls [decls : AstDeclList]) : AstDeclList
+(define (clone-augment-decls-with-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]) : AstDeclList
   (let
     [able : CloneNameSet
-      (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
-    (clone-decl-list-append decls (clone-generate-decls decls able AstDeclNil))))
+      (clone-fixpoint
+        pools
+        decls
+        (clone-all-type-names decls (clone-name-set-empty)))]
+    (clone-decl-list-append
+      decls
+      (clone-generate-decls pools decls able AstDeclNil))))
+
+(define (clone-augment-decls-with-roots-and-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [roots : CloneNameList]) : AstDeclList
+  (let
+    [able : CloneNameSet
+      (clone-fixpoint
+        pools
+        decls
+        (clone-all-type-names decls (clone-name-set-empty)))]
+    [expanded : CloneNameList (clone-root-expand pools decls able roots roots)]
+    (clone-decl-list-append
+      decls
+      (clone-generate-decls
+        pools
+        decls
+        (clone-name-list-to-set expanded (clone-name-set-empty))
+        AstDeclNil))))
+
+(define (clone-augment-decls [decls : AstDeclList]) : AstDeclList
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [out : AstDeclList (clone-augment-decls-with-pools pools decls)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      out)))
 
 (define (clone-augment-decls-with-roots
   [decls : AstDeclList]
   [roots : CloneNameList]) : AstDeclList
   (let
-    [able : CloneNameSet
-      (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
-    [expanded : CloneNameList (clone-root-expand decls able roots roots)]
-    (clone-decl-list-append
-      decls
-      (clone-generate-decls
-        decls
-        (clone-name-list-to-set expanded (clone-name-set-empty))
-        AstDeclNil))))
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [out : AstDeclList
+      (clone-augment-decls-with-roots-and-pools pools decls roots)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      out)))
 
-(define (clone-augment-program [program : AstProgram]) : AstProgram
+(define (clone-augment-program-with-pools
+  [pools : AstNodePoolContext]
+  [program : AstProgram]) : AstProgram
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (ast-program (clone-augment-decls decls)))]))
+        (ast-program (clone-augment-decls-with-pools pools decls)))]))
 
-(define (clone-augment-program-with-roots
+(define (clone-augment-program-with-roots-and-pools
+  [pools : AstNodePoolContext]
   [program : AstProgram]
   [roots : CloneNameList]) : AstProgram
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (ast-program (clone-augment-decls-with-roots decls roots)))]))
+        (ast-program
+          (clone-augment-decls-with-roots-and-pools pools decls roots)))]))
+
+(define (clone-augment-program [program : AstProgram]) : AstProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [out : AstProgram (clone-augment-program-with-pools pools program)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      out)))
+
+(define (clone-augment-program-with-roots
+  [program : AstProgram]
+  [roots : CloneNameList]) : AstProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [out : AstProgram
+      (clone-augment-program-with-roots-and-pools pools program roots)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      out)))

@@ -119,7 +119,13 @@
               (match (build-compiler-exports-with program symbols registries)
                 [(OkCompilerExports _)
                   (let
-                    [ctx : TcContext (TcContext program symbols registries "")]
+                    [ctx : TcContext
+                      (TcContext
+                        program
+                        symbols
+                        registries
+                        ""
+                        (ast-node-pool-context-capture-active))]
                     (match (tc-program-source-types-policy-ok ctx program)
                       [(OkTcUnit)
                         (match (tc-source-expr-policy-ok ctx expr)
@@ -1487,7 +1493,13 @@
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
                 (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
                     [(OkTcReprCLayout packet)
                       (match (tc-repr-c-struct-layout ctx "Outer")
@@ -1538,7 +1550,13 @@
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
                 (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
                     [(OkTcReprCLayout layout)
                       (and
@@ -1623,7 +1641,13 @@
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
                 (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
                     [(OkTcReprCLayout _) false]
                     [(ErrTcReprCLayout message) (string-eq message want)]))]
@@ -1641,7 +1665,13 @@
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
                 (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
                     [(OkTcReprCLayout layout)
                       (and
@@ -1699,7 +1729,13 @@
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
               (let
-                [ctx : TcContext (TcContext program symbols registries "")]
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
             [(ErrCompilerRegistries message) (ErrTcUnit message)])]
         [(ErrCompilerSymbols message) (ErrTcUnit message)])]
@@ -1721,7 +1757,13 @@
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
               (let
-                [ctx : TcContext (TcContext program symbols registries "")]
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
                   [(OkTcInlineAggregateLayout layout)
                     (= (tc-inline-aggregate-layout-size layout) want)]
@@ -1764,7 +1806,13 @@
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
               (let
-                [ctx : TcContext (TcContext program symbols registries "")]
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
                 [ok : bool true]
                 (begin
                   (match (tc-inline-aggregate-layout-for ctx "InlinePacket")

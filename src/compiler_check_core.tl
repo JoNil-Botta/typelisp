@@ -468,7 +468,13 @@
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
                 (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
                     (compiler-check-inline-layout-name-ok? ctx "AstExprList")

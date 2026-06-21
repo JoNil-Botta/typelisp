@@ -5464,6 +5464,124 @@
   [types : CompilerRegVarTypeList]) : bool
   (> (compiler-live-set-count (compiler-reg-function-group-vars func types)) 0))
 
+;; #3489 (PR2): LLVM-style coalescing-by-rename. LLVM removes a copy by renaming
+;; the two virtual registers into ONE, so a coalesced class is a single value the
+;; allocator places atomically. Here: collapse each coalesce class to its root
+;; var. `compiler-reg-merged-root-index` returns an interval index in which ONLY
+;; the root carries an interval -- the merged [min-start, max-end] over all class
+;; members -- and every non-root member is dropped (start = -1, excluded from the
+;; candidate list). The allocator then sees one indivisible candidate per class:
+;; one placement, one eviction unit, one register, across every pass and pool.
+;; Members inherit the root's location via compiler-reg-expand-class-assignments.
+;; The merged coarse interval drives interference; a singleton var's coarse
+;; interval already equals its live range, so non-coalesced values are unaffected.
+(define (compiler-reg-merged-root-index
+  [coalesce : CompilerRegCoalesceMap]
+  [interval-index : CompilerRegIntervalIndex]) : CompilerRegIntervalIndex
+  (let
+    [orig-starts : (Array i64) (struct-get interval-index starts)]
+    [orig-ends : (Array i64) (struct-get interval-index ends)]
+    [orig-segs : (Array CompilerRegIntervalList)
+      (struct-get interval-index segments)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [n : i64 (array-length orig-starts)]
+    [root-starts : (Array i64) (make-array i64 n)]
+    [root-ends : (Array i64) (make-array i64 n)]
+    [v : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array root-starts -1)
+      (compiler-reg-fill-i64-array root-ends -1)
+      (while (< v n)
+        (begin
+          (if (>= (array-ref orig-starts v) 0)
+            (let
+              [r : i64
+                (if (< v (array-length parents)) (array-ref parents v) v)]
+              [rr : i64 (if (and (>= r 0) (< r n)) r v)]
+              (begin
+                (if (or
+                  (< (array-ref root-starts rr) 0)
+                  (< (array-ref orig-starts v) (array-ref root-starts rr)))
+                  (array-set! root-starts rr (array-ref orig-starts v))
+                  unit)
+                (if (> (array-ref orig-ends v) (array-ref root-ends rr))
+                  (array-set! root-ends rr (array-ref orig-ends v))
+                  unit)))
+            unit)
+          (set! v (+ v 1))))
+      ;; Keep the original per-var segments: the integer/scalar passes run with an
+      ;; empty coalesce map (so they consult only the merged coarse [start,end]),
+      ;; while the call-spanning shadow pass still needs accurate segments for the
+      ;; (un-coalesced, singleton) call-spanning values it shadows.
+      (CompilerRegIntervalIndex root-starts root-ends orig-segs))))
+
+;; #3489 (PR2): expand a per-root assignment table to all original vars -- every
+;; member of a coalesce class inherits its root's location (register or spill
+;; slot). This realises the coalesce: the copy `member <- root` becomes
+;; src-reg == dst-reg and is dropped at emission. A var whose root got no
+;; location stays absent (spills by default).
+(define (compiler-reg-expand-class-assignments
+  [assignments : CompilerRegAssignmentTable]
+  [coalesce : CompilerRegCoalesceMap]
+  [orig-starts : (Array i64)]
+  [vars : i64]) : CompilerRegAssignmentTable
+  (let
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [out : CompilerRegAssignmentTable (compiler-reg-assignment-table-make vars)]
+    [v : i64 0]
+    (begin
+      (while (< v vars)
+        (begin
+          (if (and
+            (< v (array-length orig-starts))
+            (>= (array-ref orig-starts v) 0))
+            (let
+              [r : i64
+                (if (< v (array-length parents)) (array-ref parents v) v)]
+              [rr : i64 (if (and (>= r 0) (< r vars)) r v)]
+              (match (compiler-reg-assignment-table-lookup assignments rr)
+                [(CompilerRegSomeLocation loc)
+                  (begin
+                    (compiler-reg-assignment-table-insert out v loc)
+                    unit)]
+                [(CompilerRegNoLocation) unit]))
+            unit)
+          (set! v (+ v 1))))
+      out)))
+
+;; #3489 (PR2): the spill-weight eviction scores a candidate by its use count,
+;; but a merged class root carries only its OWN var's weight -- which can be the
+;; least-used member of the class (e.g. a phi result used once), so the eviction
+;; underweights a hot coalesced loop value and spills it (crc32's accumulator).
+;; Give the root the MAX weight over its members: that captures the class's
+;; hottest reference rate (enough to keep a hot loop value resident) without
+;; SUM's over-weighting, which would evict hot singletons that share the loop
+;; (the reps var in spmd_reduce).
+(define (compiler-reg-merge-ref-counts
+  [coalesce : CompilerRegCoalesceMap]
+  [ref-counts : (Array i64)]
+  [vars : i64]) : (Array i64)
+  (let
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [out : (Array i64) (make-array i64 vars)]
+    [v : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array out 0)
+      (while (< v vars)
+        (begin
+          (if (< v (array-length ref-counts))
+            (let
+              [r : i64
+                (if (< v (array-length parents)) (array-ref parents v) v)]
+              [rr : i64 (if (and (>= r 0) (< r vars)) r v)]
+              [w : i64 (array-ref ref-counts v)]
+              (if (> w (array-ref out rr))
+                (array-set! out rr w)
+                unit))
+            unit)
+          (set! v (+ v 1))))
+      out)))
+
 ;; Shared linear-scan body: assign the integer pool, then XMM, then vector, then
 ;; mask registers over the given intervals/ineligible set.
 (define (compiler-reg-plan-from
@@ -5490,6 +5608,25 @@
           group-vars
           (array-length (struct-get interval-index starts)))
         (CompilerRegCoalesceMap (make-array i64 0)))]
+    ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run
+    ;; the allocation passes over those roots with an EMPTY coalesce map (the
+    ;; merge already realised coalescing, so no per-member coalesce-location is
+    ;; needed). SIMD/AVX (allow-caller-saved-zero-call = false) builds no coalesce
+    ;; map, so eff-* fall back to the originals and that path is byte-identical.
+    [eff-index : CompilerRegIntervalIndex
+      (if allow-caller-saved-zero-call
+        (compiler-reg-merged-root-index coalesce interval-index)
+        interval-index)]
+    [eff-intervals : CompilerRegIntervalList
+      (if allow-caller-saved-zero-call
+        (compiler-reg-interval-arrays-to-list
+          (struct-get eff-index starts)
+          (struct-get eff-index ends)
+          (- (array-length (struct-get eff-index starts)) 1)
+          CompilerRegIntervalNil)
+        intervals)]
+    [eff-coalesce : CompilerRegCoalesceMap
+      (CompilerRegCoalesceMap (make-array i64 0))]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -5498,18 +5635,22 @@
     ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
     [eviction-ref-counts : (Array i64)
       (if allow-caller-saved-zero-call
-        (compiler-reg-function-spill-weights func)
+        ;; #3489 (PR2): score each class's eviction by its hottest member.
+        (compiler-reg-merge-ref-counts
+          coalesce
+          (compiler-reg-function-spill-weights func)
+          (array-length (struct-get interval-index starts)))
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates intervals type-info blocked false)
+        (compiler-reg-candidates eff-intervals type-info blocked false)
         (compiler-reg-sysv-integer-registers)
         CompilerRegActiveNil
         assignment-table
         moves
-        coalesce
+        eff-coalesce
         allow-caller-saved-zero-call
-        interval-index
+        eff-index
         type-info
         group-vars
         eviction-ref-counts)]
@@ -5521,11 +5662,11 @@
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-zero-call-candidates
-          (compiler-reg-candidates intervals type-info blocked false)
+          (compiler-reg-candidates eff-intervals type-info blocked false)
           (compiler-reg-zero-call-caller-saved-integer-registers)
           CompilerRegActiveNil
           integer-assignments
-          interval-index
+          eff-index
           group-vars
           (compiler-reg-backend-caller-clobber-points func))
         (CompilerRegAssignState CompilerRegActiveNil integer-assignments))]
@@ -5539,9 +5680,9 @@
           integer-with-caller-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           func
-          (compiler-reg-candidates intervals type-info blocked false)
+          (compiler-reg-candidates eff-intervals type-info blocked false)
           integer-with-caller-assignments
-          interval-index
+          eff-index
           group-vars)
         (CompilerRegCallSaveAssignState
           integer-with-caller-assignments
@@ -5554,14 +5695,14 @@
         [(CompilerRegCallSaveAssignState _ shadows) shadows])]
     [scalar-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates intervals type-info blocked true)
+        (compiler-reg-candidates eff-intervals type-info blocked true)
         (compiler-reg-xmm-registers)
         CompilerRegActiveNil
         integer-call-assignments
         moves
-        coalesce
+        eff-coalesce
         allow-caller-saved-zero-call
-        interval-index
+        eff-index
         type-info
         (compiler-live-set-empty)
         (make-array i64 0))]
@@ -5592,8 +5733,19 @@
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState _ found) found])]
+    ;; #3489 (PR2): the passes above assigned class ROOTS; expand so every member
+    ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
+    ;; coalesce map, so this is the identity there.
+    [final-assignments : CompilerRegAssignmentTable
+      (if allow-caller-saved-zero-call
+        (compiler-reg-expand-class-assignments
+          assignments
+          coalesce
+          (struct-get interval-index starts)
+          (array-length (struct-get interval-index starts)))
+        assignments)]
     (CompilerRegPlan
-      (compiler-reg-assignment-table-to-list assignments)
+      (compiler-reg-assignment-table-to-list final-assignments)
       ineligible
       intervals
       types

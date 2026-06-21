@@ -21,7 +21,7 @@ c_abi_sysv_two_register_return|tests/integration/c_abi_sysv_two_register_return.
 c_abi_sysv_memory_aggregate|tests/integration/c_abi_sysv_memory_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_memory_aggregate/baseline.c
 c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
-argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
+argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_poison_enable
@@ -86,7 +86,7 @@ maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
 narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
-nested_eval|tests/integration/nested_eval.tl|7|-|-|-
+nested_eval|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 integer_literal_default_i32|tests/integration/integer_literal_default_i32.tl|42|-|-|-|requires-stage0-diagnostic:typecheck: return type mismatch

@@ -36099,33 +36099,28 @@
   (let
     [prev-active : bool lower-entry-main-module-active]
     [prev-module : String lower-entry-main-module]
+    [active-ok : bool false]
     (begin
       (lower-entry-main-selection-install!
         (LowerSomeEntryMainModule "app.main"))
-      (let
-        [ok : bool
-          (and
-            (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "main")
+      (set!
+        active-ok
+        (and
+          (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "main")
+          (lower-decl-entry-main? "src\\app.tl" "src/app.tl" "app.main" "main")
+          (not
+            (lower-decl-entry-main? "src/app.tl" "src/lib.tl" "app.main" "main"))
+          (not
             (lower-decl-entry-main?
-              "src\\app.tl"
+              "src/app.tl"
               "src/app.tl"
               "app.main"
-              "main")
-            (not
-              (lower-decl-entry-main?
-                "src/app.tl"
-                "src/lib.tl"
-                "app.main"
-                "main"))
-            (not
-              (lower-decl-entry-main?
-                "src/app.tl"
-                "src/app.tl"
-                "app.main"
-                "helper")))]
-        (begin
-          (lower-entry-main-selection-restore! prev-active prev-module)
-          ok)))))
+              "helper"))))
+      (lower-entry-main-selection-restore! prev-active prev-module)
+      (and
+        active-ok
+        (not
+          (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "main"))))))
 
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.

@@ -45,13 +45,13 @@
     "char-literals": {
       "patterns": [
         {
-          "name": "constant.character.escape.typelisp",
-          "comment": "Escaped char literal: '\\n' '\\t' '\\r' '\\0' '\\\\' '\\''.",
+          "name": "string.quoted.single.typelisp",
+          "comment": "Escaped char literal: '\\n' '\\t' '\\r' '\\0' '\\\\' '\\''. Scoped as a string so VS Code's bracket matching/colorization ignores brackets inside literals like '(' and ')'.",
           "match": "'\\\\(?:[ntr0\\\\'])'"
         },
         {
-          "name": "constant.character.typelisp",
-          "comment": "Single-character literal: 'a' '0' '(' ' '.",
+          "name": "string.quoted.single.typelisp",
+          "comment": "Single-character literal: 'a' '0' '(' ' '. Scoped as a string so brackets inside '(' and ')' are not counted by bracket matching.",
           "match": "'[^'\\\\\\r\\n]'"
         }
       ]

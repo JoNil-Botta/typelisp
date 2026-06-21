@@ -4,6 +4,14 @@
 ;# `(Array i64)` live prefix. The backing array handle is stored directly for
 ;# indexed reads, while a borrowed owner witness ties the view to the caller's
 ;# source lifetime.
+;#
+;# The module also exposes the first slice-derived iterator for the stdlib
+;# iterator protocol (#3514): `i64-slice-iterator` returns iterator state, and
+;# `i64-slice-next` takes `&mut` state and returns an option-like
+;# `I64SliceIterNext` value. The iterator snapshots the slice's
+;# backing handle, start, and length, yields copied `i64` items, and exposes no
+;# references. Exhaustion is explicit and stable: repeated `next` calls after
+;# exhaustion keep returning `I64SliceIterDone`.
 (module stdlib.vector_slice)
 
 (import stdlib.vector)
@@ -121,6 +129,69 @@
       false)
       (array-ref (struct-get slice slots) (+ (struct-get slice start) index))
       fallback)))
+
+;: Iterator state over an `I64Slice`. It snapshots the slice backing handle and
+;: scalar range, then yields copied `i64` items without exposing references.
+(comptime-decl
+  (:generated vector-family I64SliceIter "i64")
+  (defstruct I64SliceIter
+    (slots (Array i64))
+    (start i64)
+    (len i64)
+    (index i64)))
+
+;: Option-like result returned by `i64-slice-next`.
+(comptime-decl
+  (:generated vector-family I64SliceIterNext "i64")
+  (defenum I64SliceIterNext
+    (I64SliceIterDone)
+    (I64SliceIterItem i64)))
+
+;: Build an iterator over `slice`. The iterator snapshots the backing range and
+;: starts at element index 0.
+(comptime-decl
+  (:generated vector-family i64-slice-iterator "i64")
+  (define (i64-slice-iterator [slice : (I64Slice source)]) : I64SliceIter
+    (I64SliceIter
+      (struct-get slice slots)
+      (struct-get slice start)
+      (struct-get slice len)
+      0)))
+
+;: Return the next slice item and advance `iter`, or `I64SliceIterDone` when all
+;: items have been yielded. Calling again after exhaustion returns
+;: `I64SliceIterDone`.
+(comptime-decl
+  (:generated vector-family i64-slice-next "i64")
+  (define (i64-slice-next [iter : (&mut iter I64SliceIter)]) : I64SliceIterNext
+    (let
+      [index : i64 (struct-get iter index)]
+      (if (>= index (struct-get iter len))
+        (I64SliceIterDone)
+        (let
+          [value : i64
+            (array-ref
+              (struct-get iter slots)
+              (+ (struct-get iter start) index))]
+          (begin
+            (set! (struct-get iter index) (+ index 1))
+            (I64SliceIterItem value)))))))
+
+;: Return true when a slice iterator next-result is exhausted.
+(comptime-decl
+  (:generated vector-family i64-slice-iter-done? "i64")
+  (define (i64-slice-iter-done? [result : I64SliceIterNext]) : bool
+    (match result
+      [(I64SliceIterDone) true]
+      [(I64SliceIterItem _) false])))
+
+;: Return the yielded slice item or `fallback` when the result is exhausted.
+(comptime-decl
+  (:generated vector-family i64-slice-iter-value-or "i64")
+  (define (i64-slice-iter-value-or [result : I64SliceIterNext] [fallback : i64]) : i64
+    (match result
+      [(I64SliceIterItem value) value]
+      [(I64SliceIterDone) fallback])))
 
 ;: Build a sub-slice whose lifetime remains tied to the original source.
 ;: Invalid ranges return an empty view tied to the same source.
@@ -264,7 +335,30 @@
                 (test.assert-i64-eq
                   (vector.i64-vec-get slice-vec 1 -1)
                   7
-                  "slice to vec second")))))))))
+                  "slice to vec second")))
+            (let
+              [iter : I64SliceIter (i64-slice-iterator middle)]
+              (begin
+                (test.assert-i64-eq
+                  (i64-slice-iter-value-or (i64-slice-next (&mut iter)) -1)
+                  6
+                  "slice iterator first")
+                (test.assert-i64-eq
+                  (i64-slice-iter-value-or (i64-slice-next (&mut iter)) -1)
+                  7
+                  "slice iterator second")
+                (test.assert-true
+                  (i64-slice-iter-done? (i64-slice-next (&mut iter)))
+                  "slice iterator exhausted")
+                (test.assert-true
+                  (i64-slice-iter-done? (i64-slice-next (&mut iter)))
+                  "slice iterator repeated exhaustion")))
+            (let
+              [empty-slice : (I64Slice fv) (i64-slice-from-vec fv (& fv) 2 2)]
+              [empty-iter : I64SliceIter (i64-slice-iterator empty-slice)]
+              (test.assert-true
+                (i64-slice-iter-done? (i64-slice-next (&mut empty-iter)))
+                "empty slice iterator exhausted"))))))))
 
 (cfg
   test
@@ -283,15 +377,28 @@
   (value i64-slice-len)
   (value i64-slice-is-empty?)
   (value i64-slice-get)
+  (value i64-slice-iterator)
+  (value i64-slice-next)
+  (value i64-slice-iter-done?)
+  (value i64-slice-iter-value-or)
   (value i64-slice-sub-slice)
   (value i64-slice-to-array)
   (value i64-slice-to-vec)
   (type I64SliceSource)
   (type I64Slice)
+  (type I64SliceIter)
+  (type I64SliceIterNext)
   (constructor I64Slice)
+  (constructor I64SliceIter)
   (field I64Slice witness)
   (field I64Slice slots)
   (field I64Slice start)
   (field I64Slice len)
+  (field I64SliceIter slots)
+  (field I64SliceIter start)
+  (field I64SliceIter len)
+  (field I64SliceIter index)
   (variant I64SliceSourceVec)
-  (variant I64SliceSourceArray))
+  (variant I64SliceSourceArray)
+  (variant I64SliceIterDone)
+  (variant I64SliceIterItem))

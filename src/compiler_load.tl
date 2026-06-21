@@ -3248,7 +3248,7 @@
 (define (compiler-load-package-entry-main?
   [entry-path : String]
   [decl-path : String]
-  [module : String]
+  [_module : String]
   [source-name : String]) : bool
   (and
     (string-eq

@@ -181,19 +181,28 @@
     [object-array : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsNil)
+        (OptBoundsCastNil)
         (smoke-bounds-object-pair (IrValueVar 1) (IrValueI64 1) (AstTyI64)))]
     [object-string : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsNil)
+        (OptBoundsCastNil)
         (smoke-bounds-object-pair (IrValueVar 1) (IrValueI64 8) (AstTyU8)))]
     [object-mismatch : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsNil)
+        (OptBoundsCastNil)
         (smoke-bounds-object-pair (IrValueVar 2) (IrValueI64 1) (AstTyI64)))]
     [object-call : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-call-barrier))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsNil) (smoke-bounds-object-store-barrier))]
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (OptBoundsCastNil)
+        (smoke-bounds-object-store-barrier))]
     (cond
       [(not (= (opt-count-bounds-instrs object-array) 1)) 1]
       [(not (= (opt-count-bounds-instrs object-string) 1)) 2]
@@ -317,6 +326,7 @@
     (unless (= (compiler-optimize-dce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-dce-mem-self-test) 42) (return 1))
     (unless (= (compiler-optimize-divrem-safety-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-const-divisor-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cse-self-test) 42) (return 1))
     (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))

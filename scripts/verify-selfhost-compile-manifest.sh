@@ -28,11 +28,11 @@ EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # SIGSEGV'd the Windows CI runner (freestanding runtime: a failed memory
 # commit surfaces as an access violation, exit 139).
 # Windows still has tighter commit headroom during stage1-mode selfhost chunks;
-# keep its default below the observed eight-output failure point while allowing
-# Linux and explicit local overrides to use the larger chunk.
+# keep its default low enough that heavyweight compiler modules do not accumulate
+# in one process while allowing Linux and explicit local overrides to go larger.
 DEFAULT_BATCH_CHUNK_SIZE=16
 if [ "$HOST_OS" = windows ]; then
-    DEFAULT_BATCH_CHUNK_SIZE=8
+    DEFAULT_BATCH_CHUNK_SIZE=2
 fi
 BATCH_CHUNK_SIZE=${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-$DEFAULT_BATCH_CHUNK_SIZE}
 

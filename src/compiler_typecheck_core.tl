@@ -5622,6 +5622,66 @@
         " "
         (string-append name (string-append " from module " target-module))))))
 
+;; #2944: tc-qualified-export-visible-ok rebuilt the whole-program export table
+;; on every cross-module qualified reference - O(program) per reference, so
+;; O(program^2) over a dotted-import-heavy file. The table is invariant for a
+;; file's typecheck pass, so memoize it. Build into a dedicated persistent arena
+;; (mirroring tc-hygiene-module-env-cache-arena) so the cached table survives the
+;; scratch arenas reset during per-decl typechecking. Cleared per file by
+;; compiler-typecheck-reset-file-state!.
+(define tc-qualified-exports-ready : bool
+  false)
+(define tc-qualified-exports-value : CompilerExports
+  (compiler-exports-empty))
+(define tc-qualified-exports-arena : i64
+  0)
+
+(define (tc-qualified-exports-arena-handle) : i64
+  (begin
+    (if (= tc-qualified-exports-arena 0)
+      (set! tc-qualified-exports-arena (arena-make))
+      unit)
+    tc-qualified-exports-arena))
+
+(define (tc-qualified-exports-reset!) : unit
+  (begin
+    (set! tc-qualified-exports-ready false)
+    (set! tc-qualified-exports-value (compiler-exports-empty))
+    (if (= tc-qualified-exports-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena-destroy tc-qualified-exports-arena))
+        (set! tc-qualified-exports-arena 0)))))
+
+;; Ensure the per-file export table is built and cached. The freshly built
+;; `exports` is moved into the global and never read back locally (CompilerExports
+;; is a move type); callers read tc-qualified-exports-value directly afterward,
+;; mirroring macro-expand-exports-value.
+(define (tc-qualified-exports-ensure! [ctx : TcContext]) : ResultTcUnit
+  (if tc-qualified-exports-ready
+    OkTcUnit
+    (let
+      [prev-arena : i64 (arena-current)]
+      [_switched : unit
+        (unsafe
+          (arena-set! (tc-qualified-exports-arena-handle)))]
+      [built : ResultCompilerExports
+        (build-compiler-exports-with
+          (tc-context-program ctx)
+          (tc-context-symbols ctx)
+          (tc-context-registries ctx))]
+      (begin
+        (unsafe
+          (arena-set! prev-arena))
+        (match built
+          [(OkCompilerExports exports)
+            (begin
+              (set! tc-qualified-exports-value exports)
+              (set! tc-qualified-exports-ready true)
+              OkTcUnit)]
+          [(ErrCompilerExports message) (ErrTcUnit message)])))))
+
 (define (tc-qualified-export-visible-ok
   [ctx : TcContext]
   [kind-name : String]
@@ -5630,13 +5690,10 @@
   [export-name : String]) : ResultTcUnit
   (if (string-eq target-module (tc-context-module ctx))
     OkTcUnit
-    (match (build-compiler-exports-with
-      (tc-context-program ctx)
-      (tc-context-symbols ctx)
-      (tc-context-registries ctx))
-      [(OkCompilerExports exports)
+    (match (tc-qualified-exports-ensure! ctx)
+      [(OkTcUnit)
         (match (compiler-exports-lookup-id
-          exports
+          tc-qualified-exports-value
           (intern kind-name)
           (intern target-module)
           (intern export-name))
@@ -5647,7 +5704,7 @@
                 kind-name
                 display-name
                 target-module))])]
-      [(ErrCompilerExports message) (ErrTcUnit message)])))
+      [(ErrTcUnit message) (ErrTcUnit message)])))
 
 (define (tc-qualified-name-export-visible-ok
   [ctx : TcContext]
@@ -38286,6 +38343,7 @@
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
+    (tc-qualified-exports-reset!)
     (macro-alias-cache-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)

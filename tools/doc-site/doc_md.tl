@@ -1091,7 +1091,7 @@
       (unless
         (md-string-contains?
           html
-          "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(define x : i64 1)\n; &lt;tag&gt; &amp; value\n</code></pre>\n")
+          "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">x</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">1</span>)\n<span class=\"tl-syn-comment\">; &lt;tag&gt; &amp; value</span>\n</code></pre>\n")
         (return 115))
       (unless
         (md-string-contains?

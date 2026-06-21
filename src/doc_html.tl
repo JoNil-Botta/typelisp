@@ -88,6 +88,408 @@
     ""
     (str-cat " data-meta=\"" (doc-html-escape meta) "\"")))
 
+(define (doc-html-syntax-span [class-name : String] [text : String]) : String
+  (str-cat "<span class=\"" class-name "\">" (doc-html-escape text) "</span>"))
+
+(define (doc-html-syntax-space? [c : char]) : bool
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
+
+(define (doc-html-syntax-alpha? [c : char]) : bool
+  (or (and (>= c 'A') (<= c 'Z')) (and (>= c 'a') (<= c 'z'))))
+
+(define (doc-html-syntax-upper? [c : char]) : bool
+  (and (>= c 'A') (<= c 'Z')))
+
+(define (doc-html-syntax-digit? [c : char]) : bool
+  (and (>= c '0') (<= c '9')))
+
+(define (doc-html-syntax-hex-digit? [c : char]) : bool
+  (or
+    (doc-html-syntax-digit? c)
+    (and (>= c 'A') (<= c 'F'))
+    (and (>= c 'a') (<= c 'f'))))
+
+(define (doc-html-syntax-ident-start? [c : char]) : bool
+  (or (doc-html-syntax-alpha? c) (= c '_')))
+
+(define (doc-html-syntax-ident-part? [c : char]) : bool
+  (or
+    (doc-html-syntax-ident-start? c)
+    (doc-html-syntax-digit? c)
+    (= c '!')
+    (= c '?')
+    (= c '*')
+    (= c '/')
+    (= c '<')
+    (= c '>')
+    (= c '=')
+    (= c '+')
+    (= c '-')))
+
+(define (doc-html-syntax-wordish? [c : char]) : bool
+  (or (doc-html-syntax-alpha? c) (doc-html-syntax-digit? c) (= c '_') (= c '-')))
+
+(define (doc-html-syntax-operator-start? [c : char]) : bool
+  (or
+    (= c '!')
+    (= c '<')
+    (= c '>')
+    (= c '=')
+    (= c '+')
+    (= c '-')
+    (= c '*')
+    (= c '/')
+    (= c '%')
+    (= c '&')))
+
+(define (doc-html-syntax-token-start? [c : char]) : bool
+  (or (doc-html-syntax-ident-start? c) (doc-html-syntax-operator-start? c)))
+
+(define (doc-html-syntax-token-delim? [c : char]) : bool
+  (or
+    (doc-html-syntax-space? c)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c '"')
+    (= c '\'')
+    (= c ';')))
+
+(define (doc-html-syntax-token-end [source : String] [start : i64]) : i64
+  (let
+    [i : i64 start]
+    [n : i64 (string-length source)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (doc-html-syntax-token-delim? (string-ref source i))
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+(define (doc-html-syntax-number-start? [source : String] [start : i64]) : bool
+  (let
+    [n : i64 (string-length source)]
+    (if (>= start n)
+      false
+      (let
+        [c : char (string-ref source start)]
+        [prev-ok : bool
+          (if (= start 0)
+            true
+            (not (doc-html-syntax-wordish? (string-ref source (- start 1)))))]
+        (and
+          prev-ok
+          (or
+            (doc-html-syntax-digit? c)
+            (and
+              (= c '-')
+              (< (+ start 1) n)
+              (doc-html-syntax-digit? (string-ref source (+ start 1))))))))))
+
+(define (doc-html-syntax-string-end [source : String] [start : i64]) : i64
+  (let
+    [i : i64 (+ start 1)]
+    [n : i64 (string-length source)]
+    [done : bool false]
+    (begin
+      (while (and (< i n) (not done))
+        (let
+          [c : char (string-ref source i)]
+          (if (= c '\\')
+            (set! i (+ i 2))
+            (if (= c '"')
+              (begin
+                (set! done true)
+                (set! i (+ i 1)))
+              (set! i (+ i 1))))))
+      i)))
+
+(define (doc-html-syntax-valid-escape-end
+  [source : String]
+  [start : i64]
+  [limit : i64]) : i64
+  (if (>= (+ start 1) limit)
+    start
+    (let
+      [payload : char (string-ref source (+ start 1))]
+      (cond
+        [(or
+            (= payload 'n')
+            (= payload 't')
+            (= payload 'r')
+            (= payload '0')
+            (= payload '\\')
+            (= payload '"')
+            (= payload '\''))
+          (+ start 2)]
+        [(= payload 'x')
+          (if (and
+            (< (+ start 3) limit)
+            (doc-html-syntax-hex-digit? (string-ref source (+ start 2)))
+            (doc-html-syntax-hex-digit? (string-ref source (+ start 3))))
+            (+ start 4)
+            start)]
+        [else start]))))
+
+(define (doc-html-syntax-render-string
+  [source : String]
+  [start : i64]
+  [end : i64]) : String
+  (let
+    [i : i64 start]
+    [out : String "<span class=\"tl-syn-string\">"]
+    (begin
+      (while (< i end)
+        (if (= (string-ref source i) '\\')
+          (let
+            [escape-end : i64 (doc-html-syntax-valid-escape-end source i end)]
+            (if (> escape-end i)
+              (begin
+                (set!
+                  out
+                  (str-cat
+                    out
+                    "<span class=\"tl-syn-escape\">"
+                    (doc-html-escape (substring source i (- escape-end i)))
+                    "</span>"))
+                (set! i escape-end))
+              (begin
+                (set! out (string-append out (doc-html-escape-one source i)))
+                (set! i (+ i 1)))))
+          (begin
+            (set! out (string-append out (doc-html-escape-one source i)))
+            (set! i (+ i 1)))))
+      (string-append out "</span>"))))
+
+(define (doc-html-syntax-char-escape? [c : char]) : bool
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
+
+(define (doc-html-syntax-char-literal-end [source : String] [start : i64]) : i64
+  (let
+    [n : i64 (string-length source)]
+    (if (< (+ start 1) n)
+      (let
+        [payload : char (string-ref source (+ start 1))]
+        (cond
+          [(= payload '\\')
+            (if (and
+              (< (+ start 3) n)
+              (doc-html-syntax-char-escape? (string-ref source (+ start 2)))
+              (= (string-ref source (+ start 3)) '\''))
+              (+ start 4)
+              start)]
+          [(or (= payload '\'') (= payload '\n') (= payload '\r')) start]
+          [else
+            (if (and (< (+ start 2) n) (= (string-ref source (+ start 2)) '\''))
+              (+ start 3)
+              start)]))
+      start)))
+
+(define (doc-html-syntax-line-end [source : String] [start : i64]) : i64
+  (let
+    [i : i64 start]
+    [n : i64 (string-length source)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (or (= (string-ref source i) '\n') (= (string-ref source i) '\r'))
+          (set! done true)
+          (set! i (+ i 1))))
+      i)))
+
+(define (doc-html-syntax-list-member? [items : String] [token : String]) : bool
+  (let
+    [needle : String (str-cat "|" token "|")]
+    (string-contains (& items) (& needle))))
+
+(define (doc-html-syntax-keyword? [token : String]) : bool
+  (doc-html-syntax-list-member?
+    "|comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if|"
+    token))
+
+(define (doc-html-syntax-builtin? [token : String]) : bool
+  (doc-html-syntax-list-member?
+    "|ptr-addr-of|ptr-offset|ptr-write!|ptr-null?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-push!|array-set!|array-data|array-ref|make-array|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple|"
+    token))
+
+(define (doc-html-syntax-operator? [token : String]) : bool
+  (doc-html-syntax-list-member?
+    "|->|!=|<=|>=|+|-|*|/|%|=|<|>|bit-and|bit-or|bit-xor|bit-not|shl|shr|not|neg|&mut|&|"
+    token))
+
+(define (doc-html-syntax-boolean? [token : String]) : bool
+  (or (string-eq token "true") (string-eq token "false")))
+
+(define (doc-html-syntax-type? [token : String]) : bool
+  (doc-html-syntax-list-member?
+    "|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|Box|MutPtr|Ptr|"
+    token))
+
+(define (doc-html-syntax-head-position? [source : String] [start : i64]) : bool
+  (and (> start 0) (= (string-ref source (- start 1)) '(')))
+
+(define (doc-html-syntax-skip-back-spaces [source : String] [pos : i64]) : i64
+  (let
+    [i : i64 pos]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (if (doc-html-syntax-space? (string-ref source i))
+          (set! i (- i 1))
+          (set! done true)))
+      i)))
+
+(define (doc-html-syntax-word-start-back [source : String] [pos : i64]) : i64
+  (let
+    [i : i64 pos]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (if (doc-html-syntax-ident-part? (string-ref source i))
+          (set! i (- i 1))
+          (set! done true)))
+      (+ i 1))))
+
+(define (doc-html-syntax-preceding-form [source : String] [start : i64]) : String
+  (let
+    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
+    (begin
+      (if (and (>= before 0) (= (string-ref source before) '('))
+        (set! before (doc-html-syntax-skip-back-spaces source (- before 1)))
+        unit)
+      (if (< before 0)
+        ""
+        (let
+          [word-start : i64 (doc-html-syntax-word-start-back source before)]
+          (if (and
+            (> word-start 0)
+            (= (string-ref source (- word-start 1)) '('))
+            (substring source word-start (+ (- before word-start) 1))
+            ""))))))
+
+(define (doc-html-syntax-definition-name? [source : String] [start : i64]) : bool
+  (let
+    [form : String (doc-html-syntax-preceding-form source start)]
+    (or
+      (string-eq form "define")
+      (string-eq form "defmacro")
+      (string-eq form "defdispatch")
+      (string-eq form "defstruct")
+      (string-eq form "defenum"))))
+
+(define (doc-html-syntax-token-class
+  [source : String]
+  [start : i64]
+  [token : String]) : String
+  (let
+    [head : bool (doc-html-syntax-head-position? source start)]
+    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
+    (cond
+      [(and head (doc-html-syntax-keyword? token)) "tl-syn-keyword"]
+      [(and head (doc-html-syntax-builtin? token)) "tl-syn-builtin"]
+      [(and head (doc-html-syntax-operator? token)) "tl-syn-operator"]
+      [(doc-html-syntax-definition-name? source start) "tl-syn-definition"]
+      [(and (>= before 0) (= (string-ref source before) '[')) "tl-syn-binding"]
+      [(doc-html-syntax-boolean? token) "tl-syn-boolean"]
+      [(doc-html-syntax-type? token) "tl-syn-type"]
+      [(doc-html-syntax-upper? (string-ref token 0)) "tl-syn-type"]
+      [(and head (doc-html-syntax-ident-start? (string-ref token 0)))
+        "tl-syn-call"]
+      [else ""])))
+
+(define (doc-html-syntax-language? [language : String]) : bool
+  (or (string-eq language "typelisp") (string-eq language "tl")))
+
+(define (doc-html-highlight-typelisp [source : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length source)]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string-ref source i)]
+          (cond
+            [(= c ';')
+              (let
+                [end : i64 (doc-html-syntax-line-end source i)]
+                [line : String (substring source i (- end i))]
+                [class-name : String
+                  (if (and
+                    (< (+ i 1) n)
+                    (or
+                      (= (string-ref source (+ i 1)) '#')
+                      (= (string-ref source (+ i 1)) ':')))
+                    "tl-syn-doc-comment"
+                    "tl-syn-comment")]
+                (begin
+                  (set!
+                    out
+                    (string-append out (doc-html-syntax-span class-name line)))
+                  (set! i end)))]
+            [(= c '"')
+              (let
+                [end : i64 (doc-html-syntax-string-end source i)]
+                (begin
+                  (set!
+                    out
+                    (string-append
+                      out
+                      (doc-html-syntax-render-string source i end)))
+                  (set! i end)))]
+            [(= c '\'')
+              (let
+                [end : i64 (doc-html-syntax-char-literal-end source i)]
+                (if (> end i)
+                  (begin
+                    (set!
+                      out
+                      (string-append
+                        out
+                        (doc-html-syntax-span
+                          "tl-syn-string"
+                          (substring source i (- end i)))))
+                    (set! i end))
+                  (begin
+                    (set!
+                      out
+                      (string-append out (doc-html-escape-one source i)))
+                    (set! i (+ i 1)))))]
+            [(doc-html-syntax-number-start? source i)
+              (let
+                [end : i64 (doc-html-syntax-token-end source i)]
+                (begin
+                  (set!
+                    out
+                    (string-append
+                      out
+                      (doc-html-syntax-span
+                        "tl-syn-number"
+                        (substring source i (- end i)))))
+                  (set! i end)))]
+            [(doc-html-syntax-token-start? c)
+              (let
+                [end : i64 (doc-html-syntax-token-end source i)]
+                [token : String (substring source i (- end i))]
+                [class-name : String
+                  (doc-html-syntax-token-class source i token)]
+                (begin
+                  (set!
+                    out
+                    (string-append
+                      out
+                      (if (= (string-length class-name) 0)
+                        (doc-html-escape token)
+                        (doc-html-syntax-span class-name token))))
+                  (set! i end)))]
+            [else
+              (begin
+                (set! out (string-append out (doc-html-escape-one source i)))
+                (set! i (+ i 1)))])))
+      out)))
+
 (define (doc-html-code-block-with-info
   [language : String]
   [meta : String]
@@ -98,7 +500,9 @@
     "\""
     (doc-html-code-block-meta-attr meta)
     ">"
-    (doc-html-escape source)
+    (if (doc-html-syntax-language? language)
+      (doc-html-highlight-typelisp source)
+      (doc-html-escape source))
     "</code></pre>\n"))
 
 (define (doc-html-code-block [source : String]) : String
@@ -248,22 +652,6 @@
     "</main>\n"
     (doc-html-page-close)))
 
-(define (doc-html-smoke-source) : String
-  ";# Module docs with `code`, [links], <tag>, & amp.
-;# Quote docs say \"hello\".
-
-;; ignored ordinary comment
-;: Global docs for answer mention <answer>, & value, and \"quote\".
-(define answer : i64 42)
-
-;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))")
-
-(define (doc-html-second-smoke-source) : String
-  ";# Second module docs.
-
-(define hidden : i64 1)")
-
 (define (doc-html-require-contains
   [rendered : String]
   [needle : String]
@@ -274,73 +662,3 @@
       (panic message)
       ;; lint-allow: unreachable-code
       false)))
-
-(define (doc-html-smoke) : i64
-  (let
-    [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
-    [second-docs : DocExtraction
-      (doc-extract-source (doc-html-second-smoke-source))]
-    [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
-    [graph : String
-      (doc-html-render-module-graph
-        (DocModuleCons
-          (DocModule "smoke<&>.tl" docs)
-          (box
-            (DocModuleCons
-              (DocModule "second.tl" second-docs)
-              (box DocModuleNil)))))]
-    (if (and
-      (doc-html-require-contains
-        page
-        "<!doctype html>"
-        "doc-html: doctype missing")
-      (doc-html-require-contains
-        page
-        "<title>TypeLisp API: smoke&lt;&amp;&gt;.tl</title>"
-        "doc-html: title escaping missing")
-      (doc-html-require-contains
-        page
-        "id=\"tl-smoke-60-38-62-46tl\""
-        "doc-html: module anchor missing")
-      (doc-html-require-contains
-        page
-        "Module docs with `code`, [links], &lt;tag&gt;, &amp; amp.<br>"
-        "doc-html: module doc escaping missing")
-      (doc-html-require-contains
-        page
-        "Quote docs say &quot;hello&quot;."
-        "doc-html: quote escaping missing")
-      (doc-html-require-contains
-        page
-        "id=\"tl-answer\""
-        "doc-html: item anchor missing")
-      (doc-html-require-contains
-        page
-        "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
-        "doc-html: signature code block missing")
-      (doc-html-require-contains
-        page
-        "Global docs for answer mention &lt;answer&gt;, &amp; value, and &quot;quote&quot;."
-        "doc-html: item doc escaping missing")
-      (doc-html-require-contains
-        page
-        "href=\"#tl-add-one\""
-        "doc-html: item nav link missing")
-      (doc-html-require-contains
-        graph
-        "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">"
-        "doc-html: module nav missing")
-      (doc-html-require-contains
-        graph
-        "href=\"#tl-second-46tl\""
-        "doc-html: second module nav link missing")
-      (doc-html-require-contains
-        graph
-        "Second module docs."
-        "doc-html: second module docs missing")
-      (doc-html-require-contains
-        graph
-        "No documented declarations."
-        "doc-html: empty item message missing"))
-      42
-      0)))

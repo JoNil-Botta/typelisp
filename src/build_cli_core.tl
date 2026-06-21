@@ -3216,15 +3216,24 @@
   [manifest : CompilerPkgManifest]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTlciMetadata
-  (match (build-package-tlci-exports (struct-get manifest name) decls paths)
-    [(ErrTlciExportList message) (ErrTlciMetadata message)]
-    [(OkTlciExportList exports)
+  (match (struct-get manifest kind)
+    [(CompilerPkgKindBin)
       (OkTlciMetadata
         (TlciMetadata
           tlci-metadata-version
           (struct-get manifest name)
           (struct-get manifest version)
-          exports))]))
+          TlciExportNil))]
+    [(CompilerPkgKindLib)
+      (match (build-package-tlci-exports (struct-get manifest name) decls paths)
+        [(ErrTlciExportList message) (ErrTlciMetadata message)]
+        [(OkTlciExportList exports)
+          (OkTlciMetadata
+            (TlciMetadata
+              tlci-metadata-version
+              (struct-get manifest name)
+              (struct-get manifest version)
+              exports))])]))
 
 (define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
   (TlciImage
@@ -3378,11 +3387,54 @@
                         emitted
                         "stdlib.core_macros"))))]))])]))
 
+(define (build-package-tlci-bin-metadata-empty-ok?) : bool
+  (match (parse-ast-source (build-package-tlci-export-test-source))
+    [(ErrAstProgram _) false]
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (match (build-package-tlci-metadata
+            (CompilerPkgManifest
+              "tlci_meta"
+              "0.1.0"
+              (CompilerPkgKindBin)
+              "src/main.tl"
+              (compiler-pkg-deps-empty)
+              (compiler-pkg-link-empty))
+            (box-get decls-box)
+            (build-package-tlci-export-test-paths))
+            [(ErrTlciMetadata _) false]
+            [(OkTlciMetadata metadata)
+              (let
+                [emitted : String (tlci-metadata-emit metadata)]
+                (and
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(package (name \"tlci_meta\")")
+                  (not
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "exported-value"))
+                  (not
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "ExportedPoint"))
+                  (not
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "exported-macro"))))])])]))
+
 (test
   build-package-tlci-export-metadata-smoke
   (unless
     (build-package-tlci-export-metadata-smoke-ok?)
     (panic "build package tlci export metadata smoke failed")))
+
+(test
+  build-package-tlci-bin-metadata-empty
+  (unless
+    (build-package-tlci-bin-metadata-empty-ok?)
+    (panic "build package tlci bin metadata empty failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]
@@ -3432,31 +3484,27 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        [doctest-status : i64
-          (build-package-closure-doctest-status
-            name
-            entry-path
-            target
-            stdlib-roots
-            manifest-dir
-            (struct-get manifest deps)
-            emit-entry)]
-        (if (= doctest-status 0)
-          (begin
-            (compiler-driver-reset-file-state!)
-            (match (compiler-driver-load-package-file-with-runtime-owned
-              entry-path
-              target
-              stdlib-roots
-              manifest-dir
-              name
-              (struct-get manifest deps)
-              emit-entry)
-              [(ErrCompilerLoadWithPaths diag)
-                (begin
-                  (print-error (compiler-diagnostic-render diag))
-                  1)]
-              [(OkCompilerLoadWithPaths decls paths _ _)
+        (match (compiler-driver-load-package-file-with-runtime-owned
+          entry-path
+          target
+          stdlib-roots
+          manifest-dir
+          name
+          (struct-get manifest deps)
+          emit-entry)
+          [(ErrCompilerLoadWithPaths diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)]
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (let
+              [doctest-status : i64
+                (build-doctest-typecheck-package-paths
+                  (build-package-doctest-paths name paths)
+                  stdlib-roots
+                  manifest-dir
+                  (struct-get manifest deps))]
+              (if (= doctest-status 0)
                 (let
                   [metadata-link-inputs : SourceToolLinkInputs
                     (source-tool-link-inputs-from-decls
@@ -3508,18 +3556,8 @@
                             obj-path
                             artifact-path
                             effective-link-inputs
-                            (build-package-try-linux-direct-object
-                              kind
-                              target
-                              opt-level
-                              mode
-                              emit-entry
-                              crt-entry
-                              decls
-                              paths
-                              obj-path
-                              artifact-path
-                              effective-link-inputs))
+                            (SourceToolDirectObjectUnavailable
+                              "package assembly already emitted"))
                             [(SourceToolCommandErr message)
                               (begin
                                 (print-error message)
@@ -3544,8 +3582,8 @@
                                       (string-append
                                         "Built "
                                         (string-append tlci-path "\n")))
-                                    0)])])])]))]))
-          doctest-status)))))
+                                    0)])])])]))
+                doctest-status))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

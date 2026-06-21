@@ -3828,6 +3828,41 @@
           (IrInstrReturn (IrSomeValue (IrValueVar 2)))
           IrInstrNil)))))
 
+(define (compiler-backend-call-arg-rax-forward-direct-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 "producer" (IrCallArgsNil) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCall 1 "consume" (IrCallArgsOne (IrValueVar 0)) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        IrInstrNil))))
+
+(define (compiler-backend-call-arg-rax-forward-indirect-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 "producer" (IrCallArgsNil) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCallIndirect
+        1
+        (IrValueFunction "consume")
+        (IrCallArgsOne (IrValueVar 0))
+        (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        IrInstrNil))))
+
+(define (compiler-backend-call-arg-rax-nonleading-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrCall 0 "producer" (IrCallArgsNil) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrCall
+        1
+        "consume2"
+        (IrCallArgsTwo (IrValueI64 7) (IrValueVar 0))
+        (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        IrInstrNil))))
+
 (define (compiler-backend-emit-rax-forward-test-instrs
   [instrs : CompilerIrInstrList]
   [vars : i64]) : ResultCompilerBackend
@@ -3886,6 +3921,51 @@
             (compiler-backend-string-contains?
               multi-use-asm
               "    movq %rax, -8(%rbp)\n"))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-call-arg-rax-forwarding-ok?) : bool
+  (match (compiler-backend-emit-rax-forward-test-instrs
+    (compiler-backend-call-arg-rax-forward-direct-instrs)
+    2)
+    [(OkCompilerBackend direct-asm)
+      (match (compiler-backend-emit-rax-forward-test-instrs
+        (compiler-backend-call-arg-rax-forward-indirect-instrs)
+        2)
+        [(OkCompilerBackend indirect-asm)
+          (match (compiler-backend-emit-rax-forward-test-instrs
+            (compiler-backend-call-arg-rax-nonleading-instrs)
+            2)
+            [(OkCompilerBackend nonleading-asm)
+              (and
+                (compiler-backend-string-contains?
+                  direct-asm
+                  "    call _tl_producer\n")
+                (compiler-backend-string-contains?
+                  direct-asm
+                  "    movq %rax, -8(%rbp)\n")
+                (compiler-backend-string-contains?
+                  direct-asm
+                  "    movq %rax, %rdi\n")
+                (not
+                  (compiler-backend-string-contains?
+                    direct-asm
+                    "    movq -8(%rbp), %rdi\n"))
+                (compiler-backend-string-contains?
+                  indirect-asm
+                  "    movq %rax, %rsi\n")
+                (not
+                  (compiler-backend-string-contains?
+                    indirect-asm
+                    "    movq -8(%rbp), %rsi\n"))
+                (compiler-backend-string-contains?
+                  nonleading-asm
+                  "    movq -8(%rbp), %rsi\n")
+                (not
+                  (compiler-backend-string-contains?
+                    nonleading-asm
+                    "    movq %rax, %rsi\n")))]
+            [(ErrCompilerBackend _) false])]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
@@ -4064,6 +4144,7 @@
     (compiler-backend-bounds-operand-folding-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-rax-forwarding-ok?)
+    (compiler-backend-call-arg-rax-forwarding-ok?)
     (compiler-backend-long-normal-block-ok?)
     (compiler-backend-fallthrough-jump-ok?)
     (compiler-backend-branch-fallthrough-ok?)

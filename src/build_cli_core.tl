@@ -2685,15 +2685,41 @@
 (define (build-package-tlci-export-name [module : String] [name : String]) : String
   (compiler-symbol-module-key module name))
 
-(define (build-package-tlci-owned-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
   (if (= (string-length owner) 0)
-    true
+    false
     (let
-      [prefix : String (str-cat owner "/")]
+      [prefix : String (str-cat owner "/stdlib/")]
       [prefix-len : i64 (string-length prefix)]
       (and
         (>= (string-length path) prefix-len)
         (string-eq (substring path 0 prefix-len) prefix)))))
+
+(define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
+  (or
+    (compiler-load-stdlib-import? path)
+    (build-package-tlci-owner-stdlib-path? owner path)))
+
+(define (build-package-tlci-owned-path? [owner : String] [path : String]) : bool
+  (if (build-package-tlci-stdlib-path? owner path)
+    false
+    (if (= (string-length owner) 0)
+      true
+      (let
+        [prefix : String (str-cat owner "/")]
+        [prefix-len : i64 (string-length prefix)]
+        (and
+          (>= (string-length path) prefix-len)
+          (string-eq (substring path 0 prefix-len) prefix))))))
+
+(define (build-package-tlci-export-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclExport _) true]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (build-package-tlci-export-decl? inner))]
+    [_ false]))
 
 (define (build-package-tlci-path-head [paths : AstDeclPathList]) : String
   (match paths
@@ -3155,17 +3181,36 @@
         [(OkBuildPackageTlciExportState state)
           (OkTlciExportList (struct-get state tlci-exports))])]))
 
+(define (build-package-tlci-has-owned-exports?
+  [owner : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String (build-package-tlci-path-head paths)]
+        [rest-paths : AstDeclPathList (build-package-tlci-path-tail paths)]
+        (if (and
+          (build-package-tlci-export-decl? decl)
+          (build-package-tlci-owned-path? owner decl-path))
+          true
+          (build-package-tlci-has-owned-exports? owner rest rest-paths)))]))
+
 (define (build-package-tlci-exports
   [owner : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTlciExportList
-  (match (typecheck-compiler-program-with-paths-checked
-    (ast-program decls)
-    paths)
-    [(ErrCompilerTypecheckChecked diag)
-      (ErrTlciExportList (compiler-diagnostic-render diag))]
-    [(OkCompilerTypecheckChecked _ ctx top-env)
-      (build-package-tlci-exports-from-checked owner decls paths ctx top-env)]))
+  (if (not (build-package-tlci-has-owned-exports? owner decls paths))
+    (OkTlciExportList TlciExportNil)
+    (match (typecheck-compiler-program-with-paths-checked
+      (ast-program decls)
+      paths)
+      [(ErrCompilerTypecheckChecked diag)
+        (ErrTlciExportList (compiler-diagnostic-render diag))]
+      [(OkCompilerTypecheckChecked _ ctx top-env)
+        (build-package-tlci-exports-from-checked owner decls paths ctx top-env)])))
 
 (define (build-package-tlci-metadata
   [manifest : CompilerPkgManifest]
@@ -3218,7 +3263,19 @@
             (tlci-bytes->string bytes 0 (array-length bytes))
             "build: failed to write package tlci")])]))
 
+(define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
+  (match paths
+    [(AstDeclPathNil) AstDeclPathNil]
+    [(AstDeclPathCons path rest)
+      (let
+        [tail : AstDeclPathList
+          (build-package-doctest-paths owner (box-get rest))]
+        (if (build-package-tlci-stdlib-path? owner path)
+          tail
+          (ast-decl-path-cons path tail)))]))
+
 (define (build-package-closure-doctest-status
+  [owner : String]
   [entry-path : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
@@ -3238,7 +3295,7 @@
         1)]
     [(OkCompilerLoadWithPaths _ paths _ _)
       (build-doctest-typecheck-package-paths
-        paths
+        (build-package-doctest-paths owner paths)
         stdlib-roots
         manifest-dir
         deps)]))
@@ -3273,7 +3330,7 @@
 
 (define (build-package-tlci-export-test-paths) : AstDeclPathList
   (build-package-tlci-export-test-paths-repeat
-    "stdlib/core_macros.tl"
+    "tlci_meta/stdlib/core_macros.tl"
     3
     (build-package-tlci-export-test-paths-repeat
       "tlci_meta/src/lib.tl"
@@ -3377,6 +3434,7 @@
         [emit-entry : bool (build-package-kind-entry? kind)]
         [doctest-status : i64
           (build-package-closure-doctest-status
+            name
             entry-path
             target
             stdlib-roots

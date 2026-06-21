@@ -6815,6 +6815,67 @@
     (expr-list-nth args 1)))
 (define (main) : bool (second 42 true))")
 
+(define (compiler-typecheck-macro-binding-clause-fixed-source) : String
+  "(defmacro (binding-init [binding : ExprBindingClause]) : Expr
+  (if (string-eq (expr-binding-clause-name binding) \"answer\")
+    (if (expr-binding-clause-has-type? binding)
+      (expr-binding-clause-init binding)
+      (expr-binding-clause-init binding))
+    (expr-int 0)))
+(define (typed) : i64 (binding-init [answer : i64 40]))
+(define (inferred) : i64 (binding-init [answer 2]))
+(define (main) : i64 (+ (typed) (inferred)))")
+
+(define (compiler-typecheck-macro-binding-clause-variadic-source) : String
+  "(defmacro (sum-bindings [bindings : ExprBindingClause ...]) : i64
+  (if (expr-binding-clause-list-empty? bindings)
+    (expr-int 0)
+    (if (= (expr-binding-clause-list-length bindings) 2)
+      (let
+        [first : ExprBindingClause (expr-binding-clause-list-head bindings)]
+        [rest : ExprBindingClauseList (expr-binding-clause-list-tail bindings)]
+        [second : ExprBindingClause (expr-binding-clause-list-nth bindings 1)]
+        (if (string-eq (expr-binding-clause-name first) \"a\")
+          (if (string-eq (expr-binding-clause-name second) \"b\")
+            (if (expr-binding-clause-has-type? first)
+              (if (expr-binding-clause-has-type? second)
+                (expr-int 0)
+                `(+ ,(expr-binding-clause-init first) ,(expr-binding-clause-init second)))
+              (expr-int 0))
+            (expr-int 0))
+          (expr-int 0)))
+      (expr-int 0))))
+(defmacro (forward-bindings [bindings : ExprBindingClause ...]) : i64
+  `(sum-bindings ,@(expr-binding-clause-list->expr-list bindings)))
+(define (main) : i64 (forward-bindings [a : i64 20] [b 22]))")
+
+(define (compiler-typecheck-macro-binding-clause-non-bracket-source) : String
+  "(defmacro (take-binding [binding : ExprBindingClause]) : i64 (expr-int 0))
+(define (main) : i64 (take-binding 1))")
+
+(define (compiler-typecheck-macro-binding-clause-short-source) : String
+  "(defmacro (take-binding [binding : ExprBindingClause]) : i64 (expr-int 0))
+(define (main) : i64 (take-binding [x]))")
+
+(define (compiler-typecheck-macro-binding-clause-missing-init-source) : String
+  "(defmacro (take-binding [binding : ExprBindingClause]) : i64 (expr-int 0))
+(define (main) : i64 (take-binding [x : i64]))")
+
+(define (compiler-typecheck-macro-binding-clause-extra-source) : String
+  "(defmacro (take-binding [binding : ExprBindingClause]) : i64 (expr-int 0))
+(define (main) : i64 (take-binding [x : i64 1 2]))")
+
+(define (compiler-typecheck-macro-binding-clause-type-source) : String
+  "(defmacro (binding-type [binding : ExprBindingClause]) : Expr
+  (if (expr-binding-clause-has-type? binding)
+    (expr-binding-clause-type binding)
+    (expr-int 0)))
+(define (main) : i64 (binding-type [x : i64 1]))")
+
+(define (compiler-typecheck-macro-expr-clause-still-narrow-source) : String
+  "(defmacro (take-clause [arm : ExprClause]) : i64 (expr-clause-second arm))
+(define (main) : i64 (take-clause [x : i64 1]))")
+
 (define (compiler-typecheck-macro-expr-type-source) : String
   "(defstruct Point (x i64))
 (defmacro (kind-code [value : Expr]) : i64
@@ -7387,6 +7448,28 @@
       (compiler-typecheck-macro-expr-wildcard-expanded-mismatch-source)
       "typecheck: if branches must match")
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-list-nth-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-binding-clause-fixed-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-binding-clause-variadic-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-non-bracket-source)
+      "typecheck: ExprBindingClause macro operand expects bracket syntax")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-short-source)
+      "typecheck: ExprBindingClause macro operand expects bracket clause [name expr] or [name : Type expr]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-missing-init-source)
+      "typecheck: ExprBindingClause macro operand expects bracket clause [name expr] or [name : Type expr]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-extra-source)
+      "typecheck: ExprBindingClause macro operand expects bracket clause [name expr] or [name : Type expr]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-type-source)
+      "typecheck: unbound name i64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expr-clause-still-narrow-source)
+      "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
     (compiler-typecheck-ok? (compiler-typecheck-macro-expr-type-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-expr-type-source))

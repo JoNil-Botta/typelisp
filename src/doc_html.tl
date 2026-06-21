@@ -109,9 +109,6 @@
     (and (>= c 'A') (<= c 'F'))
     (and (>= c 'a') (<= c 'f'))))
 
-(define (doc-html-syntax-binary-digit? [c : char]) : bool
-  (or (= c '0') (= c '1')))
-
 (define (doc-html-syntax-ident-start? [c : char]) : bool
   (or (doc-html-syntax-alpha? c) (= c '_')))
 
@@ -171,27 +168,6 @@
           (set! i (+ i 1))))
       i)))
 
-(define (doc-html-syntax-scan-digits
-  [source : String]
-  [start : i64]
-  [base : i64]) : i64
-  (let
-    [i : i64 start]
-    [n : i64 (string-length source)]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (let
-          [c : char (string-ref source i)]
-          (if (if (= base 2)
-            (doc-html-syntax-binary-digit? c)
-            (if (= base 16)
-              (doc-html-syntax-hex-digit? c)
-              (doc-html-syntax-digit? c)))
-            (set! i (+ i 1))
-            (set! done true))))
-      i)))
-
 (define (doc-html-syntax-number-start? [source : String] [start : i64]) : bool
   (let
     [n : i64 (string-length source)]
@@ -211,84 +187,6 @@
               (= c '-')
               (< (+ start 1) n)
               (doc-html-syntax-digit? (string-ref source (+ start 1))))))))))
-
-(define (doc-html-syntax-number-end [source : String] [start : i64]) : i64
-  (let
-    [n : i64 (string-length source)]
-    [i : i64 start]
-    (begin
-      (unless (doc-html-syntax-number-start? source start) (return start))
-      (if (= (string-ref source i) '-')
-        (set! i (+ i 1))
-        unit)
-      (if (and
-        (< (+ i 2) n)
-        (= (string-ref source i) '0')
-        (or
-          (= (string-ref source (+ i 1)) 'x')
-          (= (string-ref source (+ i 1)) 'X')))
-        (let
-          [digits-start : i64 (+ i 2)]
-          [digits-end : i64 (doc-html-syntax-scan-digits source (+ i 2) 16)]
-          (if (> digits-end digits-start)
-            digits-end
-            start))
-        (if (and
-          (< (+ i 2) n)
-          (= (string-ref source i) '0')
-          (or
-            (= (string-ref source (+ i 1)) 'b')
-            (= (string-ref source (+ i 1)) 'B')))
-          (let
-            [digits-start : i64 (+ i 2)]
-            [digits-end : i64 (doc-html-syntax-scan-digits source (+ i 2) 2)]
-            (if (> digits-end digits-start)
-              digits-end
-              start))
-          (let
-            [digits-end : i64 (doc-html-syntax-scan-digits source i 10)]
-            [out-end : i64 (doc-html-syntax-scan-digits source i 10)]
-            (begin
-              (set! out-end digits-end)
-              (if (and
-                (< (+ out-end 1) n)
-                (= (string-ref source out-end) '.')
-                (doc-html-syntax-digit? (string-ref source (+ out-end 1))))
-                (begin
-                  (set!
-                    out-end
-                    (doc-html-syntax-scan-digits source (+ out-end 1) 10))
-                  (if (and
-                    (< (+ out-end 1) n)
-                    (or
-                      (= (string-ref source out-end) 'e')
-                      (= (string-ref source out-end) 'E')))
-                    (let
-                      [exp-start : i64
-                        (if (and
-                          (< (+ out-end 2) n)
-                          (or
-                            (= (string-ref source (+ out-end 1)) '+')
-                            (= (string-ref source (+ out-end 1)) '-')))
-                          (+ out-end 2)
-                          (+ out-end 1))]
-                      [exp-end : i64
-                        (doc-html-syntax-scan-digits
-                          source
-                          (if (and
-                            (< (+ out-end 2) n)
-                            (or
-                              (= (string-ref source (+ out-end 1)) '+')
-                              (= (string-ref source (+ out-end 1)) '-')))
-                            (+ out-end 2)
-                            (+ out-end 1))
-                          10)]
-                      (if (> exp-end exp-start)
-                        (set! out-end exp-end)
-                        unit))
-                    unit))
-                unit)
-              out-end)))))))
 
 (define (doc-html-syntax-string-end [source : String] [start : i64]) : i64
   (let
@@ -422,21 +320,12 @@
     token))
 
 (define (doc-html-syntax-boolean? [token : String]) : bool
-  (doc-html-syntax-list-member? "|true|false|" token))
+  (or (string-eq token "true") (string-eq token "false")))
 
 (define (doc-html-syntax-type? [token : String]) : bool
   (doc-html-syntax-list-member?
     "|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|Box|MutPtr|Ptr|"
     token))
-
-(define (doc-html-syntax-function-def-form? [token : String]) : bool
-  (or
-    (string-eq token "define")
-    (string-eq token "defmacro")
-    (string-eq token "defdispatch")))
-
-(define (doc-html-syntax-type-def-form? [token : String]) : bool
-  (or (string-eq token "defstruct") (string-eq token "defenum")))
 
 (define (doc-html-syntax-head-position? [source : String] [start : i64]) : bool
   (and (> start 0) (= (string-ref source (- start 1)) '(')))
@@ -480,59 +369,35 @@
             (substring source word-start (+ (- before word-start) 1))
             ""))))))
 
-(define (doc-html-syntax-definition-function-name?
-  [source : String]
-  [start : i64]) : bool
-  (doc-html-syntax-function-def-form?
-    (doc-html-syntax-preceding-form source start)))
-
-(define (doc-html-syntax-definition-type-name? [source : String] [start : i64]) : bool
-  (doc-html-syntax-type-def-form? (doc-html-syntax-preceding-form source start)))
-
-(define (doc-html-syntax-binding-name? [source : String] [start : i64]) : bool
+(define (doc-html-syntax-definition-name? [source : String] [start : i64]) : bool
   (let
-    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
-    (and (>= before 0) (= (string-ref source before) '['))))
-
-(define (doc-html-syntax-user-type? [token : String]) : bool
-  (and
-    (> (string-length token) 0)
-    (doc-html-syntax-upper? (string-ref token 0))))
-
-(define (doc-html-syntax-function-call-token? [token : String]) : bool
-  (and
-    (> (string-length token) 0)
-    (doc-html-syntax-ident-start? (string-ref token 0))))
+    [form : String (doc-html-syntax-preceding-form source start)]
+    (or
+      (string-eq form "define")
+      (string-eq form "defmacro")
+      (string-eq form "defdispatch")
+      (string-eq form "defstruct")
+      (string-eq form "defenum"))))
 
 (define (doc-html-syntax-token-class
   [source : String]
   [start : i64]
   [token : String]) : String
-  (cond
-    [(and
-        (doc-html-syntax-head-position? source start)
-        (doc-html-syntax-keyword? token))
-      "tl-syn-keyword"]
-    [(and
-        (doc-html-syntax-head-position? source start)
-        (doc-html-syntax-builtin? token))
-      "tl-syn-builtin"]
-    [(and
-        (doc-html-syntax-head-position? source start)
-        (doc-html-syntax-operator? token))
-      "tl-syn-operator"]
-    [(doc-html-syntax-definition-function-name? source start)
-      "tl-syn-definition"]
-    [(doc-html-syntax-definition-type-name? source start) "tl-syn-definition"]
-    [(doc-html-syntax-binding-name? source start) "tl-syn-binding"]
-    [(doc-html-syntax-boolean? token) "tl-syn-boolean"]
-    [(doc-html-syntax-type? token) "tl-syn-type"]
-    [(doc-html-syntax-user-type? token) "tl-syn-type"]
-    [(and
-        (doc-html-syntax-head-position? source start)
-        (doc-html-syntax-function-call-token? token))
-      "tl-syn-call"]
-    [else ""]))
+  (let
+    [head : bool (doc-html-syntax-head-position? source start)]
+    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
+    (cond
+      [(and head (doc-html-syntax-keyword? token)) "tl-syn-keyword"]
+      [(and head (doc-html-syntax-builtin? token)) "tl-syn-builtin"]
+      [(and head (doc-html-syntax-operator? token)) "tl-syn-operator"]
+      [(doc-html-syntax-definition-name? source start) "tl-syn-definition"]
+      [(and (>= before 0) (= (string-ref source before) '[')) "tl-syn-binding"]
+      [(doc-html-syntax-boolean? token) "tl-syn-boolean"]
+      [(doc-html-syntax-type? token) "tl-syn-type"]
+      [(doc-html-syntax-upper? (string-ref token 0)) "tl-syn-type"]
+      [(and head (doc-html-syntax-ident-start? (string-ref token 0)))
+        "tl-syn-call"]
+      [else ""])))
 
 (define (doc-html-syntax-language? [language : String]) : bool
   (or (string-eq language "typelisp") (string-eq language "tl")))
@@ -594,22 +459,16 @@
                     (set! i (+ i 1)))))]
             [(doc-html-syntax-number-start? source i)
               (let
-                [end : i64 (doc-html-syntax-number-end source i)]
-                (if (> end i)
-                  (begin
-                    (set!
+                [end : i64 (doc-html-syntax-token-end source i)]
+                (begin
+                  (set!
+                    out
+                    (string-append
                       out
-                      (string-append
-                        out
-                        (doc-html-syntax-span
-                          "tl-syn-number"
-                          (substring source i (- end i)))))
-                    (set! i end))
-                  (begin
-                    (set!
-                      out
-                      (string-append out (doc-html-escape-one source i)))
-                    (set! i (+ i 1)))))]
+                      (doc-html-syntax-span
+                        "tl-syn-number"
+                        (substring source i (- end i)))))
+                  (set! i end)))]
             [(doc-html-syntax-token-start? c)
               (let
                 [end : i64 (doc-html-syntax-token-end source i)]

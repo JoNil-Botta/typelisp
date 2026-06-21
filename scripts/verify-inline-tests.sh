@@ -103,86 +103,17 @@ discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
 batch_check_stdout="$WORKDIR/check.batch.stdout"
 batch_check_stderr="$WORKDIR/check.batch.stderr"
 check_counts="$WORKDIR/check.counts.txt"
-: > "$batch_check_stdout"
-: > "$batch_check_stderr"
 
-batch_size=${VERIFY_INLINE_TESTS_BATCH_SIZE:-0}
-case "$batch_size" in
-    '' | *[!0-9]*)
-        echo "invalid VERIFY_INLINE_TESTS_BATCH_SIZE: $batch_size" >&2
-        exit 1
-        ;;
-esac
-if [ "$HOST_OS" = windows ] && [ "$batch_size" -eq 0 ]; then
-    # Windows CI has less practical headroom for the single large inline-test
-    # batch. Keep exercising `test --check --batch`, but do it in bounded
-    # chunks so coverage is preserved without relying on a single peak.
-    batch_size=16
-fi
-
-run_check_batch() {
-    _list=$1
-    _label=$2
-    _stdout=$3
-    _stderr=$4
-    echo "[inline-tests] check $_label"
-    if run_with_retry "$_stdout" "$_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test --check --batch "$_list" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
-        return 0
-    fi
-    return $?
-}
-
-batch_check_status=0
-if [ "$batch_size" -gt 0 ] && [ "$discovered_file_count" -gt "$batch_size" ]; then
-    chunk_index=1
-    chunk_line_count=0
-    chunk_path="$WORKDIR/check.chunk.$chunk_index.txt"
-    : > "$chunk_path"
-
-    run_current_chunk() {
-        chunk_stdout="$WORKDIR/check.chunk.$chunk_index.stdout"
-        chunk_stderr="$WORKDIR/check.chunk.$chunk_index.stderr"
-        if run_check_batch "$chunk_path" "chunk $chunk_index ($chunk_line_count file(s))" "$chunk_stdout" "$chunk_stderr"; then
-            chunk_status=0
-        else
-            chunk_status=$?
-        fi
-        cat "$chunk_stdout" >> "$batch_check_stdout" || true
-        cat "$chunk_stderr" >> "$batch_check_stderr" || true
-        if [ "$chunk_status" -ne 0 ]; then
-            batch_check_status=$chunk_status
-            return 1
-        fi
-        chunk_index=$((chunk_index + 1))
-        chunk_line_count=0
-        chunk_path="$WORKDIR/check.chunk.$chunk_index.txt"
-        : > "$chunk_path"
-        return 0
-    }
-
-    while IFS= read -r source; do
-        [ -n "$source" ] || continue
-        printf '%s\n' "$source" >> "$chunk_path"
-        chunk_line_count=$((chunk_line_count + 1))
-        if [ "$chunk_line_count" -ge "$batch_size" ]; then
-            run_current_chunk || break
-        fi
-    done < "$DISCOVERED"
-    if [ "$batch_check_status" -eq 0 ] && [ "$chunk_line_count" -gt 0 ]; then
-        run_current_chunk || true
-    fi
+echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
+# #2609: `test --check --batch` scopes each entry in its own compiler arena and
+# resets per-file compiler state between entries, matching compile --batch. Keep
+# the verifier batched so CI exercises that bounded-memory path.
+if run_with_retry "$batch_check_stdout" "$batch_check_stderr" \
+    "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
+    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
+    batch_check_status=0
 else
-    # #2609: `test --check --batch` scopes each entry in its own compiler arena
-    # and resets per-file compiler state between entries, matching compile
-    # --batch. Keep the default verifier batched so CI exercises that
-    # bounded-memory path.
-    if run_check_batch "$DISCOVERED" "($discovered_file_count file(s), one batch process)" "$batch_check_stdout" "$batch_check_stderr"; then
-        batch_check_status=0
-    else
-        batch_check_status=$?
-    fi
+    batch_check_status=$?
 fi
 if [ "$batch_check_status" -ne 0 ]; then
     echo "inline test batch typecheck failed" >&2

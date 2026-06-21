@@ -510,9 +510,7 @@
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (begin
     (set! compiler-load-active-session-state state)
-    (if (compiler-load-session-cache-enabled?)
-      (intern-persistent-storage-enable!)
-      (intern-persistent-storage-disable!))))
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-enable!) : unit
   (begin
@@ -520,7 +518,7 @@
       (struct-get compiler-load-active-session-state cache-enabled)
       0
       true)
-    (intern-persistent-storage-enable!)))
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
   (if enabled
@@ -4891,6 +4889,15 @@
         (compiler-load-session-cache-disable-for-test!)
         ok))))
 
+(define (compiler-load-session-cache-enable-persistent-off-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (let
+      [ok : bool (not (intern-persistent-storage-on?))]
+      (begin
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
 (define (compiler-load-session-persistent-floor-interns-ok?) : bool
   (begin
     (compiler-load-session-cache-enable!)
@@ -7539,6 +7546,14 @@
         (begin
           (panic
             "compiler-load: disabled program cache left persistent intern storage on")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-cache-enable-persistent-off-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: session cache enable left persistent intern storage on")
           ;; lint-allow: unreachable-code
           0)))
     (unless

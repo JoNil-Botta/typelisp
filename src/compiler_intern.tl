@@ -90,7 +90,7 @@
 (define intern-slice-cache3-ready : bool
   false)
 (define intern-persistent-arena : i64
-  (intern-arena-current))
+  (intern-arena-make))
 (define intern-persistent-storage-enabled : bool
   false)
 
@@ -102,6 +102,15 @@
 
 (define (intern-persistent-storage-on?) : bool
   intern-persistent-storage-enabled)
+
+(define (intern-persistent-arena-reset!) : unit
+  (let
+    [old-arena : i64 intern-persistent-arena]
+    [new-arena : i64 (intern-arena-make)]
+    (begin
+      (set! intern-persistent-arena new-arena)
+      (unsafe
+        (intern-arena-destroy old-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),

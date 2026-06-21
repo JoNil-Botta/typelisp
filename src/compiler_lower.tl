@@ -2019,6 +2019,13 @@
 (define lower-spmd-inline-next-temp : i64
   0)
 
+(define (lower-reset-file-state!) : unit
+  (begin
+    (set! lower-entry-main-module-active false)
+    (set! lower-entry-main-module "")
+    (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
+    (set! lower-spmd-inline-next-temp 0)))
+
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
 

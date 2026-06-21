@@ -38,11 +38,13 @@
   (type-pool (Array AstTypeNodePoolState))
   (builtin-ids (Array CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
-  (load-session CompilerLoadSessionState))
+  (load-session CompilerLoadSessionState)
+  (pool-arena (Array i64)))
 
-(define (compiler-driver-state-new-from-pools
+(define (compiler-driver-state-new-from-pools-and-arena
   [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]) : CompilerDriverState
+  [type-pool : AstTypeNodePoolState]
+  [pool-arena : i64]) : CompilerDriverState
   (let
     [expr-cell : (Array AstExprNodePoolState)
       (make-array AstExprNodePoolState 1)]
@@ -52,17 +54,25 @@
       (make-array CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
       (make-array CompilerLowerArenaState 1)]
+    [pool-arena-cell : (Array i64) (make-array i64 1)]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
       (array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
       (array-set! lower-cell 0 (compiler-lower-arena-state-new))
+      (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
         builtin-cell
         lower-cell
-        (compiler-load-session-state-new)))))
+        (compiler-load-session-state-new)
+        pool-arena-cell))))
+
+(define (compiler-driver-state-new-from-pools
+  [expr-pool : AstExprNodePoolState]
+  [type-pool : AstTypeNodePoolState]) : CompilerDriverState
+  (compiler-driver-state-new-from-pools-and-arena expr-pool type-pool 0))
 
 (define (compiler-driver-state-new) : CompilerDriverState
   (compiler-driver-state-new-from-pools
@@ -71,10 +81,12 @@
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
+    [pool-arena : i64 (arena-make)]
     [state : CompilerDriverState
-      (compiler-driver-state-new-from-pools
-        (ast-node-pool-state-capture)
-        (ty-node-pool-state-capture))]
+      (compiler-driver-state-new-from-pools-and-arena
+        (ast-expr-node-pool-state-init 2097152 pool-arena)
+        (ast-type-node-pool-state-init 262144 pool-arena)
+        pool-arena)]
     (begin
       (compiler-builtin-ids-state-capture-from-globals!
         (array-ref (struct-get state builtin-ids) 0))
@@ -121,6 +133,48 @@
   (ast-node-pool-context-from-cells
     (struct-get state expr-pool)
     (struct-get state type-pool)))
+
+(define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
+  (array-ref (struct-get state pool-arena) 0))
+
+(define (compiler-driver-state-has-owned-pool-arena?
+  [state : CompilerDriverState]) : bool
+  (not (= (compiler-driver-state-owned-pool-arena state) 0)))
+
+(define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
+  [state : CompilerDriverState]) : unit
+  (if (or
+    (not (compiler-driver-state-has-owned-pool-arena? state))
+    (compiler-driver-state-session-cache-enabled? state))
+    unit
+    (let
+      [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
+      [new-arena : i64 (arena-make)]
+      (begin
+        (compiler-load-session-floors-set! 0 0 0)
+        (compiler-load-program-cache-clear!)
+        (compiler-load-runtime-prelude-cache-clear!)
+        (tc-prefix-snapshot-cache-clear!)
+        (array-set! (struct-get state pool-arena) 0 new-arena)
+        (array-set!
+          (struct-get state expr-pool)
+          0
+          (ast-expr-node-pool-state-init 2097152 new-arena))
+        (array-set!
+          (struct-get state type-pool)
+          0
+          (ast-type-node-pool-state-init 262144 new-arena))
+        (compiler-driver-state-install-pools! state)
+        (unsafe
+          (arena-destroy old-arena))))))
+
+(define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
+  [state : CompilerDriverState]) : unit
+  (if (or
+    (not (compiler-driver-state-has-owned-pool-arena? state))
+    (compiler-driver-state-session-cache-enabled? state))
+    unit
+    (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (compiler-builtin-ids-state-install!
@@ -218,25 +272,30 @@
     (compiler-load-session-reset-interns!)
     (compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
+    (lower-reset-file-state!)
     ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
     ;; the escaped IR stays alive until the next file reset.
     (lower-arenas-release!)))
 
 (define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
-  (let
-    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
-    (begin
-      (compiler-driver-state-apply-session-flags! state)
-      (compiler-load-session-reset-pools-with-pools! pools)
-      (compiler-driver-state-install-pools! state)
-      (compiler-load-session-reset-interns!)
-      (compiler-driver-state-install-transients! state)
-      (compiler-builtin-reset!)
-      (compiler-typecheck-reset-file-state!)
-      ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
-      ;; the escaped IR stays alive until the next file reset.
-      (lower-arenas-release!)
-      (compiler-driver-state-capture-active-transients! state))))
+  (begin
+    (compiler-driver-state-apply-session-flags! state)
+    (compiler-driver-state-reset-owned-pool-arena-if-uncached! state)
+    (let
+      [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+      (begin
+        (compiler-load-session-reset-pools-with-pools! pools)
+        (compiler-driver-state-install-pools! state)
+        (compiler-load-session-reset-interns!)
+        (compiler-driver-state-install-transients! state)
+        (compiler-builtin-reset!)
+        (compiler-typecheck-reset-file-state!)
+        (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+        (lower-reset-file-state!)
+        ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
+        ;; the escaped IR stays alive until the next file reset.
+        (lower-arenas-release!)
+        (compiler-driver-state-capture-active-transients! state)))))
 
 (cfg
   compile-profile

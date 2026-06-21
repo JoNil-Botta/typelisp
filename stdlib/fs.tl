@@ -2812,13 +2812,7 @@
                 "cleanup read-dir temp dir: ")
               42)))))))
 
-(cfg
-  test
-  (test
-    fs-api
-    (if (= (fs-test-api-main) 42)
-      unit
-      (fs-test-fail "fs-api did not return 42"))))
+(cfg test (export (value fs-test-api-main)))
 
 (export
   (value fs-linux-syscall-mkdir)

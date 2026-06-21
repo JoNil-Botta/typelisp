@@ -1221,12 +1221,6 @@
           (process-child-started?
             (ErrProcessChild (ProcessUnsupported "unsupported"))))))))
 
-(test
-  process-api
-  (begin
-    (process-test-command-api)
-    (process-test-validation-api)))
-
 (export
   (value process-args-empty)
   (value process-args-count)

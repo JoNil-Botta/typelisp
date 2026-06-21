@@ -775,6 +775,22 @@
             (compiler-symbols-lookup-value symbols fallback)]
           [(TcNoString) NoneI64])])))
 
+(define (lower-source-name-lookup-key
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : String]) : ResultTcString
+  (if (tc-source-slash-qualified? name)
+    (OkTcString name)
+    (tc-source-name-lookup-key ctx type-env name)))
+
+(define (lower-source-name-lookup-key-after-local-field-check
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : String]) : ResultTcString
+  (if (tc-source-slash-qualified? name)
+    (OkTcString name)
+    (tc-source-name-lookup-key-after-local-field-check ctx type-env name)))
+
 (define (lower-lookup-type
   [ctx : TcContext]
   [type-cache : LowerTypeCache]
@@ -787,9 +803,10 @@
       [(ErrTcExprId message) (ErrTcType message)])
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
-      (match (if (tc-name-qualified? name)
-        (OkTcString name)
-        (tc-source-name-lookup-key-after-local-field-check ctx type-env name))
+      (match (lower-source-name-lookup-key-after-local-field-check
+        ctx
+        type-env
+        name)
         [(OkTcString lookup-name)
           (match (sym-i64-lookup env lookup-name)
             [(SomeI64 _) (tc-lookup type-env lookup-name)]
@@ -939,6 +956,9 @@
         ""
         (substring path 0 (+ last 1))))))
 
+(define (lower-normalize-path [path : String]) : String
+  (fs-path-normalize (& path)))
+
 (define (lower-string-prefix-at?
   [text : String]
   [prefix : String]
@@ -966,6 +986,8 @@
 
 (define (lower-module-id [entry-path : String] [decl-path : String]) : String
   (let
+    [entry-path : String (lower-normalize-path entry-path)]
+    [decl-path : String (lower-normalize-path decl-path)]
     [base : String (lower-dirname entry-path)]
     [base-len : i64 (string-length base)]
     [decl-len : i64 (string-length decl-path)]
@@ -977,7 +999,11 @@
   [entry-path : String]
   [decl-path : String]
   [source-name : String]) : String
-  (if (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+  (if (and
+    (string-eq
+      (lower-normalize-path decl-path)
+      (lower-normalize-path entry-path))
+    (string-eq source-name "main"))
     "main"
     (string-append
       (string-append (lower-module-id entry-path decl-path) "::")
@@ -999,7 +1025,9 @@
   [module : String]
   [source-name : String]) : bool
   (and
-    (string-eq decl-path entry-path)
+    (string-eq
+      (lower-normalize-path decl-path)
+      (lower-normalize-path entry-path))
     (string-eq source-name "main")
     (lower-entry-main-module-match? module)))
 
@@ -1025,7 +1053,11 @@
   [scan : LowerEntryMainScan]) : LowerEntryMainScan
   (match scan
     [(LowerEntryMainScan fallback-count fallback-module preferred)
-      (if (and (string-eq decl-path entry-path) (lower-entry-main-decl? decl))
+      (if (and
+        (string-eq
+          (lower-normalize-path decl-path)
+          (lower-normalize-path entry-path))
+        (lower-entry-main-decl? decl))
         (if (or (string-eq module "") (string-eq module "main"))
           (LowerEntryMainScan fallback-count fallback-module true)
           (LowerEntryMainScan (+ fallback-count 1) module preferred))
@@ -2056,8 +2088,7 @@
           [(lower-string-set-contains? shadowed raw-text) (ErrTcString "")]
           [(tc-hygiene-global-name? raw-text)
             (OkTcString (tc-hygiene-global-call-name raw-text))]
-          [(tc-name-qualified? raw-text) (OkTcString raw-text)]
-          [else (tc-source-name-lookup-key ctx type-env raw-text)]))]
+          [else (lower-source-name-lookup-key ctx type-env raw-text)]))]
     [_ (ErrTcString "")]))
 
 (define (lower-spmd-inline-helper-lookup
@@ -9993,9 +10024,9 @@
           (lower-atomic-extern-symbol-for-name
             ctx
             (tc-hygiene-global-call-name raw-text))
-          (if (tc-name-qualified? raw-text)
+          (if (tc-source-slash-qualified? raw-text)
             (lower-atomic-extern-symbol-for-name ctx raw-text)
-            (match (tc-source-name-lookup-key ctx type-env raw-text)
+            (match (lower-source-name-lookup-key ctx type-env raw-text)
               [(OkTcString lookup-name)
                 (lower-atomic-extern-symbol-for-name ctx lookup-name)]
               [(ErrTcString _) ""]))))]
@@ -11969,14 +12000,13 @@
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
   (match ctx
     [(TcContext _ symbols _ module _)
-      (let
-        [lookup-name : String
-          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-            (compiler-symbol-module-key module name)
-            name)]
-        (match (compiler-symbols-lookup-value symbols lookup-name)
-          [(SomeI64 _) true]
-          [(NoneI64) false]))]))
+      (match (if (and
+        (> (string-length module) 0)
+        (not (tc-name-qualified? name)))
+        (compiler-symbols-lookup-value-in-module symbols module name)
+        (compiler-symbols-lookup-value symbols name))
+        [(SomeI64 _) true]
+        [(NoneI64) false])]))
 
 (define (lower-builtin-call-available?
   [ctx : TcContext]
@@ -14061,9 +14091,7 @@
       [(NoneI64)
         (let
           [name : String (intern-str name-id)]
-          (match (if (tc-name-qualified? name)
-            (OkTcString name)
-            (tc-source-name-lookup-key ctx type-env name))
+          (match (lower-source-name-lookup-key ctx type-env name)
             [(OkTcString lookup-name)
               (lower-nullary-variant-or-function-value
                 ctx
@@ -20124,9 +20152,7 @@
             [(NoneI64)
               (match (if (tc-hygiene-global-name? raw-text)
                 (OkTcString (tc-hygiene-global-call-name raw-text))
-                (if (tc-name-qualified? raw-text)
-                  (OkTcString raw-text)
-                  (tc-source-name-lookup-key ctx type-env raw-text)))
+                (lower-source-name-lookup-key ctx type-env raw-text))
                 [(OkTcString name)
                   ;; `array-length`/`length` on a dynamic array, and
                   ;; `string-length`/`length` on a String, load the fat value's length
@@ -32372,9 +32398,7 @@
             [(NoneI64)
               (match (if (tc-hygiene-global-name? raw-text)
                 (OkTcString (tc-hygiene-global-call-name raw-text))
-                (if (tc-name-qualified? raw-text)
-                  (OkTcString raw-text)
-                  (tc-source-name-lookup-key ctx type-env raw-text)))
+                (lower-source-name-lookup-key ctx type-env raw-text))
                 [(OkTcString name)
                   (lower-return-call-name-to-sret
                     ctx
@@ -35279,6 +35303,7 @@
     ;; with helper contexts before final lowering. Emitted code must use one
     ;; internally consistent layout view for all functions in this pass.
     (tc-agg-caches-reset!)
+    (tc-nominal-owner-cache-reset!)
     (match program
       [(AstProgram decls-box)
         (let
@@ -36069,6 +36094,13 @@
     [(ErrCompilerLower diag)
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
+
+(define (compiler-lower-entry-moduled-main-ok?) : bool
+  (and
+    (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "main")
+    (lower-decl-entry-main? "src\\app.tl" "src/app.tl" "app.main" "main")
+    (not (lower-decl-entry-main? "src/app.tl" "src/lib.tl" "app.main" "main"))
+    (not (lower-decl-entry-main? "src/app.tl" "src/app.tl" "app.main" "helper"))))
 
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
@@ -36940,6 +36972,56 @@
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")
 
+;; #3447: payload offset lookup must not depend on earlier enum families or on
+;; helper/constructor ordering when String and i64 payload result enums coexist.
+(define (compiler-lower-inline-enum-layout-cache-order-source-a) : String
+  "(defenum FirstResult
+  (FirstErr String)
+  (FirstOk i64))
+(defenum SecondResult
+  (SecondOk i64)
+  (SecondErr String))
+(define (first-helper [flag : bool]) : FirstResult
+  (if flag
+    (FirstOk 1)
+    (FirstErr \"first failed\")))
+(define (second-helper [value : i64]) : SecondResult
+  (SecondOk value))
+(define (second-value-or [result : SecondResult] [fallback : i64]) : i64
+  (match result
+    [(SecondErr _) fallback]
+    [(SecondOk value) value]))
+(define (main) : i64
+  (+
+    (match (first-helper false)
+      [(FirstErr message) (string-length message)]
+      [(FirstOk value) value])
+    (second-value-or (second-helper 40) 0)))")
+
+(define (compiler-lower-inline-enum-layout-cache-order-source-b) : String
+  "(defenum SecondResult
+  (SecondErr String)
+  (SecondOk i64))
+(defenum FirstResult
+  (FirstOk i64)
+  (FirstErr String))
+(define (second-value-or [result : SecondResult] [fallback : i64]) : i64
+  (match result
+    [(SecondOk value) value]
+    [(SecondErr _) fallback]))
+(define (first-helper [flag : bool]) : FirstResult
+  (if flag
+    (FirstOk 2)
+    (FirstErr \"first failed\")))
+(define (second-helper [value : i64]) : SecondResult
+  (SecondOk value))
+(define (main) : i64
+  (+
+    (second-value-or (second-helper 40) 0)
+    (match (first-helper false)
+      [(FirstOk value) value]
+      [(FirstErr message) (string-length message)])))")
+
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
     [(OkCompilerLower program _)
@@ -37182,6 +37264,13 @@
               0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-inline-enum-layout-cache-order-ok?) : bool
+  (and
+    (compiler-lower-ok?
+      (compiler-lower-inline-enum-layout-cache-order-source-a))
+    (compiler-lower-ok?
+      (compiler-lower-inline-enum-layout-cache-order-source-b))))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -37193,6 +37282,7 @@
     (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
     (compiler-lower-inline-direct-store-copy-shape-ok?)
+    (compiler-lower-inline-enum-layout-cache-order-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)
       "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))
@@ -40328,6 +40418,31 @@
           (and
             (> (lower-test-functions-call-count functions "pkg.data/get") 0)
             (= (lower-test-functions-call-count functions "data/get") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-dotted-import-string-call-source) : String
+  "(module pkg.string)
+(define (string-eq [left : String] [right : String]) : bool (= (string-length left) (string-length right)))
+(export (value string-eq))
+(module pkg.args)
+(import pkg.string)
+(defstruct ArgsOptionSpec (long String))
+(define (args-option-spec-long [spec : ArgsOptionSpec]) : String
+  (struct-get spec long))
+(define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
+  (if (not (string.string-eq (args-option-spec-long spec) \"\"))
+    (string.string-eq (args-option-spec-long spec) name)
+    false))")
+
+(define (compiler-lower-dotted-import-string-call-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-dotted-import-string-call-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (>
+            (lower-test-functions-call-count functions "pkg.string/string-eq")
+            0)])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String
@@ -44648,6 +44763,9 @@
       (if (compiler-lower-and-or-short-circuit-shape-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-entry-moduled-main-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
         unit
         (set! ok false))
@@ -44892,6 +45010,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-dotted-import-default-alias-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-dotted-import-string-call-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-struct-ok?)

@@ -601,10 +601,17 @@
 
 ;: Return the newest toolset under one parent, if any.
 (define (msvc-find-toolset-in-parent [parent : String] [tool : String]) : MsvcMaybeToolset
-  (match (fs.try-read-dir-vec (& parent))
-    [(fs.OkIoStringVec entries)
-      (msvc-toolset-scan-entries entries 0 parent tool "" "" false)]
-    [(fs.ErrIoStringVec _) (MsvcNoToolset)]))
+  (let
+    [result : MsvcMaybeToolset (MsvcNoToolset)]
+    (begin
+      ;; Keep the explicit result local until aggregate match-arm returns are fixed (#3524).
+      (match (fs.try-read-dir-vec (& parent))
+        [(fs.OkIoStringVec entries)
+          (set!
+            result
+            (msvc-toolset-scan-entries entries 0 parent tool "" "" false))]
+        [(fs.ErrIoStringVec _) (set! result (MsvcNoToolset))])
+      result)))
 
 ;: Return true when `candidate` should replace the current best toolset.
 (define (msvc-toolset-candidate-newer?
@@ -1026,22 +1033,142 @@
           (msvc-test-assert-string-eq (struct-get sdk version) "10.0.2"))]
       [(MsvcNoSdk) (msvc-test-fail)])))
 
-(test
-  msvc-api
+(define (msvc-test-candidates-main) : unit
+  (msvc-test-assert-i64-eq
+    (vector.string-vec-len (msvc-toolset-parent-candidates))
+    8))
+
+(define (msvc-test-toolset-scan-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
     [root : String
       (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
     [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
-    [sdk-root : String (msvc-path-join root "WindowsKits10")]
     (begin
       (msvc-test-mkdir toolset-parent)
+      (msvc-test-assert-toolset-scan toolset-parent))))
+
+(define (msvc-test-toolset-fixture-main) : unit
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
+    [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
+    (begin
+      (msvc-test-mkdir toolset-parent)
+      (msvc-test-make-toolset-version toolset-parent "14.10.0" true)
+      (msvc-test-make-toolset-version toolset-parent "14.20.0" true)
+      (msvc-test-make-toolset-version toolset-parent "14.99.0" false)
+      unit)))
+
+(define (msvc-test-toolset-find-main) : unit
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
+    [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
+    (begin
+      (msvc-test-mkdir toolset-parent)
+      (let
+        [old-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.10.0" true)]
+        [new-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.20.0" true)]
+        [_ignored-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.99.0" false)]
+        (match (msvc-find-toolset-in-parent toolset-parent "link.exe")
+          [(MsvcSomeToolset toolset)
+            (begin
+              (msvc-test-assert-string-eq
+                (struct-get toolset version)
+                "14.20.0")
+              (msvc-test-assert-string-eq (struct-get toolset root) new-root)
+              (msvc-test-assert (not (string.string-eq old-root new-root))))]
+          [(MsvcNoToolset) (msvc-test-fail)])))))
+
+(define (msvc-test-toolset-read-dir-main) : unit
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
+    [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
+    (begin
+      (msvc-test-mkdir toolset-parent)
+      (msvc-test-make-toolset-version toolset-parent "14.10.0" true)
+      (msvc-test-make-toolset-version toolset-parent "14.20.0" true)
+      (msvc-test-make-toolset-version toolset-parent "14.99.0" false)
+      (match (fs.try-read-dir-vec (& toolset-parent))
+        [(fs.OkIoStringVec entries)
+          (begin
+            (msvc-test-assert (vector.string-vec-contains? entries "14.10.0"))
+            (msvc-test-assert (vector.string-vec-contains? entries "14.20.0"))
+            (msvc-test-assert (vector.string-vec-contains? entries "14.99.0")))]
+        [(fs.ErrIoStringVec _) (msvc-test-fail)]))))
+
+(define (msvc-test-toolset-scan-entries-main) : unit
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
+    [toolset-parent : String (msvc-path-join root "ToolsMSVC")]
+    (begin
+      (msvc-test-mkdir toolset-parent)
+      (let
+        [old-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.10.0" true)]
+        [new-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.20.0" true)]
+        [_ignored-root : String
+          (msvc-test-make-toolset-version toolset-parent "14.99.0" false)]
+        (match (fs.try-read-dir-vec (& toolset-parent))
+          [(fs.OkIoStringVec entries)
+            (match (msvc-toolset-scan-entries
+              entries
+              0
+              toolset-parent
+              "link.exe"
+              ""
+              ""
+              false)
+              [(MsvcSomeToolset toolset)
+                (begin
+                  (msvc-test-assert-string-eq
+                    (struct-get toolset version)
+                    "14.20.0")
+                  (msvc-test-assert-string-eq
+                    (struct-get toolset root)
+                    new-root)
+                  (msvc-test-assert (not (string.string-eq old-root new-root))))]
+              [(MsvcNoToolset) (msvc-test-fail)])]
+          [(fs.ErrIoStringVec _) (msvc-test-fail)])))))
+
+(define (msvc-test-sdk-scan-main) : unit
+  (let
+    [prefix : String "typelisp msvc vector scan"]
+    [root : String
+      (msvc-test-expect-ok-string (fs.try-create-temp-dir (& prefix)))]
+    [sdk-root : String (msvc-path-join root "WindowsKits10")]
+    (begin
       (msvc-test-mkdir sdk-root)
-      (msvc-test-assert-i64-eq
-        (vector.string-vec-len (msvc-toolset-parent-candidates))
-        8)
-      (msvc-test-assert-toolset-scan toolset-parent)
       (msvc-test-assert-sdk-scan sdk-root))))
+
+(define (msvc-test-api-main) : unit
+  (begin
+    (msvc-test-candidates-main)
+    (msvc-test-toolset-scan-main)
+    (msvc-test-sdk-scan-main)))
+
+(cfg
+  test
+  (export
+    (value msvc-test-candidates-main)
+    (value msvc-test-toolset-fixture-main)
+    (value msvc-test-toolset-read-dir-main)
+    (value msvc-test-toolset-scan-entries-main)
+    (value msvc-test-toolset-find-main)
+    (value msvc-test-toolset-scan-main)
+    (value msvc-test-sdk-scan-main)
+    (value msvc-test-api-main)))
 
 (export
   (value msvc-tool-executable)

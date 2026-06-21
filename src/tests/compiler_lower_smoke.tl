@@ -1,5 +1,5 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
-(import "../compiler_lower.tl")
+(import "../compiler_driver_core.tl")
 
 (define (compiler-lower-smoke-imported-local-enum-vector-source) : String
   "(module stdlib.vector)
@@ -102,10 +102,23 @@
             [(ErrCompilerLower _) false])]
         [(ErrCompilerLoadWithPaths _) false]))))
 
+(define (compiler-lower-smoke-stdlib-args-ok?) : bool
+  (let
+    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    (match (compiler-driver-load-and-lower-escaping
+      "stdlib/args.tl"
+      (BackendTargetLinux)
+      roots
+      (BackendModeScalar)
+      (compiler-cfg-empty))
+      [(OkCompilerDriverLowered _ _ _ _) true]
+      [(ErrCompilerDriverLowered _) false])))
+
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (and
     (compiler-lower-smoke-imported-local-enum-vector-ok?)
-    (compiler-lower-smoke-imported-nullary-file-ok?)))
+    (compiler-lower-smoke-imported-nullary-file-ok?)
+    (compiler-lower-smoke-stdlib-args-ok?)))
 
 (define (main) : i64
   (begin

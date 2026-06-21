@@ -532,6 +532,12 @@
   (match ctx
     [(TcContext _ _ _ _ pools) pools]))
 
+(define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
+  (ast-node-pool-context-capture-active! (tc-context-pools ctx)))
+
+(define (tc-context-type-get [ctx : TcContext] [id : i64]) : AstType
+  (ast-node-pool-context-type-get (tc-context-pools ctx) id))
+
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
@@ -18943,7 +18949,7 @@
     [(AstTypeNil) OkTcUnit]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-finite-ok ctx head stack)
           [(OkTcUnit) (tc-inline-aggregate-type-list-finite-ok ctx rest stack)]
@@ -19022,7 +19028,10 @@
     [(AstTyTuple elems)
       (tc-inline-aggregate-type-list-finite-ok ctx (box-get elems) stack)]
     [(AstTyArray elem _)
-      (tc-inline-aggregate-type-finite-ok ctx (ty-node-get elem) stack)]
+      (tc-inline-aggregate-type-finite-ok
+        ctx
+        (tc-context-type-get ctx elem)
+        stack)]
     [(AstTyEnum name)
       (tc-inline-aggregate-nominal-finite-ok ctx (intern-str name) stack)]
     [(AstTyEnumArgs name _)
@@ -19072,7 +19081,7 @@
       (OkTcLayoutInfo (tc-inline-aggregate-finish-layout cursor max-align))]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
@@ -19158,7 +19167,7 @@
             (TcInlinePayloadFieldsLayout size align TcInlinePayloadLayoutNil))])]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
           [(OkTcLayoutInfo info)
@@ -19448,7 +19457,10 @@
     [(AstTyMutRef _ _)
       (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyRegion _ inner)
-      (tc-inline-aggregate-type-layout-with-stack ctx (ty-node-get inner) stack)]
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (tc-context-type-get ctx inner)
+        stack)]
     [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyBytes)
@@ -19462,7 +19474,7 @@
     [(AstTyArray elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx
-        (ty-node-get elem)
+        (tc-context-type-get ctx elem)
         stack)
         [(OkTcLayoutInfo elem-info)
           (OkTcLayoutInfo
@@ -20186,7 +20198,7 @@
   (match fields
     [(AstTypeCons field tail)
       (let
-        [field : AstType (ty-node-get field)]
+        [field : AstType (tc-context-type-get ctx field)]
         [tail : AstTypeList (box-get tail)]
         (match tail
           [(AstTypeNil) (OkTcType (tc-resolve-type ctx field))]
@@ -36596,6 +36608,7 @@
                                       (begin
                                         (tc-hygiene-reset-active-top-env!
                                           top-env)
+                                        (tc-context-capture-active-pools! ctx)
                                         (cfg
                                           compile-profile
                                           (compiler-tc-profile-finish
@@ -37796,6 +37809,7 @@
           [(AstDeclModule next-module)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-start-section))
+              (tc-context-capture-active-pools! ctx)
               (match (tc-module-local-env-cached
                 ctx
                 top-env
@@ -37841,6 +37855,7 @@
                   (tc-unused-unsafe-set-current-path! decl-path)]
                 (begin
                   (cfg compile-profile (compiler-tc-decl-profile-start-section))
+                  (tc-context-capture-active-pools! decl-ctx)
                   (match (tc-check-decl-with-global-env
                     decl-ctx
                     local-env
@@ -37899,6 +37914,7 @@
                                   [decls : AstDeclList (box-get decls-box)]
                                   (begin
                                     (tc-hygiene-reset-active-top-env! top-env)
+                                    (tc-context-capture-active-pools! ctx)
                                     (tc-clone-able-cache-populate! ctx)
                                     (match (tc-check-decls-with-paths
                                       ctx
@@ -37909,10 +37925,12 @@
                                       stdlib-roots
                                       cache-scope)
                                       [(OkCompilerTypecheck summary)
-                                        (OkCompilerTypecheckChecked
-                                          summary
-                                          ctx
-                                          top-env)]
+                                        (begin
+                                          (tc-context-capture-active-pools! ctx)
+                                          (OkCompilerTypecheckChecked
+                                            summary
+                                            ctx
+                                            top-env))]
                                       [(ErrCompilerTypecheck diag)
                                         (ErrCompilerTypecheckChecked diag)])))])]
                           [(ErrTcEnv message)

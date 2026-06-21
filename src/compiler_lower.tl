@@ -2586,7 +2586,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (lower-clone-root-add-type-list
           ctx
@@ -2688,11 +2688,26 @@
       [(AstTyTuple elems)
         (lower-clone-root-add-type-list ctx decls able roots (box-get elems))]
       [(AstTyArray elem _)
-        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
+        (lower-clone-root-add-type
+          ctx
+          decls
+          able
+          roots
+          (tc-context-type-get ctx elem))]
       [(AstTyDynArray elem)
-        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
+        (lower-clone-root-add-type
+          ctx
+          decls
+          able
+          roots
+          (tc-context-type-get ctx elem))]
       [(AstTyBox elem)
-        (lower-clone-root-add-type ctx decls able roots (ty-node-get elem))]
+        (lower-clone-root-add-type
+          ctx
+          decls
+          able
+          roots
+          (tc-context-type-get ctx elem))]
       [(AstTyEnum name)
         (lower-clone-root-add-named ctx decls able roots (intern-str name))]
       [(AstTyStruct name)
@@ -3773,8 +3788,10 @@
             [ctx : TcContext (TcContext program symbols registries "" pools)]
             (match (tc-build-top-env ctx program)
               [(OkTcEnv top-env)
-                (OkLowerCloneRoots
-                  (lower-clone-roots-program ctx top-env names program))]
+                (begin
+                  (tc-context-capture-active-pools! ctx)
+                  (OkLowerCloneRoots
+                    (lower-clone-roots-program ctx top-env names program)))]
               [(ErrTcEnv message)
                 (ErrLowerCloneRoots (lower-diagnostic message))]))]
         [(ErrCompilerRegistries message)
@@ -5823,7 +5840,8 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-size ctx (ty-node-get inner))]
+    [(AstTyRegion _ inner)
+      (lower-type-size ctx (tc-context-type-get ctx inner))]
     [(AstTyEnum name) (lower-inline-layout-size-or ctx (AstTyEnum name) 8)]
     [(AstTyEnumArgs name lifetimes)
       (lower-inline-layout-size-or ctx (AstTyEnumArgs name lifetimes) 8)]
@@ -5863,7 +5881,8 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-align ctx (ty-node-get inner))]
+    [(AstTyRegion _ inner)
+      (lower-type-align ctx (tc-context-type-get ctx inner))]
     [(AstTyEnum name) (lower-inline-layout-align-or ctx (AstTyEnum name) 8)]
     [(AstTyEnumArgs name lifetimes)
       (lower-inline-layout-align-or ctx (AstTyEnumArgs name lifetimes) 8)]
@@ -5884,7 +5903,7 @@
     [(AstTypeNil) cursor]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -6933,7 +6952,8 @@
       (match fields
         [(AstTypeCons ty rest-fields)
           (let
-            [resolved : AstType (tc-resolve-type ctx (ty-node-get ty))]
+            [resolved : AstType
+              (tc-resolve-type ctx (tc-context-type-get ctx ty))]
             [offset : i64
               (lower-align-up cursor (lower-type-align ctx resolved))]
             (match (lower-pack-word-field ctx state acc value offset resolved)
@@ -7482,7 +7502,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type-with-stack? ctx head stack)
@@ -7497,7 +7517,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type-with-stack?
@@ -7607,9 +7627,13 @@
       true
       (match resolved
         [(AstTyRef _ inner)
-          (lower-supported-reference-referent-type? ctx (ty-node-get inner))]
+          (lower-supported-reference-referent-type?
+            ctx
+            (tc-context-type-get ctx inner))]
         [(AstTyMutRef _ inner)
-          (lower-supported-reference-referent-type? ctx (ty-node-get inner))]
+          (lower-supported-reference-referent-type?
+            ctx
+            (tc-context-type-get ctx inner))]
         [(AstTyTuple elems)
           (lower-supported-reference-type-list-with-stack?
             ctx
@@ -7618,12 +7642,12 @@
         [(AstTyArray elem _)
           (lower-supported-reference-type-with-stack?
             ctx
-            (ty-node-get elem)
+            (tc-context-type-get ctx elem)
             stack)]
         [(AstTyBox elem)
           (lower-supported-reference-type-with-stack?
             ctx
-            (ty-node-get elem)
+            (tc-context-type-get ctx elem)
             stack)]
         [(AstTyFunc params ret)
           (and
@@ -7633,7 +7657,7 @@
               stack)
             (lower-supported-reference-type-with-stack?
               ctx
-              (ty-node-get ret)
+              (tc-context-type-get ctx ret)
               stack))]
         [(AstTyStructArgs name lifetimes)
           (lower-supported-reference-struct-args-with-stack?
@@ -9082,7 +9106,7 @@
                                                           (compiler-registry-handle-child-index
                                                             handle))
                                                         (AstTyI64)))
-                                                      "payload_ok")
+                                                    "payload_ok")
                                                     [(LowerLabel
                                                         ok-state
                                                         ok-label)

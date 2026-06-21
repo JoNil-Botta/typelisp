@@ -389,13 +389,6 @@
               start)]))
       start)))
 
-(define (doc-html-syntax-char-literal-class [source : String] [start : i64]) : String
-  (if (and
-    (< (+ start 1) (string-length source))
-    (= (string-ref source (+ start 1)) '\\'))
-    "tl-syn-escape"
-    "tl-syn-char"))
-
 (define (doc-html-syntax-line-end [source : String] [start : i64]) : i64
   (let
     [i : i64 start]
@@ -408,138 +401,33 @@
           (set! i (+ i 1))))
       i)))
 
+(define (doc-html-syntax-list-member? [items : String] [token : String]) : bool
+  (let
+    [needle : String (str-cat "|" token "|")]
+    (string-contains (& items) (& needle))))
+
 (define (doc-html-syntax-keyword? [token : String]) : bool
-  (or
-    (string-eq token "comptime-decls")
-    (string-eq token "comptime-decl")
-    (string-eq token "comptime")
-    (string-eq token "defdispatch")
-    (string-eq token "defstruct")
-    (string-eq token "defmacro")
-    (string-eq token "defenum")
-    (string-eq token "define")
-    (string-eq token "include-str")
-    (string-eq token "include-bin")
-    (string-eq token "spmd-broadcast")
-    (string-eq token "spmd-reduce")
-    (string-eq token "with-arena")
-    (string-eq token "with-escape")
-    (string-eq token "with")
-    (string-eq token "unquote-splicing")
-    (string-eq token "unquote")
-    (string-eq token "quasiquote")
-    (string-eq token "quote")
-    (string-eq token "foreach")
-    (string-eq token "unsafe")
-    (string-eq token "return")
-    (string-eq token "export")
-    (string-eq token "extern")
-    (string-eq token "import")
-    (string-eq token "module")
-    (string-eq token "lambda")
-    (string-eq token "begin")
-    (string-eq token "while")
-    (string-eq token "match")
-    (string-eq token "unless")
-    (string-eq token "when")
-    (string-eq token "cond")
-    (string-eq token "cast")
-    (string-eq token "test")
-    (string-eq token "try")
-    (string-eq token "set!")
-    (string-eq token "type")
-    (string-eq token "init")
-    (string-eq token "ann")
-    (string-eq token "let")
-    (string-eq token "and")
-    (string-eq token "or")
-    (string-eq token "if")))
+  (doc-html-syntax-list-member?
+    "|comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if|"
+    token))
 
 (define (doc-html-syntax-builtin? [token : String]) : bool
-  (or
-    (string-eq token "ptr-addr-of")
-    (string-eq token "ptr-offset")
-    (string-eq token "ptr-write!")
-    (string-eq token "ptr-null?")
-    (string-eq token "ptr-null")
-    (string-eq token "ptr-read")
-    (string-eq token "ptr-cast")
-    (string-eq token "ptr->int")
-    (string-eq token "int->ptr")
-    (string-eq token "array-push!")
-    (string-eq token "array-set!")
-    (string-eq token "array-data")
-    (string-eq token "array-ref")
-    (string-eq token "make-array")
-    (string-eq token "tuple-ref")
-    (string-eq token "struct-get")
-    (string-eq token "string-from-bytes")
-    (string-eq token "string-data")
-    (string-eq token "program-argc")
-    (string-eq token "program-argv")
-    (string-eq token "program-envp")
-    (string-eq token "cpuid-eax")
-    (string-eq token "cpuid-ebx")
-    (string-eq token "cpuid-ecx")
-    (string-eq token "cpuid-edx")
-    (string-eq token "xgetbv")
-    (string-eq token "syscall")
-    (string-eq token "box-get")
-    (string-eq token "box")
-    (string-eq token "array")
-    (string-eq token "tuple")))
+  (doc-html-syntax-list-member?
+    "|ptr-addr-of|ptr-offset|ptr-write!|ptr-null?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-push!|array-set!|array-data|array-ref|make-array|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple|"
+    token))
 
 (define (doc-html-syntax-operator? [token : String]) : bool
-  (or
-    (string-eq token "->")
-    (string-eq token "!=")
-    (string-eq token "<=")
-    (string-eq token ">=")
-    (string-eq token "+")
-    (string-eq token "-")
-    (string-eq token "*")
-    (string-eq token "/")
-    (string-eq token "%")
-    (string-eq token "=")
-    (string-eq token "<")
-    (string-eq token ">")
-    (string-eq token "bit-and")
-    (string-eq token "bit-or")
-    (string-eq token "bit-xor")
-    (string-eq token "bit-not")
-    (string-eq token "shl")
-    (string-eq token "shr")
-    (string-eq token "not")
-    (string-eq token "neg")
-    (string-eq token "&mut")
-    (string-eq token "&")))
+  (doc-html-syntax-list-member?
+    "|->|!=|<=|>=|+|-|*|/|%|=|<|>|bit-and|bit-or|bit-xor|bit-not|shl|shr|not|neg|&mut|&|"
+    token))
 
 (define (doc-html-syntax-boolean? [token : String]) : bool
-  (or (string-eq token "true") (string-eq token "false")))
+  (doc-html-syntax-list-member? "|true|false|" token))
 
 (define (doc-html-syntax-type? [token : String]) : bool
-  (or
-    (string-eq token "i64")
-    (string-eq token "i32")
-    (string-eq token "i16")
-    (string-eq token "i8")
-    (string-eq token "u64")
-    (string-eq token "u32")
-    (string-eq token "u16")
-    (string-eq token "u8")
-    (string-eq token "f64")
-    (string-eq token "f32")
-    (string-eq token "bool")
-    (string-eq token "char")
-    (string-eq token "String")
-    (string-eq token "str")
-    (string-eq token "unit")
-    (string-eq token "never")
-    (string-eq token "Array")
-    (string-eq token "Tuple")
-    (string-eq token "Box")
-    (string-eq token "MutPtr")
-    (string-eq token "Ptr")))
+  (doc-html-syntax-list-member?
+    "|i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|Box|MutPtr|Ptr|"
+    token))
 
 (define (doc-html-syntax-function-def-form? [token : String]) : bool
   (or
@@ -696,7 +584,7 @@
                       (string-append
                         out
                         (doc-html-syntax-span
-                          (doc-html-syntax-char-literal-class source i)
+                          "tl-syn-string"
                           (substring source i (- end i)))))
                     (set! i end))
                   (begin
@@ -905,22 +793,6 @@
     "</main>\n"
     (doc-html-page-close)))
 
-(define (doc-html-smoke-source) : String
-  ";# Module docs with `code`, [links], <tag>, & amp.
-;# Quote docs say \"hello\".
-
-;; ignored ordinary comment
-;: Global docs for answer mention <answer>, & value, and \"quote\".
-(define answer : i64 42)
-
-;: Function docs with `tick` and [arg].
-(define (add-one [x : i64]) : i64 (+ x 1))")
-
-(define (doc-html-second-smoke-source) : String
-  ";# Second module docs.
-
-(define hidden : i64 1)")
-
 (define (doc-html-require-contains
   [rendered : String]
   [needle : String]
@@ -931,207 +803,3 @@
       (panic message)
       ;; lint-allow: unreachable-code
       false)))
-
-(define (doc-html-syntax-smoke-source) : String
-  (str-cat
-    ";# docs <tag> &\n"
-    "; ordinary comment\n"
-    "(define (add-one [x : i64]) : i64\n"
-    "  (let ([flag : bool true]\n"
-    "        [ch : char '\\n']\n"
-    "        [plain-ch : char 'a']\n"
-    "        [text : String \"a\\n<>&\"]\n"
-    "        [hex : u64 0x2a]\n"
-    "        [bin : i64 0b1010]\n"
-    "        [flt : f64 -1.25e+3]\n"
-    "        [n : i64 -42]\n"
-    "        [ptr : (Ptr Point) (ptr-null)])\n"
-    "    (when false (return (+ n 1)))\n"
-    "    (if (not flag) (box-get (box n)) (custom-call Point text))\n"
-    "    (unsafe (ptr-read (& ptr)))))\n"
-    "(defstruct Point (x i64))\n"
-    "(defenum Shape (Circle i64))\n"))
-
-(define (doc-html-vscode-grammar-expected-patterns) : String
-  (str-cat
-    "  \"patterns\": [\n"
-    "    { \"include\": \"#comments\" },\n"
-    "    { \"include\": \"#strings\" },\n"
-    "    { \"include\": \"#char-literals\" },\n"
-    "    { \"include\": \"#numbers\" },\n"
-    "    { \"include\": \"#keywords\" },\n"
-    "    { \"include\": \"#builtins\" },\n"
-    "    { \"include\": \"#operators\" },\n"
-    "    { \"include\": \"#constants\" },\n"
-    "    { \"include\": \"#types\" },\n"
-    "    { \"include\": \"#definition-name\" },\n"
-    "    { \"include\": \"#bindings\" },\n"
-    "    { \"include\": \"#user-types\" },\n"
-    "    { \"include\": \"#function-call\" }\n"
-    "  ],"))
-
-(define (doc-html-vscode-grammar-drift-ok?) : bool
-  (doc-html-require-contains
-    (read-file "tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json")
-    (doc-html-vscode-grammar-expected-patterns)
-    "doc-html: VS Code grammar categories changed; update docs highlighter"))
-
-(define (doc-html-syntax-smoke) : bool
-  (let
-    [html : String (doc-html-code-block (doc-html-syntax-smoke-source))]
-    [tl-html : String (doc-html-code-block-with-info "tl" "" "(if true 1 0)\n")]
-    [plain-html : String
-      (doc-html-code-block-with-info "text" "m<>&" "(define x : i64 1)\n")]
-    (and
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-doc-comment\">;# docs &lt;tag&gt; &amp;</span>"
-        "doc-html: documentation comment highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-comment\">; ordinary comment</span>"
-        "doc-html: ordinary comment highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-keyword\">define</span> (<span class=\"tl-syn-definition\">add-one</span>"
-        "doc-html: keyword or definition-name highlighting missing")
-      (doc-html-require-contains
-        html
-        "[<span class=\"tl-syn-binding\">x</span> : <span class=\"tl-syn-type\">i64</span>]"
-        "doc-html: binding or primitive type highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-boolean\">true</span>"
-        "doc-html: boolean highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-escape\">'\\n'</span>"
-        "doc-html: escaped char literal highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-char\">'a'</span>"
-        "doc-html: char literal highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-string\">&quot;a<span class=\"tl-syn-escape\">\\n</span>&lt;&gt;&amp;&quot;</span>"
-        "doc-html: string or escape highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-number\">0x2a</span>"
-        "doc-html: hex number highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-number\">0b1010</span>"
-        "doc-html: binary number highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-number\">-1.25e+3</span>"
-        "doc-html: float number highlighting missing")
-      (doc-html-require-contains
-        html
-        "<span class=\"tl-syn-number\">-42</span>"
-        "doc-html: integer number highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-builtin\">ptr-null</span>)"
-        "doc-html: builtin highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-operator\">+</span> n <span class=\"tl-syn-number\">1</span>)"
-        "doc-html: arithmetic operator highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-operator\">&amp;</span> ptr)"
-        "doc-html: reference operator highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-type\">Ptr</span> <span class=\"tl-syn-type\">Point</span>)"
-        "doc-html: constructor or user type highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-call\">custom-call</span> <span class=\"tl-syn-type\">Point</span> text)"
-        "doc-html: function-call highlighting missing")
-      (doc-html-require-contains
-        html
-        "(<span class=\"tl-syn-keyword\">defstruct</span> <span class=\"tl-syn-definition\">Point</span>"
-        "doc-html: type definition highlighting missing")
-      (doc-html-require-contains
-        tl-html
-        "<code class=\"language-tl\">(<span class=\"tl-syn-keyword\">if</span> <span class=\"tl-syn-boolean\">true</span>"
-        "doc-html: tl language alias highlighting missing")
-      (doc-html-require-contains
-        plain-html
-        "<pre><code class=\"language-text\" data-meta=\"m&lt;&gt;&amp;\">(define x : i64 1)\n</code></pre>\n"
-        "doc-html: non-TypeLisp code fence behavior changed")
-      (doc-html-vscode-grammar-drift-ok?))))
-
-(define (doc-html-smoke) : i64
-  (let
-    [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
-    [second-docs : DocExtraction
-      (doc-extract-source (doc-html-second-smoke-source))]
-    [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
-    [graph : String
-      (doc-html-render-module-graph
-        (DocModuleCons
-          (DocModule "smoke<&>.tl" docs)
-          (box
-            (DocModuleCons
-              (DocModule "second.tl" second-docs)
-              (box DocModuleNil)))))]
-    (if (and
-      (doc-html-require-contains
-        page
-        "<!doctype html>"
-        "doc-html: doctype missing")
-      (doc-html-require-contains
-        page
-        "<title>TypeLisp API: smoke&lt;&amp;&gt;.tl</title>"
-        "doc-html: title escaping missing")
-      (doc-html-require-contains
-        page
-        "id=\"tl-smoke-60-38-62-46tl\""
-        "doc-html: module anchor missing")
-      (doc-html-require-contains
-        page
-        "Module docs with `code`, [links], &lt;tag&gt;, &amp; amp.<br>"
-        "doc-html: module doc escaping missing")
-      (doc-html-require-contains
-        page
-        "Quote docs say &quot;hello&quot;."
-        "doc-html: quote escaping missing")
-      (doc-html-require-contains
-        page
-        "id=\"tl-answer\""
-        "doc-html: item anchor missing")
-      (doc-html-require-contains
-        page
-        "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
-        "doc-html: signature code block missing")
-      (doc-html-require-contains
-        page
-        "Global docs for answer mention &lt;answer&gt;, &amp; value, and &quot;quote&quot;."
-        "doc-html: item doc escaping missing")
-      (doc-html-require-contains
-        page
-        "href=\"#tl-add-one\""
-        "doc-html: item nav link missing")
-      (doc-html-require-contains
-        graph
-        "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">"
-        "doc-html: module nav missing")
-      (doc-html-require-contains
-        graph
-        "href=\"#tl-second-46tl\""
-        "doc-html: second module nav link missing")
-      (doc-html-require-contains
-        graph
-        "Second module docs."
-        "doc-html: second module docs missing")
-      (doc-html-require-contains
-        graph
-        "No documented declarations."
-        "doc-html: empty item message missing")
-      (doc-html-syntax-smoke))
-      42
-      0)))

@@ -689,9 +689,6 @@ pre {
   color: #fde68a;
   font-weight: 700;
 }
-.tl-syn-char {
-  color: #fcd34d;
-}
 .tl-syn-number {
   color: #c4b5fd;
 }

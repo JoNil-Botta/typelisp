@@ -5496,8 +5496,13 @@
           (if (>= (array-ref orig-starts v) 0)
             (let
               [r : i64
-                (if (< v (array-length parents)) (array-ref parents v) v)]
-              [rr : i64 (if (and (>= r 0) (< r n)) r v)]
+                (if (< v (array-length parents))
+                  (array-ref parents v)
+                  v)]
+              [rr : i64
+                (if (and (>= r 0) (< r n))
+                  r
+                  v)]
               (begin
                 (if (or
                   (< (array-ref root-starts rr) 0)
@@ -5537,8 +5542,13 @@
             (>= (array-ref orig-starts v) 0))
             (let
               [r : i64
-                (if (< v (array-length parents)) (array-ref parents v) v)]
-              [rr : i64 (if (and (>= r 0) (< r vars)) r v)]
+                (if (< v (array-length parents))
+                  (array-ref parents v)
+                  v)]
+              [rr : i64
+                (if (and (>= r 0) (< r vars))
+                  r
+                  v)]
               (match (compiler-reg-assignment-table-lookup assignments rr)
                 [(CompilerRegSomeLocation loc)
                   (begin
@@ -5572,8 +5582,13 @@
           (if (< v (array-length ref-counts))
             (let
               [r : i64
-                (if (< v (array-length parents)) (array-ref parents v) v)]
-              [rr : i64 (if (and (>= r 0) (< r vars)) r v)]
+                (if (< v (array-length parents))
+                  (array-ref parents v)
+                  v)]
+              [rr : i64
+                (if (and (>= r 0) (< r vars))
+                  r
+                  v)]
               [w : i64 (array-ref ref-counts v)]
               (if (> w (array-ref out rr))
                 (array-set! out rr w)
@@ -5595,8 +5610,12 @@
   [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]) : CompilerRegPlan
   (let
-    [moves : CompilerRegMoveList
-      (compiler-reg-function-moves func allow-caller-saved-zero-call)]
+    [moves
+      : CompilerRegMoveList
+      ;; #3489 (PR3): phi back-edge moves NON-strict so loop-carried phi/copy
+      ;; pairs coalesce (then merge into one root via PR2). SIMD already passed
+      ;; false here; only the scalar-opt2 plan gains the loop coalescing.
+      (compiler-reg-function-moves func false)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
     [coalesce : CompilerRegCoalesceMap
@@ -9078,7 +9097,7 @@
           (compiler-reg-assignment-lookup assignments 1))
         (compiler-reg-location-any-register?
           (compiler-reg-assignment-lookup assignments 2))
-        (compiler-reg-different-location? assignments 1 2))]))
+        (compiler-reg-same-location? assignments 1 2))]))
 
 (define (compiler-reg-syscall-clobber-overlap-function) : CompilerIrFunction
   (IrFunction

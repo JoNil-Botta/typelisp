@@ -2127,7 +2127,7 @@ EOF
     assert_contains "$WORKDIR/doc_source.html" "<!doctype html>"
     assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
     assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
-    assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
+    assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
 else
     fail "doc generation requires host-action drivers"
 fi

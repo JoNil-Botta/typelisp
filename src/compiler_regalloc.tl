@@ -7357,6 +7357,12 @@
         (compiler-reg-remap-value remap cond)
         true-label
         false-label)]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (compiler-reg-remap-value remap index)
+        base
+        cases
+        default-label)]
     [(IrInstrReturn value)
       (IrInstrReturn (compiler-reg-remap-maybe-value remap value))]
     [(IrInstrPhi dst inputs ty)

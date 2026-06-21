@@ -557,6 +557,18 @@
         (compiler-live-phi-input-vars (box-get rest))
         value)]))
 
+(define (compiler-live-switch-case-successors
+  [set : CompilerLiveLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : CompilerLiveLabelSet
+  (match cases
+    [(IrSwitchCaseNil) set]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (compiler-live-switch-case-successors
+            (compiler-live-label-set-insert set label)
+            (box-get rest))])]))
+
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(IrInstrMov _ src _) (compiler-live-value-vars src)]
@@ -633,6 +645,7 @@
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
+    [(IrInstrSwitch index _ _ _) (compiler-live-value-vars index)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]
     [(IrInstrPhi _ inputs _) (compiler-live-phi-input-vars inputs)]
     [(IrInstrPack _ words _) (compiler-live-value-list-vars words)]
@@ -687,6 +700,7 @@
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
     [(IrInstrPack dst _ _) (compiler-live-set1 dst)]
     [(IrInstrWord dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrSwitch _ _ _ _) (compiler-live-set-empty)]
     [_ (compiler-live-set-empty)]))
 
 (define (compiler-live-block-use-def-instrs
@@ -765,6 +779,10 @@
               (compiler-live-label-set-insert
                 (CompilerLiveLabelCons true-label (box CompilerLiveLabelNil))
                 false-label)]
+            [(IrInstrSwitch _ _ cases default-label)
+              (compiler-live-switch-case-successors
+                (CompilerLiveLabelCons default-label (box CompilerLiveLabelNil))
+                cases)]
             [_ CompilerLiveLabelNil])])]))
 
 (define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
@@ -1542,6 +1560,27 @@
             [(CompilerLiveNoBlock) false]))]
       [(CompilerLiveNoBlock) false])))
 
+(define (compiler-live-switch-ok?) : bool
+  (let
+    [cases : CompilerIrSwitchCaseList
+      (compiler-ir-switch-case-cons
+        4
+        "four"
+        (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
+    [instr : CompilerIrInstr (IrInstrSwitch (IrValueVar 9) 4 cases "other")]
+    [instrs : CompilerIrInstrList (compiler-ir-instr-cons instr IrInstrNil)]
+    [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
+    [successors : CompilerLiveLabelSet (compiler-live-block-successors block)]
+    (match (compiler-live-block-use-def instrs)
+      [(CompilerLiveUseDef uses defs)
+        (and
+          (compiler-live-set-eq? uses (compiler-live-set1 9))
+          (compiler-live-set-eq? defs (compiler-live-set-empty))
+          (= (compiler-live-label-set-count successors) 3)
+          (compiler-live-label-set-contains? successors "four")
+          (compiler-live-label-set-contains? successors "five")
+          (compiler-live-label-set-contains? successors "other"))])))
+
 (define (compiler-live-self-test) : i64
   (if (and
     (compiler-live-set-ops-ok?)
@@ -1550,7 +1589,8 @@
     (compiler-live-vector-mask-use-def-ok?)
     (compiler-live-straight-ok?)
     (compiler-live-branch-ok?)
-    (compiler-live-phi-ok?))
+    (compiler-live-phi-ok?)
+    (compiler-live-switch-ok?))
     42
     (begin
       (panic "liveness: smoke mismatch")

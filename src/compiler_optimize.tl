@@ -1372,6 +1372,7 @@
     [(IrInstrXgetbv _ index) (opt-collect-value-uses set index)]
     [(IrInstrSyscall _ args) (opt-collect-call-args-uses set args)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
+    [(IrInstrSwitch index _ _ _) (opt-collect-value-uses set index)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrSomeValue value) (opt-collect-value-uses set value)]
@@ -1817,6 +1818,7 @@
     [(IrInstrXgetbv _ index) (opt-collect-value-uses-array items index)]
     [(IrInstrSyscall _ args) (opt-collect-call-args-uses-array items args)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses-array items cond)]
+    [(IrInstrSwitch index _ _ _) (opt-collect-value-uses-array items index)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrSomeValue value) (opt-collect-value-uses-array items value)]
@@ -2447,6 +2449,8 @@
     [(IrInstrStore _ value _)
       (opt-aggregate-value-has-pointer? base ptrs value)]
     [(IrInstrBranch cond _ _) (opt-aggregate-value-has-pointer? base ptrs cond)]
+    [(IrInstrSwitch index _ _ _)
+      (opt-aggregate-value-has-pointer? base ptrs index)]
     [(IrInstrReturn maybe)
       (opt-aggregate-maybe-value-has-pointer? base ptrs maybe)]
     [(IrInstrPhi _ inputs _)
@@ -3838,6 +3842,30 @@
             (opt-phi-input-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
+(define (opt-switch-case-eq
+  [a : CompilerIrSwitchCase]
+  [b : CompilerIrSwitchCase]) : bool
+  (match a
+    [(IrSwitchCase at alabel)
+      (match b
+        [(IrSwitchCase bt blabel) (and (= at bt) (string-eq alabel blabel))])]))
+
+(define (opt-switch-case-list-eq
+  [a : CompilerIrSwitchCaseList]
+  [b : CompilerIrSwitchCaseList]) : bool
+  (match a
+    [(IrSwitchCaseNil)
+      (match b
+        [(IrSwitchCaseNil) true]
+        [_ false])]
+    [(IrSwitchCaseCons acase at)
+      (match b
+        [(IrSwitchCaseCons bcase bt)
+          (and
+            (opt-switch-case-eq acase bcase)
+            (opt-switch-case-list-eq (box-get at) (box-get bt)))]
+        [_ false])]))
+
 (define (opt-c-abi-return-slot-eq
   [a : CompilerIrCAbiReturnSlot]
   [b : CompilerIrCAbiReturnSlot]) : bool
@@ -4255,6 +4283,15 @@
         [(IrInstrBranch bv af bf)
           (and (string-eq at af) (string-eq bt bf) (opt-value-eq av bv))]
         [_ false])]
+    [(IrInstrSwitch av abase acases adefault)
+      (match b
+        [(IrInstrSwitch bv bbase bcases bdefault)
+          (and
+            (opt-value-eq av bv)
+            (= abase bbase)
+            (opt-switch-case-list-eq acases bcases)
+            (string-eq adefault bdefault))]
+        [_ false])]
     [(IrInstrReturn av)
       (match b
         [(IrInstrReturn bv) (opt-maybe-value-eq av bv)]
@@ -4629,6 +4666,7 @@
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrSwitch _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCallIndirect _ _ _) (OptCseResult (OptExprNil) instr)]
     ;; #2386: register-group ops are plain defining instructions -- invalidate
@@ -4932,6 +4970,8 @@
         (opt-copy-resolve env length)
         ok-label)]
     [(IrInstrBranch cond a b) (IrInstrBranch (opt-copy-resolve env cond) a b)]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch (opt-copy-resolve env index) base cases default-label)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrSomeValue value)
@@ -5302,6 +5342,7 @@
         [(CompilerIrInstrPredicatedStorePayload _ _ _ _ _ _) (OptBoundsNil)])]
     [(IrInstrJump _) (OptBoundsNil)]
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
+    [(IrInstrSwitch _ _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
     [(IrInstrPhi _ _ _) (OptBoundsNil)]
     [(IrInstrBoundsCheck _ _ _) facts]
@@ -7703,6 +7744,8 @@
       (opt-verify-value-use defs doms value block-label pos)]
     [(IrInstrBranch cond _ _)
       (opt-verify-value-use defs doms cond block-label pos)]
+    [(IrInstrSwitch index _ _ _)
+      (opt-verify-value-use defs doms index block-label pos)]
     [(IrInstrReturn maybe)
       (opt-verify-maybe-value-use defs doms maybe block-label pos)]
     [(IrInstrPhi _ inputs _) (opt-verify-phi-input-uses defs doms inputs)]
@@ -8943,6 +8986,15 @@
         (IrInstrBranch (opt-ssa-rewrite-value env cond) true-label false-label)
         env
         next-var)]
+    [(IrInstrSwitch index base cases default-label)
+      (OptSsaInstrResult
+        (IrInstrSwitch
+          (opt-ssa-rewrite-value env index)
+          base
+          cases
+          default-label)
+        env
+        next-var)]
     [(IrInstrReturn maybe)
       (OptSsaInstrResult
         (IrInstrReturn (opt-ssa-rewrite-maybe-value env maybe))
@@ -10092,6 +10144,12 @@
         (opt-global-copy-resolve facts doms block-id pos cond)
         true-label
         false-label)]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (opt-global-copy-resolve facts doms block-id pos index)
+        base
+        cases
+        default-label)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrSomeValue value)
@@ -10630,7 +10688,21 @@
     [(IrInstrJump label) (opt-label-add set label)]
     [(IrInstrBranch _ true-label false-label)
       (opt-label-add (opt-label-add set true-label) false-label)]
+    [(IrInstrSwitch _ _ cases default-label)
+      (opt-cfg-switch-case-successors (opt-label-add set default-label) cases)]
     [_ set]))
+
+(define (opt-cfg-switch-case-successors
+  [set : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : OptLabelSet
+  (match cases
+    [(IrSwitchCaseNil) set]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (opt-cfg-switch-case-successors
+            (opt-label-add set label)
+            (box-get rest))])]))
 
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
@@ -10655,6 +10727,7 @@
   (match instr
     [(IrInstrJump _) true]
     [(IrInstrBranch _ _ _) true]
+    [(IrInstrSwitch _ _ _ _) true]
     [(IrInstrReturn _) true]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
@@ -11401,6 +11474,25 @@
     preheader
     label))
 
+(define (opt-loop-preheaders-retarget-switch-cases
+  [cases : CompilerIrSwitchCaseList]
+  [header : String]
+  [preheader : String]) : CompilerIrSwitchCaseList
+  (match cases
+    [(IrSwitchCaseNil) IrSwitchCaseNil]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase tag label)
+          (IrSwitchCaseCons
+            (IrSwitchCase
+              tag
+              (opt-loop-preheaders-retarget-label label header preheader))
+            (box
+              (opt-loop-preheaders-retarget-switch-cases
+                (box-get rest)
+                header
+                preheader)))])]))
+
 (define (opt-loop-preheaders-retarget-instr
   [instr : CompilerIrInstr]
   [header : String]
@@ -11413,6 +11505,12 @@
         cond
         (opt-loop-preheaders-retarget-label true-label header preheader)
         (opt-loop-preheaders-retarget-label false-label header preheader))]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        index
+        base
+        (opt-loop-preheaders-retarget-switch-cases cases header preheader)
+        (opt-loop-preheaders-retarget-label default-label header preheader))]
     [_ instr]))
 
 (define (opt-loop-preheaders-retarget-instrs-from
@@ -13752,6 +13850,18 @@
         false-label)]
     [(OptSccpUnknown) state]))
 
+(define (opt-sccp-mark-switch-targets
+  [state : OptSccpState]
+  [cases : CompilerIrSwitchCaseList]) : OptSccpState
+  (match cases
+    [(IrSwitchCaseNil) state]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (opt-sccp-mark-switch-targets
+            (opt-sccp-state-mark-executable state label)
+            (box-get rest))])]))
+
 (define (opt-sccp-process-instr
   [state : OptSccpState]
   [instr : CompilerIrInstr]) : OptSccpState
@@ -13787,6 +13897,10 @@
     [(IrInstrJump label) (opt-sccp-state-mark-executable state label)]
     [(IrInstrBranch cond true-label false-label)
       (opt-sccp-mark-branch-targets state cond true-label false-label)]
+    [(IrInstrSwitch _ _ cases default-label)
+      (opt-sccp-mark-switch-targets
+        (opt-sccp-state-mark-executable state default-label)
+        cases)]
     [(IrInstrAlloc dst _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrAddrOf dst _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrGep dst _ _ _)
@@ -14210,6 +14324,12 @@
               (IrInstrJump true-label)
               (IrInstrJump false-label))]
           [_ (IrInstrBranch rewritten-cond true-label false-label)]))]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (opt-sccp-rewrite-value env index)
+        base
+        cases
+        default-label)]
     [(IrInstrReturn value)
       (IrInstrReturn (opt-sccp-rewrite-maybe-value env value))]
     [(IrInstrPhi dst inputs ty)
@@ -14541,6 +14661,7 @@
     [(IrInstrStore _ _ _) (- 0 1)]
     [(IrInstrJump _) (- 0 1)]
     [(IrInstrBranch _ _ _) (- 0 1)]
+    [(IrInstrSwitch _ _ _ _) (- 0 1)]
     [(IrInstrReturn _) (- 0 1)]
     ;; #2386: register-group ops define their dst.
     [(IrInstrPack dst _ _) dst]
@@ -17303,6 +17424,7 @@
         cond
         true-label
         false-label)]
+    [(IrInstrSwitch _ _ _ _) state]
     [(IrInstrPhi dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrPack dst _ _) (opt-loop-bce-state-invalidate-def state dst)]
     [(IrInstrWord dst _ _ _) (opt-loop-bce-state-invalidate-def state dst)]
@@ -19312,6 +19434,7 @@
     [(IrInstrStore _ value _) (opt-inline-census-value index census value)]
     [(IrInstrJump _) census]
     [(IrInstrBranch cond _ _) (opt-inline-census-value index census cond)]
+    [(IrInstrSwitch idx _ _ _) (opt-inline-census-value index census idx)]
     [(IrInstrReturn maybe) (opt-inline-census-maybe-value index census maybe)]
     [(IrInstrPhi _ inputs _) (opt-inline-census-phi-inputs index census inputs)]
     ;; #2386: register-group ops use their operands (Pack: each word; Word: src).
@@ -22718,6 +22841,7 @@
     [(IrInstrStore _ value _) (opt-reach-value index state value)]
     [(IrInstrJump _) state]
     [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
+    [(IrInstrSwitch idx _ _ _) (opt-reach-value index state idx)]
     [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
     [(IrInstrPhi _ inputs _) (opt-reach-phi-inputs index state inputs)]
     ;; #2386: register-group ops carry word-class scalar operands (vars/consts);
@@ -23428,6 +23552,7 @@
       (opt-const-globals-disq-value (string-i64-map-put disq name 1) value)]
     [(IrInstrJump _) disq]
     [(IrInstrBranch cond _ _) (opt-const-globals-disq-value disq cond)]
+    [(IrInstrSwitch idx _ _ _) (opt-const-globals-disq-value disq idx)]
     [(IrInstrReturn maybe) (opt-const-globals-disq-maybe disq maybe)]
     [(IrInstrPhi _ inputs _) (opt-const-globals-disq-phi disq inputs)]
     [(IrInstrPack _ _ _) disq]
@@ -31380,6 +31505,52 @@
     (opt-cfg-successor-targets-known? blocks)
     (opt-verify-ok? (opt-verify-function (opt-cfg-test-function blocks)))))
 
+(define (opt-cfg-switch-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrSwitch
+          (IrValueVar 0)
+          1
+          (compiler-ir-switch-case-cons
+            1
+            "one"
+            (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+          "other")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "one"
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+          (IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "two"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+            (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "other"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-cfg-switch-successors-ok?) : bool
+  (let
+    [successors : OptLabelSet
+      (opt-cfg-index-successors
+        (opt-cfg-index-build (opt-cfg-switch-blocks))
+        "entry")]
+    (and
+      (= (opt-label-count successors) 3)
+      (opt-label-contains successors "one")
+      (opt-label-contains successors "two")
+      (opt-label-contains successors "other"))))
+
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
 
@@ -33272,6 +33443,7 @@
       (unless (opt-block-list-has-label? trap-blocks "trap") (return 13))
       (unless (= (opt-count-branches-blocks trap-blocks) 1) (return 14))
       (unless (opt-cfg-fallthrough-prune-ok? fallthrough-blocks) (return 15))
+      (unless (opt-cfg-switch-successors-ok?) (return 16))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64

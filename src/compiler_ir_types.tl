@@ -87,6 +87,13 @@
   (IrPhiInputNil)
   (IrPhiInputCons CompilerIrValue String (Box CompilerIrPhiInputList)))
 
+(defenum CompilerIrSwitchCase
+  (IrSwitchCase i64 String))
+
+(defenum CompilerIrSwitchCaseList
+  (IrSwitchCaseNil)
+  (IrSwitchCaseCons CompilerIrSwitchCase (Box CompilerIrSwitchCaseList)))
+
 (defenum CompilerIrInstrVectorBinOpPayload
   (CompilerIrInstrVectorBinOpPayload
     i64
@@ -202,6 +209,7 @@
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
+  (IrInstrSwitch CompilerIrValue i64 CompilerIrSwitchCaseList String)
   (IrInstrReturn CompilerIrMaybeValue)
   (IrInstrPhi i64 CompilerIrPhiInputList AstType)
   ;; #2386 multi-word register-resident aggregates: a small (<=16 B) inline
@@ -359,6 +367,12 @@
   [label : String]
   [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (IrPhiInputCons value label (box rest)))
+
+(define (compiler-ir-switch-case-cons
+  [tag : i64]
+  [label : String]
+  [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (IrSwitchCaseCons (IrSwitchCase tag label) (box rest)))
 
 (define (compiler-ir-instr-cons
   [instr : CompilerIrInstr]
@@ -705,6 +719,35 @@
     (compiler-ir-clone-phi-input-list-acc inputs IrPhiInputNil)
     IrPhiInputNil))
 
+(define (compiler-ir-clone-switch-case [case : CompilerIrSwitchCase]) : CompilerIrSwitchCase
+  (match case
+    [(IrSwitchCase tag label) (IrSwitchCase tag (clone label))]))
+
+(define (compiler-ir-clone-switch-case-list-acc
+  [cases : CompilerIrSwitchCaseList]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match cases
+    [(IrSwitchCaseNil) acc]
+    [(IrSwitchCaseCons case rest)
+      (compiler-ir-clone-switch-case-list-acc
+        (box-get rest)
+        (IrSwitchCaseCons (compiler-ir-clone-switch-case case) (box acc)))]))
+
+(define (compiler-ir-switch-case-list-reverse-onto
+  [cases : CompilerIrSwitchCaseList]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match cases
+    [(IrSwitchCaseNil) acc]
+    [(IrSwitchCaseCons case rest)
+      (compiler-ir-switch-case-list-reverse-onto
+        (box-get rest)
+        (IrSwitchCaseCons case (box acc)))]))
+
+(define (compiler-ir-clone-switch-case-list [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-list-reverse-onto
+    (compiler-ir-clone-switch-case-list-acc cases IrSwitchCaseNil)
+    IrSwitchCaseNil))
+
 ;; Deep-clone a (flattened) AstType into the CURRENT arena. The builtin
 ;; clone$AstType copies the i64 ty-pool child ids verbatim, which only SHARES the
 ;; source's ty-pool nodes. That breaks the per-function optimizer arena escape
@@ -978,6 +1021,12 @@
         (compiler-ir-clone-value cond)
         (clone true-label)
         (clone false-label))]
+    [(IrInstrSwitch index base cases default-label)
+      (IrInstrSwitch
+        (compiler-ir-clone-value index)
+        base
+        (compiler-ir-clone-switch-case-list cases)
+        (clone default-label))]
     [(IrInstrReturn value)
       (IrInstrReturn (compiler-ir-clone-maybe-value value))]
     [(IrInstrPhi dst inputs ty)
@@ -1383,6 +1432,23 @@
           [_
             (string-append ", " (compiler-ir-value-list-render (box-get rest)))]))]))
 
+(define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
+  (match case
+    [(IrSwitchCase tag label) (str-cat (int->string tag) ":" label)]))
+
+(define (compiler-ir-switch-case-list-render [cases : CompilerIrSwitchCaseList]) : String
+  (match cases
+    [(IrSwitchCaseNil) ""]
+    [(IrSwitchCaseCons case rest)
+      (string-append
+        (compiler-ir-switch-case-render case)
+        (match (box-get rest)
+          [(IrSwitchCaseNil) ""]
+          [_
+            (string-append
+              ", "
+              (compiler-ir-switch-case-list-render (box-get rest)))]))]))
+
 (define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
   (match values
     [(IrValueNil) 0]
@@ -1475,6 +1541,16 @@
     [(IrInstrTailCall name args ty) (compiler-ir-tail-call-render name args ty)]
     [(IrInstrTailCallIndirect callee args ty)
       (compiler-ir-tail-call-indirect-render callee args ty)]
+    [(IrInstrSwitch index base cases default-label)
+      (str-cat
+        "  switch "
+        (compiler-ir-value-render index)
+        " base "
+        (int->string base)
+        " ["
+        (compiler-ir-switch-case-list-render cases)
+        "] default "
+        default-label)]
     [_ "  <ir-instr>"]))
 
 (defenum CompilerIrEffect
@@ -1619,6 +1695,7 @@
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
     [(IrInstrBranch _ _ _) IrEffectControlFlow]
+    [(IrInstrSwitch _ _ _ _) IrEffectControlFlow]
     [(IrInstrReturn _) IrEffectControlFlow]
     [(IrInstrPack _ _ _) IrEffectPure]
     [(IrInstrWord _ _ _ _) IrEffectPure]
@@ -1923,6 +2000,7 @@
         span)]
     ;; Tail-indirect is control flow and does not define a destination value.
     [(IrInstrTailCallIndirect _ _ _) spans]
+    [(IrInstrSwitch _ _ _ _) spans]
     [(IrInstrStore name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -2088,6 +2166,7 @@
             (compiler-source-spans-value-key function dst))]
         ;; Tail-indirect is control flow and does not define a destination value.
         [(IrInstrTailCallIndirect _ _ _) (CompilerNoSourceSpan)]
+        [(IrInstrSwitch _ _ _ _) (CompilerNoSourceSpan)]
         [(IrInstrStore name _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -3008,6 +3087,16 @@
         (compiler-ir-value-describe len)
         " : "
         (int->string lanes))]
+    [(IrInstrSwitch index base cases default-label)
+      (str-cat
+        "  switch "
+        (compiler-ir-value-describe index)
+        " base "
+        (int->string base)
+        " ["
+        (compiler-ir-switch-case-list-render cases)
+        "] default "
+        default-label)]
     [_ "non-vector-mask-instr"]))
 
 (define (compiler-ir-value-var-eq? [value : CompilerIrValue] [want : i64]) : bool
@@ -3076,6 +3165,16 @@
     (compiler-ir-effect-is? (IrInstrJump "done") IrEffectControlFlow)
     (compiler-ir-effect-is?
       (IrInstrBranch (IrValueBool true) "then" "else")
+      IrEffectControlFlow)
+    (compiler-ir-effect-is?
+      (IrInstrSwitch
+        (IrValueVar 0)
+        1
+        (compiler-ir-switch-case-cons
+          1
+          "one"
+          (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+        "default")
       IrEffectControlFlow)
     (compiler-ir-effect-is?
       (IrInstrReturn (IrSomeValue (IrValueI64 0)))
@@ -3370,6 +3469,22 @@
         (AstTyI64)))
     "  tailcall fact_loop(%3, 1) : i64"))
 
+(define (compiler-ir-switch-render-ok?) : bool
+  (let
+    [cases : CompilerIrSwitchCaseList
+      (compiler-ir-switch-case-cons
+        4
+        "four"
+        (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
+    [instr : CompilerIrInstr (IrInstrSwitch (IrValueVar 9) 4 cases "other")]
+    (and
+      (string-eq
+        (compiler-ir-instr-render instr)
+        "  switch %9 base 4 [4:four, 5:five] default other")
+      (string-eq
+        (compiler-ir-instr-describe instr)
+        "  switch %9 base 4 [4:four, 5:five] default other"))))
+
 (define (compiler-ir-source-spans-boxed-list-ok?) : bool
   (let
     [span1 : AstSourceSpan (AstSourceSpan 1 2 1 3)]
@@ -3451,6 +3566,7 @@
     (unless (compiler-ir-effect-predicates-ok?) (return 1))
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
+    (unless (compiler-ir-switch-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-boxed-list-ok?) (return 1))
     (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
     42))

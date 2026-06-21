@@ -16136,6 +16136,38 @@
     [(OptLoopBceValue value) (opt-normalize-scalar-to-i64 value ty)]
     [_ (OptNoI64)]))
 
+(define (opt-range-proves-additive-index-in-range?
+  [facts : OptRangeFacts]
+  [label : String]
+  [index : OptLoopBceExpr]
+  [upper : OptLoopBceExpr]
+  [upper-known-nonnegative : bool]) : bool
+  (match index
+    [(OptLoopBceBin op lhs rhs ty)
+      (if (and (opt-binop-eq op (IrBinAdd)) (opt-signed-integer-type? ty))
+        (match (opt-range-expr-i64 (box-get rhs) ty)
+          [(OptSomeI64 offset)
+            (let
+              [base : OptLoopBceExpr (box-get lhs)]
+              ;; `base < upper - k` only proves `(base + k) < upper` when the
+              ;; trusted upper length prevents `upper - k` from wrapping upward.
+              (and
+                (> offset 0)
+                upper-known-nonnegative
+                (opt-range-proves-nonnegative? facts label base)
+                (opt-range-proves-less-than?
+                  facts
+                  label
+                  base
+                  (OptLoopBceBin
+                    (IrBinSub)
+                    (box upper)
+                    (box (OptLoopBceValue (IrValueI64 offset)))
+                    ty))))]
+          [(OptNoI64) false])
+        false)]
+    [_ false]))
+
 (define (opt-range-add-nonnegative-from-compare
   [facts : OptRangeFacts]
   [sources : I64I64Map]
@@ -17301,9 +17333,18 @@
     [length-expr : OptLoopBceExpr
       (opt-loop-bce-value-expr sources (struct-get state exprs) length)]
     [ranges : OptRangeFacts (struct-get state ranges)]
-    (and
-      (opt-range-proves-nonnegative? ranges block-label index-expr)
-      (opt-range-proves-less-than? ranges block-label index-expr length-expr))))
+    [length-known-nonnegative : bool
+      (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)]
+    (or
+      (and
+        (opt-range-proves-nonnegative? ranges block-label index-expr)
+        (opt-range-proves-less-than? ranges block-label index-expr length-expr))
+      (opt-range-proves-additive-index-in-range?
+        ranges
+        block-label
+        index-expr
+        length-expr
+        length-known-nonnegative))))
 
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]

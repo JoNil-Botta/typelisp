@@ -267,6 +267,19 @@
   (lsp-json-object
     (lsp-json-member k1 v1 (lsp-json-member k2 v2 JsonMemberListNil))))
 
+(define (lsp-json-object3
+  [k1 : String]
+  [v1 : Json]
+  [k2 : String]
+  [v2 : Json]
+  [k3 : String]
+  [v3 : Json]) : Json
+  (lsp-json-object
+    (lsp-json-member
+      k1
+      v1
+      (lsp-json-member k2 v2 (lsp-json-member k3 v3 JsonMemberListNil)))))
+
 (define (lsp-json-object4
   [k1 : String]
   [v1 : Json]
@@ -3389,8 +3402,25 @@
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
-      (match (lsp-json-string-field params "name")
-        [(OkLspJsonText name)
+      (let
+        [name : String
+          (let
+            [pos-key : String "position"]
+            (match (json-object-get params (& pos-key))
+              [(JsonFound position)
+                (let
+                  [line : i64 (lsp-json-int-field-default position "line" 0)]
+                  [col : i64
+                    (lsp-json-int-field-default position "character" 0)]
+                  (lsp-find-and-extract-name text line col))]
+              [(JsonMissing)
+                (match (lsp-json-string-field params "name")
+                  [(OkLspJsonText n) n]
+                  [(MissingLspJsonText) ""])]))]
+        (if (= (string-length name) 0)
+          (begin
+            (lsp-write-error id -32600 "Missing name or position parameter")
+            (LspContinue docs))
           (match (lsp-json-string-field params "direction")
             [(OkLspJsonText direction)
               (let
@@ -3499,11 +3529,7 @@
             [(MissingLspJsonText)
               (begin
                 (lsp-write-error id -32600 "Missing direction parameter")
-                (LspContinue docs))])]
-        [(MissingLspJsonText)
-          (begin
-            (lsp-write-error id -32600 "Missing name parameter")
-            (LspContinue docs))])]
+                (LspContinue docs))])))]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")
@@ -4527,8 +4553,25 @@
 (define (lsp-handle-tl-rename [id : Json] [params : Json] [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
-      (match (lsp-json-string-field params "oldName")
-        [(OkLspJsonText old-name)
+      (let
+        [old-name : String
+          (let
+            [pos-key : String "position"]
+            (match (json-object-get params (& pos-key))
+              [(JsonFound position)
+                (let
+                  [line : i64 (lsp-json-int-field-default position "line" 0)]
+                  [col : i64
+                    (lsp-json-int-field-default position "character" 0)]
+                  (lsp-find-and-extract-name text line col))]
+              [(JsonMissing)
+                (match (lsp-json-string-field params "oldName")
+                  [(OkLspJsonText n) n]
+                  [(MissingLspJsonText) ""])]))]
+        (if (= (string-length old-name) 0)
+          (begin
+            (lsp-write-error id -32600 "Missing oldName or position parameter")
+            (LspContinue docs))
           (match (lsp-json-string-field params "newName")
             [(OkLspJsonText new-name)
               (if (string-eq old-name "")
@@ -4556,11 +4599,7 @@
             [(MissingLspJsonText)
               (begin
                 (lsp-write-error id -32600 "Missing newName parameter")
-                (LspContinue docs))])]
-        [(MissingLspJsonText)
-          (begin
-            (lsp-write-error id -32600 "Missing oldName parameter")
-            (LspContinue docs))])]
+                (LspContinue docs))])))]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")

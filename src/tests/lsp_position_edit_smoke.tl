@@ -90,9 +90,106 @@
       (string-eq (lsp-find-and-extract-name text 0 5) "foo")
       (string-eq (lsp-find-and-extract-name text 1 5) "bar"))))
 
-;; --------------------------------------------------------------------------
-;; main
-;; --------------------------------------------------------------------------
+;; Test structuralMove by name: move foo down
+(define (lsp-structural-move-by-name-ok?) : bool
+  (let
+    [docs : LspDocuments (lsp-documents-new)]
+    [doc-uri : String "file:///test.tl"]
+    [text : String "(define (foo) : i64 1)\n\n(define (bar) : i64 2)"]
+    [docs-with-doc : LspDocuments
+      (lsp-documents-set docs doc-uri "/test.tl" text "")]
+    [result : LspHandleResult
+      (lsp-handle-tl-structural-move
+        (JsonNumber "1")
+        (lsp-json-object3
+          "textDocument"
+          (lsp-json-object1 "uri" (JsonString doc-uri))
+          "name"
+          (JsonString "foo")
+          "direction"
+          (JsonString "down"))
+        docs-with-doc)]
+    (match result
+      [(LspContinue _) true]
+      [(LspExit _) false])))
+
+;; Test structuralMove by position: move bar up
+(define (lsp-structural-move-by-position-ok?) : bool
+  (let
+    [docs : LspDocuments (lsp-documents-new)]
+    [doc-uri : String "file:///test.tl"]
+    [text : String "(define (foo) : i64 1)\n\n(define (bar) : i64 2)"]
+    [docs-with-doc : LspDocuments
+      (lsp-documents-set docs doc-uri "/test.tl" text "")]
+    [result : LspHandleResult
+      (lsp-handle-tl-structural-move
+        (JsonNumber "1")
+        (lsp-json-object3
+          "textDocument"
+          (lsp-json-object1 "uri" (JsonString doc-uri))
+          "position"
+          (lsp-json-object2
+            "line"
+            (lsp-json-number 2)
+            "character"
+            (lsp-json-number 5))
+          "direction"
+          (JsonString "up"))
+        docs-with-doc)]
+    (match result
+      [(LspContinue _) true]
+      [(LspExit _) false])))
+
+;; Test rename by name
+(define (lsp-rename-by-name-ok?) : bool
+  (let
+    [docs : LspDocuments (lsp-documents-new)]
+    [doc-uri : String "file:///test.tl"]
+    [text : String "(define (foo) : i64 1)\n\n(define (bar [x : i64]) : i64 x)"]
+    [docs-with-doc : LspDocuments
+      (lsp-documents-set docs doc-uri "/test.tl" text "")]
+    [result : LspHandleResult
+      (lsp-handle-tl-rename
+        (JsonNumber "1")
+        (lsp-json-object3
+          "textDocument"
+          (lsp-json-object1 "uri" (JsonString doc-uri))
+          "oldName"
+          (JsonString "foo")
+          "newName"
+          (JsonString "baz"))
+        docs-with-doc)]
+    (match result
+      [(LspContinue _) true]
+      [(LspExit _) false])))
+
+;; Test rename by position
+(define (lsp-rename-by-position-ok?) : bool
+  (let
+    [docs : LspDocuments (lsp-documents-new)]
+    [doc-uri : String "file:///test.tl"]
+    [text : String "(define (foo) : i64 1)\n\n(define (bar [x : i64]) : i64 x)"]
+    [docs-with-doc : LspDocuments
+      (lsp-documents-set docs doc-uri "/test.tl" text "")]
+    [result : LspHandleResult
+      (lsp-handle-tl-rename
+        (JsonNumber "1")
+        (lsp-json-object3
+          "textDocument"
+          (lsp-json-object1 "uri" (JsonString doc-uri))
+          "position"
+          (lsp-json-object2
+            "line"
+            (lsp-json-number 2)
+            "character"
+            (lsp-json-number 5))
+          "newName"
+          (JsonString "qux"))
+        docs-with-doc)]
+    (match result
+      [(LspContinue _) true]
+      [(LspExit _) false])))
+
 (define (main) : i64
   (begin
     (unless (lsp-find-form-at-offset-ok?) (return 1))
@@ -106,4 +203,8 @@
     (unless (lsp-extract-define-name-var-ok?) (return 9))
     (unless (lsp-extract-define-name-nondefine-ok?) (return 10))
     (unless (lsp-find-and-extract-name-ok?) (return 11))
+    (unless (lsp-structural-move-by-name-ok?) (return 12))
+    (unless (lsp-structural-move-by-position-ok?) (return 13))
+    (unless (lsp-rename-by-name-ok?) (return 14))
+    (unless (lsp-rename-by-position-ok?) (return 15))
     42))

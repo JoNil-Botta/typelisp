@@ -1,5 +1,18 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
+(import "../stdlib/string.tl")
 (import "compiler_object.tl")
+
+(define (compiler-object-elf-string-length [text : String]) : i64
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
+(define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_ref text index)
+    (string-ref text index)))
 
 (defenum ResultCompilerObjectElf
   (OkCompilerObjectElf String)
@@ -111,11 +124,11 @@
   [text : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (compiler-object-elf-string-length text)]
     (begin
       (while (< i n)
         (begin
-          (array-push! out (cast (string-ref text i) : u8))
+          (array-push! out (cast (compiler-object-elf-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
@@ -139,8 +152,10 @@
   (match record
     [(ObjectDataLabel _) offset]
     [(ObjectDataAlign align) (compiler-object-elf-align-offset offset align)]
-    [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
-    [(ObjectDataString text) (+ offset (+ (string-length text) 1))]
+    [(ObjectDataBytes bytes)
+      (+ offset (compiler-object-elf-string-length bytes))]
+    [(ObjectDataString text)
+      (+ offset (+ (compiler-object-elf-string-length text) 1))]
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataF32 _) (+ offset 4)]
     [(ObjectDataI64 _) (+ offset 8)]
@@ -189,8 +204,8 @@
     [(ObjectX64AddRcxRip _) 7]
     [(ObjectX64MovRcxRax) 3]
     [(ObjectX64XorpdRip _) 8]
-    [(ObjectX64Bytes bytes) (string-length bytes)]
-    [(ObjectX64Raw bytes) (string-length bytes)]
+    [(ObjectX64Bytes bytes) (compiler-object-elf-string-length bytes)]
+    [(ObjectX64Raw bytes) (compiler-object-elf-string-length bytes)]
     [_ 0]))
 
 (define (compiler-object-elf-instr-relocation-count
@@ -700,7 +715,9 @@
         (begin
           (match (compiler-object-symbol-list-ref symbols index)
             [(ObjectSymbol name _ _ _)
-              (set! total (+ total (+ (string-length name) 1)))])
+              (set!
+                total
+                (+ total (+ (compiler-object-elf-string-length name) 1)))])
           (set! index (+ index 1))))
       total)))
 
@@ -901,12 +918,12 @@
     [(ObjectDataBytes bytes)
       (begin
         (compiler-object-elf-push-string-bytes! out bytes)
-        (+ offset (string-length bytes)))]
+        (+ offset (compiler-object-elf-string-length bytes)))]
     [(ObjectDataString text)
       (begin
         (compiler-object-elf-push-string-bytes! out text)
         (compiler-object-elf-push-u8! out 0)
-        (+ offset (+ (string-length text) 1)))]
+        (+ offset (+ (compiler-object-elf-string-length text) 1)))]
     [(ObjectDataF64 bits)
       (begin
         (compiler-object-elf-push-u64! out bits)
@@ -1354,7 +1371,9 @@
                 (set! result cur-offset)
                 (set! done true))
               (begin
-                (set! cur-offset (+ cur-offset (+ (string-length found) 1)))
+                (set!
+                  cur-offset
+                  (+ cur-offset (+ (compiler-object-elf-string-length found) 1)))
                 (set! index (+ index 1))))]))
       result)))
 
@@ -1733,8 +1752,8 @@
 
 (define (compiler-object-elf-u16-at [text : String] [offset : i64]) : i64
   (+
-    (cast (string-ref text offset) : i64)
-    (shl (cast (string-ref text (+ offset 1)) : i64) 8)))
+    (cast (compiler-object-elf-string-ref text offset) : i64)
+    (shl (cast (compiler-object-elf-string-ref text (+ offset 1)) : i64) 8)))
 
 (define (compiler-object-elf-u32-at [text : String] [offset : i64]) : i64
   (+
@@ -1742,7 +1761,7 @@
     (shl (compiler-object-elf-u16-at text (+ offset 2)) 16)))
 
 (define (compiler-object-elf-u8-at [text : String] [offset : i64]) : i64
-  (cast (string-ref text offset) : i64))
+  (cast (compiler-object-elf-string-ref text offset) : i64))
 
 (define (compiler-object-elf-section-header-start
   [image : CompilerObjectImage]
@@ -1795,8 +1814,8 @@
   [needle : String]
   [start : i64]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [needle-len : i64 (string-length needle)]
+    [text-len : i64 (compiler-object-elf-string-length text)]
+    [needle-len : i64 (compiler-object-elf-string-length needle)]
     (if (> (+ start needle-len) text-len)
       false
       (let
@@ -1805,7 +1824,9 @@
         (begin
           (while ok
             (if (< i needle-len)
-              (if (= (string-ref text (+ start i)) (string-ref needle i))
+              (if (=
+                (compiler-object-elf-string-ref text (+ start i))
+                (compiler-object-elf-string-ref needle i))
                 (set! i (+ i 1))
                 (set! ok false))
               (set! ok false)))
@@ -1814,7 +1835,7 @@
 (define (compiler-object-elf-contains? [text : String] [needle : String]) : bool
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (compiler-object-elf-string-length text)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
@@ -2086,15 +2107,15 @@
     [(OkCompilerObjectElf obj)
       (and
         (=
-          (string-length obj)
+          (compiler-object-elf-string-length obj)
           (+
             (compiler-object-elf-section-header-offset
               (compiler-object-elf-smoke-image))
             (*
               compiler-object-elf-section-header-size
               compiler-object-elf-section-count)))
-        (= (cast (string-ref obj 0) : i64) 0x7f)
-        (= (cast (string-ref obj 1) : i64) 0x45)
+        (= (cast (compiler-object-elf-string-ref obj 0) : i64) 0x7f)
+        (= (cast (compiler-object-elf-string-ref obj 1) : i64) 0x45)
         (= (compiler-object-elf-u16-at obj 18) 62)
         (=
           (compiler-object-elf-u16-at obj 58)

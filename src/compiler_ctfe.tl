@@ -2861,6 +2861,86 @@
       (ErrCtfe
         (ctfe-diagnostic-at-expr expr "string-length expects one string"))]))
 
+(define (ctfe-eval-string-ref-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons text tail)
+      (let
+        [text : AstExpr (ast-node-get text)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons index rest)
+            (let
+              [index : AstExpr (ast-node-get index)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg text expr env fuel name)
+                    [(ErrCtfeStringArg d) (ErrCtfe d)]
+                    [(OkCtfeStringArg s text-fuel)
+                      (ctfe-eval-string-ref-index
+                        s
+                        index
+                        expr
+                        env
+                        text-fuel
+                        name)])]
+                [_
+                  (ErrCtfe
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "string-ref expects a string and index"))]))]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                "string-ref expects a string and index"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "string-ref expects a string and index"))]))
+
+(define (ctfe-eval-string-ref-index
+  [text : String]
+  [index-expr : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [name : String]) : ResultCtfe
+  (match (ctfe-eval-i64-arg index-expr origin env fuel name)
+    [(ErrCtfeI64Arg d) (ErrCtfe d)]
+    [(OkCtfeI64Arg index index-fuel)
+      (if (or (< index 0) (>= index (string-length text)))
+        (ErrCtfe
+          (ctfe-diagnostic-at-expr origin "string-ref index out of bounds"))
+        (OkCtfe (CtfeChar (string-ref text index)) index-fuel))]))
+
+(define (ctfe-eval-string-to-int-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (ctfe-eval-string-arg arg expr env fuel name)
+              [(ErrCtfeStringArg d) (ErrCtfe d)]
+              [(OkCtfeStringArg text arg-fuel)
+                (OkCtfe (CtfeI64 (string->int text)) arg-fuel)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "string->int expects one string"))]))]
+    [_
+      (ErrCtfe (ctfe-diagnostic-at-expr expr "string->int expects one string"))]))
+
 (define (ctfe-eval-int-to-string-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -3610,16 +3690,18 @@
             (ctfe-eval-offset-query args expr env fuel)]
           [(ctfe-reflection-query-name? raw-name)
             (ctfe-eval-reflection-query raw-name args expr env fuel)]
-          [(or (string-eq raw-name "string-eq") (string-eq raw-name "string=?"))
+          [(string-eq raw-name "__tl_string_eq")
             (ctfe-eval-string-eq-call raw-name args expr env fuel)]
           [(or
               (string-eq call-name "string-append")
               (string-eq call-name "string-concat"))
             (ctfe-eval-string-append-call call-name args expr env fuel)]
-          [(or
-              (string-eq raw-name "string-length")
-              (string-eq raw-name "length"))
+          [(string-eq raw-name "__tl_string_length")
             (ctfe-eval-string-length-call raw-name args expr env fuel)]
+          [(string-eq raw-name "__tl_string_ref")
+            (ctfe-eval-string-ref-call raw-name args expr env fuel)]
+          [(string-eq raw-name "__tl_string_to_int")
+            (ctfe-eval-string-to-int-call raw-name args expr env fuel)]
           [(string-eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
           [(string-eq call-name "expr-bool")

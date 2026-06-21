@@ -985,7 +985,7 @@
 (define (compiler-backend-pic-source) : String
   "(define greeting : String \"hi\")
 (define (main) : i64
-  (string-length greeting))")
+  (__tl_string_length greeting))")
 
 (define (compiler-backend-pic-extern-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -1499,7 +1499,7 @@
   \"42\")
 (define (substring [s : String] [start : i64] [len : i64]) : String
   (let
-    [probe : char (string-ref s start)]
+    [probe : char (__tl_string_ref s start)]
     \"x\"))
 (define (string-concat [left : String] [right : String]) : String
   left)
@@ -1509,14 +1509,14 @@
   (print-string text))
 (define (parse-and-render [s : String]) : i64
   (+
-    (if (string-eq s \"42\") 1 0)
+    (if (__tl_string_eq s \"42\") 1 0)
     (+
-      (string->int s)
+      (__tl_string_to_int s)
       (+
-        (string-length (int->string 42))
+        (__tl_string_length (int->string 42))
         (+
-          (string-length (substring s 0 1))
-          (string-length (string-concat s \"!\")))))))
+          (__tl_string_length (substring s 0 1))
+          (__tl_string_length (string-concat s \"!\")))))))
 (define (emit-stdout [s : String]) : unit
   (begin
     (print-string s)
@@ -1624,8 +1624,8 @@
   (= (cast a : i64) (cast b : i64)))
 (define (string-eq [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (__tl_string_length left)]
+    [right-len : i64 (__tl_string_length right)]
     (if (not (= left-len right-len))
       false
       (let
@@ -1633,7 +1633,7 @@
         [same : bool true]
         (begin
           (while (if same (< i left-len) false)
-            (if (char-eq (string-ref left i) (string-ref right i))
+            (if (char-eq (__tl_string_ref left i) (__tl_string_ref right i))
               (set! i (+ i 1))
               (set! same false)))
           same)))))
@@ -1643,19 +1643,21 @@
   left)
 (define (string->int [text : String]) : i64
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [i : i64 0]
     [negative : bool false]
     [value : i64 0]
     (begin
-      (if (if (> n 0) (char-eq (string-ref text 0) '-') false)
+      (if (if (> n 0) (char-eq (__tl_string_ref text 0) '-') false)
         (begin
           (set! negative true)
           (set! i 1))
         unit)
       (while (< i n)
         (begin
-          (set! value (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
+          (set!
+            value
+            (+ (* value 10) (- (cast (__tl_string_ref text i) : i64) 48)))
           (set! i (+ i 1))))
       (if negative
         (- 0 value)
@@ -2430,7 +2432,7 @@
 (define (arg [index : i64]) : String
   (runtime-arg index))
 (define (main) : i64
-  (string-length (arg 0)))")
+  (__tl_string_length (arg 0)))")
 
 (define (compiler-backend-arg-runtime-abort-ok?) : bool
   (and
@@ -2473,7 +2475,7 @@
 ;; selected byte into the char result.
 (define (compiler-backend-string-ref-source) : String
   "(define sample : String \"az\")
-(define (pick [i : i64]) : char (string-ref sample i))
+(define (pick [i : i64]) : char (__tl_string_ref sample i))
 (define (main) : i64 0)")
 
 (define (compiler-backend-string-ref-shape-ok?) : bool
@@ -2572,7 +2574,7 @@
 (define (mk-string) : String \"hi\")
 (define (main) : i64
   (+ (match (mk-shape) [(Circle r) r] [(Square s) s] [Nothing 0])
-     (+ (struct-get (mk-point) y) (string-length (mk-string)))))")
+     (+ (struct-get (mk-point) y) (__tl_string_length (mk-string)))))")
 
 (define (compiler-backend-aggregate-return-shape-ok?) : bool
   (match (compiler-backend-emit-source
@@ -2610,10 +2612,10 @@
 (define nested : Nested (Nested (string-concat \"o\" \"k\") (Some 3)))
 
 (define (main) : i64
-  (+ (+ (+ (string-length greeting) (length cells))
+  (+ (+ (+ (__tl_string_length greeting) (length cells))
         (+ (struct-get pair x) (struct-get pair y)))
      (+ (match choice [(Some n) n] [None 0])
-        (+ (string-length (struct-get nested label))
+        (+ (__tl_string_length (struct-get nested label))
            (match (struct-get nested choice) [(Some n) n] [None 0])))))")
 
 (define (compiler-backend-runtime-global-shape-ok?
@@ -2711,7 +2713,7 @@
         [mk-enum : (-> Box) __tl_lambda_main_1]
         [mk-array : (-> (Array i64)) __tl_lambda_main_2]
         [mk-struct : (-> Pair) __tl_lambda_main_3])
-    (+ (string-length (mk-string))
+    (+ (__tl_string_length (mk-string))
        (+ (match (mk-enum) [(BoxI n) n])
           (+ (array-length (mk-array))
              (struct-get (mk-struct) y))))))")
@@ -5153,9 +5155,9 @@
   (let
     [message : String \"syscall-ok\\n\"]
     [addr : i64 (ptr-i64 (unsafe (string-data message)))]
-    [wrote : i64 (unsafe (syscall 1 1 addr (string-length message)))]
+    [wrote : i64 (unsafe (syscall 1 1 addr (__tl_string_length message)))]
     [bad-read : i64 (unsafe (syscall 0 -1 addr 1))]
-    (if (if (= wrote (string-length message)) (= bad-read -9) false)
+    (if (if (= wrote (__tl_string_length message)) (= bad-read -9) false)
       (begin
         (unsafe (syscall 231 42))
         1)
@@ -7731,7 +7733,7 @@
   (with-arena r
     (let
       [s : String (int->string 41)]
-      (string-length s))))")
+      (__tl_string_length s))))")
 
 (define (compiler-backend-region-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-region-source))
@@ -7855,8 +7857,8 @@
 (extern (env-path-separator) : String)
 (define (main) : i64
   (if (env-var-exists? \"TYPELISP_TEST_ENV\")
-    (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
-    (string-length (env-path-separator))))")
+    (__tl_string_length (env-var-value \"TYPELISP_TEST_ENV\"))
+    (__tl_string_length (env-path-separator))))")
 
 ;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
 ;; implements them in TypeLisp (#2142 follow-up). A program that externs the
@@ -7906,8 +7908,8 @@
   (let
     [name : String \"TYPELISP_TEST_ENV\"]
     (if (env-var-exists? name)
-      (string-length (env-var-value name))
-      (string-length (env-path-separator)))))")
+      (__tl_string_length (env-var-value name))
+      (__tl_string_length (env-path-separator)))))")
 
 (define (compiler-backend-stdlib-env-runtime-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -8021,56 +8023,58 @@
     [path : String \"target/private-runtime.txt\"]
     [data : String \"x\"]
     (begin
-      (runtime-read-file (unsafe (string-data path)) (string-length path))
+      (runtime-read-file (unsafe (string-data path)) (__tl_string_length path))
       (runtime-write-file
         (unsafe (string-data path))
-        (string-length path)
+        (__tl_string_length path)
         (unsafe (string-data data))
-        (string-length data))
-      (runtime-file-exists? (unsafe (string-data path)) (string-length path))
+        (__tl_string_length data))
+      (runtime-file-exists?
+        (unsafe (string-data path))
+        (__tl_string_length path))
       (runtime-read-file-status
         (unsafe (string-data path))
-        (string-length path))
+        (__tl_string_length path))
       (runtime-write-file-status
         (unsafe (string-data path))
-        (string-length path)
+        (__tl_string_length path)
         (unsafe (string-data data))
-        (string-length data))
+        (__tl_string_length data))
       (runtime-append-file-status
         (unsafe (string-data path))
-        (string-length path)
+        (__tl_string_length path)
         (unsafe (string-data data))
-        (string-length data))
+        (__tl_string_length data))
       (runtime-file-exists-status
         (unsafe (string-data path))
-        (string-length path))
+        (__tl_string_length path))
       (runtime-file-open-status
         (unsafe (string-data path))
-        (string-length path)
+        (__tl_string_length path)
         0)
       (runtime-file-close-status 1)
       (runtime-file-write-status
         1
         (unsafe (string-data data))
-        (string-length data))
+        (__tl_string_length data))
       (runtime-file-flush-status 1)
       (runtime-file-read-chunk-status 1 8)
       (runtime-file-read-chunk-bytes 1)
       (runtime-file-read-chunk-eof 1)
       (runtime-fs-mkdir-status
         (unsafe (string-data path))
-        (string-length path))
+        (__tl_string_length path))
       (runtime-fs-remove-file-status
         (unsafe (string-data path))
-        (string-length path))
+        (__tl_string_length path))
       (runtime-fs-remove-dir-status
         (unsafe (string-data path))
-        (string-length path))
+        (__tl_string_length path))
       (runtime-fs-rename-status
         (unsafe (string-data path))
-        (string-length path)
+        (__tl_string_length path)
         (unsafe (string-data data))
-        (string-length data))
+        (__tl_string_length data))
       (runtime-fs-process-id)
       (runtime-read-stdin-line)
       (runtime-read-stdin-bytes 1)
@@ -8233,13 +8237,13 @@
 (define (fs-current-dir) : String
   (tl_fs_current_dir))
 (define (main) : i64
-  (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
+  (+ (fs-current-dir-status) (__tl_string_length (fs-current-dir))))")
 
 (define (compiler-backend-fs-current-dir-extern-source) : String
   "(extern (tl_fs_current_dir_status) : i64)
 (extern (tl_fs_current_dir) : String)
 (define (main) : i64
-  (+ (tl_fs_current_dir_status) (string-length (tl_fs_current_dir))))")
+  (+ (tl_fs_current_dir_status) (__tl_string_length (tl_fs_current_dir))))")
 
 (define (compiler-backend-fs-current-dir-extern-only-source-ok?
   [source : String]) : bool
@@ -9946,7 +9950,7 @@
 
 (define (compiler-backend-export-symbol-stdlib-runtime-collision-source) : String
   "(define (own-int-to-string) (:export-symbol \"tl_int_to_string\") : String \"0\")
-(define (main) : i64 (string-length (own-int-to-string)))")
+(define (main) : i64 (__tl_string_length (own-int-to-string)))")
 
 (define (compiler-backend-export-symbol-main-source) : String
   "(define (main) (:export-symbol \"tl_not_main\") : i64 0)")

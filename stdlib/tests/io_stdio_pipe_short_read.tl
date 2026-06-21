@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 (import "stdlib/test.tl")
 
 (define pipe-stdin-read-size : i64

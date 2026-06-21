@@ -6,6 +6,18 @@
 (import "../stdlib/str_cat.tl")
 (import "read.tl")
 
+(define (tlci-string-length [text : String]) : i64
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
+(define (tlci-string-ref [text : String] [index : i64]) : char
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_ref text index)
+    (string-ref text index)))
+
 (defenum TlciExportKind
   (TlciExportValue)
   (TlciExportType)
@@ -289,11 +301,11 @@
 (define (tlci-push-string-bytes! [out : (Array u8)] [text : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (tlci-string-length text)]
     (begin
       (while (< i n)
         (begin
-          (array-push! out (cast (string-ref text i) : u8))
+          (array-push! out (cast (tlci-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
@@ -374,12 +386,12 @@
       hash)))
 
 (define (tlci-char-code-at [text : String] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
+  (cast (tlci-string-ref text idx) : i64))
 
 (define (tlci-string-less? [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (tlci-string-length left)]
+    [right-len : i64 (tlci-string-length right)]
     [limit : i64
       (if (< left-len right-len)
         left-len
@@ -798,7 +810,7 @@
 
 (define (tlci-escape-string [text : String]) : String
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (tlci-string-length text)]
     [i : i64 0]
     [out : String ""]
     [slash : String (tlci-backslash-text)]

@@ -27,6 +27,7 @@
 ;#       (isort.sort! (&mut v))
 ;#       (+ (ivec.get (& v) 0 0) (ivec.get (& v) 2 0)))))
 ;# ```
+(import "string.tl")
 (import "vector.tl")
 
 ;: Return the character code at `idx` in borrowed text.

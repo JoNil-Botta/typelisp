@@ -25,6 +25,7 @@
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
 (import "io.tl")
+(import "string.tl")
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
 (defenum TextBufChunkList

@@ -3054,33 +3054,22 @@
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
     [e1 : TcTypeEnv
-      (tc-bind e0 "string-length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e2 : TcTypeEnv (tc-bind e1 "length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e3 : TcTypeEnv
-      (tc-bind e2 "string-eq" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e4 : TcTypeEnv
-      (tc-bind e3 "string=?" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e5 : TcTypeEnv
-      (tc-bind e4 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e6 : TcTypeEnv
       (tc-bind
-        (tc-bind
-          e5
-          "cpuid"
-          (tc-fn2
-            (AstTyI64)
-            (AstTyI64)
-            (ast-ty-tuple
+        e0
+        "cpuid"
+        (tc-fn2
+          (AstTyI64)
+          (AstTyI64)
+          (ast-ty-tuple
+            (ast-type-cons
+              (AstTyI32)
               (ast-type-cons
                 (AstTyI32)
                 (ast-type-cons
                   (AstTyI32)
-                  (ast-type-cons
-                    (AstTyI32)
-                    (ast-type-cons (AstTyI32) (AstTypeNil))))))))
-        "xgetbv"
-        (tc-fn1 (AstTyI64) (AstTyI64)))]
-    (tc-bind e6 (tc-default-boundary-name) (AstTyUnit))))
+                  (ast-type-cons (AstTyI32) (AstTypeNil))))))))]
+    [e2 : TcTypeEnv (tc-bind e1 "xgetbv" (tc-fn1 (AstTyI64) (AstTyI64)))]
+    (tc-bind e2 (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-macro-expr-clause-type) : AstType
   (AstTyVar (intern "ExprClause")))
@@ -8690,12 +8679,12 @@
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
     [shadowed : TcTypeEnv
-      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+      (tc-bind base "__tl_string_length" (tc-fn1 (AstTyI64) (AstTyI64)))]
     [cached : TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
     (and
       (tc-type-env-cache-head? cached)
-      (not (tc-default-builtin-unshadowed? cached "string-length")))))
+      (not (tc-default-builtin-unshadowed? cached "__tl_string_length")))))
 
 (define (tc-type-env-local-cache-partial-layer-smoke?) : bool
   (let
@@ -8727,7 +8716,7 @@
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
     [shadowed : TcTypeEnv
-      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+      (tc-bind base "__tl_string_length" (tc-fn1 (AstTyI64) (AstTyI64)))]
     [shadow-layer : TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
     [miss-layer : TcTypeEnv
@@ -8738,9 +8727,9 @@
       (tc-type-env-cache-partial-head? shadow-layer)
       (tc-type-env-cache-partial-head? miss-layer)
       (tc-type-env-cache-partial-head? clear-layer)
-      (not (tc-default-builtin-unshadowed? shadow-layer "string-length"))
-      (not (tc-default-builtin-unshadowed? miss-layer "string-length"))
-      (tc-default-builtin-unshadowed? clear-layer "string-length"))))
+      (not (tc-default-builtin-unshadowed? shadow-layer "__tl_string_length"))
+      (not (tc-default-builtin-unshadowed? miss-layer "__tl_string_length"))
+      (tc-default-builtin-unshadowed? clear-layer "__tl_string_length"))))
 
 (define (tc-type-env-local-cache-depth-cap-smoke?) : bool
   (let
@@ -12981,10 +12970,10 @@
         [(ErrTcType message) (ErrTcType message)])]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
-;; user definition, or a local). Used to decide whether an unbound builtin
-;; name like `string-ref`/`char-at` should be treated as the String-index
-;; builtin (unbound) or as an ordinary direct call to a shadowing user
-;; definition (bound). Mirrors the host compiler's shadowing check (#677).
+;; user definition, or a local). Used to decide whether an unbound private
+;; compiler intrinsic should be recovered as a builtin or as an ordinary direct
+;; call to a shadowing user definition. Mirrors the host compiler's shadowing
+;; check (#677).
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-bound-id? env (tc-name-id name)))
 
@@ -13237,11 +13226,9 @@
         (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
         (ErrTcType "typecheck: unknown borrowed string builtin")))))
 
-;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
-;; String plus any integer index, yielding `char`. The parser emits this as an
-;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
-;; or local, recover the builtin String-index behavior (and its exact
-;; diagnostics) here rather than via the generic call path (#677).
+;; Typecheck the private `(__tl_string_ref s i)` intrinsic: a String plus any
+;; integer index, yielding `char`. Public `string-ref` and `char-at` live in
+;; stdlib/string.tl and lower through this private operation.
 (define (tc-string-ref-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13281,15 +13268,13 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (and
-    (tc-default-builtin-unshadowed? env name)
-    (tc-length-handle-type? arg-ty))
-    (OkTcType (AstTyI64))
-    (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
-      (if (tc-default-builtin-unshadowed? env name)
-        (ErrTcType "typecheck: argument type mismatch")
-        (tc-call-expr ctx env func args))
-      (tc-call-expr ctx env func args))))
+  (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
+    (if (tc-default-builtin-unshadowed? env name)
+      (if (tc-length-handle-type? arg-ty)
+        (OkTcType (AstTyI64))
+        (ErrTcType "typecheck: argument type mismatch"))
+      (tc-call-expr ctx env func args))
+    (tc-call-expr ctx env func args)))
 
 (define (tc-array-length-non-array-call
   [ctx : TcContext]
@@ -13324,9 +13309,9 @@
       (tc-array-length-receiver ctx (ty-node-get referent-ty))]
     [_ (ErrTcArrayReceiver "typecheck: array-length requires dynamic array")]))
 
-;; `array-length` remains dynamic-array-only. `length` and `string-length` keep
-;; their legacy owned-String path while also accepting explicit borrowed `str`
-;; handles for the unshadowed default builtin.
+;; `array-length` remains dynamic-array-only. `length` remains a transitional
+;; array alias. String/bytes length is a stdlib wrapper over the private
+;; `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13513,11 +13498,11 @@
   (match (ast-expr-unspan func)
     [(AstExprVar raw-name)
       ;; A builtin called from a macro expansion arrives hygiene-renamed
-      ;; (`__tl_macro_global$string-length`), which would miss the literal-name
-      ;; checks below and fall through to the strict registered signature. Strip
-      ;; the hygiene-global prefix so macro-generated builtin calls dispatch
-      ;; exactly like hand-written ones; `func` keeps the original name for the
-      ;; ordinary call/resolution paths.
+      ;; (`__tl_macro_global$__tl_string_length`), which would miss the
+      ;; literal-name checks below and fall through to the strict registered
+      ;; signature. Strip the hygiene-global prefix so macro-generated builtin
+      ;; calls dispatch exactly like hand-written ones; `func` keeps the
+      ;; original name for the ordinary call/resolution paths.
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
         [name-id : i64 (tc-builtin-name-id name)]
@@ -24977,12 +24962,12 @@
       [(string-eq name "align-of") true]
       [(string-eq name "offset-of") true]
       [(ctfe-reflection-query-name? name) true]
-      [(string-eq name "string-eq") true]
-      [(string-eq name "string=?") true]
+      [(string-eq name "__tl_string_eq") true]
       [(string-eq call-name "string-append") true]
       [(string-eq call-name "string-concat") true]
-      [(string-eq name "string-length") true]
-      [(string-eq name "length") true]
+      [(string-eq name "__tl_string_length") true]
+      [(string-eq name "__tl_string_ref") true]
+      [(string-eq name "__tl_string_to_int") true]
       [(string-eq call-name "int->string") true]
       [(string-eq call-name "expr-bool") true]
       [(string-eq call-name "expr-int") true]
@@ -31943,13 +31928,24 @@
   [key : String]) : AstGeneratedDeclMeta
   (AstSomeGeneratedDeclMeta generator item AstExprNil key))
 
+(define (macro-import-placeholder-kind? [kind : AstImportKind]) : bool
+  (match kind
+    [(AstImportMacro _) true]
+    [(AstImportMacroDecls _) true]
+    [_ false]))
+
 (define (macro-wrap-generated-decl
   [decl : AstDecl]
   [generator : String]
   [key : String]) : AstDecl
   (match decl
     [(AstDeclModule _) decl]
-    [(AstDeclImport _) decl]
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (if (macro-import-placeholder-kind? kind)
+        (ast-decl-comptime-decl-with-meta
+          (macro-generated-meta generator "import" key)
+          decl)
+        decl)]
     [(AstDeclExport _) decl]
     [_
       (match (gen-decl-visible-name decl)
@@ -35586,7 +35582,8 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
-  [module : String]
+  [lookup-module : String]
+  [import-module : String]
   [call-id : i64]
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]
@@ -35596,7 +35593,7 @@
     (match (ast-expr-unspan call-expr)
       [(AstExprCall func-box args)
         (let
-          [decl-ctx : TcContext (tc-context-with-module ctx module)]
+          [decl-ctx : TcContext (tc-context-with-module ctx lookup-module)]
           [func : AstExpr (ast-node-get func-box)]
           [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
           (match (macro-call-decl decl-ctx func orig-decls call-expr)
@@ -35637,7 +35634,7 @@
                                   [(OkMacroParsedDecls generated)
                                     (macro-expand-module-generated-decls
                                       orig-decls
-                                      module
+                                      import-module
                                       alias
                                       span
                                       decl-path
@@ -35669,6 +35666,14 @@
             call-expr
             "typecheck: import macro placeholder must contain a call"))])))
 
+(define (macro-generated-decl-context-module
+  [meta : AstGeneratedDeclMeta]
+  [fallback : String]) : String
+  (match meta
+    [(AstSomeGeneratedDeclMeta generator _ _ _)
+      (macro-hygiene-definition-module generator)]
+    [(AstNoGeneratedDeclMeta) fallback]))
+
 (define (macro-expand-decl-with-path
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -35677,6 +35682,35 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match template
+          [(AstDeclImport (AstImportSpec kind _ _ alias span))
+            (if (macro-import-placeholder-kind? kind)
+              (match kind
+                [(AstImportMacro call-id)
+                  (macro-expand-module-import
+                    ctx
+                    top-env
+                    orig-decls
+                    (macro-generated-decl-context-module meta module)
+                    module
+                    call-id
+                    alias
+                    span
+                    decl-path)]
+                [(AstImportMacroDecls call-id)
+                  (macro-expand-decls-splice
+                    ctx
+                    top-env
+                    orig-decls
+                    (macro-generated-decl-context-module meta module)
+                    call-id
+                    decl-path)]
+                [_ (macro-single-decl-expansion decl decl-path)])
+              (macro-single-decl-expansion decl decl-path))]
+          [_ (macro-single-decl-expansion decl decl-path)]))]
     [(AstDeclImport (AstImportSpec kind _ _ alias span))
       (match kind
         [(AstImportMacro call-id)
@@ -35684,6 +35718,7 @@
             ctx
             top-env
             orig-decls
+            module
             module
             call-id
             alias

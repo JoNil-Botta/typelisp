@@ -1,5 +1,7 @@
 ; refs #331: aggregate globals are initialized through hidden runtime
 ; initializer functions, whose returned pointers are stored before main.
+(import "stdlib/string.tl")
+
 (defenum MaybeI64
   (Some i64)
   (None))

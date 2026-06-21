@@ -11,6 +11,7 @@
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
 (import "../stdlib/io.tl")
+(import "../stdlib/string.tl")
 (import "compiler_ast_types.tl")
 (import "lex.tl")
 

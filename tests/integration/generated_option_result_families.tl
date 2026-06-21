@@ -1,4 +1,6 @@
 ; generated_option_result_families.tl - Concrete Option/Result family requests (#902).
+(import "stdlib/string.tl")
+
 (defstruct Payload
   (value i64))
 

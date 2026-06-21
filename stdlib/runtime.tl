@@ -21,6 +21,12 @@
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
+(define (runtime-string-length [text : String]) : i64
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
 (cfg
   windows
   (extern (runtime-windows-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
@@ -192,7 +198,7 @@
 ;: Write a fixed diagnostic message to stderr (fd 2), ignoring partial writes.
 (define (runtime-abort-write [message : String]) : unit
   (let
-    [len : i64 (string-length message)]
+    [len : i64 (runtime-string-length message)]
     [data : (Ptr u8)
       (unsafe
         (string-data message))]

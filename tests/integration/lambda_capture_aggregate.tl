@@ -1,6 +1,8 @@
 ; Capturing String and dynamic-array values in closure environments (#435).
 ; Each case reads a scalar out of a captured aggregate so the test exercises
 ; capture (not aggregate returns); `main` yields 42 only if every case holds.
+(import "stdlib/string.tl")
+
 ; A String captured and used while the creator scope is still live.
 (define (case-string-immediate) : bool
   (let

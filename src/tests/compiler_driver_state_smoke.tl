@@ -1,3 +1,4 @@
+(import "../../stdlib/string.tl")
 (import "../compiler_driver_core.tl")
 (import "../compiler_clone.tl")
 
@@ -466,7 +467,7 @@
     (begin
       (compiler-driver-state-install-builtins! state-a)
       (let
-        [string-length-id : i64 (intern "string-length")]
+        [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
             (compiler-builtin-typecheck-string-length-id? string-length-id)
@@ -496,7 +497,7 @@
                   (compiler-driver-state-install-builtins! state-a)
                   (let
                     [string-length-id-after-reset : i64
-                      (intern "string-length")]
+                      (intern "__tl_string_length")]
                     (begin
                       (unless
                         (compiler-builtin-typecheck-string-length-id?
@@ -521,7 +522,7 @@
         [before : i64
           (compiler-driver-state-smoke-builtin-ids-data-addr
             (array-ref (struct-get state builtin-ids) 0))]
-        [string-length-id : i64 (intern "string-length")]
+        [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
             (compiler-builtin-typecheck-string-length-id? string-length-id)
@@ -641,7 +642,9 @@
           (BackendTargetLinux)
           stdlib-roots
           (BackendModeScalar)
-          (compiler-cfg-empty))
+          (compiler-driver-target-cfgs
+            (BackendTargetLinux)
+            (compiler-cfg-empty)))
           [(OkCompilerDriverLowered _ _ _ _) true]
           [(ErrCompilerDriverLowered _) false])]
       (begin

@@ -19,6 +19,7 @@
 ;#         (string-list-builder-push (string-list-builder-empty) "first")
 ;#         "second"))))
 ;# ```
+(import "string.tl")
 (import "vector.tl")
 
 ;: Immutable list of strings.

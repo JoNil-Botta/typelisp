@@ -3,6 +3,7 @@
 ;; Follows the same pattern as lsp_frame_smoke.tl: tests pure helper functions
 ;; directly, checking their return values. Does NOT test JSON-RPC handlers
 ;; (those write to stdout and are harder to verify in a self-hosted test).
+(import "../../stdlib/string.tl")
 (import "../lsp_frame_core.tl")
 
 ;; --------------------------------------------------------------------------

@@ -7,6 +7,7 @@
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
 (import "../stdlib/io.tl")
+(import "../stdlib/string.tl")
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList

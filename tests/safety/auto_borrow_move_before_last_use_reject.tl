@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (define (len [text : (& text str)]) : i64
   (string-length text))
 

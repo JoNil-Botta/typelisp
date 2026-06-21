@@ -81,6 +81,8 @@
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
 ;: Emit a generated growable vector module for element type `T`.
+(import "string.tl")
+
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr
@@ -93,20 +95,23 @@
     [eq-body : Expr
       (match kind
         ["string"
-          `(let
-            [n : i64 (string-length a)]
-            [i : i64 0]
-            [same : bool (= n (string-length b))]
-            (begin
-              (while (if same
-                (< i n)
-                false)
-                (begin
-                  (if (= (string-ref a i) (string-ref b i))
-                    unit
-                    (set! same false))
-                  (set! i (+ i 1))))
-              same))]
+          `(cfg
+            feature-private-string-intrinsics
+            (__tl_string_eq a b)
+            (let
+              [n : i64 (string-length a)]
+              [i : i64 0]
+              [same : bool (= n (string-length b))]
+              (begin
+                (while (if same
+                  (< i n)
+                  false)
+                  (begin
+                    (if (= (string-ref a i) (string-ref b i))
+                      unit
+                      (set! same false))
+                    (set! i (+ i 1))))
+                same)))]
         ["i64" `(= a b)]
         ["i32" `(= a b)]
         ["i16" `(= a b)]
@@ -869,7 +874,10 @@
   (define (string-vec-contains-from? [v : StringVec] [x : String] [index : i64]) : bool
     (if (>= index (string-vec-len v))
       false
-      (if (string-eq (array-ref (string-vec-slots v) index) x)
+      (if (cfg
+        feature-private-string-intrinsics
+        (__tl_string_eq (array-ref (string-vec-slots v) index) x)
+        (string-eq (array-ref (string-vec-slots v) index) x))
         true
         (string-vec-contains-from? v x (+ index 1))))))
 

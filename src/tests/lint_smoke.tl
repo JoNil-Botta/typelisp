@@ -1,4 +1,5 @@
 ;; lint_smoke.tl - Runnable smoke for lint_core.tl (#1163).
+(import "../../stdlib/string.tl")
 (import "../lint_core.tl")
 
 (define (lint-smoke-string-append-source) : String

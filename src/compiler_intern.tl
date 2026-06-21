@@ -29,6 +29,24 @@
 (unsafe
   (extern (intern-arena-destroy [arg0 : i64]) : unit (:symbol "tl_arena_destroy")))
 
+(define (intern-private-string-length [text : String]) : i64
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
+(define (intern-private-string-ref [text : String] [index : i64]) : char
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_ref text index)
+    (string-ref text index)))
+
+(define (intern-private-string-eq [left : String] [right : String]) : bool
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_eq left right)
+    (string-eq left right)))
+
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 (define (intern-capacity) : i64
   262144)
@@ -149,7 +167,7 @@
     (unsafe
       (string-data (& s)))
     0
-    (string-length s)))
+    (intern-private-string-length s)))
 
 ;: Hash over a source slice without first allocating a substring.
 (define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
@@ -205,14 +223,14 @@
 (define (intern-persistent-copy [text : String]) : String
   (if (= (intern-arena-current) intern-persistent-arena)
     text
-    (intern-persistent-substring text 0 (string-length text))))
+    (intern-persistent-substring text 0 (intern-private-string-length text))))
 
 (define (intern-string-slice-eq?
   [name : String]
   [text : String]
   [start : i64]
   [len : i64]) : bool
-  (if (= (string-length name) len)
+  (if (= (intern-private-string-length name) len)
     (let
       [name-ptr : (Ptr u8)
         (unsafe
@@ -239,13 +257,13 @@
 (define (intern-record-qualified-metadata [id : i64] [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref name i)]
+          [c : char (intern-private-string-ref name i)]
           (begin
             (if (= c '/')
               (set! slash i)
@@ -268,7 +286,7 @@
             (intern-substring
               name
               base-start
-              (- (string-length name) base-start))]
+              (- (intern-private-string-length name) base-start))]
           (begin
             (array-set! intern-pool-qualified-slots id true)
             (array-set! intern-pool-module-id-slots id (intern module-name))
@@ -429,7 +447,7 @@
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq slot-key name)
                 false)
                 (begin
                   (set! out slot-id)
@@ -515,7 +533,7 @@
                 (set! done true))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq slot-key name)
                 false)
                 (begin
                   (set! out (InternLookupFound slot-id))
@@ -588,8 +606,8 @@
   (and
     (= (intern-qualified-last-slash id) last-slash)
     (= (intern-qualified? id) qualified)
-    (string-eq (intern-qualified-module id) module-name)
-    (string-eq (intern-qualified-base id) base-name)))
+    (intern-private-string-eq (intern-qualified-module id) module-name)
+    (intern-private-string-eq (intern-qualified-base id) base-name)))
 
 (define (intern-slice-tests-ok?) : bool
   (begin
@@ -608,8 +626,10 @@
           (= slice-alpha slice-alpha-again)
           (not (= slice-alpha slice-beta))
           (= long-full long-slice)
-          (string-eq (intern-str long-slice) "multiword-hash-name")
-          (string-eq (intern-str slice-alpha) "alpha")
+          (intern-private-string-eq
+            (intern-str long-slice)
+            "multiword-hash-name")
+          (intern-private-string-eq (intern-str slice-alpha) "alpha")
           (intern-qualified-metadata-case-ok?
             slice-qualified
             true
@@ -644,7 +664,7 @@
       [ok : bool
         (and
           (= id again)
-          (string-eq (intern-str id) "persist/entry")
+          (intern-private-string-eq (intern-str id) "persist/entry")
           (intern-qualified-metadata-case-ok? id true 7 "persist" "entry"))]
       (begin
         (intern-reset!)

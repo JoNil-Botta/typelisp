@@ -619,15 +619,16 @@ gang width.
 
 ### Builtins
 
-Compiler-owned builtins are `print`, `print-bool`, `print-newline`,
-`make-array`, `array-ref`, `array-set!`,
-`array-length`/`length`; strings: `string-length`/`length`,
-`string-ref`/`char-at`, `string-eq`/`string=?`, `substring`/`string-slice`,
-`string->int`, `int->string`; and `panic`/`error`.
+Compiler-owned builtins are `make-array`, `array-ref`, `array-set!`,
+`array-length`/`length`, and the compatibility string slice/format helpers
+`substring`/`string-slice` and `int->string`.
 Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
 argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 `stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
 `file-open`, `read-stdin-line`, `flush-stdout`, `fs-*`, and related APIs.
+Import `stdlib/string.tl` for public string inspection and parsing helpers:
+`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, and
+`string->int`.
 For user-facing string concatenation, import `stdlib/str_cat.tl` and use
 `str-cat` for fixed-arity joins; use `stdlib/text_buf.tl` for incremental
 builders. `string-append`/`string-concat` are deprecated low-level

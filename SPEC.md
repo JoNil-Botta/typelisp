@@ -2022,7 +2022,7 @@ inputs while preserving owned `String` results for allocation sites.
 
 | Category | Members | v1 ownership contract |
 |----------|---------|-----------------------|
-| Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
+| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
@@ -3075,9 +3075,10 @@ without moving it. In v1 these are limited to:
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
 - Compatibility inspection calls whose current signatures are not yet
-  reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
-  `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
-  `print-error`, dynamic-array `length`/`array-length`, `array-ref` when the
+  reference-typed: imported `stdlib/string.tl` helpers `string-length`,
+  `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`,
+  `print-string`/`print-str`, `print-error`, dynamic-array
+  `length`/`array-length`, `array-ref` when the
   element type is copyable, `struct-get` when the selected field type is
   copyable, and stdlib predicates that only inspect their aggregate argument.
 - `array-set!` and `array-push!` on an owned array receiver or mutable
@@ -4813,22 +4814,24 @@ surface that is still recognized by the compiler while the stdlib migration in
 | Compatibility builtin | Signature | Description |
 |-----------------------|-----------|-------------|
 | `length` | `(Array t) → i64` | Get dynamic array length |
-| `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
 | `make-array` | `type i64 → (Array type)` | Allocate a dynamic array and initialize every live element under ZII; invalid lengths trap |
 | `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element, including through an immutable or mutable reference receiver (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element through an owned array or mutable reference receiver (bounds checked) |
 | `array-push!` | `(Array t) t → unit` | Append to a dynamic array through an owned array or mutable reference receiver |
-| `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
-| `string-length` | `String → i64` | Get string byte length |
-| `string-eq` | `String String → bool` | Byte-wise string comparison |
-| `string=?` | `String String → bool` | Alias for `string-eq` |
 | `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
 | `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `substring-view` | `(& r str) i64 i64 → (& r str)` | Borrowed string view of `len` bytes starting at byte offset `start`. Bounds checked; does not copy bytes. |
 | `string-slice-view` | `(& r str) i64 i64 → (& r str)` | Alias for `substring-view` |
-| `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
+
+Public string inspection and parsing helpers are stdlib definitions in
+`stdlib/string.tl`: `string-length`, `string-ref`/`char-at`,
+`string-eq`/`string=?`, and `string->int` are unbound until that module is
+imported. Current compilers lower those stdlib helpers through private
+compiler-owned intrinsics named `__tl_string_length`, `__tl_string_ref`,
+`__tl_string_eq`, and `__tl_string_to_int`; user code must not call the private
+names directly. `length` is an array builtin only, not a string alias.
 
 User-facing fixed-arity string concatenation is the stdlib macro
 `stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
@@ -4850,12 +4853,13 @@ in-tree migrations are complete.
   a bulk zero helper, and share-safe 8-byte defaults may use a fill helper, but
   those helpers are implementation details; safe code observes initialized
   source values.
-- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice`
+- `array-ref`, `array-set!`, imported `string-ref`, and
+  `substring`/`string-slice`
   perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime
   trap (writes to stderr and exits with code 134). The slice range is checked
   with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value
   and traps.
-- The `char-at` operator is an alias for `string-ref`.
+- The stdlib `char-at` helper is an alias for `string-ref`.
 - The table above records the currently implemented compatibility signatures.
   The v1 owned `String` / borrowed `str` contract in section 3.11 changes
   non-consuming text inputs to `(& lifetime str)` while preserving owned
@@ -5450,7 +5454,7 @@ stdlib surface.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
-| Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Non-allocating inspection | `length`/`array-length` on arrays; imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
 | Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, future `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
 | Mutates caller-provided storage | `array-set!`, future `byte-buf-set!`/`bytes-set!` style helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
@@ -5755,10 +5759,12 @@ not the future safe reference/borrow model (#182), not a replacement for
 - `cast` with sign/zero extension and truncation.
 - Enums with pattern matching.
 - Structs with construction, field access, and field-place assignment.
-- Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
-- Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
-  `string->int`, `int->string`.
+- Dynamic arrays: `make-array`, `array-ref`, `array-set!`,
+  `array-length`/`length`.
+- Strings: literals, imported `stdlib/string.tl` helpers
+  `string-ref`/`char-at`, `string-length`, `string-eq`/`string=?`,
+  `string->int`, and `int->string`; imported `stdlib/str_cat.tl` `str-cat`;
+  and compatibility `substring`/`string-slice`.
 - Stdlib I/O helpers in `stdlib/io.tl`: `arg-count`, `arg`, `read-file`,
   `write-file`, `file-exists?`, `file-open`, `file-close`,
   `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
@@ -5777,8 +5783,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
-- Transitional compiler compatibility builtins for string/array primitives such
-  as `substring`, `string-ref`, and `array-ref`.
+- Transitional compiler compatibility builtins for array and slice primitives
+  such as `array-ref`, `array-length`/`length`, and `substring`.
 - Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.

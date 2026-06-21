@@ -85,7 +85,7 @@
         entry
         "(import stdlib.list)
 (define (main) : i64
-  (string-length
+  (__tl_string_length
     (match (list.string-list-single \"a\")
       [(list.StringNil) \"\"]
       [(list.StringCons head _) head])))")

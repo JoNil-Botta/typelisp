@@ -73,7 +73,10 @@
       [rest : ExprClauseList (expr-clause-list-tail arms)]
       (match (expr-clause-first arm)
         [(ExprVar name)
-          (if (string-eq name "else")
+          (if (cfg
+            feature-private-string-intrinsics
+            (__tl_string_eq name "else")
+            (string-eq name "else"))
             (if (expr-clause-list-empty? rest)
               (expr-clause-second arm)
               (expr-var "core-cond-else-must-be-final"))
@@ -154,7 +157,10 @@
         (begin
           (/ 1 0)
           unit))
-      (if (string-eq (cond [true "yes"] [else "no"]) "yes")
+      (if (cfg
+        feature-private-string-intrinsics
+        (__tl_string_eq (cond [true "yes"] [else "no"]) "yes")
+        (string-eq (cond [true "yes"] [else "no"]) "yes"))
         unit
         (begin
           (/ 1 0)

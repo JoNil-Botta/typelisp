@@ -23,6 +23,8 @@
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
 ;: Emit a generated hash set module for key type `T`.
+(import "string.tl")
+
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
@@ -47,6 +49,16 @@
           (defenum Entry
             (None)
             (Some String))
+          (define (key-length [key : (& key str)]) : i64
+            (cfg
+              feature-private-string-intrinsics
+              (__tl_string_length key)
+              (string-length key)))
+          (define (key-ref [key : (& key str)] [index : i64]) : char
+            (cfg
+              feature-private-string-intrinsics
+              (__tl_string_ref key index)
+              (string-ref key index)))
           (define (hash-normalize [value : i64]) : i64
             (let
               [m : i64 2147483647]
@@ -56,7 +68,7 @@
                 raw)))
           (define (hash-key [key : (& key str)]) : i64
             (let
-              [n : i64 (string-length key)]
+              [n : i64 (key-length key)]
               [i : i64 0]
               [hash : i64 0]
               (begin
@@ -65,27 +77,30 @@
                     (set!
                       hash
                       (%
-                        (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)
+                        (+ (+ (* hash 131) (cast (key-ref key i) : i64)) 1)
                         2147483647))
                     (set! i (+ i 1))))
                 hash)))
           (define (key-eq-borrowed? [left : String] [right : (& right str)]) : bool
-            (let
-              [left-len : i64 (string-length (& left))]
-              [right-len : i64 (string-length right)]
-              (if (not (= left-len right-len))
-                false
-                (let
-                  [i : i64 0]
-                  [same : bool true]
-                  (begin
-                    (while (if same
-                      (< i left-len)
-                      false)
-                      (if (= (string-ref (& left) i) (string-ref right i))
-                        (set! i (+ i 1))
-                        (set! same false)))
-                    same)))))
+            (cfg
+              feature-private-string-intrinsics
+              (__tl_string_eq (& left) right)
+              (let
+                [left-len : i64 (key-length (& left))]
+                [right-len : i64 (key-length right)]
+                (if (not (= left-len right-len))
+                  false
+                  (let
+                    [i : i64 0]
+                    [same : bool true]
+                    (begin
+                      (while (if same
+                        (< i left-len)
+                        false)
+                        (if (= (key-ref (& left) i) (key-ref right i))
+                          (set! i (+ i 1))
+                          (set! same false)))
+                      same))))))
           (define (round-capacity [capacity : i64]) : i64
             (let
               [rounded : i64 1]

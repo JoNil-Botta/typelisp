@@ -1570,7 +1570,7 @@
         buf
         (gen-tb2
           buf
-          "  (let\n    [n : i64 (string-length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
+          "  (let\n    [n : i64 (__tl_string_length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
           ""))
       (set!
         buf
@@ -1649,12 +1649,7 @@
           "(define ("
           prefix
           "-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
-      (set!
-        buf
-        (gen-tb2
-          buf
-          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (if same (< i left-len) false)\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
-          ""))
+      (set! buf (gen-tb2 buf "  (__tl_string_eq left right))\n" ""))
       (set! buf (gen-tb3 buf "(define (" prefix "-probe-borrowed-from\n"))
       (set!
         buf
@@ -4157,7 +4152,7 @@
         buf
         (gen-tb2
           buf
-          "  (let\n    [n : i64 (string-length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
+          "  (let\n    [n : i64 (__tl_string_length key)]\n    [i : i64 0]\n    [hash : i64 0]\n    (begin\n      (while (< i n)\n        (begin\n          (set!\n            hash\n            (%\n              (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)\n              2147483647))\n          (set! i (+ i 1))))\n      hash)))\n"
           ""))
       (set!
         buf
@@ -4166,12 +4161,7 @@
           "(define ("
           prefix
           "-string-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
-      (set!
-        buf
-        (gen-tb2
-          buf
-          "  (let\n    [left-len : i64 (string-length left)]\n    [right-len : i64 (string-length right)]\n    (if (not (= left-len right-len))\n      false\n      (let\n        [i : i64 0]\n        [same : bool true]\n        (begin\n          (while (if same (< i left-len) false)\n            (if (= (cast (string-ref left i) : i64) (cast (string-ref right i) : i64))\n              (set! i (+ i 1))\n              (set! same false)))\n          same)))))\n"
-          ""))
+      (set! buf (gen-tb2 buf "  (__tl_string_eq left right))\n" ""))
       (text-buf-render buf))))
 
 (define (gen-hashmap-source-i64-key

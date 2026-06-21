@@ -1,8 +1,10 @@
 ;# String utility library for TypeLisp.
 ;#
-;# Provides string operations built on compiler/runtime primitives:
-;# `string-length`, `string-ref`, `string-data`, `array-data`, `tl_alloc`, and
-;# `string-from-bytes`.
+;# Provides string operations built on compiler/runtime primitives. New
+;# compilers enable `feature-private-string-intrinsics`, where public helpers
+;# route through `__tl_string_length`, `__tl_string_ref`, `__tl_string_eq`, and
+;# `__tl_string_to_int`. The fallback public primitive names keep the checked-in
+;# stdlib bootstrap-compatible with the published stage0.
 ;#
 ;# Usage: `(import "stdlib/string.tl")`
 ;#
@@ -41,6 +43,24 @@
     [dst : (MutPtr u8)]
     [src : (Ptr u8)]
     [n : i64]) : unit (:symbol "tl_memcpy")))
+
+;: Return the byte length of borrowed or owned text without allocating.
+(cfg
+  feature-private-string-intrinsics
+  (defmacro (string-length [text : Expr]) : i64
+    `(__tl_string_length ,text)))
+
+;: Read one byte from borrowed or owned text as a `char` with bounds checking.
+(cfg
+  feature-private-string-intrinsics
+  (defmacro (string-ref [text : Expr] [index : Expr]) : char
+    `(__tl_string_ref ,text ,index)))
+
+;: Alias for `string-ref`.
+(cfg
+  feature-private-string-intrinsics
+  (defmacro (char-at [text : Expr] [index : Expr]) : char
+    `(__tl_string_ref ,text ,index)))
 
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!
@@ -350,42 +370,45 @@
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
-  (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
-    (if (not (= left-len right-len))
-      false
-      (unsafe
-        (let
-          [lp : (Ptr u8) (string-data left)]
-          [rp : (Ptr u8) (string-data right)]
-          (if (= (ptr->int lp) (ptr->int rp))
-            true
-            (let
-              [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
-              [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
-              [words : i64 (shr left-len 3)]
-              [i : i64 0]
-              [same : bool true]
-              (begin
-                (while (and same (< i words))
-                  (if (=
-                    (ptr-read (ptr-offset lw i))
-                    (ptr-read (ptr-offset rw i)))
-                    (set! i (+ i 1))
-                    (set! same false)))
-                (if same
-                  (let
-                    [j : i64 (* words 8)]
-                    (begin
-                      (while (and same (< j left-len))
-                        (if (=
-                          (cast (ptr-read (ptr-offset lp j)) : i64)
-                          (cast (ptr-read (ptr-offset rp j)) : i64))
-                          (set! j (+ j 1))
-                          (set! same false)))
-                      same))
-                  false)))))))))
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_eq left right)
+    (let
+      [left-len : i64 (string-length left)]
+      [right-len : i64 (string-length right)]
+      (if (not (= left-len right-len))
+        false
+        (unsafe
+          (let
+            [lp : (Ptr u8) (string-data left)]
+            [rp : (Ptr u8) (string-data right)]
+            (if (= (ptr->int lp) (ptr->int rp))
+              true
+              (let
+                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+                [words : i64 (shr left-len 3)]
+                [i : i64 0]
+                [same : bool true]
+                (begin
+                  (while (and same (< i words))
+                    (if (=
+                      (ptr-read (ptr-offset lw i))
+                      (ptr-read (ptr-offset rw i)))
+                      (set! i (+ i 1))
+                      (set! same false)))
+                  (if same
+                    (let
+                      [j : i64 (* words 8)]
+                      (begin
+                        (while (and same (< j left-len))
+                          (if (=
+                            (cast (ptr-read (ptr-offset lp j)) : i64)
+                            (cast (ptr-read (ptr-offset rp j)) : i64))
+                            (set! j (+ j 1))
+                            (set! same false)))
+                        same))
+                    false))))))))))
 
 ;: Compare two owned strings byte-for-byte without allocating.
 (define (string-eq [left : String] [right : String]) : bool
@@ -397,24 +420,29 @@
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
 (define (string->int-borrowed [text : (& text str)]) : i64
-  (let
-    [n : i64 (string-length text)]
-    [i : i64 0]
-    [negative : bool false]
-    [value : i64 0]
-    (begin
-      (if (and (> n 0) (char-eq (string-ref text 0) '-'))
-        (begin
-          (set! negative true)
-          (set! i 1))
-        unit)
-      (while (< i n)
-        (begin
-          (set! value (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
-          (set! i (+ i 1))))
-      (if negative
-        (- 0 value)
-        value))))
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_to_int text)
+    (let
+      [n : i64 (string-length text)]
+      [i : i64 0]
+      [negative : bool false]
+      [value : i64 0]
+      (begin
+        (if (and (> n 0) (char-eq (string-ref text 0) '-'))
+          (begin
+            (set! negative true)
+            (set! i 1))
+          unit)
+        (while (< i n)
+          (begin
+            (set!
+              value
+              (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
+            (set! i (+ i 1))))
+        (if negative
+          (- 0 value)
+          value)))))
 
 ;: Parse a decimal integer using the legacy `string->int` compatibility rules.
 (define (string->int [text : String]) : i64

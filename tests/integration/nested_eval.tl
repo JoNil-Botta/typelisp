@@ -1,4 +1,6 @@
 ;; nested_eval.tl - end-to-end proof of NESTED PATTERN MATCHING (#41).
+(import "stdlib/string.tl")
+
 ;;
 ;; A tiny tree-walking evaluator over a boxed recursive `Sexpr` list spine that
 ;; dispatches a call form on its operator symbol. The point of this example is

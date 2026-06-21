@@ -1111,10 +1111,26 @@
 (define (main) : i64
   (+ (bi.read (bi.make 20))
     (+ (bi2.read (bi2.make 1))
-      (+ (string-length (bs.read (bs.make \"typed\")))
-        (+ (struct-get (bp.read (bp.make (Pair 7))) value)
-          (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
-            (struct-get (bo.read (bo.make (Other 9))) value)))))))")
+      (+ (__tl_string_length (bs.read (bs.make \"typed\")))
+          (+ (struct-get (bp.read (bp.make (Pair 7))) value)
+            (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
+              (struct-get (bo.read (bo.make (Other 9))) value)))))))")
+
+(define (compiler-typecheck-smoke-module-macro-nested-vector-import-source) : String
+  "(defmacro (vector [T : type]) : Module
+  `(begin
+    (module generated.vector)
+    (define (id [value : ,T]) : ,T value)
+    (export (value id))))
+(defmacro (uses-vector) : Module
+  `(begin
+    (module generated.usesvec)
+    (import (vector i64) as v)
+    (define (answer) : i64
+      (v.id 42))
+    (export (value answer))))
+(import (uses-vector) as uv)
+(define (main) : i64 (uv.answer))")
 
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
@@ -1172,6 +1188,8 @@
       "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-type-key-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?

@@ -1,5 +1,18 @@
 ;; compiler_object_coff.tl - COFF object-file serialization for object images.
+(import "../stdlib/string.tl")
 (import "compiler_object.tl")
+
+(define (compiler-object-coff-string-length [text : String]) : i64
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
+(define (compiler-object-coff-string-ref [text : String] [index : i64]) : char
+  (cfg
+    feature-private-string-intrinsics
+    (__tl_string_ref text index)
+    (string-ref text index)))
 
 (defenum ResultCompilerObjectCoff
   (OkCompilerObjectCoff String)
@@ -149,23 +162,25 @@
   [text : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (compiler-object-coff-string-length text)]
     (begin
       (while (< i n)
         (begin
-          (array-push! out (cast (string-ref text i) : u8))
+          (array-push! out (cast (compiler-object-coff-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
 (define (compiler-object-coff-push-name8! [out : (Array u8)] [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64 (compiler-object-coff-string-length name)]
     (begin
       (while (< i 8)
         (begin
           (if (< i n)
-            (array-push! out (cast (string-ref name i) : u8))
+            (array-push!
+              out
+              (cast (compiler-object-coff-string-ref name i) : u8))
             (compiler-object-coff-push-u8! out 0))
           (set! i (+ i 1))))
       unit)))
@@ -185,8 +200,10 @@
   (match record
     [(ObjectDataLabel _) offset]
     [(ObjectDataAlign align) (compiler-object-coff-align-offset offset align)]
-    [(ObjectDataBytes bytes) (+ offset (string-length bytes))]
-    [(ObjectDataString text) (+ offset (string-length text))]
+    [(ObjectDataBytes bytes)
+      (+ offset (compiler-object-coff-string-length bytes))]
+    [(ObjectDataString text)
+      (+ offset (compiler-object-coff-string-length text))]
     [(ObjectDataF64 _) (+ offset 8)]
     [(ObjectDataF32 _) (+ offset 4)]
     [(ObjectDataI64 _) (+ offset 8)]
@@ -235,7 +252,7 @@
     [(ObjectX64AddRcxRip _) 7]
     [(ObjectX64MovRcxRax) 3]
     [(ObjectX64XorpdRip _) 8]
-    [(ObjectX64Bytes bytes) (string-length bytes)]
+    [(ObjectX64Bytes bytes) (compiler-object-coff-string-length bytes)]
     [(ObjectX64Raw _) 0]
     [_ 0]))
 
@@ -946,11 +963,11 @@
     [(ObjectDataBytes bytes)
       (begin
         (compiler-object-coff-push-string-bytes! out bytes)
-        (+ offset (string-length bytes)))]
+        (+ offset (compiler-object-coff-string-length bytes)))]
     [(ObjectDataString text)
       (begin
         (compiler-object-coff-push-string-bytes! out text)
-        (+ offset (string-length text)))]
+        (+ offset (compiler-object-coff-string-length text)))]
     [(ObjectDataF64 bits)
       (begin
         (compiler-object-coff-push-u64! out (cast bits : i64))
@@ -1381,7 +1398,7 @@
       (ObjectSectionRsrc))))
 
 (define (compiler-object-coff-symbol-name-long? [name : String]) : bool
-  (> (string-length name) 8))
+  (> (compiler-object-coff-string-length name) 8))
 
 (define (compiler-object-coff-symbol-string-offset-from
   [symbols : CompilerObjectSymbolList]
@@ -1403,7 +1420,11 @@
                   (set! result cur-offset)
                   (set! done true))
                 (begin
-                  (set! cur-offset (+ cur-offset (+ (string-length found) 1)))
+                  (set!
+                    cur-offset
+                    (+
+                      cur-offset
+                      (+ (compiler-object-coff-string-length found) 1)))
                   (set! index (+ index 1))))
               (set! index (+ index 1)))]))
       result)))
@@ -1511,7 +1532,9 @@
           (match (compiler-object-symbol-list-ref symbols index)
             [(ObjectSymbol name _ _ _)
               (if (compiler-object-coff-symbol-name-long? name)
-                (set! total (+ total (+ (string-length name) 1)))
+                (set!
+                  total
+                  (+ total (+ (compiler-object-coff-string-length name) 1)))
                 unit)])
           (set! index (+ index 1))))
       total)))
@@ -1576,8 +1599,8 @@
 
 (define (compiler-object-coff-u16-at [text : String] [offset : i64]) : i64
   (+
-    (cast (string-ref text offset) : i64)
-    (shl (cast (string-ref text (+ offset 1)) : i64) 8)))
+    (cast (compiler-object-coff-string-ref text offset) : i64)
+    (shl (cast (compiler-object-coff-string-ref text (+ offset 1)) : i64) 8)))
 
 (define (compiler-object-coff-u32-at [text : String] [offset : i64]) : i64
   (+
@@ -1585,7 +1608,7 @@
     (shl (compiler-object-coff-u16-at text (+ offset 2)) 16)))
 
 (define (compiler-object-coff-u8-at [text : String] [offset : i64]) : i64
-  (cast (string-ref text offset) : i64))
+  (cast (compiler-object-coff-string-ref text offset) : i64))
 
 (define (compiler-object-coff-section-header-offset
   [kind : CompilerObjectSectionKind]) : i64
@@ -1600,8 +1623,8 @@
   [needle : String]
   [start : i64]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [needle-len : i64 (string-length needle)]
+    [text-len : i64 (compiler-object-coff-string-length text)]
+    [needle-len : i64 (compiler-object-coff-string-length needle)]
     (if (> (+ start needle-len) text-len)
       false
       (let
@@ -1610,7 +1633,9 @@
         (begin
           (while ok
             (if (< i needle-len)
-              (if (= (string-ref text (+ start i)) (string-ref needle i))
+              (if (=
+                (compiler-object-coff-string-ref text (+ start i))
+                (compiler-object-coff-string-ref needle i))
                 (set! i (+ i 1))
                 (set! ok false))
               (set! ok false)))
@@ -1619,7 +1644,7 @@
 (define (compiler-object-coff-contains? [text : String] [needle : String]) : bool
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (compiler-object-coff-string-length text)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))

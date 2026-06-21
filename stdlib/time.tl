@@ -19,6 +19,8 @@
   (TimeUnavailable String))
 
 ;: Result of reading a millisecond timestamp.
+(import "string.tl")
+
 (defenum ResultTimeMs
   (OkTimeMs i64)
   (ErrTimeMs TimeError))

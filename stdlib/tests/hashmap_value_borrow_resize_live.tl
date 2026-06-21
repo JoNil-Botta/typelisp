@@ -1,4 +1,5 @@
 (import "stdlib/hashmap.tl")
+(import "stdlib/string.tl")
 
 (define (hashmap-borrowed-value-len
   [lookup : (StringStringMapBorrowedValueLookup map)]) : i64

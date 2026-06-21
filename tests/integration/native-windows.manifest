@@ -3,10 +3,10 @@
 # that missing integration sources are listed in verify-integration.sh.
 # extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
-aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
+aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
 ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-
-auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|-
+auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
@@ -30,7 +30,8 @@ clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
-generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|-
+generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|stdlib/string.tl
+generated_string_vector_private_intrinsics|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
 tail_call_stack_args|tests/integration/tail_call_stack_args.tl|42|-|-|-
@@ -46,13 +47,13 @@ box_pattern_direct|tests/integration/box_pattern_direct.tl|42|-|-|-
 box_pattern_enum_payload|tests/integration/box_pattern_enum_payload.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
-make_array_init|tests/integration/make_array_init.tl|42|-|-|-
+make_array_init|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-
 mutable_reference_by_value_writeback|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-
 mutable_reference_disjoint_fields|tests/integration/mutable_reference_disjoint_fields.tl|42|-|-|-
 mutable_reference_disjoint_read|tests/integration/mutable_reference_disjoint_read.tl|42|-|-|-
-enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
+enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 f64_negation|tests/integration/f64_negation.tl|42|-|-|-
 repr_c_f32_fields|tests/integration/repr_c_f32_fields.tl|42|-|-|-
@@ -68,18 +69,18 @@ global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
 i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
-lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|-
-lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|-
+lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl
+lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|stdlib/string.tl
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
-lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|-
-lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|-
+lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|stdlib/string.tl
+lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|stdlib/string.tl
 lambda_capture_scalar|tests/integration/lambda_capture_scalar.tl|42|-|-|-
 lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-
 lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
 lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl
 lifetime_nullary_variant|tests/integration/lifetime_nullary_variant.tl|42|-|-|-
-lifetime_enum_borrow_return|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|-
+lifetime_enum_borrow_return|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|stdlib/string.tl
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
@@ -132,7 +133,7 @@ stdlib_substring_start_past_end_trap|tests/integration/stdlib_substring_start_pa
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
-string_length|tests/integration/string_length.tl|5|-|-|-
+string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-
 struct_field_set|tests/integration/struct_field_set.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl
@@ -188,7 +189,7 @@ lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|-|-|compiler_check_core.tl c
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
-lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|-
+lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl
 register_resident_enum|tests/integration/register_resident_enum.tl|42|-|-|-
 register_pair_struct|tests/integration/register_pair_struct.tl|42|-|-|-
 register_group_phi_return|tests/integration/register_group_phi_return.tl|42|-|-|-

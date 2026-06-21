@@ -14,6 +14,7 @@
 ;#
 ;# Usage: `(import "stdlib/process.tl")`
 ;#
+(import "string.tl")
 (import "vector.tl")
 
 ;: Immutable list of process argument strings in argv order.

@@ -6,6 +6,7 @@
 ;; functions below without touching the process-global compatibility table,
 ;; builtin-id cache, backend symbol cache, or typecheck caches keyed by
 ;; intern-generation.
+(import "stdlib/string.tl")
 (import "compiler_intern.tl")
 
 (defstruct InternState

@@ -29653,7 +29653,7 @@ tl_memcpy:
 (define (view-length [text : (& text str)]) : i64
   (let
     [view : (& text str) (unsafe (tl_str_view text 1 2))]
-    (string-length view)))
+    (__tl_string_length view)))
 (define (main) : i64
   (let
     [text : String \"abcdef\"]

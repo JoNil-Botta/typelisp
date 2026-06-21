@@ -2,6 +2,7 @@
 ;; argument witness program's assembly for a target so the integration suite can
 ;; assemble, link, and RUN it, proving each spilled argument arrives correctly.
 (import "../../stdlib/io.tl")
+(import "../../stdlib/string.tl")
 (import "../compiler_backend_tests.tl")
 
 (define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : ResultCompilerBackend

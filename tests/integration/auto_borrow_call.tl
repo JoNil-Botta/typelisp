@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (defstruct Pair
   (left i64)
   (right i64))

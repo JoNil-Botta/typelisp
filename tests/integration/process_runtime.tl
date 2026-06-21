@@ -3,6 +3,7 @@
 (import "stdlib/process_borrowed.tl")
 (import "stdlib/test.tl")
 (import "stdlib/vector.tl")
+(import "stdlib/string.tl")
 
 (define (assert-owned-string-eq
   [actual : String]

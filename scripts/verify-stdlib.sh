@@ -178,6 +178,7 @@ comptime.tl
 core_macros.tl
 io.tl
 io_caller_result.tl
+iterator.tl
 env.tl
 cpu.tl
 fs.tl

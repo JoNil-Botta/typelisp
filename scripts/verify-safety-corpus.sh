@@ -9,7 +9,6 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-. "$ROOT/scripts/lib-retry.sh"
 . "$ROOT/scripts/lib-linux-entry.sh"
 
 HOST_OS=linux
@@ -68,7 +67,6 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 WORKDIR=${TYPELISP_SAFETY_WORKDIR:-target/safety-corpus-verify}
-ATTEMPTS=${VERIFY_SAFETY_CORPUS_ATTEMPTS:-6}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
@@ -113,22 +111,12 @@ run_case() {
     err=$2
     expected_terminal_code=$3
     shift 3
-    attempt=0
-    while :; do
-        attempt=$((attempt + 1))
-        set +e
-        "$@" > "$out" 2> "$err"
-        code=$?
-        set -e
-        if [ "$expected_terminal_code" != "-" ] && [ "$code" -eq "$expected_terminal_code" ]; then
-            break
-        fi
-        if is_crash_code "$code" && [ "$attempt" -lt "$ATTEMPTS" ]; then
-            echo "  retry ($attempt/$ATTEMPTS): safety corpus crash exit $code - likely transient (#1204)" >&2
-        else
-            break
-        fi
-    done
+    : "$expected_terminal_code"   # accepted for call-site compatibility; unused
+    # Run the case once. A crash is a real bug, not a flake — do not retry it.
+    set +e
+    "$@" > "$out" 2> "$err"
+    code=$?
+    set -e
 }
 
 # Assemble (clang) + link (lld-link) a Windows .s into an .exe. The compile-only

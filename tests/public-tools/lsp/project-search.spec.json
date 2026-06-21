@@ -1,0 +1,7 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"results\"", "raw_contains": "${{TMP_URI}}/search_hit.tl", "raw_contains": "\"name\":\"target\"", "raw_not_contains": "search_miss.tl", "raw_not_contains": "ignored.txt"}
+  ]
+}

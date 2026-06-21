@@ -2738,6 +2738,46 @@
         (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
 
+;; #3489 (PR4, hole-aware): is `reg` held by an active value that INTERFERES with
+;; `var` (their live SEGMENTS overlap)? An active value whose hole covers `var`'s
+;; range does NOT conflict -- `var` may reuse its register during the hole. This
+;; is what lets a merged loop class (which carries the union of its members'
+;; segments, with the loop body as a hole between the back-edge def and the next
+;; read) share its register with a value that lives only inside that hole.
+(define (compiler-reg-active-register-conflicts?
+  [active : CompilerRegActiveList]
+  [reg : String]
+  [index : CompilerRegIntervalIndex]
+  [var : i64]) : bool
+  (match active
+    [(CompilerRegActiveNil) false]
+    [(CompilerRegActiveCons item rest)
+      (match item
+        [(CompilerRegActive aid _ areg)
+          (if (and
+            (string-eq reg areg)
+            (compiler-reg-vars-interfere-segmented-index? index var aid))
+            true
+            (compiler-reg-active-register-conflicts?
+              (box-get rest)
+              reg
+              index
+              var))])]))
+
+;; #3489 (PR4): first register not in conflict with `var` over its live segments
+;; (CompilerRegNoString if every register is occupied by an interfering value).
+(define (compiler-reg-first-free-register-holes
+  [regs : CompilerRegStringList]
+  [active : CompilerRegActiveList]
+  [index : CompilerRegIntervalIndex]
+  [var : i64]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringNil) (CompilerRegNoString)]
+    [(CompilerRegStringCons reg rest)
+      (if (compiler-reg-active-register-conflicts? active reg index var)
+        (compiler-reg-first-free-register-holes (box-get rest) active index var)
+        (CompilerRegSomeString reg))]))
+
 (define (compiler-reg-active-max [active : CompilerRegActiveList]) : CompilerRegMaybeActive
   (match active
     [(CompilerRegActiveNil) CompilerRegNoActive]
@@ -3658,7 +3698,8 @@
   [active : CompilerRegActiveList]
   [assignments : CompilerRegAssignmentTable]
   [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]) : CompilerRegAssignState
+  [ref-counts : (Array i64)]
+  [index : CompilerRegIntervalIndex]) : CompilerRegAssignState
   (match interval
     [(CompilerRegInterval var _ end)
       (match (compiler-reg-spill-victim active group-vars ref-counts end)
@@ -3672,18 +3713,35 @@
         [(CompilerRegSomeActive spill)
           (match spill
             [(CompilerRegActive spill-var spill-end spill-reg)
-              (CompilerRegAssignState
-                (compiler-reg-active-insert
-                  (compiler-reg-active-remove-var active spill-var)
-                  (CompilerRegActive var end spill-reg))
-                (compiler-reg-assignment-table-insert
+              ;; #3489 (PR4): hole-aware oversubscription means spill-reg may host
+              ;; MORE than just the victim. Evicting the victim only frees the
+              ;; register for `var` if no OTHER active occupant of spill-reg
+              ;; interferes with `var`; otherwise reusing it would alias two live
+              ;; values (a miscompile). When the victim's register cannot be made
+              ;; conflict-free, spill `var` itself -- always sound.
+              (if (compiler-reg-active-register-conflicts?
+                (compiler-reg-active-remove-var active spill-var)
+                spill-reg
+                index
+                var)
+                (CompilerRegAssignState
+                  active
                   (compiler-reg-assignment-table-insert
                     assignments
-                    spill-var
-                    (CompilerRegSpill
-                      (compiler-reg-stack-slot-offset spill-var)))
-                  var
-                  (CompilerRegRegister spill-reg)))])])]))
+                    var
+                    (CompilerRegSpill (compiler-reg-stack-slot-offset var))))
+                (CompilerRegAssignState
+                  (compiler-reg-active-insert
+                    (compiler-reg-active-remove-var active spill-var)
+                    (CompilerRegActive var end spill-reg))
+                  (compiler-reg-assignment-table-insert
+                    (compiler-reg-assignment-table-insert
+                      assignments
+                      spill-var
+                      (CompilerRegSpill
+                        (compiler-reg-stack-slot-offset spill-var)))
+                    var
+                    (CompilerRegRegister spill-reg))))])])]))
 
 (define (compiler-reg-assign-candidates
   [candidates : CompilerRegIntervalList]
@@ -3858,31 +3916,17 @@
                         types
                         group-vars
                         ref-counts)))
-                  (if (=
-                    (compiler-reg-active-count expired)
-                    (compiler-reg-string-list-count regs))
-                    (match (compiler-reg-spill-at-interval
-                      interval
-                      expired
-                      assignments
-                      group-vars
-                      ref-counts)
-                      [(CompilerRegAssignState next-active next-assignments)
-                        (compiler-reg-assign-candidates
-                          (box-get rest)
-                          regs
-                          next-active
-                          next-assignments
-                          moves
-                          coalesce
-                          use-fixpoint-coalesce
-                          interval-index
-                          types
-                          group-vars
-                          ref-counts)])
-                    (let
-                      [reg : String
-                        (compiler-reg-first-free-register regs expired)]
+                  ;; #3489 (PR4, hole-aware): take the first register no active
+                  ;; value's live SEGMENTS conflict with -- a value may reuse a
+                  ;; register during another value's hole (e.g. a merged loop
+                  ;; class's loop body). Spill only when every register is held by
+                  ;; an interfering value, not merely when the count is full.
+                  (match (compiler-reg-first-free-register-holes
+                    regs
+                    expired
+                    interval-index
+                    var)
+                    [(CompilerRegSomeString reg)
                       (compiler-reg-assign-candidates
                         (box-get rest)
                         regs
@@ -3899,7 +3943,28 @@
                         interval-index
                         types
                         group-vars
-                        ref-counts))))]))])]))
+                        ref-counts)]
+                    [(CompilerRegNoString)
+                      (match (compiler-reg-spill-at-interval
+                        interval
+                        expired
+                        assignments
+                        group-vars
+                        ref-counts
+                        interval-index)
+                        [(CompilerRegAssignState next-active next-assignments)
+                          (compiler-reg-assign-candidates
+                            (box-get rest)
+                            regs
+                            next-active
+                            next-assignments
+                            moves
+                            coalesce
+                            use-fixpoint-coalesce
+                            interval-index
+                            types
+                            group-vars
+                            ref-counts)])]))]))])]))
 
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
@@ -5475,6 +5540,16 @@
 ;; Members inherit the root's location via compiler-reg-expand-class-assignments.
 ;; The merged coarse interval drives interference; a singleton var's coarse
 ;; interval already equals its live range, so non-coalesced values are unaffected.
+(define (compiler-reg-prepend-segments
+  [src : CompilerRegIntervalList]
+  [dst : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (match src
+    [(CompilerRegIntervalNil) dst]
+    [(CompilerRegIntervalCons s rest)
+      (compiler-reg-interval-cons
+        s
+        (compiler-reg-prepend-segments (box-get rest) dst))]))
+
 (define (compiler-reg-merged-root-index
   [coalesce : CompilerRegCoalesceMap]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegIntervalIndex
@@ -5487,10 +5562,21 @@
     [n : i64 (array-length orig-starts)]
     [root-starts : (Array i64) (make-array i64 n)]
     [root-ends : (Array i64) (make-array i64 n)]
+    [root-segs : (Array CompilerRegIntervalList)
+      (make-array CompilerRegIntervalList n)]
     [v : i64 0]
     (begin
       (compiler-reg-fill-i64-array root-starts -1)
       (compiler-reg-fill-i64-array root-ends -1)
+      ;; #3489 (PR4): make-array does NOT zero object slots to Nil, so every
+      ;; root-segs entry MUST be initialised before the prepend accumulation --
+      ;; otherwise the union list's tail is a garbage pointer and iterating it
+      ;; later (interference check / call-spanning shadow) dereferences it.
+      (while (< v n)
+        (begin
+          (array-set! root-segs v CompilerRegIntervalNil)
+          (set! v (+ v 1))))
+      (set! v 0)
       (while (< v n)
         (begin
           (if (>= (array-ref orig-starts v) 0)
@@ -5511,14 +5597,22 @@
                   unit)
                 (if (> (array-ref orig-ends v) (array-ref root-ends rr))
                   (array-set! root-ends rr (array-ref orig-ends v))
-                  unit)))
+                  unit)
+                ;; #3489 (PR4): the root carries the UNION of its members'
+                ;; segments (members are pairwise non-interfering, so the lists
+                ;; concatenate without overlap), exposing the class's holes to the
+                ;; hole-aware free-register check.
+                (array-set!
+                  root-segs
+                  rr
+                  (compiler-reg-prepend-segments
+                    (if (< v (array-length orig-segs))
+                      (array-ref orig-segs v)
+                      CompilerRegIntervalNil)
+                    (array-ref root-segs rr)))))
             unit)
           (set! v (+ v 1))))
-      ;; Keep the original per-var segments: the integer/scalar passes run with an
-      ;; empty coalesce map (so they consult only the merged coarse [start,end]),
-      ;; while the call-spanning shadow pass still needs accurate segments for the
-      ;; (un-coalesced, singleton) call-spanning values it shadows.
-      (CompilerRegIntervalIndex root-starts root-ends orig-segs))))
+      (CompilerRegIntervalIndex root-starts root-ends root-segs))))
 
 ;; #3489 (PR2): expand a per-root assignment table to all original vars -- every
 ;; member of a coalesce class inherits its root's location (register or spill

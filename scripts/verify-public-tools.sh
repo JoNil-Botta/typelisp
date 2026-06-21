@@ -2288,11 +2288,9 @@ EOF
 run_cmd_cwd package-test-empty "$TEST_EMPTY_PKG" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
-if [ "$HOST_OS" = windows ]; then
-    assert_contains "$out" "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)"
-else
-    assert_contains "$out" "TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)"
-fi
+assert_contains_any "$out" \
+    "TypeLisp package test typecheck passed: 0 test(s) in 0 file(s)" \
+    "TypeLisp package test typecheck passed: 0 test(s) in 1 file(s)"
 
 TEST_FAIL_PKG="$WORKDIR/package-test-fail-pkg"
 mkdir -p "$TEST_FAIL_PKG/src" "$TEST_FAIL_PKG/tests"

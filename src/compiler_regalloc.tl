@@ -2033,11 +2033,6 @@
             (box-get rest)
             (compiler-live-set-insert set var))])]))
 
-(define (compiler-reg-param-list-empty? [params : CompilerIrParamList]) : bool
-  (match params
-    [(IrParamNil) true]
-    [(IrParamCons _ _) false]))
-
 (define (compiler-reg-integer-param-type? [ty : AstType]) : bool
   (and
     ;; Local handle values are register-eligible after lowering, but aggregate
@@ -2077,11 +2072,6 @@
           [(= idx 3) (CompilerRegSomeString "%r9")]
           [else CompilerRegNoString])])))
 
-(define (compiler-reg-abi-param-preassign-enabled? [abi : CompilerRegTargetAbi]) : bool
-  (match abi
-    [(CompilerRegAbiLinux) true]
-    [(CompilerRegAbiWindows) true]))
-
 (define (compiler-reg-param-pin-safe?
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -2111,7 +2101,6 @@
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
   [int-idx : i64]
-  [float-idx : i64]
   [position : i64]
   [can-pin? : bool]) : CompilerRegParamAssignPlan
   (match params
@@ -2126,10 +2115,6 @@
               (if is-float
                 int-idx
                 (+ int-idx 1))]
-            [next-float : i64
-              (if is-float
-                (+ float-idx 1)
-                float-idx)]
             [next-position : i64 (+ position 1)]
             [tail-can-pin? : bool (and can-pin? (not is-group))]
             [reg : CompilerRegMaybeString
@@ -2158,7 +2143,6 @@
                     ineligible
                     (compiler-live-set-insert blocked var-id)
                     next-int
-                    next-float
                     next-position
                     tail-can-pin?)
                   (compiler-reg-param-assign-walk
@@ -2169,7 +2153,6 @@
                     (compiler-live-set-insert ineligible var-id)
                     (compiler-live-set-insert blocked var-id)
                     next-int
-                    next-float
                     next-position
                     tail-can-pin?))]
               [(CompilerRegNoString)
@@ -2181,7 +2164,6 @@
                   (compiler-live-set-insert ineligible var-id)
                   (compiler-live-set-insert blocked var-id)
                   next-int
-                  next-float
                   next-position
                   tail-can-pin?)]))])]))
 
@@ -2193,24 +2175,24 @@
   [vars : i64]) : CompilerRegParamAssignPlan
   (match func
     [(IrFunction _ params _ _ _)
-      (let
-        [assignments : CompilerRegAssignmentTable
-          (compiler-reg-assignment-table-make vars)]
-        (if (compiler-reg-param-list-empty? params)
+      (match params
+        [(IrParamNil)
           (CompilerRegParamAssignPlan
-            assignments
+            (compiler-reg-assignment-table-make vars)
             base-ineligible
-            base-ineligible)
+            base-ineligible)]
+        [(IrParamCons _ _)
           (let
-            [fallback-ineligible : CompilerLiveI64Set
-              (compiler-reg-ineligible-params params base-ineligible)]
-            (if (or
-              (not (compiler-reg-abi-param-preassign-enabled? abi))
-              (compiler-reg-backend-caller-clobber? func))
-              (CompilerRegParamAssignPlan
-                assignments
-                fallback-ineligible
-                fallback-ineligible)
+            [assignments : CompilerRegAssignmentTable
+              (compiler-reg-assignment-table-make vars)]
+            (if (compiler-reg-backend-caller-clobber? func)
+              (let
+                [fallback-ineligible : CompilerLiveI64Set
+                  (compiler-reg-ineligible-params params base-ineligible)]
+                (CompilerRegParamAssignPlan
+                  assignments
+                  fallback-ineligible
+                  fallback-ineligible))
               (compiler-reg-param-assign-walk
                 abi
                 params
@@ -2220,8 +2202,7 @@
                 base-ineligible
                 0
                 0
-                0
-                true)))))]))
+                true)))])]))
 
 (define (compiler-reg-ineligible-instr
   [instr : CompilerIrInstr]
@@ -8240,160 +8221,170 @@
             IrInstrNil)))
       IrBlockNil)))
 
-(define (compiler-reg-param-register-function) : CompilerIrFunction
-  (IrFunction
-    "param_registers"
-    (compiler-ir-param-cons
-      (IrParam "a" (compiler-reg-i64-ty) 0)
-      (compiler-ir-param-cons
-        (IrParam "b" (compiler-reg-i64-ty) 1)
-        (compiler-ir-param-cons
-          (IrParam "c" (compiler-reg-i64-ty) 2)
-          IrParamNil)))
-    (AstTyUnit)
-    3
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (IrInstrStore "pa" (IrValueVar 0) (compiler-reg-i64-ty))
-          (compiler-ir-instr-cons
-            (IrInstrStore "pb" (IrValueVar 1) (compiler-reg-i64-ty))
-            (compiler-ir-instr-cons
-              (IrInstrStore "pc" (IrValueVar 2) (compiler-reg-i64-ty))
-              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
-      IrBlockNil)))
-
-(define (compiler-reg-zero-call-param-conflict-function) : CompilerIrFunction
-  (let
-    [instrs : CompilerIrInstrList IrInstrNil]
-    (begin
-      (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "p5" (IrValueVar 5) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g12" (IrValueVar 12) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g11" (IrValueVar 11) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g10" (IrValueVar 10) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g9" (IrValueVar 9) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g8" (IrValueVar 8) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g7" (IrValueVar 7) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 12 (IrValueI64 12) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 11 (IrValueI64 11) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 10 (IrValueI64 10) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 9 (IrValueI64 9) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 8 (IrValueI64 8) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 7 (IrValueI64 7) (compiler-reg-i64-ty))
-          instrs))
-      (set!
-        instrs
-        (compiler-ir-instr-cons
-          (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
-          instrs))
-      (IrFunction
-        "zero_call_param_conflict"
-        (compiler-ir-param-cons
-          (IrParam "a" (compiler-reg-i64-ty) 0)
-          (compiler-ir-param-cons
-            (IrParam "b" (compiler-reg-i64-ty) 1)
-            (compiler-ir-param-cons
-              (IrParam "c" (compiler-reg-i64-ty) 2)
-              (compiler-ir-param-cons
-                (IrParam "d" (compiler-reg-i64-ty) 3)
-                (compiler-ir-param-cons
-                  (IrParam "e" (compiler-reg-i64-ty) 4)
-                  (compiler-ir-param-cons
-                    (IrParam "f" (compiler-reg-i64-ty) 5)
-                    IrParamNil))))))
-        (AstTyUnit)
-        13
-        (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)))))
-
-(define (compiler-reg-param-clobber-function) : CompilerIrFunction
-  (IrFunction
-    "param_clobber"
-    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
-    (AstTyI64)
-    2
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
-          (compiler-ir-instr-cons
-            (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-            IrInstrNil)))
-      IrBlockNil)))
-
-(define (compiler-reg-param-aggregate-function) : CompilerIrFunction
-  (let
-    [ty : AstType (AstTyStruct (intern "ParamAggregate"))]
+(cfg
+  test
+  (define (compiler-reg-param-register-function) : CompilerIrFunction
     (IrFunction
-      "param_aggregate"
-      (compiler-ir-param-cons (IrParam "state" ty 0) IrParamNil)
+      "param_registers"
+      (compiler-ir-param-cons
+        (IrParam "a" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (IrParam "b" (compiler-reg-i64-ty) 1)
+          (compiler-ir-param-cons
+            (IrParam "c" (compiler-reg-i64-ty) 2)
+            IrParamNil)))
       (AstTyUnit)
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrStore "pa" (IrValueVar 0) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrStore "pb" (IrValueVar 1) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrStore "pc" (IrValueVar 2) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-zero-call-param-conflict-function) : CompilerIrFunction
+    (let
+      [instrs : CompilerIrInstrList IrInstrNil]
+      (begin
+        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "p5" (IrValueVar 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g12" (IrValueVar 12) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g11" (IrValueVar 11) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g10" (IrValueVar 10) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g9" (IrValueVar 9) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g8" (IrValueVar 8) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g7" (IrValueVar 7) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "g6" (IrValueVar 6) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 12 (IrValueI64 12) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 11 (IrValueI64 11) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 10 (IrValueI64 10) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 9 (IrValueI64 9) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 8 (IrValueI64 8) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 7 (IrValueI64 7) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
+            instrs))
+        (IrFunction
+          "zero_call_param_conflict"
+          (compiler-ir-param-cons
+            (IrParam "a" (compiler-reg-i64-ty) 0)
+            (compiler-ir-param-cons
+              (IrParam "b" (compiler-reg-i64-ty) 1)
+              (compiler-ir-param-cons
+                (IrParam "c" (compiler-reg-i64-ty) 2)
+                (compiler-ir-param-cons
+                  (IrParam "d" (compiler-reg-i64-ty) 3)
+                  (compiler-ir-param-cons
+                    (IrParam "e" (compiler-reg-i64-ty) 4)
+                    (compiler-ir-param-cons
+                      (IrParam "f" (compiler-reg-i64-ty) 5)
+                      IrParamNil))))))
+          (AstTyUnit)
+          13
+          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+
+(cfg
+  test
+  (define (compiler-reg-param-clobber-function) : CompilerIrFunction
+    (IrFunction
+      "param_clobber"
+      (compiler-ir-param-cons
+        (IrParam "arg" (compiler-reg-i64-ty) 0)
+        IrParamNil)
+      (AstTyI64)
       2
       (compiler-ir-block-cons
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrMov 1 (IrValueVar 0) ty)
-            (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
         IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-param-aggregate-function) : CompilerIrFunction
+    (let
+      [ty : AstType (AstTyStruct (intern "ParamAggregate"))]
+      (IrFunction
+        "param_aggregate"
+        (compiler-ir-param-cons (IrParam "state" ty 0) IrParamNil)
+        (AstTyUnit)
+        2
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrMov 1 (IrValueVar 0) ty)
+              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))
+          IrBlockNil)))))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (IrFunction
@@ -8778,59 +8769,67 @@
           (compiler-reg-assignment-lookup assignments 0)
           "%rdi"))]))
 
-(define (compiler-reg-scalar-linux-param-registers-ok?) : bool
-  (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiLinux
-    (compiler-reg-param-register-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
-      (and
-        (not (compiler-live-set-contains? ineligible 0))
-        (not (compiler-live-set-contains? ineligible 1))
-        (not (compiler-live-set-contains? ineligible 2))
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 0)
-          "%rdi")
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 1)
-          "%rsi")
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 2)
-          "%rdx"))]))
+(cfg
+  test
+  (define (compiler-reg-scalar-linux-param-registers-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-register-function))
+      [(CompilerRegPlan assignments ineligible _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (not (compiler-live-set-contains? ineligible 2))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rdi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%rsi")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%rdx"))])))
 
-(define (compiler-reg-scalar-windows-param-registers-ok?) : bool
-  (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiWindows
-    (compiler-reg-param-register-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
-      (and
-        (not (compiler-live-set-contains? ineligible 0))
-        (not (compiler-live-set-contains? ineligible 1))
-        (compiler-live-set-contains? ineligible 2)
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 0)
-          "%rcx")
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 1)
-          "%rdx")
-        (compiler-reg-unassigned? assignments 2))]))
+(cfg
+  test
+  (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiWindows
+      (compiler-reg-param-register-function))
+      [(CompilerRegPlan assignments ineligible _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (compiler-live-set-contains? ineligible 2)
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%rcx")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%rdx")
+          (compiler-reg-unassigned? assignments 2))])))
 
-(define (compiler-reg-scalar-param-clobber-ok?) : bool
-  (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiLinux
-    (compiler-reg-param-clobber-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
-      (and
-        (compiler-live-set-contains? ineligible 0)
-        (compiler-reg-unassigned? assignments 0))]))
+(cfg
+  test
+  (define (compiler-reg-scalar-param-clobber-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-clobber-function))
+      [(CompilerRegPlan assignments ineligible _ _ _)
+        (and
+          (compiler-live-set-contains? ineligible 0)
+          (compiler-reg-unassigned? assignments 0))])))
 
-(define (compiler-reg-scalar-aggregate-param-not-pinned-ok?) : bool
-  (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiLinux
-    (compiler-reg-param-aggregate-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
-      (and
-        (compiler-live-set-contains? ineligible 0)
-        (compiler-reg-unassigned? assignments 0))]))
+(cfg
+  test
+  (define (compiler-reg-scalar-aggregate-param-not-pinned-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-param-aggregate-function))
+      [(CompilerRegPlan assignments ineligible _ _ _)
+        (and
+          (compiler-live-set-contains? ineligible 0)
+          (compiler-reg-unassigned? assignments 0))])))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -9020,22 +9019,24 @@
           (compiler-reg-assignment-lookup assignments 6)
           "%rcx"))]))
 
-(define (compiler-reg-scalar-zero-call-param-conflict-ok?) : bool
-  (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiLinux
-    (compiler-reg-zero-call-param-conflict-function))
-    [(CompilerRegPlan assignments _ _ _ _)
-      (and
-        (= (compiler-reg-spill-count assignments) 0)
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 5)
-          "%r9")
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 11)
-          "%rcx")
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 12)
-          "%rdx"))]))
+(cfg
+  test
+  (define (compiler-reg-scalar-zero-call-param-conflict-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegAbiLinux
+      (compiler-reg-zero-call-param-conflict-function))
+      [(CompilerRegPlan assignments _ _ _ _)
+        (and
+          (= (compiler-reg-spill-count assignments) 0)
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 5)
+            "%r9")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 11)
+            "%rcx")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 12)
+            "%rdx"))])))
 
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
   (match (compiler-reg-plan-function-scalar
@@ -10414,15 +10415,15 @@
     (compiler-reg-scalar-call-live-ok?)
     (compiler-reg-scalar-f64-call-live-ok?)
     (compiler-reg-scalar-handle-eligible-ok?)
-    (compiler-reg-scalar-linux-param-registers-ok?)
-    (compiler-reg-scalar-windows-param-registers-ok?)
-    (compiler-reg-scalar-param-clobber-ok?)
-    (compiler-reg-scalar-aggregate-param-not-pinned-ok?)
+    (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
+    (cfg test (compiler-reg-scalar-aggregate-param-not-pinned-ok?) true)
     (compiler-reg-scalar-function-intervals-ok?)
     (compiler-reg-scalar-interval-guardrail-ok?)
     (compiler-reg-scalar-loop-backedge-ok?)
     (compiler-reg-scalar-zero-call-caller-saved-ok?)
-    (compiler-reg-scalar-zero-call-param-conflict-ok?)
+    (cfg test (compiler-reg-scalar-zero-call-param-conflict-ok?) true)
     (compiler-reg-scalar-caller-saved-clobber-ok?)
     (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)

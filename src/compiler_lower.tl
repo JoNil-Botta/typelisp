@@ -59,6 +59,13 @@
 (defenum LowerPrunedProgram
   (LowerPrunedProgram AstProgram AstDeclPathList))
 
+(defenum LowerEntryMainScan
+  (LowerEntryMainScan i64 String bool))
+
+(defenum LowerMaybeEntryMainModule
+  (LowerNoEntryMainModule)
+  (LowerSomeEntryMainModule String))
+
 (defenum ResultLowerCloneRoots
   (OkLowerCloneRoots CloneNameList)
   (ErrLowerCloneRoots CompilerDiagnostic))
@@ -976,6 +983,16 @@
       (string-append (lower-module-id entry-path decl-path) "::")
       source-name)))
 
+(define lower-entry-main-module-active : bool
+  false)
+(define lower-entry-main-module : String
+  "")
+
+(define (lower-entry-main-module-match? [module : String]) : bool
+  (if lower-entry-main-module-active
+    (string-eq module lower-entry-main-module)
+    (or (string-eq module "") (string-eq module "main"))))
+
 (define (lower-decl-entry-main?
   [entry-path : String]
   [decl-path : String]
@@ -984,7 +1001,115 @@
   (and
     (string-eq decl-path entry-path)
     (string-eq source-name "main")
-    (or (string-eq module "") (string-eq module "main"))))
+    (lower-entry-main-module-match? module)))
+
+(define (lower-entry-main-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef name _ _) (= name (intern "main"))]
+    [(AstDeclDefFn name _ _ _ _) (= name (intern "main"))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-entry-main-decl? template))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-entry-main-decl? inner))]
+    [_ false]))
+
+(define (lower-entry-main-scan-add
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [decl : AstDecl]
+  [scan : LowerEntryMainScan]) : LowerEntryMainScan
+  (match scan
+    [(LowerEntryMainScan fallback-count fallback-module preferred)
+      (if (and (string-eq decl-path entry-path) (lower-entry-main-decl? decl))
+        (if (or (string-eq module "") (string-eq module "main"))
+          (LowerEntryMainScan fallback-count fallback-module true)
+          (LowerEntryMainScan (+ fallback-count 1) module preferred))
+        scan)]))
+
+(define (lower-entry-main-scan-decls-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [scan : LowerEntryMainScan]
+  [module : String]) : LowerEntryMainScan
+  (match decls
+    [(AstDeclNil) scan]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-entry-main-scan-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              scan
+              (intern-str next-module))]
+          [_
+            (lower-entry-main-scan-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              (lower-entry-main-scan-add entry-path decl-path module decl scan)
+              module)]))]))
+
+(define (lower-entry-main-scan-selection [scan : LowerEntryMainScan]) : LowerMaybeEntryMainModule
+  (match scan
+    [(LowerEntryMainScan fallback-count fallback-module preferred)
+      (if preferred
+        (LowerNoEntryMainModule)
+        (if (= fallback-count 1)
+          (LowerSomeEntryMainModule fallback-module)
+          (LowerNoEntryMainModule)))]))
+
+(define (lower-entry-main-selection-for-program
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : LowerMaybeEntryMainModule
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (lower-entry-main-scan-selection
+          (lower-entry-main-scan-decls-in-module
+            decls
+            paths
+            entry-path
+            (LowerEntryMainScan 0 "" false)
+            "")))]))
+
+(define (lower-entry-main-selection-install!
+  [selection : LowerMaybeEntryMainModule]) : unit
+  (match selection
+    [(LowerNoEntryMainModule)
+      (begin
+        (set! lower-entry-main-module-active false)
+        (set! lower-entry-main-module ""))]
+    [(LowerSomeEntryMainModule module)
+      (begin
+        (set! lower-entry-main-module-active true)
+        (set! lower-entry-main-module module))]))
+
+(define (lower-entry-main-selection-restore! [active : bool] [module : String]) : unit
+  (begin
+    (set! lower-entry-main-module-active active)
+    (set! lower-entry-main-module module)))
 
 (define (lower-decl-logical-name
   [entry-path : String]
@@ -33695,6 +33820,10 @@
 ;; single shared mark/rewind region is sound. Output stays byte-identical: the
 ;; clone is a structural deep copy, so the escaped IR lowers to the same assembly
 ;; as the in-place IR did.
+;; Dotted imports create transient lookup-key strings during function lowering
+;; (`module/name` from `alias.name`). Any new intern entry made from those
+;; strings must survive the scratch rewind, so the scope mirrors
+;; `tc-check-fn-decl-scoped` and forces persistent intern storage while active.
 (defstruct CompilerLowerArenaState
   (scratch-arena (Array i64))
   (ir-arena (Array i64)))
@@ -33807,9 +33936,15 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
     [enclosing : i64 (arena-current)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
+      ;; Type-name/owner caches may contain keys allocated by earlier
+      ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
+      ;; pass and invalidate them before rewinding this function's scratch arena.
+      (tc-nominal-owner-cache-reset!)
+      (intern-persistent-storage-enable!)
       ;; #2386 (compile-time): new generation for the result-type-fast memo, so
       ;; this function's cached node types are independent of every other
       ;; function's (and never outlive this function's scratch arena).
@@ -33857,6 +33992,10 @@
                           (arena-set! scratch-head)
                           (arena-rewind mark)
                           (arena-set! new-enclosing))
+                        (tc-nominal-owner-cache-reset!)
+                        (if prev-persist
+                          unit
+                          (intern-persistent-storage-disable!))
                         (OkLowerFunction escaped-fns escaped-spans)))))))]
           [(ErrLowerFunction message)
             (let
@@ -33872,6 +34011,10 @@
                       (arena-set! scratch-head)
                       (arena-rewind mark)
                       (arena-set! new-enclosing))
+                    (tc-nominal-owner-cache-reset!)
+                    (if prev-persist
+                      unit
+                      (intern-persistent-storage-disable!))
                     (ErrLowerFunction escaped-message)))))])))))
 
 (define (lower-struct-cleanup-param-name) : String
@@ -35132,6 +35275,10 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
     (lower-refresh-marker-ids!)
+    ;; Clone-root discovery and checked typechecking can probe aggregate layout
+    ;; with helper contexts before final lowering. Emitted code must use one
+    ;; internally consistent layout view for all functions in this pass.
+    (tc-agg-caches-reset!)
     (match program
       [(AstProgram decls-box)
         (let
@@ -35241,7 +35388,7 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -35262,7 +35409,9 @@
             (let
               [decls : AstDeclList (box-get decls-box)]
               (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
-      (match (compiler-specialize-program program)
+      (match (if needs-specialization
+        (compiler-specialize-program program)
+        (OkSpecProgram program))
         [(OkSpecProgram specialized)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
@@ -35399,6 +35548,35 @@
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerLower
+  (let
+    [prev-active : bool lower-entry-main-module-active]
+    [prev-module : String lower-entry-main-module]
+    [selection : LowerMaybeEntryMainModule
+      (lower-entry-main-selection-for-program entry-path program paths)]
+    (begin
+      ;; Inline-test harnesses are generated inside the source module so they
+      ;; can call private helpers; the selected entry still needs ABI name main.
+      (lower-entry-main-selection-install! selection)
+      (let
+        [result : ResultCompilerLower
+          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
+            entry-path
+            program
+            paths
+            mode
+            stdlib-roots
+            cache-scope)]
+        (begin
+          (lower-entry-main-selection-restore! prev-active prev-module)
+          result)))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
@@ -40045,6 +40223,32 @@
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-module-entry-main-source) : String
+  "(module stdlib.arena)
+(define (helper) : i64 41)
+(define (main) : i64 (helper))")
+
+(define (compiler-lower-module-entry-main-ok?) : bool
+  (match (parse-ast-source (compiler-lower-module-entry-main-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "stdlib/arena.tl"
+        program
+        AstDeclPathNil)
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (and
+                (lower-test-function-defined? functions "main")
+                (=
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "stdlib.arena/helper")
+                  1))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-lower-module-qualified-source) : String
   "(module left)
 (define same : i64 20)
@@ -44676,6 +44880,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-package-owned-symbols-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-entry-main-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-qualified-ok?)

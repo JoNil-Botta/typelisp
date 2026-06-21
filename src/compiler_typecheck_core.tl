@@ -5818,7 +5818,9 @@
   [found : bool]
   [handle : i64]) : unit
   (begin
-    (set! tc-resolve-type-name-cache-key lookup-name)
+    (set!
+      tc-resolve-type-name-cache-key
+      (substring lookup-name 0 (string-length lookup-name)))
     (set! tc-resolve-type-name-cache-found found)
     (set! tc-resolve-type-name-cache-handle handle)
     (set! tc-resolve-type-name-cache-valid true)))
@@ -37262,90 +37264,95 @@
   [top-env : TcTypeEnv]
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
-  (match decl
-    [(AstDeclDef _ maybe-ty expr-box)
-      (let
-        [expr : AstExpr (ast-node-get expr-box)]
-        (match maybe-ty
-          [(AstSomeType want)
-            (match (tc-expr-with-expected-or-actual
-              ctx
-              global-env
-              expr
-              (tc-resolve-type ctx want))
-              [(OkTcType got)
-                (match (tc-expect
-                  got
-                  (tc-resolve-type ctx want)
-                  "typecheck: value definition type mismatch")
-                  [(OkTcUnit)
-                    (tc-ensure-region-value-can-flow-into
-                      global-env
-                      (tc-resolve-type ctx want)
-                      got
-                      "top-level value")]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
-              [(ErrTcType message) (ErrTcUnit message)])]
-          [(AstNoType)
-            (match (tc-expr ctx global-env expr)
-              [(OkTcType _) OkTcUnit]
-              [(ErrTcType message) (ErrTcUnit message)])]))]
-    [(AstDeclDefFn _ params ret body-box _)
-      (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
-    [(AstDeclDefMacro name params ret body-box)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (tc-check-defmacro name ctx top-env params ret body))]
-    [(AstDeclExtern _ kind metadata ty)
-      (tc-check-extern-decl ctx kind metadata ty)]
-    [(AstDeclDefDispatch name variants)
-      (match (tc-dispatch-decl-type ctx (intern-str name) variants)
-        [(OkTcType _) OkTcUnit]
-        [(ErrTcType message) (ErrTcUnit message)])]
-    [(AstDeclDefEnum name cleanup variants)
-      (tc-check-cleanup-enum-decl
-        ctx
-        top-env
-        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
-        AstLifetimeNil
-        cleanup
-        variants)]
-    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
-      (tc-check-cleanup-enum-decl
-        ctx
-        top-env
-        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
-        lifetimes
-        cleanup
-        variants)]
-    [(AstDeclDefStruct name repr cleanup fields)
-      (tc-check-cleanup-struct-decl
-        ctx
-        top-env
-        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
-        repr
-        cleanup
-        fields)]
-    [(AstDeclDefStructLifetimes name _ repr cleanup fields)
-      (tc-check-cleanup-struct-decl
-        ctx
-        top-env
-        (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
-        repr
-        cleanup
-        fields)]
-    [(AstDeclComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match (tc-check-comptime-decl-purity ctx top-env template)
-          [(OkTcUnit)
-            (tc-check-decl-with-global-env ctx top-env global-env template)]
-          [(ErrTcUnit message) (ErrTcUnit message)]))]
-    [(AstDeclUnsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tc-check-decl-with-global-env ctx top-env global-env inner))]
-    [_ OkTcUnit]))
+  (begin
+    ;; Type-name and owner caches are keyed by text/handle only. Helper passes
+    ;; may typecheck with short-lived symbol tables before the final declaration
+    ;; walk, so keep cache entries scoped to one checked declaration.
+    (tc-nominal-owner-cache-reset!)
+    (match decl
+      [(AstDeclDef _ maybe-ty expr-box)
+        (let
+          [expr : AstExpr (ast-node-get expr-box)]
+          (match maybe-ty
+            [(AstSomeType want)
+              (match (tc-expr-with-expected-or-actual
+                ctx
+                global-env
+                expr
+                (tc-resolve-type ctx want))
+                [(OkTcType got)
+                  (match (tc-expect
+                    got
+                    (tc-resolve-type ctx want)
+                    "typecheck: value definition type mismatch")
+                    [(OkTcUnit)
+                      (tc-ensure-region-value-can-flow-into
+                        global-env
+                        (tc-resolve-type ctx want)
+                        got
+                        "top-level value")]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
+                [(ErrTcType message) (ErrTcUnit message)])]
+            [(AstNoType)
+              (match (tc-expr ctx global-env expr)
+                [(OkTcType _) OkTcUnit]
+                [(ErrTcType message) (ErrTcUnit message)])]))]
+      [(AstDeclDefFn _ params ret body-box _)
+        (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
+      [(AstDeclDefMacro name params ret body-box)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (tc-check-defmacro name ctx top-env params ret body))]
+      [(AstDeclExtern _ kind metadata ty)
+        (tc-check-extern-decl ctx kind metadata ty)]
+      [(AstDeclDefDispatch name variants)
+        (match (tc-dispatch-decl-type ctx (intern-str name) variants)
+          [(OkTcType _) OkTcUnit]
+          [(ErrTcType message) (ErrTcUnit message)])]
+      [(AstDeclDefEnum name cleanup variants)
+        (tc-check-cleanup-enum-decl
+          ctx
+          top-env
+          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          AstLifetimeNil
+          cleanup
+          variants)]
+      [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+        (tc-check-cleanup-enum-decl
+          ctx
+          top-env
+          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          lifetimes
+          cleanup
+          variants)]
+      [(AstDeclDefStruct name repr cleanup fields)
+        (tc-check-cleanup-struct-decl
+          ctx
+          top-env
+          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          repr
+          cleanup
+          fields)]
+      [(AstDeclDefStructLifetimes name _ repr cleanup fields)
+        (tc-check-cleanup-struct-decl
+          ctx
+          top-env
+          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          repr
+          cleanup
+          fields)]
+      [(AstDeclComptimeDecl _ template-box)
+        (let
+          [template : AstDecl (box-get template-box)]
+          (match (tc-check-comptime-decl-purity ctx top-env template)
+            [(OkTcUnit)
+              (tc-check-decl-with-global-env ctx top-env global-env template)]
+            [(ErrTcUnit message) (ErrTcUnit message)]))]
+      [(AstDeclUnsafe inner-box)
+        (let
+          [inner : AstDecl (box-get inner-box)]
+          (tc-check-decl-with-global-env ctx top-env global-env inner))]
+      [_ OkTcUnit])))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env

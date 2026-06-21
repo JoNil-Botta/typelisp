@@ -411,8 +411,10 @@
 
 ;: Lexical guard returned by `mutex-i64-lock`.
 (defstruct MutexI64Guard
-  (control-addr i64)
-  (mutex-handle i64)
+  (:cleanup mutex-i64-unlock)
+  ; Field cleanups run in reverse declaration order, so post before untrack.
+  (control-addr i64 (:cleanup mutex-i64-untrack-user))
+  (mutex-handle i64 (:cleanup mutex-i64-unlock-handle))
   (value-addr i64))
 
 ;: Finish mutex creation after storage allocation.

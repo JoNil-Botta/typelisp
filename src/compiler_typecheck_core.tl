@@ -36908,8 +36908,7 @@
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : ResultTcUnit
   (let
-    [struct-name : String
-      (compiler-symbol-module-key (tc-context-module ctx) name)]
+    [struct-name : String name]
     (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
       (ErrTcUnit (tc-struct-cleanup-repr-c-message struct-name))
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
@@ -37136,8 +37135,7 @@
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : ResultTcUnit
   (let
-    [enum-name : String
-      (compiler-symbol-module-key (tc-context-module ctx) name)]
+    [enum-name : String name]
     [enum-ty : AstType
       (match lifetimes
         [(AstLifetimeNil) (AstTyEnum (intern enum-name))]

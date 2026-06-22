@@ -19046,7 +19046,9 @@
                       [switch-input : CompilerIrFunction
                         (IrFunction name params ret-ty ssa-frame cfg)]
                       [switch-result : OptFunctionPassResult
-                        (opt-switch-form-function-pass switch-input)]
+                        (if run-heavy?
+                          (opt-switch-form-function-pass switch-input)
+                          (OptFunctionPassResult switch-input false))]
                       [switched : CompilerIrFunction
                         (match switch-result
                           [(OptFunctionPassResult f _) f])]

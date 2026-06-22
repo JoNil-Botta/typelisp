@@ -108,11 +108,6 @@
           42
           9)))))
 
-(define (sync-api-unlock-mutex-guard [guard : sync.MutexI64Guard]) : unit
-  (begin
-    (sync.mutex-i64-unlock-handle (sync.mutex-i64-guard-mutex-handle guard))
-    (sync.mutex-i64-untrack-user (sync.mutex-i64-guard-control-addr guard))))
-
 (define (sync-api-run-mutex [mutex : sync.MutexI64]) : i64
   (let
     [packed : (Array i64) (make-array i64 sync.mutex-i64-raw-field-count)]
@@ -122,17 +117,17 @@
         [loaded : sync.MutexI64 (sync.mutex-i64-load-raw packed 0)]
         [first : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
             (begin
               (sync.mutex-i64-set! guard 17)
               (sync.mutex-i64-add! guard 25)))]
         [second : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
             (sync.mutex-i64-get guard))]
         [live-close-code : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
             (let
               [blocked-close : bool (sync.mutex-i64-close loaded)]
               [after : i64 (sync.mutex-i64-add! guard 1)]
@@ -143,7 +138,7 @@
                 6)))]
         [third : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync-api-unlock-mutex-guard])
+            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
             (sync.mutex-i64-get guard))]
         [closed : bool (sync.mutex-i64-close loaded)]
         [closed-again : bool (sync.mutex-i64-close loaded)]

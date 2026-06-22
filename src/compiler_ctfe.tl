@@ -4254,6 +4254,19 @@
         (match value
           [(CtfeExpr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
+          [(CtfeExprClause clause)
+            (if (ctfe-pattern-variant-name? variant "ExprClause")
+              (ctfe-match-pattern-list
+                args
+                (ctfe-value-list2
+                  (CtfeExpr
+                    (ctfe-expr-clause-first clause)
+                    (ctfe-untyped-expr-type))
+                  (CtfeExpr
+                    (ctfe-expr-clause-second clause)
+                    (ctfe-untyped-expr-type)))
+                env)
+              (CtfeNoPatternMatch))]
           [_ (CtfeNoPatternMatch)]))]
     [(AstPatTuple _) (CtfeNoPatternMatch)]))
 

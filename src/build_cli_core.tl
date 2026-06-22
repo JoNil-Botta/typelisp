@@ -2498,6 +2498,34 @@
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolDirectObjectStatus
+  (match (build-package-try-render-linux-direct-object
+    kind
+    target
+    opt-level
+    mode
+    emit-entry
+    crt-entry
+    decls
+    paths)
+    [(OkSourceToolString obj)
+      (build-package-write-linux-direct-object-artifact
+        kind
+        target
+        obj-path
+        artifact-path
+        link-inputs
+        obj)]
+    [(ErrSourceToolString message) (SourceToolDirectObjectUnavailable message)]))
+
+(define (build-package-try-render-linux-direct-object
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultSourceToolString
   (if (and
     (source-tool-linux-direct-object-enabled?)
     (compiler-backend-target-linux? target))
@@ -2512,20 +2540,10 @@
       decls
       paths)
       [(OkCompilerDriverObject image)
-        (match (build-package-render-linux-direct-object kind image)
-          [(OkSourceToolString obj)
-            (build-package-write-linux-direct-object-artifact
-              kind
-              target
-              obj-path
-              artifact-path
-              link-inputs
-              obj)]
-          [(ErrSourceToolString message)
-            (SourceToolDirectObjectUnavailable message)])]
+        (build-package-render-linux-direct-object kind image)]
       [(ErrCompilerDriverObject diag)
-        (SourceToolDirectObjectUnavailable (compiler-diagnostic-render diag))])
-    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
+        (ErrSourceToolString (compiler-diagnostic-render diag))])
+    (ErrSourceToolString "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
@@ -3536,6 +3554,16 @@
                         1)]
                     [(OkBuildPackageTlciText tlci-text)
                       (let
+                        [direct-object : ResultSourceToolString
+                          (build-package-try-render-linux-direct-object
+                            kind
+                            target
+                            opt-level
+                            mode
+                            emit-entry
+                            crt-entry
+                            decls
+                            owned-paths)]
                         [_reset-before-doctests : unit
                           (compiler-driver-reset-file-state!)]
                         [doctest-status : i64
@@ -3554,38 +3582,51 @@
                                 (print-error message)
                                 1)]
                             [(SourceToolCommandOk)
-                              (match (build-package-artifact-status
-                                kind
-                                target
-                                asm-path
-                                obj-path
-                                artifact-path
-                                effective-link-inputs
-                                (SourceToolDirectObjectUnavailable
-                                  "package assembly already emitted"))
-                                [(SourceToolCommandErr message)
-                                  (begin
-                                    (print-error message)
-                                    1)]
-                                [(SourceToolCommandOk)
-                                  (match (build-package-write-tlci
-                                    tlci-path
-                                    tlci-text)
-                                    [(SourceToolCommandErr message)
-                                      (begin
-                                        (print-error message)
-                                        1)]
-                                    [(SourceToolCommandOk)
-                                      (begin
-                                        (print-string
-                                          (string-append
-                                            "Built "
-                                            (string-append artifact-path "\n")))
-                                        (print-string
-                                          (string-append
-                                            "Built "
-                                            (string-append tlci-path "\n")))
-                                        0)])])])
+                              (let
+                                [direct-status : SourceToolDirectObjectStatus
+                                  (match direct-object
+                                    [(OkSourceToolString obj)
+                                      (build-package-write-linux-direct-object-artifact
+                                        kind
+                                        target
+                                        obj-path
+                                        artifact-path
+                                        effective-link-inputs
+                                        obj)]
+                                    [(ErrSourceToolString message)
+                                      (SourceToolDirectObjectUnavailable
+                                        message)])]
+                                (match (build-package-artifact-status
+                                  kind
+                                  target
+                                  asm-path
+                                  obj-path
+                                  artifact-path
+                                  effective-link-inputs
+                                  direct-status)
+                                  [(SourceToolCommandErr message)
+                                    (begin
+                                      (print-error message)
+                                      1)]
+                                  [(SourceToolCommandOk)
+                                    (match (build-package-write-tlci
+                                      tlci-path
+                                      tlci-text)
+                                      [(SourceToolCommandErr message)
+                                        (begin
+                                          (print-error message)
+                                          1)]
+                                      [(SourceToolCommandOk)
+                                        (begin
+                                          (print-string
+                                            (string-append
+                                              "Built "
+                                              (string-append artifact-path "\n")))
+                                          (print-string
+                                            (string-append
+                                              "Built "
+                                              (string-append tlci-path "\n")))
+                                          0)])]))])
                           doctest-status))])]))])))))
 
 (define (build-package-worker-unified-cli?) : bool

@@ -81,9 +81,17 @@
   (OkSpecProgram AstProgram)
   (ErrSpecProgram CompilerDiagnostic))
 
+(defenum ResultSpecProgramWithPaths
+  (OkSpecProgramWithPaths AstProgram AstDeclPathList)
+  (ErrSpecProgramWithPaths CompilerDiagnostic))
+
 (defenum ResultSpecDecls
   (OkSpecDecls AstDeclList SpecState)
   (ErrSpecDecls CompilerDiagnostic))
+
+(defenum ResultSpecDeclsWithPaths
+  (OkSpecDeclsWithPaths AstDeclList AstDeclPathList SpecState)
+  (ErrSpecDeclsWithPaths CompilerDiagnostic))
 
 (defenum ResultSpecDecl
   (OkSpecDecl SpecMaybeDecl SpecState)
@@ -381,6 +389,16 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (ast-decl-cons head (spec-decl-list-append rest back)))]))
+
+(define (spec-decl-path-list-append
+  [front : AstDeclPathList]
+  [back : AstDeclPathList]) : AstDeclPathList
+  (match front
+    [(AstDeclPathNil) back]
+    [(AstDeclPathCons head rest)
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (ast-decl-path-cons head (spec-decl-path-list-append rest back)))]))
 
 (define (gen-single-decl-list [decl : AstDecl]) : AstDeclList
   (ast-decl-cons decl AstDeclNil))
@@ -8957,6 +8975,50 @@
               [(ErrSpecDecls diag) (ErrSpecDecls diag)])]
           [(ErrSpecDecl diag) (ErrSpecDecls diag)]))]))
 
+(define (spec-rewrite-decls-with-paths
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [templates : SpecTemplateEnv]
+  [state : SpecState]) : ResultSpecDeclsWithPaths
+  (match decls
+    [(AstDeclNil) (OkSpecDeclsWithPaths AstDeclNil AstDeclPathNil state)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String (gen-path-list-head-or paths fallback-path)]
+        [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
+        (match (spec-rewrite-decl decl templates state)
+          [(OkSpecDecl maybe-decl decl-state)
+            (match (spec-rewrite-decls-with-paths
+              rest
+              rest-paths
+              fallback-path
+              templates
+              decl-state)
+              [(OkSpecDeclsWithPaths
+                  rewritten-rest
+                  rewritten-rest-paths
+                  rest-state)
+                (match maybe-decl
+                  [(SpecNoDecl)
+                    (OkSpecDeclsWithPaths
+                      rewritten-rest
+                      rewritten-rest-paths
+                      rest-state)]
+                  [(SpecSomeDecl rewritten-decl)
+                    (OkSpecDeclsWithPaths
+                      (ast-decl-cons rewritten-decl rewritten-rest)
+                      (ast-decl-path-cons decl-path rewritten-rest-paths)
+                      rest-state)])]
+              [(ErrSpecDeclsWithPaths diag) (ErrSpecDeclsWithPaths diag)])]
+          [(ErrSpecDecl diag) (ErrSpecDeclsWithPaths diag)]))]))
+
+(define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
+  (if (string-eq fallback-path "")
+    AstDeclPathNil
+    (gen-path-list-for-decls decls fallback-path AstDeclPathNil)))
+
 (define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
   (match (gen-normalize-program program)
     [(OkGenProgram normalized)
@@ -8984,6 +9046,43 @@
                             (spec-decl-list-append rewritten generated)))])]
                   [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))])]
     [(ErrGenProgram diag) (ErrSpecProgram diag)]))
+
+(define (compiler-specialize-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]) : ResultSpecProgramWithPaths
+  (match (gen-normalize-program-with-paths program paths fallback-path)
+    [(OkGenProgramWithPaths normalized normalized-paths)
+      (match normalized
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [templates : SpecTemplateList (spec-collect-templates decls)]
+            (match templates
+              [(SpecTemplateNil)
+                (OkSpecProgramWithPaths normalized normalized-paths)]
+              [_
+                (match (spec-rewrite-decls-with-paths
+                  decls
+                  normalized-paths
+                  fallback-path
+                  (spec-template-env-from-list templates)
+                  (SpecState
+                    AstDeclNil
+                    (string-string-map-with-capacity 64)
+                    (ctfe-env-with-reflections
+                      (ctfe-reflections-from-program normalized))))
+                  [(OkSpecDeclsWithPaths rewritten rewritten-paths state)
+                    (match state
+                      [(SpecState generated _ _)
+                        (OkSpecProgramWithPaths
+                          (ast-program
+                            (spec-decl-list-append rewritten generated))
+                          (spec-decl-path-list-append
+                            rewritten-paths
+                            (spec-generated-paths generated fallback-path)))])]
+                  [(ErrSpecDeclsWithPaths diag) (ErrSpecProgramWithPaths diag)])]))])]
+    [(ErrGenProgramWithPaths diag) (ErrSpecProgramWithPaths diag)]))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (match program

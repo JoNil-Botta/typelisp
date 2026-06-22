@@ -4861,10 +4861,7 @@
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (lower-reach-expr all-functions names state expr))]
-    [(AstDeclDefMacro _ _ _ body-box)
-      (let
-        [expr : AstExpr (ast-node-get body-box)]
-        (lower-reach-expr all-functions names state expr))]
+    [(AstDeclDefMacro _ _ _ _) state]
     [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4894,14 +4891,8 @@
                 names
                 (lower-reach-expr all-functions names state expr)
                 rest))]
-          [(AstDeclDefMacro _ _ _ body-box)
-            (let
-              [expr : AstExpr (ast-node-get body-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (lower-reach-expr all-functions names state expr)
-                rest))]
+          [(AstDeclDefMacro _ _ _ _)
+            (lower-reach-global-decls all-functions names state rest)]
           [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
@@ -5551,6 +5542,9 @@
     (string-i64-map-contains? reachable logical-name)
     (string-i64-map-contains? dispatch-variants logical-name)))
 
+(define (lower-comptime-only-module? [module : String]) : bool
+  (string-eq module "stdlib.comptime"))
+
 (define (lower-export-value-item-kept?
   [_entry-path : String]
   [_decl-path : String]
@@ -5560,15 +5554,19 @@
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]
   [name : String]) : bool
-  (let
-    [logical-name : String
-      (lower-name-cache-resolve names (compiler-symbol-module-key module name))]
-    (if (string-i64-map-contains? all-functions logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        reachable
-        dispatch-variants
-        logical-name)
-      true)))
+  (if (lower-comptime-only-module? module)
+    true
+    (let
+      [logical-name : String
+        (lower-name-cache-resolve
+          names
+          (compiler-symbol-module-key module name))]
+      (if (string-i64-map-contains? all-functions logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          reachable
+          dispatch-variants
+          logical-name)
+        true))))
 
 (define (lower-export-item-kept?
   [entry-path : String]
@@ -5634,17 +5632,19 @@
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]
   [decl : AstDecl]) : bool
-  (match (lower-function-logical-name-from-decl
-    entry-path
-    decl-path
-    module
-    decl)
-    [(TcSomeString logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        reachable
-        dispatch-variants
-        logical-name)]
-    [(TcNoString) true]))
+  (if (lower-comptime-only-module? module)
+    true
+    (match (lower-function-logical-name-from-decl
+      entry-path
+      decl-path
+      module
+      decl)
+      [(TcSomeString logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          reachable
+          dispatch-variants
+          logical-name)]
+      [(TcNoString) true])))
 
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
@@ -35476,6 +35476,14 @@
 ;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
 ;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
 ;; threaded accumulators become loop state.
+(define (lower-skip-until-next-module [decls : AstDeclList]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule _) decls]
+        [_ (lower-skip-until-next-module (box-get rest))])]))
+
 (define (lower-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -35746,6 +35754,8 @@
                 [(AstDeclModule next-module)
                   (let
                     [next-module-str : String (intern-str next-module)]
+                    [skip-runtime : bool
+                      (lower-comptime-only-module? next-module-str)]
                     (match (lower-module-local-envs
                       ctx
                       top-env
@@ -35762,7 +35772,11 @@
                             cur-type-cache
                             (lower-type-cache-from-env cur-local-top-env))
                           (set! cur-module next-module-str)
-                          (set! cur-decls rest))]
+                          (set!
+                            cur-decls
+                            (if skip-runtime
+                              (lower-skip-until-next-module rest)
+                              rest)))]
                       [(ErrLowerModuleLocalEnv message)
                         (begin
                           (set!
@@ -45725,6 +45739,44 @@
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
+(define (lower-test-export-list-has-value?
+  [items : AstExportItemList]
+  [name : String]) : bool
+  (match items
+    [(AstExportItemNil) false]
+    [(AstExportItemCons item rest)
+      (match item
+        [(AstExportValue found)
+          (if (string-eq found name)
+            true
+            (lower-test-export-list-has-value? (box-get rest) name))]
+        [_ (lower-test-export-list-has-value? (box-get rest) name)])]))
+
+(define (lower-test-decl-list-exports-value?
+  [decls : AstDeclList]
+  [name : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclExport items)
+          (if (lower-test-export-list-has-value? items name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [(AstDeclComptimeDecl _ inner-box)
+          (if (lower-test-decl-list-exports-value?
+            (ast-decl-cons (box-get inner-box) AstDeclNil)
+            name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [(AstDeclUnsafe inner-box)
+          (if (lower-test-decl-list-exports-value?
+            (ast-decl-cons (box-get inner-box) AstDeclNil)
+            name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [_ (lower-test-decl-list-exports-value? (box-get rest) name)])]))
+
 (define (compiler-lower-ast-dce-program) : AstProgram
   (ast-program
     (ast-decl-cons
@@ -45775,6 +45827,55 @@
           (AstTyI64)
           (ast-node-push (AstExprLiteral (ast-lit-int 9))))
         AstDeclNil))))
+
+(define (compiler-lower-macro-body-dce-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-def-fn
+        "main"
+        AstParamNil
+        (AstTyI64)
+        (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+      (ast-decl-cons
+        (ast-decl-def-fn
+          "macro-only-helper"
+          AstParamNil
+          (AstTyI64)
+          (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+        (ast-decl-cons
+          (ast-decl-def-macro
+            "macro-uses-helper"
+            AstMacroParamNil
+            (AstTyExpr)
+            (ast-expr-call
+              (ast-node-push (AstExprVar (intern "macro-only-helper")))
+              AstExprNil))
+          AstDeclNil)))))
+
+(define (compiler-lower-stdlib-comptime-runtime-dce-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-module "stdlib.comptime")
+      (ast-decl-cons
+        (ast-decl-def-fn
+          "ctfe-runtime-helper"
+          AstParamNil
+          (AstTyI64)
+          (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+        (ast-decl-cons
+          (AstDeclExport
+            (ast-export-item-cons
+              (AstExportValue "ctfe-runtime-helper")
+              AstExportItemNil))
+          (ast-decl-cons
+            (ast-decl-module "main")
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil)))))))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
@@ -45845,6 +45946,80 @@
                           (lower-test-decl-list-defines? kept "callback-target")
                           (not (lower-test-decl-list-defines? kept "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
+
+(define (compiler-lower-macro-body-dce-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-macro-body-dce-program)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions
+        "entry.tl"
+        program
+        AstDeclPathNil
+        names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 2)
+                (lower-test-decl-list-defines? kept "main")
+                (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
+
+(define (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-stdlib-comptime-runtime-dce-program)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions
+        "entry.tl"
+        program
+        AstDeclPathNil
+        names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ctfe-runtime-helper")
+                (lower-test-decl-list-exports-value? kept "ctfe-runtime-helper")))])])))
+
+(define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
+  (match (lower-compiler-program-with-decl-paths
+    "entry.tl"
+    (compiler-lower-stdlib-comptime-runtime-dce-program)
+    AstDeclPathNil)
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions externs)
+          (and
+            (= (compiler-ir-function-list-count functions) 1)
+            (= (compiler-ir-extern-list-count externs) 0)
+            (lower-test-function-defined? functions "main"))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
   (and
@@ -46077,6 +46252,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-macro-body-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-runtime-dce-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-unsafe-ast-dce-ok?)

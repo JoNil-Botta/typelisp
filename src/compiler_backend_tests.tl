@@ -5927,7 +5927,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "}{z}")
               (compiler-backend-string-contains? asm "tail_mask_")
@@ -5956,7 +5956,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
@@ -5985,7 +5985,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $0,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
@@ -6014,7 +6014,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "    vmovdqu64 %zmm")
               (compiler-backend-string-contains? asm "{%k")
@@ -6401,10 +6401,37 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    kandw %k2, %k1, %k1\n")
-        (compiler-backend-string-contains? asm "    knotw %k1, %k1\n")
+        (compiler-backend-string-contains? asm "    kandnw %k1, %k7, %k1\n")
+        (not (compiler-backend-string-contains? asm "    knotw %k1, %k1\n"))
         (not
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k2"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
+  (match (compiler-backend-emit-avx512-mask-not
+    (compiler-backend-avx512-mask-not-assignments)
+    1
+    (IrValueVar 0)
+    lanes
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-not-shortens-ok?) : bool
+  (and
+    (compiler-backend-avx512-mask-not-emits?
+      8
+      "    movl $255, %eax\n    kmovw %eax, %k7\n    kandnw %k1, %k7, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 16 "    knotw %k1, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 32 "    knotd %k1, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 64 "    knotq %k1, %k2\n")))
 
 (define (compiler-backend-avx512-mask-binop-same-dst-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
@@ -6518,6 +6545,7 @@
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))

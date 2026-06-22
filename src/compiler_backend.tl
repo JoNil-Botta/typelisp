@@ -1623,6 +1623,9 @@
 (define (compiler-backend-avx512-mask-mov-imm-mnemonic [lanes : i64]) : String
   (string-append "mov" (compiler-backend-avx512-mask-int-suffix lanes)))
 
+(define (compiler-backend-avx512-mask-not-full-width? [lanes : i64]) : bool
+  (or (= lanes 16) (= lanes 32) (= lanes 64)))
+
 (define (compiler-backend-avx512-mask-shl-mnemonic [lanes : i64]) : String
   (string-append "shl" (compiler-backend-avx512-mask-int-suffix lanes)))
 
@@ -2508,7 +2511,7 @@
           (match (compiler-backend-mask-var-reg assignments dst "mask not dst")
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
-                (string-append
+                (if (compiler-backend-avx512-mask-not-full-width? lanes)
                   (str-cat
                     "    "
                     (string-append "knot" mask-suffix)
@@ -2529,10 +2532,10 @@
                     " "
                     mask-gpr
                     ", %k7\n    "
-                    (string-append "kand" mask-suffix)
-                    " %k7, "
-                    dst-reg
-                    ", "
+                    (string-append "kandn" mask-suffix)
+                    " "
+                    src-reg
+                    ", %k7, "
                     dst-reg
                     "\n")))]
             [(ErrBackendReg message)

@@ -4846,6 +4846,143 @@
         depths
         block-index)]))
 
+(define (compiler-reg-remat-value? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueI64 _) true]
+    [(IrValueBool _) true]
+    [(IrValueChar _) true]
+    [(IrValueF64 _) true]
+    [(IrValueGlobalAddr _) true]
+    [_ false]))
+
+(define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov _ value _)
+      (and
+        (compiler-reg-remat-value? value)
+        (= (compiler-live-set-count (compiler-live-instr-uses instr)) 0))]
+    [_ false]))
+
+(define (compiler-reg-remat-candidates-add-instr
+  [candidates : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrMov dst _ _)
+      (if (compiler-reg-remat-defn? instr)
+        (compiler-live-set-insert candidates dst)
+        candidates)]
+    [_ candidates]))
+
+(define (compiler-reg-remat-scan-seq!
+  [def-counts : (Array i64)]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [candidates : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (if (>= index (struct-get instrs len))
+    candidates
+    (let
+      [instr : CompilerIrInstr (array-ref (struct-get instrs slots) index)]
+      [next-candidates : CompilerLiveI64Set
+        (compiler-reg-remat-candidates-add-instr candidates instr)]
+      (begin
+        (compiler-reg-ref-counts-add-set!
+          def-counts
+          (compiler-live-instr-defs instr))
+        (compiler-reg-remat-scan-seq!
+          def-counts
+          instrs
+          (+ index 1)
+          next-candidates)))))
+
+(define (compiler-reg-remat-scan-blocks!
+  [def-counts : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [candidates : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(IrBlockNil) candidates]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-remat-scan-blocks!
+            def-counts
+            (box-get rest)
+            (compiler-reg-remat-scan-seq! def-counts instrs 0 candidates))])]
+    [(IrBlockArray seq)
+      (compiler-reg-remat-scan-blocks!
+        def-counts
+        (compiler-ir-block-seq-to-list seq)
+        candidates)]))
+
+(define (compiler-reg-remat-single-def-vars
+  [candidates : CompilerLiveI64Set]
+  [def-counts : (Array i64)]) : CompilerLiveI64Set
+  (let
+    [out : CompilerLiveI64Set (compiler-live-set-empty)]
+    [var : i64 0]
+    (begin
+      (while (< var (array-length def-counts))
+        (begin
+          (if (and
+            (compiler-live-set-contains? candidates var)
+            (= (array-ref def-counts var) 1))
+            (set! out (compiler-live-set-insert out var))
+            unit)
+          (set! var (+ var 1))))
+      out)))
+
+(define (compiler-reg-function-remat-vars [func : CompilerIrFunction]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [def-counts : (Array i64) (make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array def-counts 0)
+          (compiler-reg-remat-single-def-vars
+            (compiler-reg-remat-scan-blocks!
+              def-counts
+              blocks
+              (compiler-live-set-empty))
+            def-counts)))]))
+
+(define (compiler-reg-remat-discount-weight [weight : i64]) : i64
+  (/ weight 2))
+
+(define (compiler-reg-coalesce-var-nonsingleton?
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]
+  [var : i64]) : bool
+  (if (or (< var 0) (>= var (array-length parents)))
+    false
+    (let
+      [root : i64 (array-ref parents var)]
+      [mapped : i64
+        (if (and (>= root 0) (< root (array-length parents)))
+          root
+          var)]
+      (compiler-live-set-contains? merged-roots mapped))))
+
+(define (compiler-reg-remat-discount-spill-weights!
+  [weights : (Array i64)]
+  [remat-vars : CompilerLiveI64Set]
+  [coalesce : CompilerRegCoalesceMap]) : unit
+  (let
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [merged-roots : CompilerLiveI64Set
+      (compiler-reg-coalesce-merged-root-set coalesce)]
+    [var : i64 0]
+    (while (< var (array-length weights))
+      (begin
+        (if (and
+          (compiler-live-set-contains? remat-vars var)
+          (not
+            (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+          (array-set!
+            weights
+            var
+            (compiler-reg-remat-discount-weight (array-ref weights var)))
+          unit)
+        (set! var (+ var 1))))))
+
 (define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
     i64)
   (match func
@@ -4868,6 +5005,18 @@
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-ref-counts-blocks-weighted! counts blocks depths 0)
           counts))]))
+
+(define (compiler-reg-function-spill-weights-remat
+  [func : CompilerIrFunction]
+  [coalesce : CompilerRegCoalesceMap]) : (Array i64)
+  (let
+    [counts : (Array i64) (compiler-reg-function-spill-weights func)]
+    (begin
+      (compiler-reg-remat-discount-spill-weights!
+        counts
+        (compiler-reg-function-remat-vars func)
+        coalesce)
+      counts)))
 
 (define (compiler-reg-call-spanning-caller-saved-benefit?
   [ref-count : i64]
@@ -5863,7 +6012,7 @@
         ;; #3489 (PR2): score each class's eviction by its hottest member.
         (compiler-reg-merge-ref-counts
           coalesce
-          (compiler-reg-function-spill-weights func)
+          (compiler-reg-function-spill-weights-remat func coalesce)
           (array-length (struct-get interval-index starts)))
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
@@ -9503,6 +9652,237 @@
 
 (cfg
   test
+  (define (compiler-reg-remat-weight-function) : CompilerIrFunction
+    (IrFunction
+      "remat_weight"
+      IrParamNil
+      (AstTyUnit)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                1
+                (IrBinAdd)
+                (IrValueI64 1)
+                (IrValueI64 2)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrStore "use1" (IrValueVar 1) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "use0a" (IrValueVar 0) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrStore "use0b" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (IrInstrReturn IrNoValue)
+                      IrInstrNil)))))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-multi-def-function) : CompilerIrFunction
+    (IrFunction
+      "remat_multi_def"
+      IrParamNil
+      (AstTyUnit)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                0
+                (IrBinAdd)
+                (IrValueI64 1)
+                (IrValueI64 2)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-classifier-ok?) : bool
+    (let
+      [single-remats : CompilerLiveI64Set
+        (compiler-reg-function-remat-vars (compiler-reg-remat-weight-function))]
+      [multi-remats : CompilerLiveI64Set
+        (compiler-reg-function-remat-vars
+          (compiler-reg-remat-multi-def-function))]
+      (and
+        (compiler-reg-remat-defn?
+          (IrInstrMov 10 (IrValueI64 1) (compiler-reg-i64-ty)))
+        (compiler-reg-remat-defn?
+          (IrInstrMov 11 (IrValueBool true) (AstTyBool)))
+        (compiler-reg-remat-defn? (IrInstrMov 12 (IrValueChar 'x') (AstTyChar)))
+        (compiler-reg-remat-defn?
+          (IrInstrMov 13 (IrValueF64 0x3ff0000000000000) (compiler-reg-f64-ty)))
+        (compiler-reg-remat-defn?
+          (IrInstrMov 14 (IrValueGlobalAddr "global") (AstTyU64)))
+        (not
+          (compiler-reg-remat-defn?
+            (IrInstrMov 15 (IrValueVar 0) (compiler-reg-i64-ty))))
+        (not
+          (compiler-reg-remat-defn?
+            (IrInstrMov 16 (IrValueString "heap") (AstTyString))))
+        (not
+          (compiler-reg-remat-defn?
+            (IrInstrBinOp
+              17
+              (IrBinAdd)
+              (IrValueI64 1)
+              (IrValueI64 2)
+              (compiler-reg-i64-ty))))
+        (compiler-live-set-contains? single-remats 0)
+        (not (compiler-live-set-contains? single-remats 1))
+        (not (compiler-live-set-contains? multi-remats 0))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-discount-weights-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-weight-function)]
+      [empty-coalesce : CompilerRegCoalesceMap
+        (CompilerRegCoalesceMap (make-array i64 0))]
+      [raw : (Array i64) (compiler-reg-function-spill-weights func)]
+      [discounted : (Array i64)
+        (compiler-reg-function-spill-weights-remat func empty-coalesce)]
+      [parents : (Array i64) (make-array i64 2)]
+      (begin
+        (array-set! parents 0 0)
+        (array-set! parents 1 0)
+        (let
+          [coalesced : (Array i64)
+            (compiler-reg-function-spill-weights-remat
+              func
+              (CompilerRegCoalesceMap parents))]
+          (and
+            (= (array-ref raw 0) 3)
+            (= (array-ref raw 1) 2)
+            (= (array-ref discounted 0) 1)
+            (= (array-ref discounted 1) 2)
+            (= (array-ref coalesced 0) 3)
+            (= (array-ref coalesced 1) 2)))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-spill-weight-eviction-function) : CompilerIrFunction
+    (let
+      [instrs : CompilerIrInstrList IrInstrNil]
+      (begin
+        (set! instrs (compiler-ir-instr-cons (IrInstrReturn IrNoValue) instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "hot0b" (IrValueVar 0) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "hot0a" (IrValueVar 0) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "cold1" (IrValueVar 1) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use5" (IrValueVar 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use4" (IrValueVar 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use3" (IrValueVar 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use2" (IrValueVar 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              1
+              (IrBinAdd)
+              (IrValueI64 1)
+              (IrValueI64 2)
+              (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
+            instrs))
+        (IrFunction
+          "remat_spill_weight_eviction"
+          IrParamNil
+          (AstTyUnit)
+          7
+          (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-spill-weight-eviction-ok?) : bool
+    (let
+      [func : CompilerIrFunction
+        (compiler-reg-remat-spill-weight-eviction-function)]
+      [empty-coalesce : CompilerRegCoalesceMap
+        (CompilerRegCoalesceMap (make-array i64 0))]
+      [raw : (Array i64) (compiler-reg-function-spill-weights func)]
+      [discounted : (Array i64)
+        (compiler-reg-function-spill-weights-remat func empty-coalesce)]
+      (match (compiler-reg-plan-function-scalar func)
+        [(CompilerRegPlan assignments _ _ _ _)
+          (and
+            (> (array-ref raw 0) (array-ref raw 1))
+            (< (array-ref discounted 0) (array-ref discounted 1))
+            (compiler-reg-location-spill-offset?
+              (compiler-reg-assignment-lookup assignments 0)
+              (compiler-reg-stack-slot-offset 0))
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 1))
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 5)))]))))
+
+(cfg
+  test
   (define (compiler-reg-spill-weight-eviction-function) : CompilerIrFunction
     (let
       [instrs : CompilerIrInstrList IrInstrNil]
@@ -11013,6 +11393,9 @@
 
 (define (compiler-regalloc-storage-self-test?) : bool
   (and
+    (cfg test (compiler-reg-remat-classifier-ok?) true)
+    (cfg test (compiler-reg-remat-discount-weights-ok?) true)
+    (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-call-span-counts-ok?) true)

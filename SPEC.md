@@ -120,7 +120,7 @@ table.
 | Integer shift counts | Deterministic runtime trap | `shl`/`shr` trap when the count is negative or not less than the left operand's bit width. See section 5.4. |
 | Scalar numeric casts | Defined result | Integer/integer, integer/`char`, `f64` ↔ `f32`, and integer/`char` ↔ float casts use defined truncation, sign/zero-extension, and round-to-nearest/truncate-toward-zero rules. See section 3.8 and #1101. |
 | Non-numeric casts | Static reject | Casts touching non-numeric types are rejected before lowering. See section 3.8 and #1101. |
-| Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
+| Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative compatibility dynamic-buffer lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
 | Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is implemented by the selfhost checker (#805, #1048, #1049, #1050). |
 | Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are implemented (#1033/#1034/#1035); non-lexical last-use shortening is implemented for straight-line sequences and path-sensitive `if`/`match` joins, with loop joins still conservative. |
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker is implemented (#806). Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
@@ -307,18 +307,35 @@ semantics are deferred to a future feature.
 - `array-ref` and `array-set!` on fixed arrays are bounds-checked and use the
   compile-time length. By-value fixed-array returns are still rejected by backend
   validation.
+- End-state public `Array` means this fixed-size form only. Growable or
+  runtime-sized public collections should use vector/slice-style stdlib
+  surfaces instead of exposing an unsized `(Array T)` type.
 
-**Dynamic array:** `(Array type)` - written without a size
-- Runtime-sized element buffer allocated with `tl_alloc`.
-- `make-array` rejects negative lengths and traps if `length * sizeof(type)`
-  would overflow an `i64` byte count before calling `tl_alloc`.
+**Compatibility dynamic buffer:** `(Array type)` - written without a size
+- The current compiler still accepts this runtime-sized dynamic-array spelling
+  during the migration from public dynamic arrays to vectors and private
+  buffers. It is implemented today, but it is no longer the long-term public
+  collection surface.
+- `make-array` creates a compatibility dynamic buffer. It rejects negative
+  lengths and traps if `length * sizeof(type)` would overflow an `i64` byte
+  count before calling `tl_alloc`.
 - `make-array` initializes every live element according to the ZII `init`
   rules in section 5.12.1. The language rule is source-level initialization,
   not "whatever bits the allocator happened to return".
-- A dynamic-array value is a pointer to inline fat storage
+- A compatibility dynamic-buffer value is a pointer to inline fat storage
   `(data_ptr : u64, length : i64)` - 16 bytes total.
 - The stored `length` field is always non-negative.
 - Not valid as a global initializer.
+- New public APIs must not introduce `(Array T)` as a growable collection type.
+  During migration, intentionally runtime-sized uses are limited to vector
+  backing storage (#3577/#3579), SPMD lanes and result buffers until the
+  vector/slice surface lands (#3578), binary/byte compatibility while
+  `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
+  compiler-internal pools. Final rejection/removal of public unsized
+  `(Array T)` is tracked by #3581.
+- Collection APIs should inspect existing storage through immutable borrows and
+  mutate through `&mut` where possible. Mutating collection operations should
+  update storage in place instead of returning copied whole collections.
 
 **Owned string:** `String`
 - `String` is an owned, immutable byte-string handle. The handle is a
@@ -374,7 +391,8 @@ semantics are deferred to a future feature.
   top-level functions and materialized as raw function pointer values.
 - Capturing `lambda` literals build heap-allocated closure environments and
   evaluate to closure descriptor values. Supported captures are scalars,
-  function values, `String`, dynamic arrays, and tuples of scalars (see §5.14).
+  function values, `String`, compatibility dynamic arrays, and tuples of
+  scalars (see §5.14).
 
 ### 3.4 Raw pointer types (v1 design; implemented)
 
@@ -772,8 +790,8 @@ V1 exclusions:
 - No source-level generic type constructors, generic functions, traits,
   `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
 - No runtime representation for `type`, `Expr`, `ExprList`, `ExprClause`,
-  `ExprClauseList`, declaration metadata, generated keys, or other
-  comptime-only values.
+  `ExprClauseList`, `ExprBindingClause`, `ExprBindingClauseList`, declaration
+  metadata, generated keys, or other comptime-only values.
 - No generated public Rust compiler product surface; this is a selfhost
   compiler feature.
 - No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
@@ -793,14 +811,15 @@ value and cannot be stored in variables, passed to functions, placed in fields,
 or called indirectly.
 
 Macro signatures use ordinary produced types, with `Expr` as an explicit
-wildcard capture and `ExprClause` as a bracket-clause capture. An ordinary
-operand slot states the type that the operand expression must produce at the
-call site. For example, a macro with type `(macro (bool bool) bool)` takes two
-operand expressions that must each typecheck as `bool` and produces an
-expression that must typecheck as `bool`. A fixed slot declared `Expr` accepts
-any ordinary operand expression without checking its produced type before
-expansion; the macro receives the syntax as an `Expr`, and ordinary
-typechecking validates the expanded expression afterward.
+wildcard capture, `ExprClause` as a general bracket-clause capture, and
+`ExprBindingClause` as a let-like binding-clause capture. An ordinary operand
+slot states the type that the operand expression must produce at the call site.
+For example, a macro with type `(macro (bool bool) bool)` takes two operand
+expressions that must each typecheck as `bool` and produces an expression that
+must typecheck as `bool`. A fixed slot declared `Expr` accepts any ordinary
+operand expression without checking its produced type before expansion; the
+macro receives the syntax as an `Expr`, and ordinary typechecking validates the
+expanded expression afterward.
 The macro may call `(expr-type expr)` to query the captured expression's
 produced type when ordinary typechecking can determine it; the query does not
 evaluate the runtime expression and reports a macro-time diagnostic for syntax
@@ -809,15 +828,25 @@ that cannot be typed in the caller context.
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions preserved
 as syntax. The bracket form is valid only in macro call operands; it is not a
-general expression, and ordinary calls or non-`ExprClause` macro slots reject it
-with a source-located diagnostic. Empty clauses, one-element clauses, and
-clauses with more than two elements are rejected.
+general expression, and ordinary calls or non-bracket macro slots reject it with
+a source-located diagnostic. Empty clauses, one-element clauses, and clauses
+with more than two elements are rejected.
+
+A fixed slot declared `ExprBindingClause` accepts exactly one binding-clause
+operand, either `[name init]` or `[name : Type init]`. The `name` must be a
+source identifier and is preserved as the user-facing binding name. The optional
+type annotation and initializer are preserved as syntax; the type annotation is
+not resolved before macro expansion. These operands are distinct from
+`ExprClause`: `[x : i64 1]` is accepted only for `ExprBindingClause`, while
+`ExprClause` remains exactly `[expr expr]`.
 
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro body
 receives the remaining operands as an `ExprList`; for `Expr ...`, they are
 captured without per-operand produced-type checks. For `ExprClause ...`, every
 remaining operand must be a two-expression bracket clause and the macro body
-receives an `ExprClauseList`.
+receives an `ExprClauseList`. For `ExprBindingClause ...`, every remaining
+operand must be a binding clause and the macro body receives an
+`ExprBindingClauseList`.
 
 Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
 `expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
@@ -827,12 +856,20 @@ They can inspect clause captures with `expr-clause-first`,
 `expr-clause-list-tail`, and `expr-clause-list-nth`.
 `expr-clause-list->expr-list` converts a clause list back into a list of
 bracket-clause operand syntax for explicit splicing into recursive macro calls.
+They can inspect binding-clause captures with `expr-binding-clause-name`,
+`expr-binding-clause-has-type?`, `expr-binding-clause-type`,
+`expr-binding-clause-init`, `expr-binding-clause-list-empty?`,
+`expr-binding-clause-list-length`, `expr-binding-clause-list-head`,
+`expr-binding-clause-list-tail`, and `expr-binding-clause-list-nth`.
+`expr-binding-clause-list->expr-list` converts a binding-clause list back into
+bracket-clause operand syntax for explicit splicing into macro calls.
 
-`Expr`, `ExprList`, `ExprClause`, and `ExprClauseList` are compile-time-only
-types. They are valid in macro bodies and explicit `(comptime ...)` helper
-code, but they have no runtime representation. The compiler tracks the checked
-produced type of each `Expr` internally; there is no source-level `Expr<T>` and
-no generic macro type parameter.
+`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`, and
+`ExprBindingClauseList` are compile-time-only types. They are valid in macro
+bodies and explicit `(comptime ...)` helper code, but they have no runtime
+representation. The compiler tracks the checked produced type of each `Expr`
+internally; there is no source-level `Expr<T>` and no generic macro type
+parameter.
 
 Macro bodies build expression values with quote forms. The reader accepts both
 prefix shorthand and the equivalent list-headed forms:
@@ -848,8 +885,9 @@ prefix shorthand and the equivalent list-headed forms:
 `quasiquote` produces an `Expr` while evaluating `unquote` operands as
 compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
 evaluates to an `ExprList` and splices that list into the surrounding template
-list. Clause lists do not splice implicitly; use `expr-clause-list->expr-list`
-when a macro needs to splice generated bracket operands. `unquote` and
+list. Clause lists and binding-clause lists do not splice implicitly; use
+`expr-clause-list->expr-list` or `expr-binding-clause-list->expr-list` when a
+macro needs to splice generated bracket operands. `unquote` and
 `unquote-splicing` outside quasiquote are rejected.
 
 The source surface is:
@@ -876,17 +914,19 @@ bool)`, `(macro (bool bool ...) bool)`, and
 `(macro (ExprClause ...) i64)`. The `defmacro` operand list names the macro
 body's compile-time parameters and their call-site produced types. Fixed
 ordinary operands bind as `Expr`, fixed `ExprClause` operands bind as
-`ExprClause`, variadic ordinary operands bind as `ExprList`, and variadic
-`ExprClause` operands bind as `ExprClauseList`. The macro body must typecheck
-as `Expr`, and the produced fragment must post-expand typecheck as the declared
-result type.
+`ExprClause`, fixed `ExprBindingClause` operands bind as `ExprBindingClause`,
+variadic ordinary operands bind as `ExprList`, variadic `ExprClause` operands
+bind as `ExprClauseList`, and variadic `ExprBindingClause` operands bind as
+`ExprBindingClauseList`. The macro body must typecheck as `Expr`, and the
+produced fragment must post-expand typecheck as the declared result type.
 
 Typed expansion has three checks:
 
 1. The macro call site is checked from the macro signature before expansion.
    Ordinary operand type errors are reported at the operand source span; `Expr`
    operands are wildcard syntax captures and skip the produced-type check;
-   `ExprClause` operands must use `[expr expr]` syntax.
+   `ExprClause` operands must use `[expr expr]` syntax; `ExprBindingClause`
+   operands must use `[name expr]` or `[name : Type expr]` syntax.
 2. The macro body is checked as compile-time TypeLisp over the macro-only
    syntax types.
 3. The expanded expression is checked again by the ordinary typechecker as a
@@ -1033,7 +1073,8 @@ loaded.
 
 The well-known set for the first stdlib-owned surface is:
 
-- Syntax values: `Expr`, `ExprList`, `ExprClause`, and `ExprClauseList`.
+- Syntax values: `Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
+  `ExprBindingClause`, and `ExprBindingClauseList`.
 - Reflection values: `TypeInfo` plus the associated field, variant, payload,
   parameter, and sequence types needed to represent the section 5.17 reflection
   data as ordinary TypeLisp values.
@@ -1057,11 +1098,12 @@ surface, or compiler symbol-table handles.
 
 The stdlib declarations choose the end-state collection shape rather than
 freezing the compiler's historical cons-list helpers. `ExprList`,
-`ExprClauseList`, and reflection sequences are dense, length-indexed sequence
-wrappers over arrays (or an equivalent compiler-verified dense representation).
-Their public API is length/index/iteration-oriented. Recursive cons cells are
-not part of the public contract, even if temporary compatibility helpers keep
-names such as `expr-list-head` during migration.
+`ExprClauseList`, `ExprBindingClauseList`, and reflection sequences are dense,
+length-indexed sequence wrappers over arrays (or an equivalent
+compiler-verified dense representation). Their public API is
+length/index/iteration-oriented. Recursive cons cells are not part of the
+public contract, even if temporary compatibility helpers keep names such as
+`expr-list-head` during migration.
 
 The public enum variant policy follows the dotted qualified variant direction:
 stdlib declarations should use short variant names such as `Var`, `Call`,
@@ -1245,7 +1287,7 @@ can be created inside a region scope:
 - `String`
 - `ByteBuf` - owned mutable byte buffers
 - `(Box T)` - arena-owned boxed storage
-- `(Array T)` — dynamic array
+- `(Array T)` - compatibility dynamic buffer
 - Enum and struct values returned from functions inside the region
 - Tuple values (when tuple-by-value ABI support lands)
 
@@ -1336,10 +1378,11 @@ places whose owner/provenance is statically known:
   borrow expression, forms such as `(struct-get p field)`, local dotted field
   sugar `p.field`, `(tuple-ref t 0)`, and `(array-ref items i)` are treated as
   projections, not by-value reads.
-- Arena-owned aggregate handles: `String`, dynamic-array, struct, enum, and
-  tuple handles allocated in the active arena. Handles with type `(in phase T)`
-  infer lifetime `phase`; untagged heap handles allocated in the default
-  program-lifetime arena infer the reserved lifetime name `program`.
+- Arena-owned aggregate handles: `String`, compatibility dynamic-array,
+  struct, enum, and tuple handles allocated in the active arena. Handles with
+  type `(in phase T)` infer lifetime `phase`; untagged heap handles allocated
+  in the default program-lifetime arena infer the reserved lifetime name
+  `program`.
 
 The checker rejects immutable borrows of arbitrary rvalues and temporaries whose
 owner cannot be named. Bind the value first if it should have a lexical owner.
@@ -1349,8 +1392,8 @@ lifetime from the owner:
 
 - A local or parameter root named `x` gives references rooted in `x` the
   lifetime name `x`.
-- A field, tuple element, fixed-array element, or dynamic-array element
-  projection inherits the lifetime name of its root place.
+- A field, tuple element, fixed-array element, or compatibility dynamic-array
+  element projection inherits the lifetime name of its root place.
 - A region-tagged aggregate `(in phase T)` gives references to its owned storage
   the lifetime name `phase`.
 - An untagged default-arena aggregate gives references to its owned storage the
@@ -1484,8 +1527,8 @@ Lifetime argument type-use rules:
   and the same lifetime argument list after substitution.
 - Nested uses are allowed wherever ordinary types are allowed, including
   function parameters and returns, `let` annotations, struct fields, enum
-  payloads, tuple elements, fixed arrays, dynamic arrays, boxes, pointers, and
-  references.
+  payloads, tuple elements, fixed arrays, compatibility dynamic arrays, boxes,
+  pointers, and references.
 
 Declaration lifetime parameters are substituted by position. If
 `RefPair` declares `(:lifetimes a b)`, then the field type `(& a i64)` becomes
@@ -1745,8 +1788,8 @@ reference-capturing closure:
 - Assigning it into a binding whose scope is not contained within every
   captured reference lifetime, including assignment into an outer local.
 - Storing it in a global/top-level slot.
-- Storing it in an aggregate, tuple, fixed array, dynamic array, enum payload,
-  struct field, or `Box`.
+- Storing it in an aggregate, tuple, fixed array, compatibility dynamic array,
+  enum payload, struct field, or `Box`.
 - Passing it to an ordinary named function, function pointer, extern, or other
   callee whose body/contract is not checker-known to invoke the closure without
   retaining or returning it.
@@ -2065,7 +2108,7 @@ source checker; the runtime representation does not retain aliasing state.
 
 Declares a global variable with a typed or inferred initializer. Scalar constant
 initializers can be emitted directly as static data. `String` and aggregate
-initializers, including struct, enum, tuple, fixed-array, and dynamic-array
+initializers, including struct, enum, tuple, fixed-array, and compatibility dynamic-array
 values, are lowered through generated runtime initializer functions when static
 data emission is not sufficient. Those initializer functions run before the
 selected `main`.
@@ -2157,7 +2200,7 @@ escaped consistently. Ordinary TypeLisp declarations still use module-prefixed
 
 Extern signatures may use backend-supported scalar values, `unit`, function
 pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
-`String`, dynamic arrays, structs, and enums. Tuple values, fixed arrays,
+`String`, compatibility dynamic arrays, structs, and enums. Tuple values, fixed arrays,
 references, regions, and unsupported aggregate forms are rejected
 for extern parameters and returns; pass a raw pointer when a foreign API needs
 aggregate storage.
@@ -3011,7 +3054,7 @@ and marks the source place moved. Move-only types are:
 
 - `String`.
 - `ByteBuf`.
-- Dynamic arrays `(Array T)`.
+- Compatibility dynamic arrays `(Array T)`.
 - Boxes `(Box T)`.
 - Fixed arrays `(Array T N)`.
 - Tuples `(Tuple ...)`.
@@ -3077,7 +3120,7 @@ without moving it. In v1 these are limited to:
 - Compatibility inspection calls whose current signatures are not yet
   reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
   `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
-  `print-error`, dynamic-array `length`/`array-length`, `array-ref` when the
+  `print-error`, compatibility dynamic-array `length`/`array-length`, `array-ref` when the
   element type is copyable, `struct-get` when the selected field type is
   copyable, and stdlib predicates that only inspect their aggregate argument.
 - `array-set!` and `array-push!` on an owned array receiver or mutable
@@ -3121,7 +3164,7 @@ then binds payload values owned by the selected arm.
 - Use after move, naming the moved local or path and the move site when known.
 - Moving from an uninitialized or already-moved slot.
 - Assigning over an initialized move-only slot.
-- Moving out of an unsupported path such as a dynamic-array element,
+- Moving out of an unsupported path such as a compatibility dynamic-array element,
   non-literal fixed-array index, box projection, or unsupported aggregate path.
 - Storing, capturing, or returning a move-only value where the destination would
   outlive the owner scope.
@@ -3487,7 +3530,7 @@ ZII eligibility:
 | `unit` | `unit` |
 | `(Ptr T)`, `(MutPtr T)` | typed null raw pointer |
 | `String` | valid empty string |
-| `(Array T)` | valid empty dynamic array; `make-array` uses the same element rules for live elements |
+| `(Array T)` | valid empty compatibility dynamic array; `make-array` uses the same element rules for live elements |
 | `(Tuple T0 T1 ...)` | tuple of recursively initialized elements |
 | `(Array T N)` | fixed array of `N` recursively initialized elements; `N` must be non-negative |
 | Default-layout `defstruct` without cleanup | constructor with every field recursively initialized |
@@ -3497,8 +3540,9 @@ ZII eligibility:
 Unsupported or ambiguous cases are rejected rather than producing invalid
 values. Current rejected cases include function/closure values, references,
 `never`, `Expr`/`ExprList`, `(:repr c)` structs, cleanup-owning structs/enums,
-empty enums, negative fixed-array lengths, unsupported dynamic-array element
-types, and recursive aggregate layouts that fail finite-layout analysis.
+empty enums, negative fixed-array lengths, unsupported compatibility
+dynamic-array element types, and recursive aggregate layouts that fail
+finite-layout analysis.
 
 Cleanup-owning aggregates are intentionally not initialized by `init` yet:
 constructing one would also commit to cleanup execution and failure behavior.
@@ -3558,19 +3602,21 @@ specified.
   and evaluate to static closure descriptor values.
 - Capturing lambdas snapshot supported captures into heap-allocated closure
   environments. Supported captured values are integer widths, `bool`, `char`,
-  `f64`, function values, `String`, dynamic arrays, tuples/structs/enums
-  (including ones with nested aggregate fields), and a directly-captured fixed
-  `(Array T N)` of scalar elements. `String` and dynamic-array captures snapshot
-  their fat `{ ptr, len }` value onto the heap so the environment can outlive
-  the frame that created the handle without dangling; the underlying buffer
-  (`.rodata` for string literals, `tl_alloc` for dynamic arrays) is shared,
+  `f64`, function values, `String`, compatibility dynamic arrays,
+  tuples/structs/enums (including ones with nested aggregate fields), and a
+  directly-captured fixed `(Array T N)` of scalar elements. `String` and
+  compatibility dynamic-array captures snapshot their fat `{ ptr, len }` value
+  onto the heap so the environment can outlive the frame that created the handle
+  without dangling; the underlying buffer (`.rodata` for string literals,
+  `tl_alloc` for compatibility dynamic arrays) is shared,
   matching aggregate-handle reference semantics. A tuple/struct/enum capture
   shallow-copies its inline storage onto the heap and then recursively
   re-snapshots any nested aggregate fields/payloads so they cannot dangle
   (#584). A scalar fixed-array capture shallow-copies its inline element storage
   and reconstructs the array view on capture-load (#571).
 - Lambda literals can return the same value categories as named function
-  returns, including `String`, enums, structs, dynamic arrays, tuples, and
+  returns, including `String`, enums, structs, compatibility dynamic arrays,
+  tuples, and
   fixed arrays.
 - `set!` to captured names is rejected by design (#2552). A lambda may assign
   its own parameters and locals, including a local that shadows an outer name,
@@ -3637,20 +3683,21 @@ Semantics:
 - Programs that evaluate `(program-index)` or `(program-count)` explicitly
   observe the selected backend gang shape. Those results are allowed to differ
   by backend mode as described under lane identity below.
-- Existing dynamic-array bounds checks still apply. If a `foreach` indexes past
-  an array's length, the program traps the same way `array-ref`/`array-set!`
-  traps today.
+- Existing compatibility dynamic-buffer bounds checks still apply. If a
+  `foreach` indexes past an array's length, the program traps the same way
+  `array-ref`/`array-set!` traps today.
 
-Initial dynamic-array use cases:
+Current compatibility dynamic-buffer use cases:
 
-- Contiguous map and zip-style kernels over dynamic arrays.
+- Contiguous map and zip-style kernels over runtime-sized buffers.
 - Reads through `array-ref` and writes through `array-set!`.
 - Reads through `array-ref` may use any SPMD-safe varying `i64` index
   expression, including gather-only reads through an index array such as
   `xs[ix[i]]`. The scalar/reference lowering executes those reads with the
-  ordinary dynamic-array bounds checks for the logical iteration that performs
-  the read. Explicit SIMD backend modes may reject non-contiguous gather shapes
-  with a targeted diagnostic until vector gather lowering is implemented.
+  ordinary compatibility dynamic-buffer bounds checks for the logical iteration
+  that performs the read. Explicit SIMD backend modes may reject non-contiguous
+  gather shapes with a targeted diagnostic until vector gather lowering is
+  implemented.
 - Non-atomic `array-set!` destination indexes must be the loop index or a
   simple uniform offset from it, such as `i` or `(+ base i)`. Scatter writes
   through arbitrary varying indexes are deferred; the only overlap-tolerant
@@ -3659,10 +3706,10 @@ Initial dynamic-array use cases:
 - Supported lane element types for the first contiguous map/zip slice are
   `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`,
   plus an
-  AVX-512-only bool dynamic-array subset for contiguous bool copies and
+  AVX-512-only bool dynamic-buffer subset for contiguous bool copies and
   bool-valued map results. Bool array storage remains byte-compatible (`0` or
   `1` per element); the SIMD lowering converts at the private boundary between
-  byte arrays and internal masks. AVX2 explicitly rejects bool dynamic-array
+  byte arrays and internal masks. AVX2 explicitly rejects bool dynamic-buffer
   lanes rather than silently scalarizing them. `i8`/`u8` support vectorized `+`
   with the same modulo wrapping semantics as scalar integer addition; `*` over
   `i8`/`u8` is rejected in explicit SIMD backend modes until a
@@ -3670,6 +3717,12 @@ Initial dynamic-array use cases:
   `i16`/`u16`, `i32`/`u32`, and `i64`/`u64` support vectorized `+` and `*`
   with the same modulo wrapping semantics as scalar integer arithmetic.
   `String`, structs, enums, tuples, and arrays as lane elements are deferred.
+
+The public SPMD surface should not require users to spell unsized `(Array T)`
+after the array migration completes. Runtime-sized SPMD inputs and outputs are
+an intentionally dynamic use during migration; #3578 replaces them with
+vector/slice-style sources and mutable destinations that borrow storage instead
+of copying whole collections.
 
 Uniform and varying rules:
 
@@ -3829,12 +3882,12 @@ Masked varying `if` (v2):
 Explicit SPMD atomic scatter:
 
 - `(import "stdlib/atomic.tl")` provides sequentially consistent atomic helpers
-  for dynamic-array elements of type `i32` and `i64`:
+  for compatibility dynamic-array elements of type `i32` and `i64`:
   `atomic-i32-load`, `atomic-i32-store!`, `atomic-i32-add!`,
   `atomic-i32-fetch-add!`, and the corresponding `i64` helpers.
-- The array argument is a normal dynamic array, the index is an `i64`, and add
-  or store values use the element type. There is no public memory-order
-  parameter; all helpers are sequentially consistent.
+- The array argument is a current compatibility dynamic array, the index is an
+  `i64`, and add or store values use the element type. There is no public
+  memory-order parameter; all helpers are sequentially consistent.
 - Inside `foreach`, the helper index and value arguments may be varying. This is
   the only safe overlap-tolerant scatter update in the current source surface.
   Ordinary `array-set!` with a varying non-contiguous index remains rejected.
@@ -3970,7 +4023,8 @@ Backend coverage for reductions:
 Purity and varying rules for the first slice:
 
 - The `value` expression may use the varying index, `(program-index)`,
-  `(program-count)`, dynamic-array reads, arithmetic/comparison/boolean
+  `(program-count)`, compatibility dynamic-array reads,
+  arithmetic/comparison/boolean
   operators over supported types, `spmd-broadcast`, and local `let` bindings
   whose values satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular, `set!`,
@@ -4009,8 +4063,8 @@ Cross-lane operations:
   and AVX-512 predicated tail gangs. Other supported broadcast expressions use
   scalar reference lowering in scalar backend modes and may be rejected by
   explicit SIMD backend modes until a vector pattern accepts them. Bool
-  `spmd-broadcast` remains deferred even though bool dynamic-array lanes are
-  supported in the AVX-512 `foreach` subset.
+  `spmd-broadcast` remains deferred even though bool compatibility
+  dynamic-array lanes are supported in the AVX-512 `foreach` subset.
 - General shuffles, lane extraction/insertion, gathers/scatters, atomics, task
   parallelism, vectorized scans, floating-point scans, and public vector/mask
   values remain deferred.
@@ -4234,8 +4288,8 @@ active allocation target. On exit, the result is cloned into the enclosing activ
 arena when needed, the scratch arena is rewound to its entry mark, and the active
 arena is restored. The v1 result surface follows the current `clone` lowering:
 copyable values are returned as-is, `String` values are copied, and cloneable
-tuples, fixed arrays, dynamic arrays, boxes, and named aggregates are cloned
-recursively when their elements or fields are clone-supported. Unsupported
+tuples, fixed arrays, compatibility dynamic arrays, boxes, and named aggregates
+are cloned recursively when their elements or fields are clone-supported. Unsupported
 result shapes such as function values are rejected. Typechecking returns the
 body result type with source-region tags stripped, matching the clone semantics
 of moving the result back to the enclosing arena.
@@ -4309,8 +4363,8 @@ V1 primitive names and signatures are fixed as follows:
 | `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
 | `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
-| `(array-element-type type-expr)` | `type` | Requires fixed or dynamic array. |
-| `(array-length type-expr)` | `i64` | Requires fixed array. Dynamic arrays reject this. |
+| `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
+| `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
 | `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
@@ -4360,7 +4414,7 @@ names, and recursive subkeys cannot collide. Conceptually, the rules are:
 
 - Builtins key by their stable lowercase kind string.
 - Fixed arrays key as `(array length element-key)`.
-- Dynamic arrays key as `(dyn-array element-key)`.
+- Compatibility dynamic arrays key as `(dyn-array element-key)`.
 - Functions key as `(function param-count param-key... return-key)`.
 - Nominal structs/enums key as `(nominal kind module-identity type-name)`.
 - Pointer/reference/region keys, once detailed reflection lands, must include
@@ -4810,17 +4864,20 @@ The table below records the remaining transitional string/array compatibility
 surface that is still recognized by the compiler while the stdlib migration in
 #3079 continues. `stdlib/array.tl` now provides public array macro wrappers that
 expand to compiler-private array intrinsics, but the compiler still accepts the
-public aliases during the in-tree import migration.
+public aliases during the in-tree import migration. The array names preserve
+today's behavior while #3576/#3581 move the source type contract toward
+fixed-size-only public `Array`.
 
 | Compatibility builtin | Signature | Description |
 |-----------------------|-----------|-------------|
-| `length` | `(Array t) → i64` | Get dynamic array length |
+| `length` | `(Array t) → i64` | Get compatibility dynamic array length |
 | `length` | `String → i64` | Get string byte length |
-| `array-length` | `(Array t) → i64` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array length |
-| `make-array` | `type i64 → (Array type)` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array allocation; initializes every live element under ZII and traps invalid lengths |
+| `array-length` | `(Array t) → i64` | Transitional alias for `stdlib/array.tl`'s macro-backed compatibility dynamic array length |
+| `make-array` | `type i64 → (Array type)` | Transitional alias for `stdlib/array.tl`'s macro-backed compatibility dynamic array allocation; initializes every live element under ZII and traps invalid lengths |
 | `array-ref` | `(Array t) i64 → t` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic/fixed array read, including immutable or mutable reference receivers (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic/fixed array write through an owned array or mutable reference receiver (bounds checked) |
-| `array-push!` | `(Array t) t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic array append through an owned array or mutable reference receiver |
+| `array-push!` | `(Array t) t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed compatibility dynamic array append through an owned array or mutable reference receiver |
+| `array-data` | `(Array t) → (MutPtr t)` | Unsafe low-level pointer escape to array element storage for runtime/FFI/internal compatibility |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
@@ -4857,6 +4914,16 @@ in-tree migrations are complete.
   trap (writes to stderr and exits with code 134). The slice range is checked
   with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value
   and traps.
+- `array-data` requires an enclosing `(unsafe ...)` expression. It exists for
+  runtime, FFI, and migration code that must pass raw storage pointers; it is
+  not a public collection API and should not be used to model ordinary vectors
+  or slices.
+- Unsized `(Array T)`, `make-array`, `array-length`, `length` on arrays,
+  `array-ref`, `array-set!`, `array-push!`, and `array-data` remain available
+  as compatibility forms until the vector/private-buffer migration lands.
+  Public growable collection APIs should route through `stdlib/vector.tl` or a
+  future slice/private-buffer surface, use `&`/`&mut` where possible, and
+  mutate storage in place instead of returning copied collections.
 - The `char-at` operator is an alias for `string-ref`.
 - The table above records the currently implemented compatibility signatures.
   The v1 owned `String` / borrowed `str` contract in section 3.11 changes
@@ -5140,9 +5207,9 @@ The baseline structural rules are:
 - `String` is transferable when its bytes are static/program-owned or owned by a
   spanning atomic arena. It is immutable, so the transfer does not create a
   mutation race.
-- Dynamic arrays and `(Box T)` values are transferable only by exclusive move,
-  only when their element/referent type is transferable, and only when their
-  backing storage owner spans the participating threads.
+- Compatibility dynamic arrays and `(Box T)` values are transferable only by
+  exclusive move, only when their element/referent type is transferable, and
+  only when their backing storage owner spans the participating threads.
 - Closure values are transferable only when their environment record and every
   captured value are transferable. Captured references, scoped-region handles,
   ordinary-arena values, raw-pointer-derived ownership claims, mutable aliases,
@@ -5195,11 +5262,12 @@ The accepted safe spawn shape is closure based:
   on that worker. Resetting or destroying such an arena before all users have
   joined remains unsafe or rejected.
 
-Typed join does not launder ownership. Returning a `String`, dynamic array,
-`Box`, tuple, struct, or enum from a worker is accepted only when the returned
-value's reachable storage is already in a spanning owner or when the join API
-performs an explicit, specified clone/move into a caller-selected spanning owner.
-Returning a value allocated in the worker's default arena is rejected.
+Typed join does not launder ownership. Returning a `String`, compatibility
+dynamic array, `Box`, tuple, struct, or enum from a worker is accepted only when
+the returned value's reachable storage is already in a spanning owner or when
+the join API performs an explicit, specified clone/move into a caller-selected
+spanning owner. Returning a value allocated in the worker's default arena is
+rejected.
 
 #### Mutexes and guards
 
@@ -5254,10 +5322,10 @@ ordinary data must use mutex guards, channel ownership transfer, an accepted
 atomic helper for that exact field, or `(unsafe ...)`.
 
 `stdlib/atomic.tl` is the first accepted safe atomic helper surface. It is
-limited to one indexed dynamic-array element of type `i32` or `i64` and exposes
-only load, store, add, and fetch-add operations with sequentially consistent
-ordering. It has no public relaxed/acquire/release ordering parameter and does
-not protect unrelated non-atomic locations.
+limited to one indexed compatibility dynamic-array element of type `i32` or
+`i64` and exposes only load, store, add, and fetch-add operations with
+sequentially consistent ordering. It has no public relaxed/acquire/release
+ordering parameter and does not protect unrelated non-atomic locations.
 
 ---
 
@@ -5288,9 +5356,9 @@ guarantees and are not implemented yet (#809/#896).
 
 ### 7.2 Heap
 
-- Dynamic array element buffers, future `ByteBuf` backing stores, and escaping
-  returned aggregates (enums, structs, strings, dynamic-array fat values) are
-  heap-allocated.
+- Compatibility dynamic-array element buffers, future `ByteBuf` backing stores,
+  and escaping returned aggregates (enums, structs, strings, dynamic-array fat
+  values) are heap-allocated.
 - Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
 - There is **no garbage collector** or general `free`.
@@ -5305,17 +5373,17 @@ default arena remains process-lifetime by default because it is simple,
 deterministic, and correct for one-shot compiled programs. It covers all current
 heap allocation kinds within the allocating thread: fresh string storage from
 `substring`, `str-cat`/the low-level concat primitives, `read-file`, `arg`, and
-`int->string`; dynamic array element buffers and fat values; returned enum and
-struct storage; and self-hosted data structures built from those primitives.
-Future `ByteBuf` backing storage and closures are expected to allocate in the
-same active arena until a more precise model exists.
+`int->string`; compatibility dynamic-array element buffers and fat values;
+returned enum and struct storage; and self-hosted data structures built from
+those primitives. Future `ByteBuf` backing storage and closures are expected to
+allocate in the same active arena until a more precise model exists.
 
 General per-object `free`, implicit destructors, and borrowed references are not
 part of this v1 policy. Aggregate handles are represented as pointer-shaped
-runtime values, and dynamic arrays are shared mutable buffers, so adding
-arbitrary `free` before move checking and borrow semantics are enforced would
-make double-free and use-after-free errors expressible. Ownership, borrowing,
-and reference work is a separate design track (#25, #182).
+runtime values, and compatibility dynamic arrays are shared mutable buffers, so
+adding arbitrary `free` before move checking and borrow semantics are enforced
+would make double-free and use-after-free errors expressible. Ownership,
+borrowing, and reference work is a separate design track (#25, #182).
 
 A tracing garbage collector is also not the first reclamation step. It would
 need object metadata, root discovery or stack maps, runtime scanning policy, and
@@ -5376,11 +5444,16 @@ reclamation between phases.
         (array-ref buf 0)))))
 ```
 
+This example uses the current compatibility dynamic-buffer surface. The
+long-term public collection surface should use vectors/slices for runtime-sized
+buffers, while fixed `(Array T N)` remains the public `Array` form.
+
 Allocation sites inside a `with-arena` scope target the active region:
 - String operations that create fresh storage (`substring`, `str-cat`,
-  low-level concat primitives, `read-file`, `int->string`, `arg`), `make-array`,
-  `box`, future `ByteBuf` construction/growth/copy-result helpers, and returned
-  aggregate storage from calls inside the region.
+  low-level concat primitives, `read-file`, `int->string`, `arg`),
+  compatibility `make-array`, `box`, future `ByteBuf`
+  construction/growth/copy-result helpers, and returned aggregate storage from
+  calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-arena`).
 
@@ -5452,8 +5525,8 @@ stdlib surface.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
-| Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, future `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Non-allocating inspection | `length`/`array-length` on compatibility arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Returns active-arena owned data | compatibility `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, future `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
 | Mutates caller-provided storage | `array-set!`, future `byte-buf-set!`/`bytes-set!` style helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
@@ -5691,10 +5764,11 @@ not the future safe reference/borrow model (#182), not a replacement for
 
 ### 7.6 Aggregate handles, moves, and aliasing
 
-- The IR/ABI may represent `String`, dynamic-array, tuple, struct, enum, and
-  closure values as pointer-sized handles. Bit-copying such a handle aliases the
-  same backing storage, but source-level v1 treats aggregate by-value use as a
-  move under section 4.6.2 rather than as a user-visible copy operation.
+- The IR/ABI may represent `String`, compatibility dynamic-buffer, tuple,
+  struct, enum, and closure values as pointer-sized handles. Bit-copying such a
+  handle aliases the same backing storage, but source-level v1 treats aggregate
+  by-value use as a move under section 4.6.2 rather than as a user-visible copy
+  operation.
 - Non-consuming inspection builtins are borrow-like compatibility operations
   until reference-typed parameters land. They can read an aggregate handle
   without moving it, but ordinary user-defined function parameters remain
@@ -5703,10 +5777,12 @@ not the future safe reference/borrow model (#182), not a replacement for
   `.rodata`; `substring`, `string-slice`, `str-cat`, low-level concat
   primitives, `read-file`, `arg`, and `int->string` return fresh heap-allocated
   string storage. There is no source operation that mutates a string's bytes.
-- Dynamic arrays are mutable heap buffers. `array-set!` mutates the buffer named
-  by the live owner handle under the temporary compatibility rule in section
-  4.6.2. Explicit shared mutable aliases require future reference/borrow
-  semantics rather than copying the array handle.
+- Compatibility dynamic arrays are mutable heap buffers. `array-set!` mutates
+  the buffer named by the live owner handle under the temporary compatibility
+  rule in section 4.6.2. Explicit shared mutable aliases require
+  reference/borrow semantics rather than copying the array handle. Public
+  growable collections should move to vector/slice APIs before unsized
+  `(Array T)` is removed.
 - Struct and enum values are pointer-sized aggregate handles internally.
   Struct field-place assignment mutates selected fields in place through owned
   storage places or mutable references. Enum payloads are consumed by a
@@ -5718,11 +5794,11 @@ not the future safe reference/borrow model (#182), not a replacement for
 - `(clone value)` is the explicit deep-copy operation for values that must not
   share aggregate backing storage with the source. Cloneable types are scalars,
   `unit`, `never`, `String`, tuples whose elements are cloneable, fixed arrays
-  whose elements are cloneable, dynamic arrays whose elements are cloneable, and
-  named structs/enums whose fields or payloads are cloneable. Scalars return the
-  same value; aggregate clones allocate fresh storage in the current active
-  arena and recursively clone nested cloneable elements. Named structs/enums use
-  compiler-generated `clone$Type` helpers.
+  whose elements are cloneable, compatibility dynamic arrays whose elements are
+  cloneable, and named structs/enums whose fields or payloads are cloneable.
+  Scalars return the same value; aggregate clones allocate fresh storage in the
+  current active arena and recursively clone nested cloneable elements. Named
+  structs/enums use compiler-generated `clone$Type` helpers.
 - `clone` rejects unsupported ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
   references including borrowed `str`, raw pointers, boxes, compile-time-only
@@ -5752,12 +5828,13 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Direct and indirect function calls.
 - Non-capturing lambda literals as raw function pointer values.
 - Capturing lambda literals with heap closure environments; captures may be
-  scalars, function values, `String`, and dynamic arrays.
+  scalars, function values, `String`, and compatibility dynamic arrays.
 - Local and global variables, `let`, `set!`.
 - `cast` with sign/zero extension and truncation.
 - Enums with pattern matching.
 - Structs with construction, field access, and field-place assignment.
-- Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
+- Compatibility dynamic arrays: `make-array`, `array-ref`, `array-set!`,
+  `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
   `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
   `string->int`, `int->string`.
@@ -5792,7 +5869,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Tuple by-value ABI | Implemented: tuple parameters and returns compile by value |
 | Fixed-array by-value return | Implemented |
 | Tuple/Struct/Enum/String globals | Implemented, including runtime initializers (#331) |
-| Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
+| Reference captures in lambdas | Implemented for local non-escaping immutable captures (#808/#2280); escaping closures still reject reference captures. By-value captures work for scalars, String, compatibility dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
 | Mutable captures (`set!` to captured names) in lambdas | Rejected by design (#2552): closure captures are by-value snapshots; assign lambda parameters/locals or mutate explicit captured storage instead |
 | Tail call optimization | Direct/self and supported indirect function-value tail jumps implemented (#2506/#2363); ABI shapes that cannot be tail-jumped are conservatively emitted as ordinary calls |
 | Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
@@ -5802,7 +5879,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool dynamic-array copies and bool-valued map results through private mask conversion; scalar gather-only dynamic-array reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented, including value-producing scalar lane selects |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented, including value-producing scalar lane selects |
 | Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`, lane identities, masked-if subset, and explicit atomic helpers | Vectorized/floating-point scans, general shuffles, remaining control-flow forms beyond masked `if`, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
@@ -6176,7 +6253,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   padding minimization; fields are placed in declaration order.
 - Enums: tag word (8 bytes) plus max payload storage. Each variant payload is
   laid out from offset 8 using natural alignment for each payload position.
-- `String` and dynamic-array source values are handle-sized in this layout;
+- `String` and compatibility dynamic-array source values are handle-sized in this layout;
   their backing storage is larger implementation-owned data.
 - The current IR/ABI may still carry aggregate values through pointer-shaped
   heap handles in positions not covered by layout queries. That is an
@@ -6227,7 +6304,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
     (+ (struct-get p x) (struct-get p y))))  ; returns 7
 ```
 
-### Dynamic array
+### Compatibility dynamic array
 
 ```lisp test=run name=dynamic-array exit=30 stdout=""
 (define (main) : i64
@@ -6238,6 +6315,10 @@ storage. Target C ABI call/return lowering is a separate backend contract.
       (array-set! arr 1 20)
       (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
 ```
+
+This remains a runnable compatibility example for today's compiler. New public
+runtime-sized collections should use vector/slice APIs as that migration lands;
+fixed `(Array T N)` is the public `Array` end state.
 
 ### String operations
 
@@ -6425,6 +6506,8 @@ macro-call    ::= "(" qualified-name call-operand* ")"
 
 call-operand  ::= expr
                 | "[" expr expr "]"            ; macro-only ExprClause operand
+                | "[" ident expr "]"           ; macro-only ExprBindingClause operand
+                | "[" ident ":" type expr "]"  ; macro-only ExprBindingClause operand
 
 cond-clause   ::= "[" expr expr "]"
 cond-else-clause ::= "[" "else" expr "]"
@@ -6463,6 +6546,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "str"                               ; borrowed referent only
                 | "Expr" | "ExprList"               ; compile-time-only macro body values
                 | "ExprClause" | "ExprClauseList"   ; macro-only bracket operand values
+                | "ExprBindingClause" | "ExprBindingClauseList"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type

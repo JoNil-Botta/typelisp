@@ -1,0 +1,9 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"target\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":8", "raw_contains": "\"character\":20"},
+    {"jsonpath_id": 3, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":0"},
+    {"jsonpath_id": 4, "raw_contains": "\"uri\":\"${{TMP_URI}}/feature/util.tl\"", "raw_contains": "\"line\":1", "raw_contains": "\"character\":8"}
+  ]
+}

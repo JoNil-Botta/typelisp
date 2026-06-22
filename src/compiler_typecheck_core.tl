@@ -36015,7 +36015,7 @@
 ;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module-with-exports
-  [exports : CompilerExports]
+  [_exports : CompilerExports]
   [symbols : CompilerSymbols]
   [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
@@ -36087,7 +36087,7 @@
   [exports : CompilerExports]
   [target-module : String]
   [lookup-name : String]
-  [call-expr : AstExpr]) : ResultMacroCallDecl
+  [_call-expr : AstExpr]) : ResultMacroCallDecl
   (match (compiler-exports-lookup-id
     exports
     (intern (compiler-export-kind-macro))

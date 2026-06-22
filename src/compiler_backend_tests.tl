@@ -6401,7 +6401,7 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    kandw %k2, %k1, %k1\n")
-        (compiler-backend-string-contains? asm "    kandnw %k1, %k7, %k1\n")
+        (compiler-backend-string-contains? asm "    kandnw %k7, %k1, %k1\n")
         (not (compiler-backend-string-contains? asm "    knotw %k1, %k1\n"))
         (not
           (compiler-backend-string-contains? asm "register home unavailable")))]
@@ -6428,7 +6428,7 @@
   (and
     (compiler-backend-avx512-mask-not-emits?
       8
-      "    movl $255, %eax\n    kmovw %eax, %k7\n    kandnw %k1, %k7, %k2\n")
+      "    movl $255, %eax\n    kmovw %eax, %k7\n    kandnw %k7, %k1, %k2\n")
     (compiler-backend-avx512-mask-not-emits? 16 "    knotw %k1, %k2\n")
     (compiler-backend-avx512-mask-not-emits? 32 "    knotd %k1, %k2\n")
     (compiler-backend-avx512-mask-not-emits? 64 "    knotq %k1, %k2\n")))

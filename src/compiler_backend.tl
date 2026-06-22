@@ -13576,6 +13576,118 @@
           "%rax")
         ty))))
 
+(define (compiler-backend-tls-current-arena-call-name? [name : String]) : bool
+  (let
+    [len : i64 (string-length name)]
+    (if (or (= len 25) (= len 26))
+      (let
+        [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+        (and
+          (>= name-id 0)
+          (compiler-builtin-backend-tls-current-arena-call-id? name-id)))
+      false)))
+
+(define (compiler-backend-tls-current-arena-inline-asm
+  [target : CompilerBackendTarget]
+  [name : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
+    (cond
+      [(compiler-builtin-backend-tls-current-arena-load-id? name-id)
+        (OkCompilerBackend (compiler-backend-current-arena-load target "%rax"))]
+      [(compiler-builtin-backend-tls-current-arena-store-id? name-id)
+        (match (compiler-backend-target-arg-reg target 0)
+          [(OkBackendReg reg)
+            (OkCompilerBackend
+              (compiler-backend-current-arena-store target reg))]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])]
+      [else
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unknown tls current arena helper"))])))
+
+(define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [arg-assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-call-param-types-for-call
+        name
+        args
+        types
+        global-types
+        externs
+        program-index)]
+    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        args
+        param-types
+        c-abi?
+        program-index)]
+    (match (compiler-backend-emit-call-args
+      target
+      arg-assignments
+      args
+      param-types
+      c-abi?
+      0
+      0
+      0
+      0
+      0
+      instr-diag
+      program-index
+      vars)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-call-result-store
+          assignments
+          dst
+          ty
+          vars
+          program-index)
+          [(OkCompilerBackend result-store)
+            (match (compiler-backend-tls-current-arena-inline-asm
+              target
+              name
+              instr-diag)
+              [(OkCompilerBackend inline-asm)
+                (OkCompilerBackend
+                  (string-append
+                    (compiler-backend-emit-call-space-sub call-space)
+                    (string-append
+                      args-asm
+                      (string-append
+                        inline-asm
+                        (string-append
+                          (compiler-backend-emit-call-space-add call-space)
+                          result-store)))))]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackend
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
 (define (compiler-backend-atomic-call-name? [name : String]) : bool
   (or
     (string-eq name "tl_atomic_i64_load_ptr")
@@ -13833,35 +13945,53 @@
     [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
-    (if (and
-      (> fast-alloc-size 0)
-      (compiler-builtin-backend-tl-alloc-id?
-        (compiler-backend-runtime-helper-name-id name))
-      (compiler-backend-plan-provides? plan "tl_alloc")
-      (compiler-builtin-backend-tl-alloc-id?
-        (compiler-backend-runtime-helper-name-id call-symbol)))
-      (OkCompilerBackend
-        (string-append
-          (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
-            (compiler-backend-emit-inline-fast-alloc
-              target
-              function
-              current-label
+    (cond
+      [(and
+          (> fast-alloc-size 0)
+          (compiler-builtin-backend-tl-alloc-id?
+            (compiler-backend-runtime-helper-name-id name))
+          (compiler-backend-plan-provides? plan "tl_alloc")
+          (compiler-builtin-backend-tl-alloc-id?
+            (compiler-backend-runtime-helper-name-id call-symbol)))
+        (OkCompilerBackend
+          (string-append
+            (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
+              (compiler-backend-emit-inline-fast-alloc
+                target
+                function
+                current-label
+                dst
+                fast-alloc-size
+                (compiler-backend-plan-provides? plan "tl_profile_alloc_total"))
+              (str-cat
+                "    call "
+                (compiler-backend-fast-alloc-label fast-alloc-size)
+                "\n"
+                ""
+                ""))
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
               dst
-              fast-alloc-size
-              (compiler-backend-plan-provides? plan "tl_profile_alloc_total"))
-            (str-cat
-              "    call "
-              (compiler-backend-fast-alloc-label fast-alloc-size)
-              "\n"
-              ""
-              ""))
-          (compiler-backend-emit-store-typed-var-with-plan
-            assignments
-            dst
-            "%rax"
-            ty)))
-      (if (compiler-backend-atomic-call-name? call-symbol)
+              "%rax"
+              ty)))]
+      [(and
+          (compiler-backend-tls-current-arena-call-name? name)
+          (not (compiler-backend-index-function-defines? program-index name)))
+        (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
+          target
+          assignments
+          arg-assignments
+          dst
+          name
+          args
+          ty
+          types
+          global-types
+          externs
+          program-index
+          vars
+          instr-diag)]
+      [(compiler-backend-atomic-call-name? call-symbol)
         (compiler-backend-emit-inline-atomic-call-with-arg-assignments
           target
           assignments
@@ -13875,7 +14005,8 @@
           externs
           program-index
           vars
-          instr-diag)
+          instr-diag)]
+      [else
         (let
           [param-types : AstTypeList
             (compiler-backend-call-param-types-for-call
@@ -13940,7 +14071,7 @@
                     (compiler-backend-apply-instr-diagnostic message instr-diag))])]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))))))
+                (compiler-backend-apply-instr-diagnostic message instr-diag))]))])))
 
 (define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
   (if (= idx 0)
@@ -17263,44 +17394,69 @@
       program-index
       vars)
       [(OkCompilerBackend args-asm)
-        (if (compiler-backend-atomic-call-name? call-symbol)
-          (OkCompilerBackend
-            (string-append
-              (compiler-backend-emit-call-space-sub call-space)
-              (string-append
-                args-asm
+        (if (and
+          (compiler-backend-tls-current-arena-call-name? name)
+          (not (compiler-backend-index-function-defines? program-index name)))
+          (match (compiler-backend-tls-current-arena-inline-asm
+            target
+            name
+            instr-diag)
+            [(OkCompilerBackend inline-asm)
+              (OkCompilerBackend
                 (string-append
-                  (compiler-backend-atomic-inline-asm target call-symbol)
+                  (compiler-backend-emit-call-space-sub call-space)
                   (string-append
-                    (compiler-backend-emit-call-space-add call-space)
-                    (compiler-backend-return-tail
-                      source-function
-                      assignments
-                      vars
-                      blocks))))))
-          (OkCompilerBackend
-            (string-append
-              (compiler-backend-emit-call-space-sub call-space)
+                    args-asm
+                    (string-append
+                      inline-asm
+                      (string-append
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-return-tail
+                          source-function
+                          assignments
+                          vars
+                          blocks))))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))])
+          (if (compiler-backend-atomic-call-name? call-symbol)
+            (OkCompilerBackend
               (string-append
-                args-asm
+                (compiler-backend-emit-call-space-sub call-space)
                 (string-append
-                  (compiler-backend-varargs-pre-call
-                    target
-                    name
-                    externs
-                    param-types)
-                  (str-cat
-                    "    call "
-                    call-symbol
-                    "\n"
+                  args-asm
+                  (string-append
+                    (compiler-backend-atomic-inline-asm target call-symbol)
                     (string-append
                       (compiler-backend-emit-call-space-add call-space)
                       (compiler-backend-return-tail
                         source-function
                         assignments
                         vars
-                        blocks))
-                    ""))))))]
+                        blocks))))))
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub call-space)
+                (string-append
+                  args-asm
+                  (string-append
+                    (compiler-backend-varargs-pre-call
+                      target
+                      name
+                      externs
+                      param-types)
+                    (str-cat
+                      "    call "
+                      call-symbol
+                      "\n"
+                      (string-append
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-return-tail
+                          source-function
+                          assignments
+                          vars
+                          blocks))
+                      "")))))))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))

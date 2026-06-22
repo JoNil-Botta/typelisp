@@ -26,7 +26,7 @@
     [(ExprClause test result)
       (match test
         [(ExprVar name)
-          (if (string-eq name "else")
+          (if (string.string-eq name "else")
             result
             (comptime.expr-int 0))]
         [_ (comptime.expr-int 0)])]))
@@ -50,7 +50,7 @@
             (length base)
             (+
               (string->int "7")
-              (if (string-eq base "stdlib-comptime-derived")
+              (if (string.string-eq base "stdlib-comptime-derived")
                 (if (string=? base "stdlib-comptime-derived")
                   (if (=
                     (cast (string-ref base 0) : i64)

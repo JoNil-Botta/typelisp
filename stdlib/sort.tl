@@ -29,7 +29,10 @@
 ;# ```
 (module stdlib.sort)
 
+;; lint-allow: unused-import
 (import stdlib.string)
+
+;; lint-allow: unused-import
 (import stdlib.vector)
 
 ;: Return the character code at `idx` in borrowed text.

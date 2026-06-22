@@ -424,15 +424,11 @@
       (while (and (not found) (<= (+ i 6) n))
         (if (and
           (= (cast (ctfe-private-string-ref name i) : i64) 115)
-          (and
-            (= (cast (ctfe-private-string-ref name (+ i 1)) : i64) 116)
-            (and
-              (= (cast (ctfe-private-string-ref name (+ i 2)) : i64) 114)
-              (and
-                (= (cast (ctfe-private-string-ref name (+ i 3)) : i64) 105)
-                (and
-                  (= (cast (ctfe-private-string-ref name (+ i 4)) : i64) 110)
-                  (= (cast (ctfe-private-string-ref name (+ i 5)) : i64) 103))))))
+          (= (cast (ctfe-private-string-ref name (+ i 1)) : i64) 116)
+          (= (cast (ctfe-private-string-ref name (+ i 2)) : i64) 114)
+          (= (cast (ctfe-private-string-ref name (+ i 3)) : i64) 105)
+          (= (cast (ctfe-private-string-ref name (+ i 4)) : i64) 110)
+          (= (cast (ctfe-private-string-ref name (+ i 5)) : i64) 103))
           (set! found true)
           (set! i (+ i 1))))
       found)))

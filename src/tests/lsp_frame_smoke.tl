@@ -10,7 +10,7 @@
     (begin
       (while (< idx (string-vec-len items))
         (begin
-          (if (string-eq (string-vec-get items idx "") needle)
+          (if (string.string-eq (string-vec-get items idx "") needle)
             (begin
               (set! found true)
               (set! idx (string-vec-len items)))

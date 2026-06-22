@@ -13953,9 +13953,9 @@
       "string=?")))
 
 (define (tc-string-to-int-helper-call-name?
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [env : TcTypeEnv]
-  [source-name : String]
+  [_source-name : String]
   [lookup-name : String]) : bool
   (and
     (compiler-builtin-typecheck-string-to-int-id?

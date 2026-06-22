@@ -90,6 +90,29 @@
       (string-eq (lsp-find-and-extract-name text 0 5) "foo")
       (string-eq (lsp-find-and-extract-name text 1 5) "bar"))))
 
+;; Test structuralMove destination helper: move foo after baz
+(define (lsp-structural-move-destination-ok?) : bool
+  (let
+    [text : String
+      "(define (foo) : i64 1)\n\n(define (bar) : i64 2)\n\n(define (baz) : i64 3)"]
+    [decls : LspDeclList (lsp-scan-decls text)]
+    [foo-idx : i64 (lsp-decl-list-find-name decls "foo")]
+    [baz-idx : i64 (lsp-decl-list-find-name decls "baz")]
+    (if (and (= foo-idx 0) (= baz-idx 2))
+      (let
+        [foo-entry : LspDeclEntry
+          (lsp-decl-list-get decls foo-idx (lsp-decl-entry-fallback))]
+        [baz-entry : LspDeclEntry
+          (lsp-decl-list-get decls baz-idx (lsp-decl-entry-fallback))]
+        [moved : String
+          (format-rules-render-source-width
+            (lsp-move-form-after text foo-entry baz-entry)
+            80)]
+        [expected : String
+          "(define (bar) : i64\n  2)\n\n(define (baz) : i64\n  3)\n\n(define (foo) : i64\n  1)"]
+        (string-eq moved expected))
+      false)))
+
 (define (main) : i64
   (begin
     (unless (lsp-find-form-at-offset-ok?) (return 1))
@@ -103,4 +126,5 @@
     (unless (lsp-extract-define-name-var-ok?) (return 9))
     (unless (lsp-extract-define-name-nondefine-ok?) (return 10))
     (unless (lsp-find-and-extract-name-ok?) (return 11))
+    (unless (lsp-structural-move-destination-ok?) (return 12))
     42))

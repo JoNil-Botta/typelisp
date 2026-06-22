@@ -1476,21 +1476,20 @@
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
 ;;
-;; Address arithmetic (`IrInstrGep`), value conversions (`IrInstrCast`), and
-;; non-volatile reads (`IrInstrLoad`) are pure or read-only
+;; Address creation (`IrInstrAddrOf`), address arithmetic (`IrInstrGep`), value
+;; conversions (`IrInstrCast`), and non-volatile reads (`IrInstrLoad`) are pure
+;; or read-only
 ;; (`compiler-ir-instr-effect` classes `IrEffectPure` / `IrEffectMemoryRead`): a
-;; load never writes state and only ever feeds its result var, so when that var
-;; is unused the whole computation is dead. These arms let DCE clear the dead
-;; length-load / gep / cast chain that `opt-loop-bce-blocks` leaves behind once
-;; it proves an array index in range, which otherwise survives every later pass
-;; because these producers were excluded here. `IrInstrAddrOf` is intentionally
-;; NOT included: making address-of DCE-eligible regressed
-;; `compiler-optimize-spans-cse-ok?` (a CSE-rewritten copy feeding a surviving
-;; `&v` was dropped), and it is not part of the bounds-check chain, so it stays
-;; conservative here.
+;; dead address calculation/read never writes state and only ever feeds its
+;; result var, so when that var is unused the whole computation is dead. These
+;; arms let DCE clear the dead length-load / addr-of / gep / cast chain that
+;; `opt-loop-bce-blocks` leaves behind once it proves an array index in range,
+;; which otherwise survives every later pass because these producers were
+;; excluded here.
 (define (opt-instr-dead? [set : I64I64Map] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrAddrOf dst _) (not (opt-used-contains set dst))]
     [(IrInstrGep dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrCast dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrLoad dst _ _) (not (opt-used-contains set dst))]
@@ -1870,6 +1869,7 @@
   [instr : CompilerIrInstr]) : unit
   (match instr
     [(IrInstrMov _ src _) (opt-uncount-value-uses-array items src)]
+    [(IrInstrAddrOf _ src) (opt-used-array-dec items src)]
     [(IrInstrGep _ base offset _)
       (begin
         (opt-uncount-value-uses-array items base)
@@ -1957,10 +1957,9 @@
       items)))
 
 ;; Mirror of `opt-instr-dead?` for the array-backed use set the pipeline DCE
-;; runs on. The pure (`IrInstrGep`/`IrInstrCast`) and read-only (`IrInstrLoad`)
-;; arms drop the dead length-load/gep/cast chain that `opt-loop-bce-blocks`
-;; strands once a bounds check is proven redundant. `IrInstrAddrOf` is excluded
-;; for the same reason as in `opt-instr-dead?`.
+;; runs on. The pure/read-only addr-of/gep/cast/load arms drop the dead
+;; length-load/address chain that `opt-loop-bce-blocks` strands once a bounds
+;; check is proven redundant.
 (define (opt-instr-dead-array?
   [items : (Array i64)]
   [slots : (Array CompilerIrInstr)]
@@ -1976,6 +1975,7 @@
             (opt-array-prev-adjacent-alloc? slots index dst)
             (opt-array-next-adjacent-alloc? slots count index dst))))]
     [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrAddrOf dst _) (not (opt-used-array-contains items dst))]
     [(IrInstrGep dst _ _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrCast dst _ _ _) (not (opt-used-array-contains items dst))]
     [(IrInstrLoad dst _ _) (not (opt-used-array-contains items dst))]
@@ -24305,6 +24305,63 @@
     [(IrBlockArray seq)
       (opt-count-xgetbv-blocks (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-count-exact-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [needle : CompilerIrInstr]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-count-exact-instr-seq-from
+      instrs
+      needle
+      (+ index 1)
+      (if (opt-instr-eq (compiler-ir-instr-seq-ref instrs index) needle)
+        (+ acc 1)
+        acc))))
+
+(define (opt-count-exact-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [needle : CompilerIrInstr]) : i64
+  (opt-count-exact-instr-seq-from instrs needle 0 0))
+
+(define (opt-count-exact-instr-blocks
+  [blocks : CompilerIrBlockList]
+  [needle : CompilerIrInstr]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-exact-instr-seq instrs needle)
+            (opt-count-exact-instr-blocks (box-get rest) needle))])]
+    [(IrBlockArray seq)
+      (opt-count-exact-instr-blocks (compiler-ir-block-seq-to-list seq) needle)]))
+
+(define (opt-count-exact-instr-functions
+  [functions : CompilerIrFunctionList]
+  [needle : CompilerIrInstr]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (opt-count-exact-instr-blocks blocks needle)
+            (opt-count-exact-instr-functions (box-get rest) needle))])]
+    [(IrFunctionArray seq)
+      (opt-count-exact-instr-functions
+        (compiler-ir-function-seq-to-list seq)
+        needle)]))
+
+(define (opt-count-exact-instr-program
+  [program : CompilerIrProgram]
+  [needle : CompilerIrInstr]) : i64
+  (match program
+    [(IrProgram _ functions _)
+      (opt-count-exact-instr-functions functions needle)]))
+
 (define (opt-sum-mov-i64 [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -24535,19 +24592,31 @@
     [(CompilerSomeSourceSpan _) false]
     [(CompilerNoSourceSpan) true]))
 
-(define (opt-spans-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+(define (opt-spans-function-with-frame
+  [instrs : CompilerIrInstrList]
+  [frame : i64]) : CompilerIrFunction
   (IrFunction
     "main"
     IrParamNil
     (AstTyI64)
-    4
+    frame
     (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)))
 
-(define (opt-spans-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
+(define (opt-spans-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (opt-spans-function-with-frame instrs 4))
+
+(define (opt-spans-program-with-frame
+  [instrs : CompilerIrInstrList]
+  [frame : i64]) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (compiler-ir-function-cons (opt-spans-function instrs) IrFunctionNil)
+    (compiler-ir-function-cons
+      (opt-spans-function-with-frame instrs frame)
+      IrFunctionNil)
     IrExternNil))
+
+(define (opt-spans-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
+  (opt-spans-program-with-frame instrs 4))
 
 (define (opt-spans-base) : CompilerSourceSpans
   (compiler-source-spans-insert
@@ -24641,13 +24710,38 @@
         second
         (opt-test-span 61 11))]
     (match (optimize-program-with-spans-and-level
-      (opt-spans-program instrs)
+      (opt-spans-program-with-frame instrs 5)
       spans
       2)
-      [(CompilerOptimizedProgram _ optimized-spans)
+      [(CompilerOptimizedProgram optimized optimized-spans)
         (and
           (opt-span-lookup-ok? optimized-spans "main" first 51 9)
-          (opt-span-lookup-ok? optimized-spans "main" rewritten 61 11))])))
+          (opt-span-lookup-ok? optimized-spans "main" rewritten 61 11)
+          (= (opt-count-exact-instr-program optimized rewritten) 1)
+          (= (opt-count-exact-instr-program optimized (IrInstrAddrOf 4 3)) 1)
+          (= (opt-count-exact-instr-program optimized (IrInstrAddrOf 4 2)) 0))])))
+
+(define (compiler-optimize-dead-addrof-ok?) : bool
+  (let
+    [producer : CompilerIrInstr
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))]
+    [addr : CompilerIrInstr (IrInstrAddrOf 3 2)]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        producer
+        (compiler-ir-instr-cons
+          addr
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+            IrInstrNil)))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      (opt-spans-base)
+      1)
+      [(CompilerOptimizedProgram optimized _)
+        (and
+          (= (opt-count-exact-instr-program optimized producer) 0)
+          (= (opt-count-exact-instr-program optimized addr) 0))])))
 
 (define (opt-inline-span-callee-call) : CompilerIrInstr
   (IrInstrCall 1 "opaque" (IrCallArgsOne (IrValueVar 0)) (AstTyI64)))
@@ -24856,6 +24950,7 @@
     (compiler-optimize-spans-dce-ok?)
     (compiler-optimize-spans-fold-ok?)
     (compiler-optimize-spans-cse-ok?)
+    (compiler-optimize-dead-addrof-ok?)
     (compiler-optimize-spans-inline-callee-ok?)
     (compiler-optimize-spans-inline-fallback-ok?)
     (compiler-optimize-spans-inline-multiblock-ok?)

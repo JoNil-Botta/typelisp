@@ -211,7 +211,7 @@
     (unless
       (compiler-lower-error-ok?
         (compiler-lower-bracket-ordinary-call-error-source)
-        "typecheck: bracket clause is only valid as an ExprClause macro operand")
+        "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")
       (panic "lower: bracket ordinary-call diagnostic smoke mismatch"))
     (unless
       (compiler-lower-spans-ok? (compiler-lower-smoke-source))

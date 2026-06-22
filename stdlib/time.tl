@@ -14,13 +14,13 @@
 ;#     [(OkTimeMs ms) (if (> ms 0) 42 1)]
 ;#     [(ErrTimeMs _) 2]))
 ;# ```
+(import "string.tl")
+
 ;: Recoverable time source error.
 (defenum TimeError
   (TimeUnavailable String))
 
 ;: Result of reading a millisecond timestamp.
-(import "string.tl")
-
 (defenum ResultTimeMs
   (OkTimeMs i64)
   (ErrTimeMs TimeError))

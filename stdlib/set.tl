@@ -22,9 +22,9 @@
 ;# insertion order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
-;: Emit a generated hash set module for key type `T`.
 (import "string.tl")
 
+;: Emit a generated hash set module for key type `T`.
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]

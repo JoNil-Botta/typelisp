@@ -173,6 +173,30 @@
 (define (expr-type [value : Expr]) : Expr
   value)
 
+;: Return true when a module exports a value with the given name.
+(define (module-export-value? [module : String] [name : String]) : bool
+  (module-export-value? module name))
+
+;: Return true when a module exports a type with the given name.
+(define (module-export-type? [module : String] [name : String]) : bool
+  (module-export-type? module name))
+
+;: Return true when a module exports a macro with the given name.
+(define (module-export-macro? [module : String] [name : String]) : bool
+  (module-export-macro? module name))
+
+;: Return the exported value's type, or diagnose a missing export.
+(define (module-export-value-type [module : String] [name : String]) : Expr
+  (module-export-value-type module name))
+
+;: Return the exported nominal type, or diagnose a missing export.
+(define (module-export-type [module : String] [name : String]) : Expr
+  (module-export-type module name))
+
+;: Return the exported macro signature type, or diagnose a missing export.
+(define (module-export-macro-type [module : String] [name : String]) : Expr
+  (module-export-macro-type module name))
+
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
   (expr-bool? value))
@@ -379,6 +403,12 @@
   (value expr-splice)
   (value expr-if)
   (value expr-type)
+  (value module-export-value?)
+  (value module-export-type?)
+  (value module-export-macro?)
+  (value module-export-value-type)
+  (value module-export-type)
+  (value module-export-macro-type)
   (value expr-bool?)
   (value expr-bool-value)
   (value expr-if?)

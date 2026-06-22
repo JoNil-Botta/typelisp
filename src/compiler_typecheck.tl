@@ -2047,8 +2047,13 @@
 (defstruct CtfeReflectInfoList
   (slots (Array CtfeReflectInfo))
   (len i64))
+(defenum CtfeModuleExportInfo
+  (CtfeModuleExportInfo String String String AstType))
+(defstruct CtfeModuleExportInfoList
+  (slots (Array CtfeModuleExportInfo))
+  (len i64))
 (defenum CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
+  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList CtfeModuleExportInfoList)
   (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
@@ -2060,7 +2065,8 @@
       (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
-      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList"))))
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList")
+      (compiler-typecheck-inline-layout-ok? src "CtfeModuleExportInfoList"))))
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
@@ -6651,9 +6657,74 @@
 (define (compiler-typecheck-reflection-kind-mismatch-source) : String
   "(define (main) : i64 (comptime (struct-field-count (type i64))))")
 
+(define (compiler-typecheck-module-export-reflection-source) : String
+  "(module tc.module.export.reflection)
+(defstruct PublicBox (value i64))
+(define (iterator [box : PublicBox]) : PublicBox box)
+(defstruct PrivateBox (value i64))
+(defmacro (probe [x : Expr]) : i64 x)
+(export
+  (type PublicBox)
+  (constructor PublicBox)
+  (value iterator)
+  (macro probe))
+(define (main) : i64
+  (+ (comptime (if (module-export-value? \"tc.module.export.reflection\" \"iterator\") 1 0))
+     (+ (comptime (if (module-export-type? \"tc.module.export.reflection\" \"PublicBox\") 2 0))
+        (+ (comptime (if (module-export-macro? \"tc.module.export.reflection\" \"probe\") 4 0))
+           (+ (comptime
+                (if (string-eq
+                  (type-nominal-name
+                    (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
+                  \"PublicBox\")
+                  8
+                  0))
+              (+ (comptime
+                   (function-param-count
+                     (module-export-value-type \"tc.module.export.reflection\" \"iterator\")))
+                 (+ (comptime
+                      (if (not
+                        (module-export-type? \"tc.module.export.reflection\" \"PrivateBox\"))
+                        32
+                        0))
+                    (comptime
+                      (if (string-eq
+                        (type-nominal-module
+                          (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
+                        \"tc.module.export.reflection\")
+                        64
+                        0)))))))))")
+
+(define (compiler-typecheck-module-export-generated-source) : String
+  "(defmacro (gen) : Module
+  `(begin
+    (module generated.tc_export_reflection)
+    (defstruct GenBox (value i64))
+    (define (score [box : GenBox]) : i64 (struct-get box value))
+    (export
+      (type GenBox)
+      (constructor GenBox)
+      (value score))))
+(import (gen) as gen)
+(define (main) : bool
+  (comptime
+    (if (module-export-type? \"generated.tc_export_reflection\" \"GenBox\")
+      (module-export-value? \"generated.tc_export_reflection\" \"score\")
+      false)))")
+
+(define (compiler-typecheck-module-export-missing-source) : String
+  "(module tc.module.export.reflection)
+(define (main) : i64
+  (comptime
+    (function-param-count
+      (module-export-value-type \"tc.module.export.reflection\" \"missing\"))))")
+
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-export-reflection-source))
+    (compiler-typecheck-ok? (compiler-typecheck-module-export-generated-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-runtime-source)
       "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
@@ -6662,7 +6733,10 @@
       "String value is compile-time only")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-kind-mismatch-source)
-      "struct-field-count requires struct type")))
+      "struct-field-count requires struct type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-export-missing-source)
+      "module-export-value-type: module tc.module.export.reflection does not export value missing")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool

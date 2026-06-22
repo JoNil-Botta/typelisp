@@ -20225,11 +20225,18 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (tc-string-eq-helper-call-name? ctx type-env name name)
+  (if (lower-private-string-eq-helper-call-name? type-env name)
     (lower-string-eq-call ctx state env type-env args result-ty origin)
     (if (tc-string-to-int-helper-call-name? ctx type-env name name)
       (lower-string-to-int-call ctx state env type-env args result-ty origin)
       (lower-direct-call ctx state env type-env name args result-ty origin))))
+
+(define (lower-private-string-eq-helper-call-name?
+  [type-env : TcTypeEnv]
+  [name : String]) : bool
+  (and
+    (compiler-builtin-typecheck-string-eq-id? (tc-builtin-name-id name))
+    (tc-default-builtin-unshadowed? type-env name)))
 
 ;; Lower an unshadowed `(__tl_string_ref s i)` intrinsic call to the
 ;; bounds-checked String byte index, like the parser-owned `AstExprStringRef`
@@ -20849,11 +20856,7 @@
                           args
                           result-ty
                           origin)]
-                      [(tc-string-eq-helper-call-name?
-                          ctx
-                          type-env
-                          source-name
-                          name)
+                      [(lower-private-string-eq-helper-call-name? type-env name)
                         (lower-string-eq-call
                           ctx
                           state

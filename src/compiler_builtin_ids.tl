@@ -1079,6 +1079,11 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-private-string-length)))
 
+(define (compiler-builtin-typecheck-public-string-length-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-string-length)))
+
 (define (compiler-builtin-typecheck-array-length-id? [name-id : i64]) : bool
   (compiler-builtin-lower-array-length-id? name-id))
 
@@ -1087,6 +1092,19 @@
 
 (define (compiler-builtin-typecheck-string-ref-call-id? [name-id : i64]) : bool
   (compiler-builtin-lower-string-ref-call-id? name-id))
+
+(define (compiler-builtin-typecheck-public-string-ref-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-string-ref
+      compiler-builtin-id-char-at)))
+
+(define (compiler-builtin-typecheck-public-char-at-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-char-at)))
 
 (define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
   (compiler-builtin-lower-clone-id? name-id))
@@ -1107,6 +1125,20 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-private-string-eq)))
+
+(define (compiler-builtin-typecheck-public-string-eq-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-string-eq
+      compiler-builtin-id-string-eq-question)))
+
+(define (compiler-builtin-typecheck-public-string-eq-question-id?
+  [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-string-eq-question)))
 
 (define (compiler-builtin-typecheck-string-to-int-id? [name-id : i64]) : bool
   (begin

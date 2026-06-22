@@ -2558,6 +2558,12 @@
                     tail)]
                 [(CompilerRegNoType) tail])))])]))
 
+(define (compiler-reg-interval-list-count [intervals : CompilerRegIntervalList]) : i64
+  (match intervals
+    [(CompilerRegIntervalNil) 0]
+    [(CompilerRegIntervalCons _ rest)
+      (+ 1 (compiler-reg-interval-list-count (box-get rest)))]))
+
 (define (compiler-reg-vector-defs-instr
   [instr : CompilerIrInstr]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
@@ -6031,6 +6037,8 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-root-set-from-vars coalesce blocked)
         blocked)]
+    [integer-candidates : CompilerRegIntervalList
+      (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -6042,12 +6050,17 @@
         ;; #3489 (PR2): score each class's eviction by its hottest member.
         (compiler-reg-merge-ref-counts
           coalesce
-          (compiler-reg-function-spill-weights-remat func coalesce)
+          (if (>
+            (compiler-reg-interval-list-count integer-candidates)
+            (compiler-reg-string-list-count
+              (compiler-reg-sysv-integer-registers)))
+            (compiler-reg-function-spill-weights-remat func coalesce)
+            (compiler-reg-function-spill-weights func))
           (array-length (struct-get interval-index starts)))
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates eff-intervals type-info eff-blocked false)
+        integer-candidates
         (compiler-reg-sysv-integer-registers)
         CompilerRegActiveNil
         assignment-table
@@ -6067,7 +6080,7 @@
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-zero-call-candidates
-          (compiler-reg-candidates eff-intervals type-info eff-blocked false)
+          integer-candidates
           (compiler-reg-zero-call-caller-saved-integer-registers)
           CompilerRegActiveNil
           integer-assignments
@@ -6085,7 +6098,7 @@
           integer-with-caller-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           func
-          (compiler-reg-candidates eff-intervals type-info eff-blocked false)
+          integer-candidates
           integer-with-caller-assignments
           eff-index
           group-vars)

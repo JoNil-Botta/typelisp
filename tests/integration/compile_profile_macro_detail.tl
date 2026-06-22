@@ -1,7 +1,7 @@
 ;; compile_profile_macro_detail.tl - Fixture for compile-profile macro rows.
 (import "stdlib/string.tl")
 (import "stdlib/core_macros.tl" module stdlib.core_macros as core)
-(import "stdlib/str_cat.tl" module stdlib.str-cat as sc)
+(import "stdlib/str_cat.tl" module stdlib.str_cat as sc)
 
 (define (profile-macro-detail-short-cat) : String
   (sc.str-cat "a" "b"))

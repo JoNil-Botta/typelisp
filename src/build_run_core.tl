@@ -2,13 +2,14 @@
 (import "compiler_driver_core.tl")
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
-(import "../stdlib/env.tl")
-(import "../stdlib/fs.tl")
+(import stdlib.env)
+(import stdlib.fs)
 (import "../stdlib/io.tl")
 (import "../stdlib/msvc.tl")
 (import "../stdlib/process.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
+(import stdlib.vector)
 
 (defenum SourceToolCommandStatus
   (SourceToolCommandOk)
@@ -50,7 +51,7 @@
     [(BackendTargetWindows) "windows-x86_64"]))
 
 (define (source-tool-default-target) : CompilerBackendTarget
-  (if (string-eq (env-path-separator) ";")
+  (if (string-eq (env.env-path-separator) ";")
     (BackendTargetWindows)
     (BackendTargetLinux)))
 
@@ -378,10 +379,10 @@
     (source-tool-fs-path-join dir tool)))
 
 (define (source-tool-fs-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (fs.fs-path-join (& left) (& right)))
 
 (define (source-tool-fs-basename [path : String]) : String
-  (fs-basename (& path)))
+  (fs.fs-basename (& path)))
 
 (define (source-tool-try-file-exists? [path : String]) : ResultIoBool
   (try-file-exists? (& path)))
@@ -390,10 +391,10 @@
   (try-read-file (& path)))
 
 (define (source-tool-try-remove-file-if-exists [path : String]) : ResultIoUnit
-  (try-remove-file-if-exists (& path)))
+  (fs.try-remove-file-if-exists (& path)))
 
 (define (source-tool-try-remove-dir-if-exists [path : String]) : ResultIoUnit
-  (try-remove-dir-if-exists (& path)))
+  (fs.try-remove-dir-if-exists (& path)))
 
 (define (source-tool-stdout-write [text : String]) : unit
   (stdout-write (& text)))
@@ -407,7 +408,7 @@
     [(ErrIoBool _) false]))
 
 (define (source-tool-windows-host?) : bool
-  (string-eq (env-path-separator) ";"))
+  (string-eq (env.env-path-separator) ";"))
 
 (define (source-tool-windows-exe-candidate [candidate : String]) : String
   (if (source-tool-windows-host?)
@@ -416,42 +417,42 @@
 
 (define (source-tool-find-command-on-path
   [tool : String]
-  [paths : EnvStringList]) : String
-  (match paths
-    [(EnvStringNil) tool]
-    [(EnvStringCons dir rest)
-      (let
-        [candidate : String (source-tool-path-entry-command dir tool)]
-        (if (source-tool-path-command-exists? candidate)
-          candidate
-          (let
-            [exe-candidate : String
-              (source-tool-windows-exe-candidate candidate)]
-            (if (and
-              (not (string-eq exe-candidate candidate))
-              (source-tool-path-command-exists? exe-candidate))
-              exe-candidate
-              (source-tool-find-command-on-path tool (box-get rest))))))]))
+  [paths : vector.StringVec]
+  [index : i64]) : String
+  (if (>= index (vector.string-vec-len paths))
+    tool
+    (let
+      [dir : String (vector.string-vec-get paths index "")]
+      [candidate : String (source-tool-path-entry-command dir tool)]
+      (if (source-tool-path-command-exists? candidate)
+        candidate
+        (let
+          [exe-candidate : String (source-tool-windows-exe-candidate candidate)]
+          (if (and
+            (not (string-eq exe-candidate candidate))
+            (source-tool-path-command-exists? exe-candidate))
+            exe-candidate
+            (source-tool-find-command-on-path tool paths (+ index 1))))))))
 
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)
     tool
     (let
       [name : String "PATH"]
-      (match (env-path-list (& name))
-        [(EnvSomeStringList paths)
-          (source-tool-find-command-on-path tool paths)]
-        [(EnvNoStringList) tool]))))
+      (match (env.env-path-list-vec (& name))
+        [(env.EnvSomeStringVec paths)
+          (source-tool-find-command-on-path tool paths 0)]
+        [(env.EnvNoStringVec) tool]))))
 
 (define (source-tool-env-command-or-default
   [name : String]
   [default-command : String]) : String
-  (match (env-get (& name))
-    [(EnvSomeString value)
+  (match (env.env-get (& name))
+    [(env.EnvSomeString value)
       (if (string-eq value "")
         default-command
         value)]
-    [(EnvNoString) default-command]))
+    [(env.EnvNoString) default-command]))
 
 (define (source-tool-resolved-env-command-or-default
   [name : String]
@@ -460,9 +461,9 @@
     (source-tool-env-command-or-default name default-command)))
 
 (define (source-tool-env-command-set? [name : String]) : bool
-  (match (env-get (& name))
-    [(EnvSomeString value) (not (string-eq value ""))]
-    [(EnvNoString) false]))
+  (match (env.env-get (& name))
+    [(env.EnvSomeString value) (not (string-eq value ""))]
+    [(env.EnvNoString) false]))
 
 (define (source-tool-replace-extension
   [input-path : String]
@@ -550,7 +551,7 @@
       (source-tool-executable-extension target))))
 
 (define (source-tool-create-temp-dir [prefix : String]) : ResultSourceToolString
-  (match (try-create-temp-dir (& prefix))
+  (match (fs.try-create-temp-dir (& prefix))
     [(OkIoString path) (OkSourceToolString path)]
     [(ErrIoString error) (ErrSourceToolString (io-error-message error))]))
 

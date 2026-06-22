@@ -7,21 +7,23 @@
 ;# Compatibility `ffi-c-string-*` wrappers borrow their input text as bytes and
 ;# delegate to the byte-slice path.
 ;#
-;# Usage: `(import "stdlib/ffi.tl")`
+;# Usage: `(import stdlib.ffi)`
 ;#
 ;# ```typelisp run
 ;# ;; doctest-exit: 0
-;# (import "stdlib/ffi.tl")
+;# (import stdlib.ffi)
 ;# (define (main) : i64
 ;#   (let
-;#     [ptr : (Ptr u8) (ffi-cstr "abc")]
+;#     [ptr : (Ptr u8) (ffi.ffi-cstr "abc")]
 ;#     (if (or
 ;#       (ptr-null? ptr)
 ;#       (not (= (cast (unsafe (ptr-read (ptr-offset ptr 3))) : i64) 0)))
 ;#       1
 ;#       0)))
 ;# ```
-(import "byte_buf.tl")
+(module stdlib.ffi)
+
+(import stdlib.byte_buf)
 
 ;: Result type for copying TypeLisp bytes into caller-owned C string storage.
 (defenum FfiCStringCopyResult
@@ -31,17 +33,17 @@
 
 ;: Return the byte count needed for a NUL-terminated copy of `view`.
 (define (ffi-c-bytes-required-bytes [view : (& source bytes)]) : i64
-  (+ (bytes-length view) 1))
+  (+ (byte_buf.bytes-length view) 1))
 
 ;: Return true when `view` contains an interior NUL byte.
 (define (ffi-c-bytes-interior-nul? [view : (& source bytes)]) : bool
   (let
-    [n : i64 (bytes-length view)]
+    [n : i64 (byte_buf.bytes-length view)]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
-        (if (= (bytes-ref view i) (cast '\0' : u8))
+        (if (= (byte_buf.bytes-ref view i) (cast '\0' : u8))
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -59,7 +61,7 @@
     (while (< i n)
       (begin
         (unsafe
-          (ptr-write! (ptr-offset dst i) (bytes-ref view i)))
+          (ptr-write! (ptr-offset dst i) (byte_buf.bytes-ref view i)))
         (set! i (+ i 1))))))
 
 ;: Copy `view` to caller-owned mutable storage and append the trailing NUL byte.
@@ -81,7 +83,7 @@
       (if (< capacity needed)
         (FfiCStringBufferTooSmall needed)
         (let
-          [n : i64 (bytes-length view)]
+          [n : i64 (byte_buf.bytes-length view)]
           (begin
             (ffi-c-bytes-copy-bytes! view dst n)
             (unsafe
@@ -99,7 +101,7 @@
     (ptr-null : (Ptr u8))
     (let
       [needed : i64 (ffi-c-bytes-required-bytes view)]
-      [n : i64 (bytes-length view)]
+      [n : i64 (byte_buf.bytes-length view)]
       [buf : (Array u8) (make-array u8 needed)]
       [dst : (MutPtr u8)
         (unsafe
@@ -117,18 +119,18 @@
 
 ;: Return the byte count needed for a NUL-terminated copy of `text`.
 (define (ffi-c-string-required-bytes [text : String]) : i64
-  (ffi-c-bytes-required-bytes (str-as-bytes (& text))))
+  (ffi-c-bytes-required-bytes (byte_buf.str-as-bytes (& text))))
 
 ;: Return true when `text` contains an interior NUL byte.
 (define (ffi-c-string-interior-nul? [text : String]) : bool
-  (ffi-c-bytes-interior-nul? (str-as-bytes (& text))))
+  (ffi-c-bytes-interior-nul? (byte_buf.str-as-bytes (& text))))
 
 ;: Copy exactly `n` bytes from `text` into `dst`.
 ;:
 ;: The caller must ensure `n` is at most `(string-length text)` and that `dst`
 ;: points to writable storage for at least `n` bytes.
 (define (ffi-c-string-copy-bytes! [text : String] [dst : (MutPtr u8)] [n : i64]) : unit
-  (ffi-c-bytes-copy-bytes! (str-as-bytes (& text)) dst n))
+  (ffi-c-bytes-copy-bytes! (byte_buf.str-as-bytes (& text)) dst n))
 
 ;: Copy `text` to caller-owned mutable storage and append the trailing NUL byte.
 ;:
@@ -137,13 +139,13 @@
   [text : String]
   [dst : (MutPtr u8)]
   [capacity : i64]) : FfiCStringCopyResult
-  (ffi-c-bytes-copy! (str-as-bytes (& text)) dst capacity))
+  (ffi-c-bytes-copy! (byte_buf.str-as-bytes (& text)) dst capacity))
 
 ;: Allocate a NUL-terminated C string copy in the active arena.
 ;:
 ;: Compatibility wrapper over `ffi-c-bytes-alloc`.
 (define (ffi-c-string-alloc [text : String]) : (Ptr u8)
-  (ffi-c-bytes-alloc (str-as-bytes (& text))))
+  (ffi-c-bytes-alloc (byte_buf.str-as-bytes (& text))))
 
 ;: Short alias for `ffi-c-string-alloc`.
 (define (ffi-cstr [text : String]) : (Ptr u8)
@@ -229,7 +231,7 @@
       (ffi-test-fail))
     (let
       [view-text : String "bytes"]
-      [view : (& view-text bytes) (str-as-bytes (& view-text))]
+      [view : (& view-text bytes) (byte_buf.str-as-bytes (& view-text))]
       (begin
         (if (= (ffi-c-bytes-required-bytes view) 6)
           unit
@@ -261,7 +263,7 @@
         (ffi-test-assert-u8-eq (ffi-test-read-u8 exact 3) 0)))
     (let
       [bytes-text : String "buf"]
-      [bytes-view : (& bytes-text bytes) (str-as-bytes (& bytes-text))]
+      [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
       [bytes-storage : (Array u8) (make-array u8 4)]
       [bytes-dst : (MutPtr u8)
         (unsafe
@@ -295,11 +297,11 @@
         (ffi-test-assert-interior-nul (ffi-c-string-copy! with-nul nul-buf 4))
         (ffi-test-assert-u8-eq (ffi-test-read-u8 nul-buf 0) 88)))
     (let
-      [binary : ByteBuf
-        (byte-buf-push
-          (byte-buf-push (byte-buf-new) (cast 97 : u8))
+      [binary : byte_buf.ByteBuf
+        (byte_buf.byte-buf-push
+          (byte_buf.byte-buf-push (byte_buf.byte-buf-new) (cast 97 : u8))
           (cast 0 : u8))]
-      [binary-view : (& binary bytes) (byte-buf-as-bytes (& binary))]
+      [binary-view : (& binary bytes) (byte_buf.byte-buf-as-bytes (& binary))]
       [binary-storage : (Array u8) (make-array u8 3)]
       [binary-buf : (MutPtr u8)
         (unsafe
@@ -331,7 +333,7 @@
         (ffi-test-assert-u8-eq (ffi-test-read-const-u8 ptr 3) 0)))
     (let
       [bytes-text : String "pq"]
-      [bytes-view : (& bytes-text bytes) (str-as-bytes (& bytes-text))]
+      [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
       [bytes-ptr : (Ptr u8) (ffi-cbytes bytes-view)]
       (begin
         (if (not (ptr-null? bytes-ptr))
@@ -354,3 +356,21 @@
       (if (ptr-null? (ffi-c-string-alloc with-nul))
         unit
         (ffi-test-fail)))))
+
+(export
+  (value ffi-c-bytes-required-bytes)
+  (value ffi-c-bytes-interior-nul?)
+  (value ffi-c-bytes-copy-bytes!)
+  (value ffi-c-bytes-copy!)
+  (value ffi-c-bytes-alloc)
+  (value ffi-cbytes)
+  (value ffi-c-string-required-bytes)
+  (value ffi-c-string-interior-nul?)
+  (value ffi-c-string-copy-bytes!)
+  (value ffi-c-string-copy!)
+  (value ffi-c-string-alloc)
+  (value ffi-cstr)
+  (type FfiCStringCopyResult)
+  (variant FfiCStringCopyOk)
+  (variant FfiCStringInteriorNul)
+  (variant FfiCStringBufferTooSmall))

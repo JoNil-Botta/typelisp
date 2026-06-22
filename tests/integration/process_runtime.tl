@@ -1,6 +1,8 @@
 (import "stdlib/io.tl")
 (import "stdlib/env.tl")
+(import "stdlib/process.tl")
 (import "stdlib/process_borrowed.tl")
+(import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/vector.tl")
 

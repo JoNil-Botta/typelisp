@@ -4,14 +4,16 @@
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
 (import "../stdlib/fs.tl")
-(import "../stdlib/json.tl")
+(import "../stdlib/io.tl")
+(import "../stdlib/str_cat.tl")
+(import stdlib.json)
+(import stdlib.vector)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
 (import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
 
 (defenum LspFrameRead
   (LspFrameOk String)
@@ -246,40 +248,47 @@
         ""))
     (stdout-flush)))
 
-(define (lsp-json-number [value : i64]) : Json
-  (JsonNumber (int->string value)))
+(define (lsp-json-number [value : i64]) : json.Json
+  (json.JsonNumber (int->string value)))
 
-(define (lsp-json-member [k : String] [v : Json] [rest : JsonMemberList]) : JsonMemberList
-  (JsonMemberListCons k v (box rest)))
+(define (lsp-json-member
+  [k : String]
+  [v : json.Json]
+  [rest : json.JsonMemberList]) : json.JsonMemberList
+  (json.JsonMemberListCons k v (box rest)))
 
-(define (lsp-json-object [members : JsonMemberList]) : Json
-  (JsonObject (box members)))
+(define (lsp-json-object [members : json.JsonMemberList]) : json.Json
+  (json.JsonObject (box members)))
 
-(define (lsp-json-list-cons [value : Json] [rest : JsonList]) : JsonList
-  (JsonListCons value (box rest)))
+(define (lsp-json-list-cons [value : json.Json] [rest : json.JsonList]) : json.JsonList
+  (json.JsonListCons value (box rest)))
 
-(define (lsp-json-array [items : JsonList]) : Json
-  (JsonArray (box items)))
+(define (lsp-json-array [items : json.JsonList]) : json.Json
+  (json.JsonArray (box items)))
 
-(define (lsp-json-rpc-member [rest : JsonMemberList]) : JsonMemberList
-  (lsp-json-member "jsonrpc" (JsonString "2.0") rest))
+(define (lsp-json-rpc-member [rest : json.JsonMemberList]) : json.JsonMemberList
+  (lsp-json-member "jsonrpc" (json.JsonString "2.0") rest))
 
-(define (lsp-json-object1 [k : String] [v : Json]) : Json
-  (lsp-json-object (lsp-json-member k v JsonMemberListNil)))
+(define (lsp-json-object1 [k : String] [v : json.Json]) : json.Json
+  (lsp-json-object (lsp-json-member k v json.JsonMemberListNil)))
 
-(define (lsp-json-object2 [k1 : String] [v1 : Json] [k2 : String] [v2 : Json]) : Json
+(define (lsp-json-object2
+  [k1 : String]
+  [v1 : json.Json]
+  [k2 : String]
+  [v2 : json.Json]) : json.Json
   (lsp-json-object
-    (lsp-json-member k1 v1 (lsp-json-member k2 v2 JsonMemberListNil))))
+    (lsp-json-member k1 v1 (lsp-json-member k2 v2 json.JsonMemberListNil))))
 
 (define (lsp-json-object4
   [k1 : String]
-  [v1 : Json]
+  [v1 : json.Json]
   [k2 : String]
-  [v2 : Json]
+  [v2 : json.Json]
   [k3 : String]
-  [v3 : Json]
+  [v3 : json.Json]
   [k4 : String]
-  [v4 : Json]) : Json
+  [v4 : json.Json]) : json.Json
   (lsp-json-object
     (lsp-json-member
       k1
@@ -287,37 +296,37 @@
       (lsp-json-member
         k2
         v2
-        (lsp-json-member k3 v3 (lsp-json-member k4 v4 JsonMemberListNil))))))
+        (lsp-json-member k3 v3 (lsp-json-member k4 v4 json.JsonMemberListNil))))))
 
-(define (lsp-json-string-field [value : Json] [key : String]) : LspJsonText
-  (match (json-object-get value (& key))
-    [(JsonFound field)
+(define (lsp-json-string-field [value : json.Json] [key : String]) : LspJsonText
+  (match (json.json-object-get value (& key))
+    [(json.JsonFound field)
       (match field
-        [(JsonString text) (OkLspJsonText text)]
+        [(json.JsonString text) (OkLspJsonText text)]
         [_ MissingLspJsonText])]
-    [(JsonMissing) MissingLspJsonText]))
+    [(json.JsonMissing) MissingLspJsonText]))
 
 (define (lsp-json-string-field-default
-  [value : Json]
+  [value : json.Json]
   [key : String]
   [fallback : String]) : String
   (match (lsp-json-string-field value key)
     [(OkLspJsonText text) text]
     [(MissingLspJsonText) fallback]))
 
-(define (lsp-write-json [value : Json]) : unit
-  (lsp-frame-write-body (json-stringify value)))
+(define (lsp-write-json [value : json.Json]) : unit
+  (lsp-frame-write-body (json.json-stringify value)))
 
-(define (lsp-write-response [id : Json] [result : Json]) : unit
+(define (lsp-write-response [id : json.Json] [result : json.Json]) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
         (lsp-json-member
           "id"
           id
-          (lsp-json-member "result" result JsonMemberListNil))))))
+          (lsp-json-member "result" result json.JsonMemberListNil))))))
 
-(define (lsp-write-error [id : Json] [code : i64] [message : String]) : unit
+(define (lsp-write-error [id : json.Json] [code : i64] [message : String]) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
@@ -330,13 +339,13 @@
               "code"
               (lsp-json-number code)
               "message"
-              (JsonString message))
-            JsonMemberListNil))))))
+              (json.JsonString message))
+            json.JsonMemberListNil))))))
 
 (define (lsp-write-parse-error [message : String]) : unit
-  (lsp-write-error JsonNull -32700 message))
+  (lsp-write-error json.JsonNull -32700 message))
 
-(define (lsp-initialize-result) : Json
+(define (lsp-initialize-result) : json.Json
   (lsp-json-object2
     "capabilities"
     (lsp-json-object
@@ -344,34 +353,34 @@
         "textDocumentSync"
         (lsp-json-object2
           "openClose"
-          (JsonBool true)
+          (json.JsonBool true)
           "change"
           (lsp-json-number 1))
         (lsp-json-member
           "definitionProvider"
-          (JsonBool true)
+          (json.JsonBool true)
           (lsp-json-member
             "completionProvider"
-            (lsp-json-object1 "resolveProvider" (JsonBool false))
+            (lsp-json-object1 "resolveProvider" (json.JsonBool false))
             (lsp-json-member
               "inlayHintProvider"
-              (JsonBool true)
+              (json.JsonBool true)
               (lsp-json-member
                 "documentFormattingProvider"
-                (JsonBool true)
+                (json.JsonBool true)
                 (lsp-json-member
                   "hoverProvider"
-                  (JsonBool true)
+                  (json.JsonBool true)
                   (lsp-json-member
                     "documentLinkProvider"
-                    (lsp-json-object1 "resolveProvider" (JsonBool false))
-                    JsonMemberListNil))))))))
+                    (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+                    json.JsonMemberListNil))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
-      (JsonString "typelisp")
+      (json.JsonString "typelisp")
       "version"
-      (JsonString "selfhost"))))
+      (json.JsonString "selfhost"))))
 
 (define (lsp-document-fallback) : LspDocument
   (LspDocument "" "" "" ""))
@@ -477,12 +486,12 @@
                 [hi : i64 (lsp-hex-value (string-ref text (+ i 1)))]
                 [lo : i64 (lsp-hex-value (string-ref text (+ i 2)))]
                 (if (and (>= hi 0) (>= lo 0))
-                  (match (json-codepoint-string (+ (* hi 16) lo))
-                    [(OkJsonCodepointString decoded)
+                  (match (json.json-codepoint-string (+ (* hi 16) lo))
+                    [(json.OkJsonCodepointString decoded)
                       (begin
                         (set! out (string-append out decoded))
                         (set! i (+ i 3)))]
-                    [(ErrJsonCodepointString message)
+                    [(json.ErrJsonCodepointString message)
                       (begin
                         (set! err message)
                         (set! i n))])
@@ -549,8 +558,8 @@
                   out
                   "%"
                   (string-append
-                    (json-hex-digit (/ code 16))
-                    (json-hex-digit (- code (* (/ code 16) 16))))))))
+                    (json.json-hex-digit (/ code 16))
+                    (json.json-hex-digit (- code (* (/ code 16) 16))))))))
           (set! i (+ i 1))))
       out)))
 
@@ -564,21 +573,21 @@
     (- value 1)
     0))
 
-(define (lsp-position [line : i64] [character : i64]) : Json
+(define (lsp-position [line : i64] [character : i64]) : json.Json
   (lsp-json-object2
     "line"
     (lsp-json-number (lsp-zero-based line))
     "character"
     (lsp-json-number (lsp-zero-based character))))
 
-(define (lsp-range [line : i64] [col : i64]) : Json
+(define (lsp-range [line : i64] [col : i64]) : json.Json
   (lsp-json-object2
     "start"
     (lsp-position line col)
     "end"
     (lsp-position line (+ col 1))))
 
-(define (lsp-range-from-compiler-span [span : CompilerDiagnosticSpan]) : Json
+(define (lsp-range-from-compiler-span [span : CompilerDiagnosticSpan]) : json.Json
   (let
     [start-line : i64 (compiler-diagnostic-span-start-line span)]
     [start-col : i64 (compiler-diagnostic-span-start-col span)]
@@ -615,41 +624,42 @@
 
 (define (lsp-diagnostic-related-information
   [fallback-path : String]
-  [entry : CompilerDiagnosticLabel]) : Json
+  [entry : CompilerDiagnosticLabel]) : json.Json
   (let
     [span : CompilerDiagnosticSpan (struct-get entry span)]
     (lsp-json-object2
       "location"
       (lsp-json-object2
         "uri"
-        (JsonString (lsp-diagnostic-related-uri fallback-path span))
+        (json.JsonString (lsp-diagnostic-related-uri fallback-path span))
         "range"
         (lsp-range-from-compiler-span span))
       "message"
-      (JsonString (lsp-diagnostic-related-message (struct-get entry label))))))
+      (json.JsonString
+        (lsp-diagnostic-related-message (struct-get entry label))))))
 
 (define (lsp-diagnostic-related-information-list
   [fallback-path : String]
-  [labels : CompilerDiagnosticLabelList]) : JsonList
+  [labels : CompilerDiagnosticLabelList]) : json.JsonList
   (match labels
-    [(CompilerDiagnosticLabelNil) JsonListNil]
+    [(CompilerDiagnosticLabelNil) json.JsonListNil]
     [(CompilerDiagnosticLabelCons entry rest)
       (lsp-json-list-cons
         (lsp-diagnostic-related-information fallback-path entry)
         (lsp-diagnostic-related-information-list fallback-path (box-get rest)))]))
 
-(define (lsp-diagnostic-message-tail [message : String]) : JsonMemberList
-  (lsp-json-member "message" (JsonString message) JsonMemberListNil))
+(define (lsp-diagnostic-message-tail [message : String]) : json.JsonMemberList
+  (lsp-json-member "message" (json.JsonString message) json.JsonMemberListNil))
 
-(define (lsp-diagnostic-code-tail [code : String] [tail : JsonMemberList]) : JsonMemberList
+(define (lsp-diagnostic-code-tail [code : String] [tail : json.JsonMemberList]) : json.JsonMemberList
   (if (string-eq code "")
     tail
-    (lsp-json-member "code" (JsonString code) tail)))
+    (lsp-json-member "code" (json.JsonString code) tail)))
 
 (define (lsp-diagnostic-with-range-tail
-  [range : Json]
+  [range : json.Json]
   [code : String]
-  [tail : JsonMemberList]) : Json
+  [tail : json.JsonMemberList]) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -659,13 +669,13 @@
         (lsp-json-number 1)
         (lsp-json-member
           "source"
-          (JsonString "typelisp")
+          (json.JsonString "typelisp")
           (lsp-diagnostic-code-tail code tail))))))
 
 (define (lsp-diagnostic-with-range
-  [range : Json]
+  [range : json.Json]
   [message : String]
-  [code : String]) : Json
+  [code : String]) : json.Json
   (lsp-diagnostic-with-range-tail
     range
     code
@@ -675,16 +685,16 @@
   [line : i64]
   [col : i64]
   [message : String]
-  [code : String]) : Json
+  [code : String]) : json.Json
   (lsp-diagnostic-with-range (lsp-range line col) message code))
 
-(define (lsp-compiler-diagnostic [diag : CompilerDiagnostic]) : Json
+(define (lsp-compiler-diagnostic [diag : CompilerDiagnostic]) : json.Json
   (let
     [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
     [path : String (compiler-diagnostic-span-path span)]
     [labels : CompilerDiagnosticLabelList
       (compiler-diagnostic-secondary-spans diag)]
-    [range : Json (lsp-range-from-compiler-span span)]
+    [range : json.Json (lsp-range-from-compiler-span span)]
     [message : String (compiler-diagnostic-message diag)]
     [code : String (compiler-diagnostic-code-or-empty diag)]
     (match labels
@@ -726,7 +736,7 @@
             "E7777")
           (CompilerDiagnosticSpan "" 4 5 4 8)
           (CompilerDiagnosticSomeString "borrow remains live"))]
-      [rendered : String (json-stringify (lsp-compiler-diagnostic diag))]
+      [rendered : String (json.json-stringify (lsp-compiler-diagnostic diag))]
       [related-key : String "\"relatedInformation\""]
       [related-message : String "\"message\":\"borrow remains live\""]
       [related-uri : String "\"uri\":\"file:///primary.tl\""]
@@ -807,26 +817,26 @@
       root-uri
       (lsp-path-to-file-uri diag-path))))
 
-(define (lsp-publish-diagnostics [uri : String] [diagnostics : JsonList]) : unit
+(define (lsp-publish-diagnostics [uri : String] [diagnostics : json.JsonList]) : unit
   (lsp-write-json
     (lsp-json-object
       (lsp-json-rpc-member
         (lsp-json-member
           "method"
-          (JsonString "textDocument/publishDiagnostics")
+          (json.JsonString "textDocument/publishDiagnostics")
           (lsp-json-member
             "params"
             (lsp-json-object2
               "uri"
-              (JsonString uri)
+              (json.JsonString uri)
               "diagnostics"
               (lsp-json-array diagnostics))
-            JsonMemberListNil))))))
+            json.JsonMemberListNil))))))
 
 (define (lsp-publish-uri-diagnostic [uri : String] [message : String]) : unit
   (lsp-publish-diagnostics
     uri
-    (lsp-json-list-cons (lsp-diagnostic 1 1 message "") JsonListNil)))
+    (lsp-json-list-cons (lsp-diagnostic 1 1 message "") json.JsonListNil)))
 
 (define (lsp-clear-stale-diagnostic
   [docs : LspDocuments]
@@ -839,20 +849,20 @@
         (string-eq old-diagnostic-uri uri)
         (string-eq old-diagnostic-uri next-diagnostic-uri))
         unit
-        (lsp-publish-diagnostics old-diagnostic-uri JsonListNil))]
+        (lsp-publish-diagnostics old-diagnostic-uri json.JsonListNil))]
     [(MissingLspDocument) unit]))
 
 (define (lsp-clear-close-diagnostics [docs : LspDocuments] [uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
     [(FoundLspDocument _ _ old-diagnostic-uri)
       (begin
-        (lsp-publish-diagnostics uri JsonListNil)
+        (lsp-publish-diagnostics uri json.JsonListNil)
         (if (or
           (string-eq old-diagnostic-uri "")
           (string-eq old-diagnostic-uri uri))
           unit
-          (lsp-publish-diagnostics old-diagnostic-uri JsonListNil)))]
-    [(MissingLspDocument) (lsp-publish-diagnostics uri JsonListNil)]))
+          (lsp-publish-diagnostics old-diagnostic-uri json.JsonListNil)))]
+    [(MissingLspDocument) (lsp-publish-diagnostics uri json.JsonListNil)]))
 
 ;; --------------------------------------------------------------------------
 ;; Lint findings as diagnostics (Warning severity), published for the open
@@ -864,7 +874,7 @@
   [line : i64]
   [col : i64]
   [message : String]
-  [code : String]) : Json
+  [code : String]) : json.Json
   (lsp-json-object
     (lsp-json-member
       "range"
@@ -874,13 +884,16 @@
         (lsp-json-number 2)
         (lsp-json-member
           "source"
-          (JsonString "typelisp-lint")
+          (json.JsonString "typelisp-lint")
           (lsp-json-member
             "code"
-            (JsonString code)
-            (lsp-json-member "message" (JsonString message) JsonMemberListNil)))))))
+            (json.JsonString code)
+            (lsp-json-member
+              "message"
+              (json.JsonString message)
+              json.JsonMemberListNil)))))))
 
-(define (lsp-lint-finding-diagnostic [finding : LintFinding]) : Json
+(define (lsp-lint-finding-diagnostic [finding : LintFinding]) : json.Json
   (let
     [span : AstSourceSpan (struct-get finding span)]
     (lsp-lint-diagnostic
@@ -893,7 +906,7 @@
   [text : String]
   [findings : LintFindings]
   [i : i64]
-  [acc : JsonList]) : JsonList
+  [acc : json.JsonList]) : json.JsonList
   (if (>= i (lint-findings-count findings))
     acc
     (let
@@ -909,12 +922,12 @@
 (define (lsp-lint-diagnostics
   [path : String]
   [text : String]
-  [stdlib-roots : StringVec]) : JsonList
+  [stdlib-roots : StringVec]) : json.JsonList
   (lsp-lint-findings-to-json
     text
     (selfhost-lint-source-with-roots path text stdlib-roots)
     0
-    JsonListNil))
+    json.JsonListNil))
 
 (define (lsp-analyze-document
   [uri : String]
@@ -922,7 +935,7 @@
   [text : String]
   [stdlib-roots : StringVec]) : String
   (let
-    [lint-diags : JsonList (lsp-lint-diagnostics path text stdlib-roots)]
+    [lint-diags : json.JsonList (lsp-lint-diagnostics path text stdlib-roots)]
     (match (compiler-check-source-with-roots path text stdlib-roots)
       [(OkCompilerCheck _)
         (begin
@@ -941,30 +954,32 @@
               (lsp-publish-diagnostics uri lint-diags)
               (lsp-publish-diagnostics
                 diag-uri
-                (lsp-json-list-cons (lsp-compiler-diagnostic diag) JsonListNil))
+                (lsp-json-list-cons
+                  (lsp-compiler-diagnostic diag)
+                  json.JsonListNil))
               diag-uri)))])))
 
-(define (lsp-first-change-text [params : Json]) : LspJsonText
+(define (lsp-first-change-text [params : json.Json]) : LspJsonText
   (let
     [key : String "contentChanges"]
-    (match (json-object-get params (& key))
-      [(JsonFound value)
+    (match (json.json-object-get params (& key))
+      [(json.JsonFound value)
         (match value
-          [(JsonArray items)
+          [(json.JsonArray items)
             (match (box-get items)
-              [(JsonListNil) MissingLspJsonText]
-              [(JsonListCons first _) (lsp-json-string-field first "text")])]
+              [(json.JsonListNil) MissingLspJsonText]
+              [(json.JsonListCons first _) (lsp-json-string-field first "text")])]
           [_ MissingLspJsonText])]
-      [(JsonMissing) MissingLspJsonText])))
+      [(json.JsonMissing) MissingLspJsonText])))
 
 (define (lsp-did-open
-  [params : Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json-object-get params (& key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (let
@@ -983,16 +998,16 @@
                     (lsp-publish-uri-diagnostic uri message)
                     (LspContinue docs))]))]
           [(MissingLspJsonText) (LspContinue docs)])]
-      [(JsonMissing) (LspContinue docs)])))
+      [(json.JsonMissing) (LspContinue docs)])))
 
 (define (lsp-did-change
-  [params : Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json-object-get params (& key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (match (lsp-first-change-text params)
@@ -1018,20 +1033,20 @@
                       (LspContinue docs))]
                   [(MissingLspDocument) (LspContinue docs)])])]
           [(MissingLspJsonText) (LspContinue docs)])]
-      [(JsonMissing) (LspContinue docs)])))
+      [(json.JsonMissing) (LspContinue docs)])))
 
-(define (lsp-did-close [params : Json] [docs : LspDocuments]) : LspHandleResult
+(define (lsp-did-close [params : json.Json] [docs : LspDocuments]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json-object-get params (& key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (begin
               (lsp-clear-close-diagnostics docs uri)
               (LspContinue (lsp-documents-remove docs uri)))]
           [(MissingLspJsonText) (LspContinue docs)])]
-      [(JsonMissing) (LspContinue docs)])))
+      [(json.JsonMissing) (LspContinue docs)])))
 
 ;; --------------------------------------------------------------------------
 ;; Go-to-definition (textDocument/definition).
@@ -1675,27 +1690,27 @@
             0)]))))
 
 (define (lsp-json-int-field-default
-  [value : Json]
+  [value : json.Json]
   [key : String]
   [fallback : i64]) : i64
-  (match (json-object-get value (& key))
-    [(JsonFound field)
+  (match (json.json-object-get value (& key))
+    [(json.JsonFound field)
       (match field
-        [(JsonNumber text)
-          (match (json-number->i64 (& text))
-            [(OkJsonNumberI64 number) number]
-            [(ErrJsonNumberI64 _) fallback])]
+        [(json.JsonNumber text)
+          (match (json.json-number->i64 (& text))
+            [(json.OkJsonNumberI64 number) number]
+            [(json.ErrJsonNumberI64 _) fallback])]
         [_ fallback])]
-    [(JsonMissing) fallback]))
+    [(json.JsonMissing) fallback]))
 
 (define (lsp-definition-location
   [uri : String]
   [line : i64]
   [col : i64]
-  [len : i64]) : Json
+  [len : i64]) : json.Json
   (lsp-json-object2
     "uri"
-    (JsonString uri)
+    (json.JsonString uri)
     "range"
     (lsp-json-object2
       "start"
@@ -1704,9 +1719,9 @@
       (lsp-position line (+ col len)))))
 
 (define (lsp-definition-respond
-  [id : Json]
+  [id : json.Json]
   [uri : String]
-  [position : Json]
+  [position : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -1725,7 +1740,7 @@
               (lsp-definition-location (lsp-path-to-file-uri resolved) 1 1 1))]
           [(MissingLspImportTarget)
             (if (string-eq sym "")
-              (lsp-write-response id JsonNull)
+              (lsp-write-response id json.JsonNull)
               (match (lsp-find-definition
                 docs
                 uri
@@ -1737,28 +1752,28 @@
                   (lsp-write-response
                     id
                     (lsp-definition-location def-uri def-line def-col def-len))]
-                [(MissingDefLoc) (lsp-write-response id JsonNull)]))]))]
-    [(MissingLspDocument) (lsp-write-response id JsonNull)]))
+                [(MissingDefLoc) (lsp-write-response id json.JsonNull)]))]))]
+    [(MissingLspDocument) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-definition
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& td-key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (let
               [pos-key : String "position"]
-              (match (json-object-get params (& pos-key))
-                [(JsonFound position)
+              (match (json.json-object-get params (& pos-key))
+                [(json.JsonFound position)
                   (lsp-definition-respond id uri position docs stdlib-roots)]
-                [(JsonMissing) (lsp-write-response id JsonNull)]))]
-          [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
-      [(JsonMissing) (lsp-write-response id JsonNull)])))
+                [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
+          [(MissingLspJsonText) (lsp-write-response id json.JsonNull)])]
+      [(json.JsonMissing) (lsp-write-response id json.JsonNull)])))
 
 (define (lsp-definition-smoke-basic?) : bool
   (let
@@ -1856,14 +1871,18 @@
         unit)
       acc)))
 
-(define (lsp-completion-item [label : String] [kind : i64]) : Json
-  (lsp-json-object2 "label" (JsonString label) "kind" (lsp-json-number kind)))
+(define (lsp-completion-item [label : String] [kind : i64]) : json.Json
+  (lsp-json-object2
+    "label"
+    (json.JsonString label)
+    "kind"
+    (lsp-json-number kind)))
 
 (define (lsp-completion-items-from
   [labels : StringVec]
   [kind : i64]
   [idx : i64]
-  [acc : JsonList]) : JsonList
+  [acc : json.JsonList]) : json.JsonList
   (if (>= idx (string-vec-len labels))
     acc
     (lsp-completion-items-from
@@ -1913,10 +1932,10 @@
         (struct-get (lsp-documents-get docs idx (lsp-document-fallback)) text)
         acc))))
 
-(define (lsp-completion-respond [id : Json] [docs : LspDocuments]) : unit
+(define (lsp-completion-respond [id : json.Json] [docs : LspDocuments]) : unit
   (let
     [names : StringVec (lsp-collect-def-names-all docs 0 (string-vec-new))]
-    [items : JsonList
+    [items : json.JsonList
       (lsp-completion-items-from
         names
         3
@@ -1933,7 +1952,7 @@
               (lsp-split-spaces (lsp-completion-keywords))
               14
               0
-              JsonListNil))))]
+              json.JsonListNil))))]
     (lsp-write-response id (lsp-json-array items))))
 
 ;; --------------------------------------------------------------------------
@@ -1964,27 +1983,31 @@
               (set! p (- p 1)))
             (and (>= p 0) (= (string-ref text p) '['))))))))
 
-(define (lsp-inlay-range-line [range : Json] [which : String] [fallback : i64]) : i64
-  (match (json-object-get range (& which))
-    [(JsonFound endpoint) (lsp-json-int-field-default endpoint "line" fallback)]
-    [(JsonMissing) fallback]))
+(define (lsp-inlay-range-line
+  [range : json.Json]
+  [which : String]
+  [fallback : i64]) : i64
+  (match (json.json-object-get range (& which))
+    [(json.JsonFound endpoint)
+      (lsp-json-int-field-default endpoint "line" fallback)]
+    [(json.JsonMissing) fallback]))
 
-(define (lsp-inlay-hint-json [line : i64] [col : i64] [ty : String]) : Json
+(define (lsp-inlay-hint-json [line : i64] [col : i64] [ty : String]) : json.Json
   (lsp-json-object4
     "position"
     (lsp-position line col)
     "label"
-    (JsonString (string-append ": " ty))
+    (json.JsonString (string-append ": " ty))
     "kind"
     (lsp-json-number 1)
     "paddingRight"
-    (JsonBool true)))
+    (json.JsonBool true)))
 
-(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : JsonList
+(define (lsp-inlay-build [text : String] [start-line : i64] [end-line : i64]) : json.JsonList
   (let
     [size : i64 (tc-inlay-hints-size)]
     [i : i64 0]
-    [acc : JsonList JsonListNil]
+    [acc : json.JsonList json.JsonListNil]
     (begin
       (while (< i size)
         (let
@@ -2008,9 +2031,9 @@
       acc)))
 
 (define (lsp-inlay-respond
-  [id : Json]
+  [id : json.Json]
   [uri : String]
-  [range : Json]
+  [range : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -2024,33 +2047,35 @@
             [(OkCompilerCheck _) unit]
             [(ErrCompilerCheck _) unit])
           (let
-            [hints : JsonList (lsp-inlay-build text start-line end-line)]
+            [hints : json.JsonList (lsp-inlay-build text start-line end-line)]
             (begin
               (tc-inlay-hints-disable!)
               (lsp-write-response id (lsp-json-array hints))))))]
-    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
+    [(MissingLspDocument)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-handle-inlay
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& td-key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (let
               [range-key : String "range"]
-              (match (json-object-get params (& range-key))
-                [(JsonFound range)
+              (match (json.json-object-get params (& range-key))
+                [(json.JsonFound range)
                   (lsp-inlay-respond id uri range docs stdlib-roots)]
-                [(JsonMissing)
-                  (lsp-write-response id (lsp-json-array JsonListNil))]))]
+                [(json.JsonMissing)
+                  (lsp-write-response id (lsp-json-array json.JsonListNil))]))]
           [(MissingLspJsonText)
-            (lsp-write-response id (lsp-json-array JsonListNil))])]
-      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
+            (lsp-write-response id (lsp-json-array json.JsonListNil))])]
+      [(json.JsonMissing)
+        (lsp-write-response id (lsp-json-array json.JsonListNil))])))
 
 ;; --------------------------------------------------------------------------
 ;; Document formatting (textDocument/formatting), enabling format-on-save.
@@ -2059,7 +2084,7 @@
 ;; error the document is left untouched (empty edit list) so saving never
 ;; mangles in-progress code.
 ;; --------------------------------------------------------------------------
-(define (lsp-formatting-edit [text : String] [formatted : String]) : Json
+(define (lsp-formatting-edit [text : String] [formatted : String]) : json.Json
   (let
     [end : LspLineCol (lsp-line-col-at-offset text (string-length text))]
     (lsp-json-object2
@@ -2070,10 +2095,10 @@
         "end"
         (lsp-position (struct-get end line) (struct-get end col)))
       "newText"
-      (JsonString formatted))))
+      (json.JsonString formatted))))
 
 (define (lsp-formatting-respond
-  [id : Json]
+  [id : json.Json]
   [uri : String]
   [docs : LspDocuments]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -2085,24 +2110,26 @@
             (lsp-json-array
               (lsp-json-list-cons
                 (lsp-formatting-edit text formatted)
-                JsonListNil)))]
+                json.JsonListNil)))]
         [(ErrFormatString _)
-          (lsp-write-response id (lsp-json-array JsonListNil))])]
-    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
+          (lsp-write-response id (lsp-json-array json.JsonListNil))])]
+    [(MissingLspDocument)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-handle-formatting
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& td-key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri) (lsp-formatting-respond id uri docs)]
           [(MissingLspJsonText)
-            (lsp-write-response id (lsp-json-array JsonListNil))])]
-      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
+            (lsp-write-response id (lsp-json-array json.JsonListNil))])]
+      [(json.JsonMissing)
+        (lsp-write-response id (lsp-json-array json.JsonListNil))])))
 
 ;; --------------------------------------------------------------------------
 ;; Hover (textDocument/hover).
@@ -2560,14 +2587,14 @@
   [markdown : String]
   [line : i64]
   [col : i64]
-  [len : i64]) : Json
+  [len : i64]) : json.Json
   (lsp-json-object2
     "contents"
     (lsp-json-object2
       "kind"
-      (JsonString "markdown")
+      (json.JsonString "markdown")
       "value"
-      (JsonString markdown))
+      (json.JsonString markdown))
     "range"
     (lsp-json-object2
       "start"
@@ -3077,9 +3104,9 @@
       result)))
 
 (define (lsp-hover-respond
-  [id : Json]
+  [id : json.Json]
   [uri : String]
-  [position : Json]
+  [position : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -3090,7 +3117,7 @@
         [off : i64 (lsp-offset-at-position text line0 char0)]
         [sym : String (lsp-symbol-at-offset text off)]
         (if (string-eq sym "")
-          (lsp-write-response id JsonNull)
+          (lsp-write-response id json.JsonNull)
           (let
             [needle : String (lsp-symbol-base sym)]
             [bind-type : String (lsp-binding-type text needle off)]
@@ -3146,28 +3173,28 @@
                             line0
                             char0
                             (string-length sym)))]
-                      [(MissingVariant) (lsp-write-response id JsonNull)])]))))))]
-    [(MissingLspDocument) (lsp-write-response id JsonNull)]))
+                      [(MissingVariant) (lsp-write-response id json.JsonNull)])]))))))]
+    [(MissingLspDocument) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-hover
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& td-key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (let
               [pos-key : String "position"]
-              (match (json-object-get params (& pos-key))
-                [(JsonFound position)
+              (match (json.json-object-get params (& pos-key))
+                [(json.JsonFound position)
                   (lsp-hover-respond id uri position docs stdlib-roots)]
-                [(JsonMissing) (lsp-write-response id JsonNull)]))]
-          [(MissingLspJsonText) (lsp-write-response id JsonNull)])]
-      [(JsonMissing) (lsp-write-response id JsonNull)])))
+                [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
+          [(MissingLspJsonText) (lsp-write-response id json.JsonNull)])]
+      [(json.JsonMissing) (lsp-write-response id json.JsonNull)])))
 
 ;; --------------------------------------------------------------------------
 ;; Document links (textDocument/documentLink): make import operands clickable,
@@ -3177,7 +3204,7 @@
   [text : String]
   [resolved : String]
   [content-start : i64]
-  [content-end : i64]) : Json
+  [content-end : i64]) : json.Json
   (let
     [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
     [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
@@ -3189,16 +3216,16 @@
         "end"
         (lsp-position (struct-get end-lc line) (struct-get end-lc col)))
       "target"
-      (JsonString (lsp-path-to-file-uri resolved)))))
+      (json.JsonString (lsp-path-to-file-uri resolved)))))
 
 (define (lsp-document-links
   [text : String]
   [path : String]
-  [stdlib-roots : StringVec]) : JsonList
+  [stdlib-roots : StringVec]) : json.JsonList
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
-    [acc : JsonList JsonListNil]
+    [acc : json.JsonList json.JsonListNil]
     (begin
       (while (< i n)
         (let
@@ -3237,7 +3264,7 @@
       acc)))
 
 (define (lsp-document-link-respond
-  [id : Json]
+  [id : json.Json]
   [uri : String]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
@@ -3246,30 +3273,32 @@
       (lsp-write-response
         id
         (lsp-json-array (lsp-document-links text path stdlib-roots)))]
-    [(MissingLspDocument) (lsp-write-response id (lsp-json-array JsonListNil))]))
+    [(MissingLspDocument)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-handle-document-link
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json-object-get params (& td-key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& td-key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri)
             (lsp-document-link-respond id uri docs stdlib-roots)]
           [(MissingLspJsonText)
-            (lsp-write-response id (lsp-json-array JsonListNil))])]
-      [(JsonMissing) (lsp-write-response id (lsp-json-array JsonListNil))])))
+            (lsp-write-response id (lsp-json-array json.JsonListNil))])]
+      [(json.JsonMissing)
+        (lsp-write-response id (lsp-json-array json.JsonListNil))])))
 
-(define (lsp-maybe-write-method-not-found [message : Json]) : unit
+(define (lsp-maybe-write-method-not-found [message : json.Json]) : unit
   (let
     [key : String "id"]
-    (match (json-object-get message (& key))
-      [(JsonFound id) (lsp-write-error id -32601 "Method not found")]
-      [(JsonMissing) unit])))
+    (match (json.json-object-get message (& key))
+      [(json.JsonFound id) (lsp-write-error id -32601 "Method not found")]
+      [(json.JsonMissing) unit])))
 
 (define (lsp-decl-entry-fallback) : LspDeclEntry
   (LspDeclEntry "" "" 0 0 0 0 0 0 0))
@@ -3348,43 +3377,43 @@
       result)))
 
 ;; Helper: extract document from params
-(define (lsp-get-document [params : Json] [docs : LspDocuments]) : LspDocumentLookup
+(define (lsp-get-document [params : json.Json] [docs : LspDocuments]) : LspDocumentLookup
   (let
     [key : String "textDocument"]
-    (match (json-object-get params (& key))
-      [(JsonFound document)
+    (match (json.json-object-get params (& key))
+      [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(OkLspJsonText uri) (lsp-documents-lookup docs uri)]
           [(MissingLspJsonText) MissingLspDocument])]
-      [(JsonMissing) MissingLspDocument])))
+      [(json.JsonMissing) MissingLspDocument])))
 
-;; Helper: build JSON array of declaration names from LspDeclList
-(define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : JsonList
+;; Helper: build json.Json array of declaration names from LspDeclList
+(define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : json.JsonList
   (if (>= idx (lsp-decl-list-len decls))
-    JsonListNil
+    json.JsonListNil
     (let
       [entry : LspDeclEntry
         (lsp-decl-list-get decls idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
       (lsp-json-list-cons
-        (JsonString name)
+        (json.JsonString name)
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
-;; Helper: build JSON array of all declarations with metadata
-(define (lsp-decls-to-json-list [decls : LspDeclList] [idx : i64]) : JsonList
+;; Helper: build json.Json array of all declarations with metadata
+(define (lsp-decls-to-json-list [decls : LspDeclList] [idx : i64]) : json.JsonList
   (if (>= idx (lsp-decl-list-len decls))
-    JsonListNil
+    json.JsonListNil
     (let
       [entry : LspDeclEntry
         (lsp-decl-list-get decls idx (lsp-decl-entry-fallback))]
-      [obj : Json
+      [obj : json.Json
         (lsp-json-object
           (lsp-json-member
             "kind"
-            (JsonString (struct-get entry kind))
+            (json.JsonString (struct-get entry kind))
             (lsp-json-member
               "name"
-              (JsonString (struct-get entry name))
+              (json.JsonString (struct-get entry name))
               (lsp-json-member
                 "line"
                 (lsp-json-number (struct-get entry name-line))
@@ -3394,7 +3423,7 @@
                   (lsp-json-member
                     "length"
                     (lsp-json-number (struct-get entry name-len))
-                    JsonMemberListNil))))))]
+                    json.JsonMemberListNil))))))]
       (lsp-json-list-cons obj (lsp-decls-to-json-list decls (+ idx 1))))))
 
 ;; Helper: replace text from (sl,sc) to (el,ec) with new-text
@@ -3415,14 +3444,14 @@
 
 ;; tl/listFunctions - List all top-level function names in a document
 (define (lsp-handle-tl-list-functions
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [decls : LspDeclList (lsp-scan-decls text)]
-        [items : JsonList (lsp-decls-to-name-list decls 0)]
+        [items : json.JsonList (lsp-decls-to-name-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspContinue docs)))]
@@ -3433,14 +3462,14 @@
 
 ;; tl/astDump - Return full declaration metadata
 (define (lsp-handle-tl-ast-dump
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [decls : LspDeclList (lsp-scan-decls text)]
-        [items : JsonList (lsp-decls-to-json-list decls 0)]
+        [items : json.JsonList (lsp-decls-to-json-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspContinue docs)))]
@@ -3451,8 +3480,8 @@
 
 ;; tl/findPosition - Find the name position {line, character} of a top-level form
 (define (lsp-handle-tl-find-position
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3508,6 +3537,7 @@
         (LspContinue docs))]))
 
 ;; tl/structuralReplace - legacy method name routed to position-based replacement
+;; tl/deleteFunction - legacy method name routed to position-based deletion
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start [text : String] [entry : LspDeclEntry]) : i64
   (lsp-offset-at-position
@@ -3524,8 +3554,8 @@
 
 ;; tl/structuralMove - Move a form up/down in the file
 (define (lsp-handle-tl-structural-move
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3533,7 +3563,7 @@
         [name : String
           (let
             [pos-key : String "position"]
-            (match (json-object-get params (& pos-key))
+            (match (json.json-object-get params (& pos-key))
               [(JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -3649,9 +3679,9 @@
                                   id
                                   (lsp-json-object2
                                     "success"
-                                    (JsonBool true)
+                                    (json.JsonBool true)
                                     "text"
-                                    (JsonString formatted)))
+                                    (json.JsonString formatted)))
                                 (LspContinue docs))))))))))]
             [(MissingLspJsonText)
               (begin
@@ -3666,8 +3696,8 @@
 ;; For now, returns the top-level form by name.
 ;; Full macro expansion would require compiler macro expansion integration.
 (define (lsp-handle-tl-expand-macro
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3714,9 +3744,9 @@
                       id
                       (lsp-json-object2
                         "success"
-                        (JsonBool true)
+                        (json.JsonBool true)
                         "text"
-                        (JsonString result)))
+                        (json.JsonString result)))
                     (LspContinue docs))))))]
         [(MissingLspJsonText)
           (begin
@@ -3729,8 +3759,8 @@
 
 ;; tl/getTypeAt - Type of expression at cursor
 (define (lsp-handle-tl-get-type-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3743,9 +3773,9 @@
                 id
                 (lsp-json-object2
                   "success"
-                  (JsonBool true)
+                  (json.JsonBool true)
                   "text"
-                  (JsonString new-text)))
+                  (json.JsonString new-text)))
               (LspContinue docs))]
           [(ErrLspEdit message)
             (begin
@@ -3758,8 +3788,8 @@
 
 ;; tl/findReferences - All uses of a name
 (define (lsp-handle-tl-find-references
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3772,9 +3802,9 @@
                 id
                 (lsp-json-object2
                   "success"
-                  (JsonBool true)
+                  (json.JsonBool true)
                   "text"
-                  (JsonString new-text)))
+                  (json.JsonString new-text)))
               (LspContinue docs))]
           [(ErrLspEdit message)
             (begin
@@ -3812,8 +3842,8 @@
 
 ;; tl/projectSearch - Search for a declaration name across .tl files in a directory
 (define (lsp-handle-tl-project-search
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-json-string-field params "name")
     [(OkLspJsonText name)
@@ -3823,8 +3853,8 @@
           (LspContinue docs))
         (let
           [td-key : String "textDocument"]
-          (match (json-object-get params (& td-key))
-            [(JsonFound document)
+          (match (json.json-object-get params (& td-key))
+            [(json.JsonFound document)
               (match (lsp-json-string-field document "uri")
                 [(OkLspJsonText uri)
                   (match (lsp-file-uri-to-path uri)
@@ -3832,13 +3862,14 @@
                       (match (try-read-dir-vec (& path))
                         [(OkIoStringVec entries)
                           (let
-                            [n : i64 (string-vec-len entries)]
+                            [n : i64 (vector.string-vec-len entries)]
                             [i : i64 0]
-                            [results : JsonList JsonListNil]
+                            [results : json.JsonList json.JsonListNil]
                             (begin
                               (while (< i n)
                                 (let
-                                  [entry : String (string-vec-get entries i "")]
+                                  [entry : String
+                                    (vector.string-vec-get entries i "")]
                                   (begin
                                     (if (lsp-tl-source-file-name? entry)
                                       (let
@@ -3859,9 +3890,10 @@
                                                   (lsp-json-list-cons
                                                     (lsp-json-object2
                                                       "uri"
-                                                      (JsonString entry-uri)
+                                                      (json.JsonString
+                                                        entry-uri)
                                                       "name"
-                                                      (JsonString name))
+                                                      (json.JsonString name))
                                                     results)))
                                               unit)]
                                           [(ErrIoString _) unit]))
@@ -3871,7 +3903,7 @@
                                 id
                                 (lsp-json-object2
                                   "success"
-                                  (JsonBool true)
+                                  (json.JsonBool true)
                                   "results"
                                   (lsp-json-array results)))
                               (LspContinue docs)))]
@@ -3895,7 +3927,7 @@
                       -32600
                       "Missing uri in textDocument parameter")
                     (LspContinue docs))])]
-            [(JsonMissing)
+            [(json.JsonMissing)
               (begin
                 (lsp-write-error id -32600 "Missing textDocument parameter")
                 (LspContinue docs))])))]
@@ -3904,10 +3936,10 @@
         (lsp-write-error id -32600 "Missing name parameter")
         (LspContinue docs))]))
 
-;; tl/signatureHelp - Parameter types for function at cursor
+;; tl/evalAtPoint - Evaluate expression at cursor
 (define (lsp-handle-tl-eval-at-point
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3920,9 +3952,9 @@
                 id
                 (lsp-json-object2
                   "success"
-                  (JsonBool true)
+                  (json.JsonBool true)
                   "text"
-                  (JsonString new-text)))
+                  (json.JsonString new-text)))
               (LspContinue docs))]
           [(ErrLspEdit message)
             (begin
@@ -3935,8 +3967,8 @@
 
 ;; tl/signatureHelp - Parameter types for function at cursor
 (define (lsp-handle-tl-signature-help
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -3949,9 +3981,9 @@
                 id
                 (lsp-json-object2
                   "success"
-                  (JsonBool true)
+                  (json.JsonBool true)
                   "text"
-                  (JsonString new-text)))
+                  (json.JsonString new-text)))
               (LspContinue docs))]
           [(ErrLspEdit message)
             (begin
@@ -3964,8 +3996,8 @@
 
 ;; tl/appendFunction - Append a form at the end of the file
 (define (lsp-handle-tl-append-function
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -4013,9 +4045,9 @@
                       id
                       (lsp-json-object2
                         "success"
-                        (JsonBool true)
+                        (json.JsonBool true)
                         "text"
-                        (JsonString formatted)))
+                        (json.JsonString formatted)))
                     (LspContinue docs))))))]
         [(MissingLspJsonText)
           (begin
@@ -4028,7 +4060,7 @@
 
 ;; tl/replaceBody - legacy method name routed to position-based body replacement
 (define (lsp-handle-message
-  [message : Json]
+  [message : json.Json]
   [docs : LspDocuments]
   [stdlib-roots : StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
@@ -4042,10 +4074,10 @@
               (set! handled true)
               (let
                 [key : String "id"]
-                (match (json-object-get message (& key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& key))
+                  [(json.JsonFound id)
                     (lsp-write-response id (lsp-initialize-result))]
-                  [(JsonMissing) unit]))
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "initialized"))
@@ -4058,9 +4090,9 @@
               (set! handled true)
               (let
                 [key : String "id"]
-                (match (json-object-get message (& key))
-                  [(JsonFound id) (lsp-write-response id JsonNull)]
-                  [(JsonMissing) unit]))
+                (match (json.json-object-get message (& key))
+                  [(json.JsonFound id) (lsp-write-response id json.JsonNull)]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "exit"))
@@ -4073,44 +4105,46 @@
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json-object-get message (& key))
-                  [(JsonFound params)
+                (match (json.json-object-get message (& key))
+                  [(json.JsonFound params)
                     (set! result (lsp-did-open params docs stdlib-roots))]
-                  [(JsonMissing) (set! result (LspContinue docs))])))
+                  [(json.JsonMissing) (set! result (LspContinue docs))])))
             unit)
           (if (and (not handled) (string-eq method "textDocument/didChange"))
             (begin
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json-object-get message (& key))
-                  [(JsonFound params)
+                (match (json.json-object-get message (& key))
+                  [(json.JsonFound params)
                     (set! result (lsp-did-change params docs stdlib-roots))]
-                  [(JsonMissing) (set! result (LspContinue docs))])))
+                  [(json.JsonMissing) (set! result (LspContinue docs))])))
             unit)
           (if (and (not handled) (string-eq method "textDocument/didClose"))
             (begin
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json-object-get message (& key))
-                  [(JsonFound params) (set! result (lsp-did-close params docs))]
-                  [(JsonMissing) (set! result (LspContinue docs))])))
+                (match (json.json-object-get message (& key))
+                  [(json.JsonFound params)
+                    (set! result (lsp-did-close params docs))]
+                  [(json.JsonMissing) (set! result (LspContinue docs))])))
             unit)
           (if (and (not handled) (string-eq method "textDocument/definition"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (lsp-handle-definition id params docs stdlib-roots)]
-                        [(JsonMissing) (lsp-write-response id JsonNull)]))]
-                  [(JsonMissing) unit]))
+                        [(json.JsonMissing)
+                          (lsp-write-response id json.JsonNull)]))]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "textDocument/completion"))
@@ -4118,9 +4152,9 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id) (lsp-completion-respond id docs)]
-                  [(JsonMissing) unit]))
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id) (lsp-completion-respond id docs)]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "textDocument/inlayHint"))
@@ -4128,16 +4162,18 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (lsp-handle-inlay id params docs stdlib-roots)]
-                        [(JsonMissing)
-                          (lsp-write-response id (lsp-json-array JsonListNil))]))]
-                  [(JsonMissing) unit]))
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "textDocument/formatting"))
@@ -4145,16 +4181,18 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (lsp-handle-formatting id params docs)]
-                        [(JsonMissing)
-                          (lsp-write-response id (lsp-json-array JsonListNil))]))]
-                  [(JsonMissing) unit]))
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "textDocument/hover"))
@@ -4162,15 +4200,16 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (lsp-handle-hover id params docs stdlib-roots)]
-                        [(JsonMissing) (lsp-write-response id JsonNull)]))]
-                  [(JsonMissing) unit]))
+                        [(json.JsonMissing)
+                          (lsp-write-response id json.JsonNull)]))]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "textDocument/documentLink"))
@@ -4178,16 +4217,18 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (lsp-handle-document-link id params docs stdlib-roots)]
-                        [(JsonMissing)
-                          (lsp-write-response id (lsp-json-array JsonListNil))]))]
-                  [(JsonMissing) unit]))
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit]))
               (set! result (LspContinue docs)))
             unit)
           (if (and (not handled) (string-eq method "tl/astDump"))
@@ -4195,388 +4236,392 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set! result (lsp-handle-tl-ast-dump id params docs))]
-                        [(JsonMissing)
-                          (lsp-write-response id (lsp-json-array JsonListNil))]))]
-                  [(JsonMissing) unit])))
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/listFunctions"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-list-functions id params docs))]
-                        [(JsonMissing)
-                          (lsp-write-response id (lsp-json-array JsonListNil))]))]
-                  [(JsonMissing) unit])))
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/findPosition"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-find-position id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/structuralReplace"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-structural-replace-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/deleteFunction"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set! result (lsp-handle-tl-delete-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/structuralMove"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-structural-move id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/expandMacro"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-expand-macro id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/getTypeAt"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-get-type-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/findReferences"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-find-references id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/evalAtPoint"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-eval-at-point id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/appendFunction"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-append-function id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/replaceBody"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-replace-body-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/signatureHelp"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-signature-help id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/replacePattern"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-replace-pattern-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/batchEdit"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-batch-edit id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/projectSearch"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-project-search id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/rename"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set! result (lsp-handle-tl-rename id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/deleteAt"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set! result (lsp-handle-tl-delete-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/insertAfter"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-insert-after id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/replaceBodyAt"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-replace-body-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/replacePatternAt"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-replace-pattern-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (and (not handled) (string-eq method "tl/readFormAt"))
             (begin
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json-object-get message (& id-key))
-                  [(JsonFound id)
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json-object-get message (& params-key))
-                        [(JsonFound params)
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
                           (set!
                             result
                             (lsp-handle-tl-read-form-at id params docs))]
-                        [(JsonMissing)
+                        [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
-                  [(JsonMissing) unit])))
+                  [(json.JsonMissing) unit])))
             unit)
           (if (not handled)
             (begin
@@ -4630,15 +4675,15 @@
           [(LspFrameOk payload)
             (let
               [text : String payload]
-              (match (json-parse (& text))
-                [(OkJson message)
+              (match (json.json-parse (& text))
+                [(json.OkJson message)
                   (match (lsp-handle-message message docs stdlib-roots)
                     [(LspContinue next-docs) (set! docs next-docs)]
                     [(LspExit next-docs)
                       (begin
                         (set! docs next-docs)
                         (set! done true))])]
-                [(ErrJson message) (lsp-write-parse-error message)]))]
+                [(json.ErrJson message) (lsp-write-parse-error message)]))]
           [(LspFrameEof) (set! done true)]
           [(LspFrameErr message)
             (begin
@@ -4677,14 +4722,17 @@
           (set! i (+ i 1))))
       result)))
 
-(define (lsp-handle-tl-rename [id : Json] [params : Json] [docs : LspDocuments]) : LspHandleResult
+(define (lsp-handle-tl-rename
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [old-name : String
           (let
             [pos-key : String "position"]
-            (match (json-object-get params (& pos-key))
+            (match (json.json-object-get params (& pos-key))
               [(JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -4719,9 +4767,9 @@
                         id
                         (lsp-json-object2
                           "success"
-                          (JsonBool true)
+                          (json.JsonBool true)
                           "text"
-                          (JsonString formatted)))
+                          (json.JsonString formatted)))
                       (LspContinue docs)))))]
             [(MissingLspJsonText)
               (begin
@@ -4733,8 +4781,8 @@
         (LspContinue docs))]))
 
 (define (lsp-handle-tl-replace-pattern
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -4881,9 +4929,9 @@
                                   id
                                   (lsp-json-object2
                                     "success"
-                                    (JsonBool true)
+                                    (json.JsonBool true)
                                     "text"
-                                    (JsonString formatted)))
+                                    (json.JsonString formatted)))
                                 (LspContinue docs))))
                           (begin
                             (lsp-write-error id -32600 "Declaration not found")
@@ -5131,7 +5179,7 @@
 (define (lsp-batch-edit-step
   [text : String]
   [edit-kind : String]
-  [edit-params : Json]) : LspEditResult
+  [edit-params : json.Json]) : LspEditResult
   (cond
     [(string-eq edit-kind "replace-body")
       (match (lsp-json-string-field edit-params "name")
@@ -5165,12 +5213,12 @@
         [(MissingLspJsonText) (ErrLspEdit "structural-replace: missing name")])]
     [else (ErrLspEdit (str-cat "Unknown edit kind: " edit-kind))]))
 
-(define (lsp-batch-edit-apply [text : String] [edits : JsonList]) : LspEditResult
+(define (lsp-batch-edit-apply [text : String] [edits : json.JsonList]) : LspEditResult
   (match edits
-    [(JsonListNil) (OkLspEdit text)]
-    [(JsonListCons first rest)
+    [(json.JsonListNil) (OkLspEdit text)]
+    [(json.JsonListCons first rest)
       (match first
-        [(JsonObject _)
+        [(json.JsonObject _)
           (match (lsp-json-string-field first "kind")
             [(OkLspJsonText kind)
               (match (lsp-batch-edit-step text kind first)
@@ -5178,20 +5226,20 @@
                   (lsp-batch-edit-apply new-text (box-get rest))]
                 [(ErrLspEdit err) (ErrLspEdit err)])]
             [(MissingLspJsonText) (ErrLspEdit "Edit missing 'kind' field")])]
-        [_ (ErrLspEdit "Edit is not a JSON object")])]))
+        [_ (ErrLspEdit "Edit is not a json.Json object")])]))
 
 (define (lsp-handle-tl-batch-edit
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [edits-key : String "edits"]
-        (match (json-object-get params (& edits-key))
-          [(JsonFound edits-value)
+        (match (json.json-object-get params (& edits-key))
+          [(json.JsonFound edits-value)
             (match edits-value
-              [(JsonArray edits-list)
+              [(json.JsonArray edits-list)
                 (match (lsp-batch-edit-apply text (box-get edits-list))
                   [(OkLspEdit result-text)
                     (let
@@ -5202,9 +5250,9 @@
                           id
                           (lsp-json-object2
                             "success"
-                            (JsonBool true)
+                            (json.JsonBool true)
                             "text"
-                            (JsonString formatted)))
+                            (json.JsonString formatted)))
                         (LspContinue docs)))]
                   [(ErrLspEdit err)
                     (begin
@@ -5214,7 +5262,7 @@
                 (begin
                   (lsp-write-error id -32600 "edits must be an array")
                   (LspContinue docs))])]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing edits parameter")
               (LspContinue docs))]))]
@@ -5318,15 +5366,15 @@
 
 ;; tl/structuralReplaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [pos-key : String "position"]
-        (match (json-object-get params (& pos-key))
-          [(JsonFound position)
+        (match (json.json-object-get params (& pos-key))
+          [(json.JsonFound position)
             (match (lsp-json-string-field params "newText")
               [(OkLspJsonText new-text)
                 (let
@@ -5342,15 +5390,15 @@
                       id
                       (lsp-json-object2
                         "success"
-                        (JsonBool true)
+                        (json.JsonBool true)
                         "text"
-                        (JsonString formatted)))
+                        (json.JsonString formatted)))
                     (LspContinue docs)))]
               [(MissingLspJsonText)
                 (begin
                   (lsp-write-error id -32600 "Missing newText parameter")
                   (LspContinue docs))])]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
               (LspContinue docs))]))]
@@ -5402,15 +5450,15 @@
 
 ;; tl/deleteAt - Delete the form at a given position
 (define (lsp-handle-tl-delete-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [pos-key : String "position"]
-        (match (json-object-get params (& pos-key))
-          [(JsonFound position)
+        (match (json.json-object-get params (& pos-key))
+          [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
               [col : i64 (lsp-json-int-field-default position "character" 0)]
@@ -5458,11 +5506,11 @@
                                   id
                                   (lsp-json-object2
                                     "success"
-                                    (JsonBool true)
+                                    (json.JsonBool true)
                                     "text"
-                                    (JsonString formatted)))
+                                    (json.JsonString formatted)))
                                 (LspContinue docs)))))))))))]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
               (LspContinue docs))]))]
@@ -5473,8 +5521,8 @@
 
 ;; tl/insertAfter - Insert a new form after the form at a given position
 (define (lsp-handle-tl-insert-after
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
@@ -5482,8 +5530,8 @@
         [(OkLspJsonText new-text)
           (let
             [pos-key : String "position"]
-            (match (json-object-get params (& pos-key))
-              [(JsonFound position)
+            (match (json.json-object-get params (& pos-key))
+              [(json.JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
                   [col : i64
@@ -5539,11 +5587,11 @@
                                       id
                                       (lsp-json-object2
                                         "success"
-                                        (JsonBool true)
+                                        (json.JsonBool true)
                                         "text"
-                                        (JsonString formatted)))
+                                        (json.JsonString formatted)))
                                     (LspContinue docs)))))))))))]
-              [(JsonMissing)
+              [(json.JsonMissing)
                 (begin
                   (lsp-write-error id -32600 "Missing position parameter")
                   (LspContinue docs))]))]
@@ -5627,15 +5675,15 @@
 
 ;; tl/replaceBodyAt - Replace body of function at a given position
 (define (lsp-handle-tl-replace-body-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [pos-key : String "position"]
-        (match (json-object-get params (& pos-key))
-          [(JsonFound position)
+        (match (json.json-object-get params (& pos-key))
+          [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
               [col : i64 (lsp-json-int-field-default position "character" 0)]
@@ -5659,9 +5707,9 @@
                               id
                               (lsp-json-object2
                                 "success"
-                                (JsonBool true)
+                                (json.JsonBool true)
                                 "text"
-                                (JsonString formatted)))
+                                (json.JsonString formatted)))
                             (LspContinue docs)))]
                       [(ErrLspEdit message)
                         (begin
@@ -5671,7 +5719,7 @@
                     (begin
                       (lsp-write-error id -32600 "Missing newBody parameter")
                       (LspContinue docs))])))]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
               (LspContinue docs))]))]
@@ -5682,15 +5730,15 @@
 
 ;; tl/replacePatternAt - Replace pattern in function at a given position
 (define (lsp-handle-tl-replace-pattern-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [pos-key : String "position"]
-        (match (json-object-get params (& pos-key))
-          [(JsonFound position)
+        (match (json.json-object-get params (& pos-key))
+          [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
               [col : i64 (lsp-json-int-field-default position "character" 0)]
@@ -5720,9 +5768,9 @@
                                   id
                                   (lsp-json-object2
                                     "success"
-                                    (JsonBool true)
+                                    (json.JsonBool true)
                                     "text"
-                                    (JsonString formatted)))
+                                    (json.JsonString formatted)))
                                 (LspContinue docs)))]
                           [(ErrLspEdit message)
                             (begin
@@ -5739,7 +5787,7 @@
                     (begin
                       (lsp-write-error id -32600 "Missing oldPattern parameter")
                       (LspContinue docs))])))]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
               (LspContinue docs))]))]
@@ -5750,15 +5798,15 @@
 
 ;; tl/readFormAt - Read the form at a given position
 (define (lsp-handle-tl-read-form-at
-  [id : Json]
-  [params : Json]
+  [id : json.Json]
+  [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
         [pos-key : String "position"]
-        (match (json-object-get params (& pos-key))
-          [(JsonFound position)
+        (match (json.json-object-get params (& pos-key))
+          [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
               [col : i64 (lsp-json-int-field-default position "character" 0)]
@@ -5774,11 +5822,11 @@
                     id
                     (lsp-json-object2
                       "success"
-                      (JsonBool true)
+                      (json.JsonBool true)
                       "form"
-                      (JsonString form-text)))
+                      (json.JsonString form-text)))
                   (LspContinue docs))))]
-          [(JsonMissing)
+          [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
               (LspContinue docs))]))]

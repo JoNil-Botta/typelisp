@@ -1,8 +1,8 @@
-(import "stdlib/string_caller_result.tl")
+(import stdlib.string_caller_result)
 
 ; Must fail: `string-replace-result` may return a borrowed no-match result tied
 ; to `inner`, not `outer`.
-(define (main [outer : String] [old : String] [new : String]) : (StringReplaceResult
+(define (main [outer : String] [old : String] [new : String]) : (string_caller_result.StringReplaceResult
     outer
     old
     new)
@@ -10,4 +10,4 @@
     inner
     (let
       [text : String "inner"]
-      (string-replace-result (& text) (& old) (& new)))))
+      (string_caller_result.string-replace-result (& text) (& old) (& new)))))

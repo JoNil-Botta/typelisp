@@ -23696,6 +23696,12 @@
 ;; table is independent and far cheaper (one linear store scan), so it is built
 ;; separately by the program driver and injected here rather than tied to this
 ;; gate -- see optimize-program-with-level.
+(define (opt-loop-bce-summary-function-limit) : i64
+  ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
+  ;; functions than the old 64-function gate, even when the final program is still
+  ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
+  1024)
+
 (define (opt-loop-bce-build-summaries [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
   (let
     [capacity : i64
@@ -23734,7 +23740,9 @@
   [reachable-functions : CompilerIrFunctionList]
   [level : i64]) : OptLoopBceSummaries
   (opt-loop-bce-summaries-set-const-divisors
-    (if (<= (opt-function-list-count reachable-functions) 64)
+    (if (<=
+      (opt-function-list-count reachable-functions)
+      (opt-loop-bce-summary-function-limit))
       (opt-loop-bce-build-summaries reachable-functions)
       (opt-loop-bce-empty-summaries))
     (if (>= level 2)
@@ -23854,14 +23862,16 @@
               (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
               (cfg compile-profile (compiler-opt-profile-start))
               (let
-                [summaries : OptLoopBceSummaries
-                  (opt-build-program-summaries
+                [pruned-functions : CompilerIrFunctionList
+                  (opt-prune-unreachable-functions
                     globals
                     reachable-functions
-                    level)]
+                    externs)]
+                [summaries : OptLoopBceSummaries
+                  (opt-build-program-summaries globals pruned-functions level)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
-                    reachable-functions
+                    pruned-functions
                     level
                     summaries)]
                 (begin
@@ -24142,14 +24152,16 @@
                 (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
                 (cfg compile-profile (compiler-opt-profile-start))
                 (let
-                  [summaries : OptLoopBceSummaries
-                    (opt-build-program-summaries
+                  [pruned-functions : CompilerIrFunctionList
+                    (opt-prune-unreachable-functions
                       globals
                       reachable-functions
-                      level)]
+                      externs)]
+                  [summaries : OptLoopBceSummaries
+                    (opt-build-program-summaries globals pruned-functions level)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
-                      reachable-functions
+                      pruned-functions
                       level
                       summaries)]
                   (begin

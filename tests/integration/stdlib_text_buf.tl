@@ -1,6 +1,7 @@
 ;; stdlib_text_buf.tl - Integration witness for stdlib/text_buf.tl.
 (import "stdlib/text_buf.tl")
 (import "stdlib/text_buf_borrowed.tl")
+(import "stdlib/string.tl")
 
 (define (text-buf-integration-ok?) : bool
   (let

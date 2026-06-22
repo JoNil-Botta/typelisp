@@ -14,19 +14,21 @@
 ;# these monomorphic `*Next` enums when it lands.
 ;#
 ;# ```typelisp
-;# (import "stdlib/iterator.tl")
+;# (import stdlib.iterator as iter)
 ;# (define (main) : i64
 ;#   (let
-;#     [it : I64RangeIter (i64-range-iterator 0 3)]
+;#     [it : iter.I64RangeIter (iter.i64-range-iterator 0 3)]
 ;#     [sum : i64 0]
 ;#     [done : bool false]
 ;#     (begin
 ;#       (while (not done)
-;#         (match (i64-range-next (&mut it))
-;#           [(I64RangeItem value) (set! sum (+ sum value))]
-;#           [(I64RangeDone) (set! done true)]))
+;#         (match (iter.i64-range-next (&mut it))
+;#           [(iter.I64RangeItem value) (set! sum (+ sum value))]
+;#           [(iter.I64RangeDone) (set! done true)]))
 ;#       sum)))
 ;# ```
+(module stdlib.iterator)
+
 ;: Iterator state for a half-open `i64` range `[current, end)`.
 (defstruct I64RangeIter
   (current i64)
@@ -65,7 +67,7 @@
     [(I64RangeItem value) value]
     [(I64RangeDone) fallback]))
 
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -85,21 +87,24 @@
   test
   (define (iterator-test-main) : i64
     (begin
-      (assert-i64-eq (iterator-test-range-sum 0 0) 0 "empty range sum")
-      (assert-i64-eq (iterator-test-range-sum 5 3) 0 "descending range sum")
-      (assert-i64-eq (iterator-test-range-sum 4 5) 4 "single range sum")
-      (assert-i64-eq (iterator-test-range-sum 1 4) 6 "multi range sum")
+      (test.assert-i64-eq (iterator-test-range-sum 0 0) 0 "empty range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum 5 3)
+        0
+        "descending range sum")
+      (test.assert-i64-eq (iterator-test-range-sum 4 5) 4 "single range sum")
+      (test.assert-i64-eq (iterator-test-range-sum 1 4) 6 "multi range sum")
       (let
         [iter : I64RangeIter (i64-range-iterator 7 8)]
         (begin
-          (assert-i64-eq
+          (test.assert-i64-eq
             (i64-range-value-or (i64-range-next (&mut iter)) -1)
             7
             "first next yields value")
-          (assert-true
+          (test.assert-true
             (i64-range-done? (i64-range-next (&mut iter)))
             "second next exhausted")
-          (assert-true
+          (test.assert-true
             (i64-range-done? (i64-range-next (&mut iter)))
             "repeated next stays exhausted")))
       42)))
@@ -108,4 +113,17 @@
   test
   (test
     iterator-range-api
-    (assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
+    (test.assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
+
+(export
+  (value i64-range-iterator)
+  (value i64-range-next)
+  (value i64-range-done?)
+  (value i64-range-value-or)
+  (type I64RangeIter)
+  (type I64RangeNext)
+  (constructor I64RangeIter)
+  (field I64RangeIter current)
+  (field I64RangeIter end)
+  (variant I64RangeDone)
+  (variant I64RangeItem))

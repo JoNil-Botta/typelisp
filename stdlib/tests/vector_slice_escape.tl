@@ -1,6 +1,7 @@
-(import "stdlib/vector_slice.tl")
-(import (vector i64) as vec)
-(import (slice i64) as slice)
+(import stdlib.vector)
+(import stdlib.vector_slice)
+(import (stdlib.vector.vector i64) as vec)
+(import (stdlib.vector_slice.slice i64) as slice)
 
 ; Must fail: the returned slice is tied to `inner`, not `outer`.
 (define (main [outer : vec.Vec]) : (slice.Slice outer)

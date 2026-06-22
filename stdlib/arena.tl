@@ -4,21 +4,21 @@
 ;# `(with-arena ...)` for scoped reclamation when possible; these helpers expose
 ;# manual switching/rewinding/destruction and can invalidate live heap handles.
 ;#
-;# Usage: `(import "stdlib/arena.tl")`
+;# Usage: `(import stdlib.arena)`
 ;#
 ;# Temporary scratch work should usually use lexical `with-arena`; values
 ;# allocated inside the scoped arena cannot escape:
 ;#
 ;# ```typelisp
-;# (import "stdlib/arena.tl")
-;# (import "stdlib/string.tl")
+;# (import stdlib.arena)
+;# (import stdlib.string)
 ;#
 ;# (define (scratch-score [n : i64]) : i64
 ;#   (with-arena scratch
 ;#     (let
 ;#       [prefix : String "phase:"]
-;#       [suffix : String (int->string n)]
-;#       [text : String (string-append-borrowed (& prefix) (& suffix))]
+;#       [suffix : String (string.int->string n)]
+;#       [text : String (string.string-append-borrowed (& prefix) (& suffix))]
 ;#       (string-length (& text)))))
 ;# ```
 ;#
@@ -27,16 +27,16 @@
 ;# back into the enclosing active arena:
 ;#
 ;# ```typelisp
-;# (import "stdlib/arena.tl")
-;# (import "stdlib/string.tl")
+;# (import stdlib.arena)
+;# (import stdlib.string)
 ;#
 ;# (define (build-message [scratch : i64] [n : i64]) : String
 ;#   (with-escape
 ;#     scratch
 ;#     (let
 ;#       [prefix : String "kept:"]
-;#       [suffix : String (int->string n)]
-;#       (string-append-borrowed (& prefix) (& suffix)))))
+;#       [suffix : String (string.int->string n)]
+;#       (string.string-append-borrowed (& prefix) (& suffix)))))
 ;# ```
 ;#
 ;# For one-shot scratch work, `with-scratch` creates and destroys the scratch
@@ -44,11 +44,11 @@
 ;# active arena:
 ;#
 ;# ```typelisp
-;# (import "stdlib/string.tl")
+;# (import stdlib.string)
 ;#
 ;# (define (build-once [n : i64]) : String
 ;#   (with-scratch
-;#     (string-append "once:" (int->string n))))
+;#     (string.string-append "once:" (string.int->string n))))
 ;# ```
 ;#
 ;# To keep results owned by the target arena itself, use `in-arena`. It switches
@@ -56,37 +56,39 @@
 ;# active arena without marking, rewinding, destroying, or cloning:
 ;#
 ;# ```typelisp
-;# (import "stdlib/arena.tl")
-;# (import "stdlib/string.tl")
+;# (import stdlib.arena)
+;# (import stdlib.string)
 ;#
 ;# (define (build-in-level [level : i64] [n : i64]) : String
 ;#   (in-arena
 ;#     level
-;#     (string-append "level:" (int->string n))))
+;#     (string.string-append "level:" (string.int->string n))))
 ;# ```
 ;#
 ;# Manual arena switching, rewinding, and destruction remain explicit unsafe
 ;# operations for code that can prove all invalidated handles are dead:
 ;#
 ;# ```typelisp
-;# (import "stdlib/arena.tl")
+;# (import stdlib.arena)
 ;#
 ;# (define (manual-step) : unit
 ;#   (let
-;#     [home : i64 (arena-current)]
-;#     [scratch : i64 (arena-make)]
+;#     [home : i64 (arena.arena-current)]
+;#     [scratch : i64 (arena.arena-make)]
 ;#     (unsafe
 ;#       (begin
-;#         (arena-set! scratch)
-;#         (arena-rewind (arena-mark))
-;#         (arena-set! home)
-;#         (arena-destroy scratch)))))
+;#         (arena.arena-set! scratch)
+;#         (arena.arena-rewind (arena.arena-mark))
+;#         (arena.arena-set! home)
+;#         (arena.arena-destroy scratch)))))
 ;# ```
 ;#
 ;# `ArenaHandle`/`ArenaMark` are temporary `i64` aliases until opaque public
 ;# handle types land (#182/#1632). The public helpers are wrappers over raw
 ;# runtime externs so this module stays formatter-stable until extern metadata
 ;# formatting is fixed (#1827).
+(module stdlib.arena)
+
 ;: Runtime hook backing `arena-make`.
 (extern (tl_arena_make) : i64)
 
@@ -185,3 +187,19 @@
               (arena-rewind scratch-mark)
               (arena-set! home)
               (arena-destroy scratch))))))))
+
+(export
+  (value tl_arena_make)
+  (value tl_arena_make_atomic)
+  (value tl_arena_current)
+  (value tl_region_mark)
+  (value tl_arena_set)
+  (value tl_arena_destroy)
+  (value tl_region_reset)
+  (value arena-make)
+  (value arena-make-atomic)
+  (value arena-current)
+  (value arena-mark)
+  (value arena-set!)
+  (value arena-destroy)
+  (value arena-rewind))

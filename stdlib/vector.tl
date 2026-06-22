@@ -88,8 +88,6 @@
 ;# ```
 (module stdlib.vector)
 
-(import stdlib.string)
-
 ;: Emit a generated growable vector module for element type `T`.
 (defmacro (vector [T : type]) : Module
   (let
@@ -102,7 +100,24 @@
     [kind : String (type-kind T)]
     [eq-body : Expr
       (match kind
-        ["string" `(string.string-eq a b)]
+        ["string"
+          `(cfg
+            feature-compiler-private-string-intrinsics
+            (__tl_string_eq a b)
+            (let
+              [n : i64 (string-length a)]
+              [i : i64 0]
+              [same : bool (= n (string-length b))]
+              (begin
+                (while (if same
+                  (< i n)
+                  false)
+                  (begin
+                    (if (= (string-ref a i) (string-ref b i))
+                      unit
+                      (set! same false))
+                    (set! i (+ i 1))))
+                same)))]
         ["i64" `(= a b)]
         ["i32" `(= a b)]
         ["i16" `(= a b)]
@@ -118,7 +133,6 @@
         [_ `false])]
     `(begin
       (module ,module-name)
-      (import stdlib.string)
       (defstruct ,vec-name
         (slots (Array ,T))
         (len i64))
@@ -875,7 +889,10 @@
   (define (string-vec-contains-from? [v : StringVec] [x : String] [index : i64]) : bool
     (if (>= index (string-vec-len v))
       false
-      (if (string.string-eq (array-ref (string-vec-slots v) index) x)
+      (if (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_eq (array-ref (string-vec-slots v) index) x)
+        (string-eq (array-ref (string-vec-slots v) index) x))
         true
         (string-vec-contains-from? v x (+ index 1))))))
 

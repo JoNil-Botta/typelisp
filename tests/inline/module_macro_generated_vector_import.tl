@@ -3,6 +3,9 @@
 (import "stdlib/test.tl")
 (import "stdlib/vector.tl")
 
+(defstruct Pair
+  (value i64))
+
 (defmacro (vector-user [T : type]) : Module
   (let
     [module-name : Expr
@@ -26,6 +29,7 @@
 
 (import (vector-user i64) as user)
 (import (vector-user String) as string-user)
+(import (vector-user Pair) as pair-user)
 
 (test
   generated-module-body-imports-vector-module-macro
@@ -37,3 +41,10 @@
     (string-user.score "alpha" "fallback")
     42
     "generated module imported string vector macro"))
+
+(test
+  generated-module-body-imports-struct-vector-module-macro
+  (assert-i64-eq
+    (pair-user.score (Pair 7) (Pair 0))
+    42
+    "generated module imported struct vector macro"))

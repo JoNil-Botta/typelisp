@@ -734,6 +734,10 @@
   (OkCtfeQuoteTypeList AstTypeList i64)
   (ErrCtfeQuoteTypeList CompilerDiagnostic))
 
+(defenum ResultCtfeQuoteLifetimeList
+  (OkCtfeQuoteLifetimeList AstLifetimeList)
+  (ErrCtfeQuoteLifetimeList CompilerDiagnostic))
+
 (defenum ResultCtfeQuoteMaybeType
   (OkCtfeQuoteMaybeType AstMaybeType i64)
   (ErrCtfeQuoteMaybeType CompilerDiagnostic))
@@ -4706,6 +4710,55 @@
           [_ (ctfe-type-expr-error origin)]))]
     [_ (ctfe-type-expr-error origin)]))
 
+(define (ctfe-expr-list-to-lifetime-list
+  [exprs : AstExprList]
+  [origin : AstExpr]) : ResultCtfeQuoteLifetimeList
+  (match exprs
+    [(AstExprNil) (OkCtfeQuoteLifetimeList AstLifetimeNil)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest : AstExprList (box-get rest)]
+        (match (ast-expr-unspan head-expr)
+          [(AstExprVar name)
+            (match (ctfe-expr-list-to-lifetime-list rest origin)
+              [(OkCtfeQuoteLifetimeList tail)
+                (OkCtfeQuoteLifetimeList
+                  (ast-lifetime-cons (intern-str name) tail))]
+              [(ErrCtfeQuoteLifetimeList diag) (ErrCtfeQuoteLifetimeList diag)])]
+          [_
+            (ErrCtfeQuoteLifetimeList
+              (ctfe-diagnostic-at-expr
+                origin
+                "type unquote expects a type expression"))]))]))
+
+(define (ctfe-expr-resolved-nominal-type
+  [args : AstExprList]
+  [origin : AstExpr]
+  [fuel : i64]
+  [is-struct : bool]) : ResultCtfeQuoteType
+  (match args
+    [(AstExprCons name-node lifetime-rest)
+      (let
+        [name-expr : AstExpr (ast-node-get name-node)]
+        [lifetime-exprs : AstExprList (box-get lifetime-rest)]
+        (match (ast-expr-unspan name-expr)
+          [(AstExprLiteral (AstLitString name))
+            (match (ctfe-expr-list-to-lifetime-list lifetime-exprs origin)
+              [(OkCtfeQuoteLifetimeList lifetimes)
+                (OkCtfeQuoteType
+                  (if is-struct
+                    (match lifetimes
+                      [(AstLifetimeNil) (AstTyStruct (intern name))]
+                      [_ (ast-ty-struct-args (intern name) lifetimes)])
+                    (match lifetimes
+                      [(AstLifetimeNil) (AstTyEnum (intern name))]
+                      [_ (ast-ty-enum-args (intern name) lifetimes)]))
+                  fuel)]
+              [(ErrCtfeQuoteLifetimeList diag) (ErrCtfeQuoteType diag)])]
+          [_ (ctfe-type-expr-error origin)]))]
+    [_ (ctfe-type-expr-error origin)]))
+
 (define (ctfe-expr-to-type [expr : AstExpr] [origin : AstExpr] [fuel : i64]) : ResultCtfeQuoteType
   (match (ast-expr-unspan expr)
     [(AstExprTypeLiteral ty) (OkCtfeQuoteType ty fuel)]
@@ -4719,6 +4772,10 @@
             (let
               [head : String (intern-str name)]
               (cond
+                [(string-eq head (ctfe-internal-resolved-struct-type-marker))
+                  (ctfe-expr-resolved-nominal-type args origin fuel true)]
+                [(string-eq head (ctfe-internal-resolved-enum-type-marker))
+                  (ctfe-expr-resolved-nominal-type args origin fuel false)]
                 [(string-eq head "->") (ctfe-expr-func-type args origin fuel)]
                 [(string-eq head "Array")
                   (ctfe-expr-array-type args origin fuel)]

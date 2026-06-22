@@ -4,7 +4,7 @@
 
 (define (main) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     (match (channel-string-create 1)
       [(ChannelStringCreateErr _) 1]
       [(ChannelStringCreateOk channel)

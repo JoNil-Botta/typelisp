@@ -30,7 +30,7 @@
 ;# (import stdlib.arena)
 ;# (import stdlib.string)
 ;#
-;# (define (build-message [scratch : i64] [n : i64]) : String
+;# (define (build-message [scratch : arena.Arena] [n : i64]) : String
 ;#   (with-escape
 ;#     scratch
 ;#     (let
@@ -59,7 +59,7 @@
 ;# (import stdlib.arena)
 ;# (import stdlib.string)
 ;#
-;# (define (build-in-level [level : i64] [n : i64]) : String
+;# (define (build-in-level [level : arena.Arena] [n : i64]) : String
 ;#   (in-arena
 ;#     level
 ;#     (string.string-append "level:" (string.int->string n))))
@@ -73,8 +73,8 @@
 ;#
 ;# (define (manual-step) : unit
 ;#   (let
-;#     [home : i64 (arena.arena-current)]
-;#     [scratch : i64 (arena.arena-make)]
+;#     [home : arena.Arena (arena.arena-current)]
+;#     [scratch : arena.Arena (arena.arena-make)]
 ;#     (unsafe
 ;#       (begin
 ;#         (arena.arena-set! scratch)
@@ -83,11 +83,19 @@
 ;#         (arena.arena-destroy scratch)))))
 ;# ```
 ;#
-;# `ArenaHandle`/`ArenaMark` are temporary `i64` aliases until opaque public
-;# handle types land (#182/#1632). The public helpers are wrappers over raw
-;# runtime externs so this module stays formatter-stable until extern metadata
-;# formatting is fixed (#1827).
+;# `Arena` and `ArenaMark` are nominal wrappers over raw runtime handles. The
+;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
+;# low-level code; ordinary user code should use the typed helpers below.
 (module stdlib.arena)
+
+;: First-class arena handle. The runtime representation is a raw `i64` handle,
+;: but the source type is nominal so raw integers cannot satisfy arena APIs.
+(defstruct Arena
+  (handle i64))
+
+;: Rewind mark for the current active arena.
+(defstruct ArenaMark
+  (handle i64))
 
 ;: Runtime hook backing `arena-make`.
 (extern (tl_arena_make) : i64)
@@ -118,49 +126,65 @@
 ;: Prefer `with-scratch` for one-shot scratch clone-out, or pass the handle to
 ;: `with-escape` when the scratch arena should be reused. Direct switching or
 ;: destruction of the handle remains unsafe.
-(define (arena-make) : i64
-  (tl_arena_make))
+(define (arena-make) : Arena
+  (Arena (tl_arena_make)))
 
 ;: Create a fresh independent atomic arena without switching to it.
-(define (arena-make-atomic) : i64
-  (tl_arena_make_atomic))
+(define (arena-make-atomic) : Arena
+  (Arena (tl_arena_make_atomic)))
 
 ;: Return the current active arena handle, or `0` before the first allocation.
-(define (arena-current) : i64
-  (tl_arena_current))
+(define (arena-current) : Arena
+  (Arena (tl_arena_current)))
 
 ;: Return a rewind mark for the current active arena.
 ;:
 ;: Rewinding to the mark is unsafe because it invalidates later allocations.
-(define (arena-mark) : i64
-  (tl_region_mark))
+(define (arena-mark) : ArenaMark
+  (ArenaMark (tl_region_mark)))
+
+;: Return the raw runtime handle for low-level interop.
+(define (arena-raw-handle [arena : Arena]) : i64
+  (struct-get arena handle))
+
+;: Return the raw runtime mark for low-level interop.
+(define (arena-mark-raw-handle [mark : ArenaMark]) : i64
+  (struct-get mark handle))
+
+;: Compare two arena handles by their raw runtime identity.
+(define (arena-eq? [left : Arena] [right : Arena]) : bool
+  (= (arena-raw-handle left) (arena-raw-handle right)))
+
+;: Compare two arena marks by their raw runtime identity.
+(define (arena-mark-eq? [left : ArenaMark] [right : ArenaMark]) : bool
+  (= (arena-mark-raw-handle left) (arena-mark-raw-handle right)))
 
 ;: Switch the active arena to `arena`.
 ;:
 ;: This invalidates allocation assumptions for code that still expects the old
 ;: active arena, so calls require `(unsafe ...)`.
 (unsafe
-  (define (arena-set! [arena : i64]) : unit
+  (define (arena-set! [arena : Arena]) : unit
     (unsafe
-      (tl_arena_set arena))))
+      (tl_arena_set (arena-raw-handle arena)))))
 
 ;: Destroy `arena` and any chained arena segments reachable from it.
 ;:
 ;: All heap handles into that arena become invalid, so calls require
 ;: `(unsafe ...)`.
 (unsafe
-  (define (arena-destroy [arena : i64]) : unit
+  (define (arena-destroy [arena : Arena]) : unit
     (unsafe
-      (tl_arena_destroy arena))))
+      (tl_arena_destroy (arena-raw-handle arena)))))
 
 ;: Rewind the current active arena to `mark`.
 ;:
 ;: Heap handles allocated after the mark become invalid, so calls require
 ;: `(unsafe ...)`.
 (unsafe
-  (define (arena-rewind [mark : i64]) : unit
+  (define (arena-rewind [mark : ArenaMark]) : unit
     (unsafe
-      (tl_region_reset mark))))
+      (tl_region_reset (arena-mark-raw-handle mark)))))
 
 (test
   arena-first-class-api
@@ -170,16 +194,16 @@
         (begin
           (/ 1 0)
           unit))]
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (begin
       (unsafe
         (arena-set! scratch))
       (let
-        [scratch-current : i64 (arena-current)]
-        [scratch-mark : i64 (arena-mark)]
+        [scratch-current : Arena (arena-current)]
+        [scratch-mark : ArenaMark (arena-mark)]
         (begin
-          (if (= scratch-current scratch)
+          (if (arena-eq? scratch-current scratch)
             unit
             (fail))
           (unsafe
@@ -196,10 +220,16 @@
   (value tl_arena_set)
   (value tl_arena_destroy)
   (value tl_region_reset)
+  (type Arena)
+  (type ArenaMark)
   (value arena-make)
   (value arena-make-atomic)
   (value arena-current)
   (value arena-mark)
+  (value arena-raw-handle)
+  (value arena-mark-raw-handle)
+  (value arena-eq?)
+  (value arena-mark-eq?)
   (value arena-set!)
   (value arena-destroy)
   (value arena-rewind))

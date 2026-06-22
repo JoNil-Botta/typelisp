@@ -11,7 +11,7 @@
       [text : String (string.string-append-borrowed (& prefix) (& seed-text))]
       (string-length (& text)))))
 
-(define (scratch-clone-message [scratch : i64] [seed : i64]) : String
+(define (scratch-clone-message [scratch : arena.Arena] [seed : i64]) : String
   (with-escape
     scratch
     (let
@@ -28,7 +28,7 @@
 
 (define (main) : i64
   (let
-    [scratch : i64 (arena.arena-make)]
+    [scratch : arena.Arena (arena.arena-make)]
     [score : i64 (scratch-temporary-score 1234)]
     [kept : String (scratch-clone-message scratch 7)]
     [noise : String (scratch-clone-message scratch 99)]

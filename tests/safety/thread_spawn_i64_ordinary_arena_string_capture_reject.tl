@@ -4,7 +4,7 @@
 
 (define (main) : i64
   (let
-    [owner : i64 (arena-make)]
+    [owner : Arena (arena-make)]
     [text : String (in-arena owner (string-append "not-" "spanning"))]
     (match (thread-spawn-i64
       (lambda () : i64

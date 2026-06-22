@@ -48,7 +48,7 @@
 
 (define (thread-safe-array-i64-atomic-run) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     [base : i64 18]
     (match (thread-spawn-array-i64
       (lambda () : (Array i64)

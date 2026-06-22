@@ -9765,7 +9765,7 @@
   (and
     (compiler-parse-with-escape-shape-ok?)
     (compiler-parse-ok?
-      "(define (main) : i64 (let ([scratch : i64 (arena-make)]) (with-escape scratch 1 2 3)))")
+      "(define (main) : i64 (let ([scratch : Arena (arena-make)]) (with-escape scratch 1 2 3)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (with-escape))"
       "parse: with-escape requires a scratch arena before its body")
@@ -9814,7 +9814,7 @@
 
 (define (compiler-parse-in-arena-shape-ok?) : bool
   (match (parse-ast-source
-    "(define (main [arena : i64]) : i64 (in-arena arena 1 2))")
+    "(define (main [arena : Arena]) : i64 (in-arena arena 1 2))")
     [(OkAstProgram (AstProgram decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
@@ -9854,7 +9854,7 @@
   (and
     (compiler-parse-in-arena-shape-ok?)
     (compiler-parse-ok?
-      "(define (main) : i64 (let ([arena : i64 0]) (in-arena arena 1 2 3)))")
+      "(define (main) : i64 (let ([arena : Arena (arena-current)]) (in-arena arena 1 2 3)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (in-arena))"
       "parse: in-arena requires an arena before its body")

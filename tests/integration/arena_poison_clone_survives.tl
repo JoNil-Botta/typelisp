@@ -9,8 +9,8 @@
 
 (define (main) : i64
   (let
-    [outer : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [outer : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (begin
       (tl_arena_poison_enable)
       (unsafe

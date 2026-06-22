@@ -61,8 +61,8 @@
 
 (define (scratch-string-array-copy-ok?) : bool
   (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (begin
       (unsafe
         (arena-set! scratch))

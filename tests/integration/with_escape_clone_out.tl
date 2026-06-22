@@ -24,13 +24,13 @@
       (array-set! items 1 (piece seed 2))
       items)))
 
-(define (escape-items [scratch : i64] [seed : i64]) : (Array String)
+(define (escape-items [scratch : Arena] [seed : i64]) : (Array String)
   (with-escape scratch (make-items seed)))
 
-(define (escape-cell [scratch : i64] [seed : i64]) : (Box String)
+(define (escape-cell [scratch : Arena] [seed : i64]) : (Box String)
   (with-escape scratch (box (piece seed 3))))
 
-(define (escape-bundle [scratch : i64] [seed : i64]) : EscapeOutcome
+(define (escape-bundle [scratch : Arena] [seed : i64]) : EscapeOutcome
   (with-escape
     scratch
     (Escaped
@@ -76,11 +76,11 @@
     [(Escaped bundle) (bundle-ok? bundle seed)]
     [NoEscape false]))
 
-(define (scratch-rewound? [scratch : i64] [seed : i64]) : bool
+(define (scratch-rewound? [scratch : Arena] [seed : i64]) : bool
   (let
-    [home : i64 (arena-current)]
-    [before : i64 0]
-    [after : i64 0]
+    [home : Arena (arena-current)]
+    [before : ArenaMark (arena-mark)]
+    [after : ArenaMark (arena-mark)]
     (begin
       (unsafe
         (arena-set! scratch))
@@ -95,11 +95,11 @@
           (set! after (arena-mark))
           (unsafe
             (arena-set! home))
-          (and (= before after) (items-ok? items seed)))))))
+          (and (arena-mark-eq? before after) (items-ok? items seed)))))))
 
 (define (main) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     [items : (Array String) (escape-items scratch 10)]
     [cell : (Box String) (escape-cell scratch 20)]
     [bundle : EscapeOutcome (escape-bundle scratch 30)]

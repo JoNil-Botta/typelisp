@@ -19492,7 +19492,7 @@
   (if (= level 0)
     funcs
     (let
-      [scratch : i64 (arena-make)]
+      [scratch : i64 (tl_arena_make)]
       [result : CompilerIrFunctionList
         (optimize-function-list-escaping-with-summaries
           funcs
@@ -19501,7 +19501,7 @@
           summaries)]
       (begin
         (unsafe
-          (arena-destroy scratch))
+          (tl_arena_destroy scratch))
         result))))
 
 (define (optimize-function-list-escaping
@@ -19576,10 +19576,29 @@
   [level : i64]
   [scratch : i64]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
-  (with-escape
-    scratch
-    (compiler-ir-function-compact-blocks
-      (optimize-function-with-level-and-summaries func level summaries))))
+  (let
+    [enclosing : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set scratch))
+      (let
+        [mark : i64 (tl_region_mark)]
+        [optimized : CompilerIrFunction
+          (compiler-ir-function-compact-blocks
+            (optimize-function-with-level-and-summaries func level summaries))]
+        [scratch-head : i64 (tl_arena_current)]
+        (begin
+          (unsafe
+            (tl_arena_set enclosing))
+          (let
+            [escaped : CompilerIrFunction (clone optimized)]
+            [new-enclosing : i64 (tl_arena_current)]
+            (begin
+              (unsafe
+                (tl_arena_set scratch-head)
+                (tl_region_reset mark)
+                (tl_arena_set new-enclosing))
+              escaped)))))))
 
 (defenum OptStringSet
   (OptStringNil)
@@ -35264,10 +35283,19 @@
   (define (compiler-opt-scratch-region-report-function-escaping
     [func : CompilerIrFunction]
     [scratch : i64]) : unit
-    (with-escape
-      scratch
-      (compiler-opt-scratch-region-report-function func)
-      unit)))
+    (let
+      [enclosing : i64 (tl_arena_current)]
+      (begin
+        (unsafe
+          (tl_arena_set scratch))
+        (let
+          [mark : i64 (tl_region_mark)]
+          [_report : unit (compiler-opt-scratch-region-report-function func)]
+          [scratch-head : i64 (tl_arena_current)]
+          (unsafe
+            (tl_arena_set scratch-head)
+            (tl_region_reset mark)
+            (tl_arena_set enclosing)))))))
 
 (define (opt-scratch-test-alloc) : CompilerIrInstr
   (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueI64 32)) (AstTyU64)))

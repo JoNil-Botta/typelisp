@@ -58,7 +58,7 @@
 (define (main) : i64
   (let
     [base : i64 20]
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     (match (thread-spawn-i64
       (lambda () : i64
         (+ base 1)))

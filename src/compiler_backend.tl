@@ -1623,6 +1623,9 @@
 (define (compiler-backend-avx512-mask-mov-imm-mnemonic [lanes : i64]) : String
   (string-append "mov" (compiler-backend-avx512-mask-int-suffix lanes)))
 
+(define (compiler-backend-avx512-mask-not-full-width? [lanes : i64]) : bool
+  (or (= lanes 16) (= lanes 32) (= lanes 64)))
+
 (define (compiler-backend-avx512-mask-shl-mnemonic [lanes : i64]) : String
   (string-append "shl" (compiler-backend-avx512-mask-int-suffix lanes)))
 
@@ -2508,7 +2511,7 @@
           (match (compiler-backend-mask-var-reg assignments dst "mask not dst")
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
-                (string-append
+                (if (compiler-backend-avx512-mask-not-full-width? lanes)
                   (str-cat
                     "    "
                     (string-append "knot" mask-suffix)
@@ -2529,10 +2532,10 @@
                     " "
                     mask-gpr
                     ", %k7\n    "
-                    (string-append "kand" mask-suffix)
-                    " %k7, "
-                    dst-reg
-                    ", "
+                    (string-append "kandn" mask-suffix)
+                    " "
+                    src-reg
+                    ", %k7, "
                     dst-reg
                     "\n")))]
             [(ErrBackendReg message)
@@ -6504,8 +6507,18 @@
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
     [(IrBinBitAnd)
-      (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "and" ty imm))]
+      (let
+        [size : i64 (compiler-backend-type-size ty)]
+        (CompilerBackendSomeAsm
+          (if (string-eq imm "$255")
+            (if (= size 8)
+              "    movzbq %al, %rax\n"
+              "    movzbl %al, %eax\n")
+            (if (and (>= size 2) (string-eq imm "$65535"))
+              (if (= size 8)
+                "    movzwq %ax, %rax\n"
+                "    movzwl %ax, %eax\n")
+              (compiler-backend-binop-immediate-reg-asm "and" ty imm)))))]
     [(IrBinBitOr)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
@@ -6840,7 +6853,25 @@
             (OkCompilerBackend
               (string-append
                 lhs-asm
-                (str-cat "    " mnem " " imm ", " dst-home "\n")))]
+                (if (match op
+                  [(IrBinBitAnd) true]
+                  [_ false])
+                  (if (string-eq imm "$255")
+                    (str-cat
+                      "    movzbq "
+                      (compiler-backend-reg-part dst-home 1)
+                      ", "
+                      dst-home
+                      "\n")
+                    (if (string-eq imm "$65535")
+                      (str-cat
+                        "    movzwq "
+                        (compiler-backend-reg-part dst-home 2)
+                        ", "
+                        dst-home
+                        "\n")
+                      (str-cat "    " mnem " " imm ", " dst-home "\n")))
+                  (str-cat "    " mnem " " imm ", " dst-home "\n"))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop

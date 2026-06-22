@@ -1807,8 +1807,9 @@
   [base-cache : LowerNameCache]
   [names : LowerNameEnv]
   [target-module : String]
+  [target-module-id : i64]
   [alias : String]
-  [module : String]) : LowerNameEnv
+  [module-id : i64]) : LowerNameEnv
   (match decls
     [(AstDeclNil) names]
     [(AstDeclCons decl rest)
@@ -1821,57 +1822,63 @@
               base-cache
               names
               target-module
+              target-module-id
               alias
-              (intern-str next-module))]
+              next-module)]
           [(AstDeclImport _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
               names
               target-module
+              target-module-id
               alias
-              module)]
+              module-id)]
           [(AstDeclIncludeStr _ _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
               names
               target-module
+              target-module-id
               alias
-              module)]
+              module-id)]
           [(AstDeclIncludeBin _ _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
               names
               target-module
+              target-module-id
               alias
-              module)]
+              module-id)]
           [(AstDeclExport _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
               names
               target-module
+              target-module-id
               alias
-              module)]
+              module-id)]
           [(AstDeclTest _ _ _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
               names
               target-module
+              target-module-id
               alias
-              module)]
+              module-id)]
           [_
             (let
               [next-names : LowerNameEnv
-                (if (string-eq module target-module)
+                (if (= module-id target-module-id)
                   (lower-name-env-add-decl-alias-in-module-cache
                     names
                     base-cache
                     alias
-                    module
+                    target-module
                     decl)
                   names)]
               (lower-name-env-add-module-aliases-cache
@@ -1879,8 +1886,9 @@
                 base-cache
                 next-names
                 target-module
+                target-module-id
                 alias
-                module))]))]))
+                module-id))]))]))
 
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
@@ -2041,8 +2049,8 @@
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [target-current-module : String]
-  [current-module : String]) : LowerNameEnv
+  [target-current-module-id : i64]
+  [current-module-id : i64]) : LowerNameEnv
   (match decls
     [(AstDeclNil) names]
     [(AstDeclCons decl rest)
@@ -2055,8 +2063,8 @@
               rest
               names
               base-cache
-              target-current-module
-              (intern-str next-module))]
+              target-current-module-id
+              next-module)]
           [(AstDeclImport
               (AstImportSpec
                 _
@@ -2067,26 +2075,27 @@
             (lower-name-env-from-import-aliases-in-module-cache
               all-decls
               rest
-              (if (string-eq current-module target-current-module)
+              (if (= current-module-id target-current-module-id)
                 (lower-name-env-add-module-aliases-cache
                   all-decls
                   base-cache
                   names
                   target-module
+                  (intern target-module)
                   alias
-                  "")
+                  (intern ""))
                 names)
               base-cache
-              target-current-module
-              current-module)]
+              target-current-module-id
+              current-module-id)]
           [_
             (lower-name-env-from-import-aliases-in-module-cache
               all-decls
               rest
               names
               base-cache
-              target-current-module
-              current-module)]))]))
+              target-current-module-id
+              current-module-id)]))]))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : AstDeclList]
@@ -2098,8 +2107,8 @@
     decls
     names
     base-cache
-    module
-    ""))
+    (intern module)
+    (intern "")))
 
 (define (lower-name-env-add-local-decl
   [names : LowerNameEnv]
@@ -2320,7 +2329,8 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [target-module : String]
-  [module : String]) : ResultLowerModuleLocalEnv
+  [target-module-id : i64]
+  [module-id : i64]) : ResultLowerModuleLocalEnv
   (match decls
     [(AstDeclNil) (OkLowerModuleLocalEnv type-env names)]
     [(AstDeclCons decl rest)
@@ -2335,9 +2345,10 @@
               names
               name-cache
               target-module
-              (intern-str next-module))]
+              target-module-id
+              next-module)]
           [_
-            (if (string-eq module target-module)
+            (if (= module-id target-module-id)
               (match (lower-module-local-type-env-add-decl
                 top-env
                 type-env
@@ -2355,7 +2366,8 @@
                       decl)
                     name-cache
                     target-module
-                    module)]
+                    target-module-id
+                    module-id)]
                 [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
               (lower-module-local-envs-list
                 top-env
@@ -2364,7 +2376,8 @@
                 names
                 name-cache
                 target-module
-                module))]))]))
+                target-module-id
+                module-id))]))]))
 
 (define (lower-module-local-envs
   [ctx : TcContext]
@@ -2391,7 +2404,8 @@
             module-names
             name-cache
             module
-            ""))])))
+            (intern module)
+            (intern "")))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -5042,7 +5056,8 @@
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [target-module : String]
-  [module : String]) : LowerNameEnv
+  [target-module-id : i64]
+  [module-id : i64]) : LowerNameEnv
   (match decls
     [(AstDeclNil) base-names]
     [(AstDeclCons decl rest)
@@ -5055,11 +5070,12 @@
               base-names
               base-cache
               target-module
-              (intern-str next-module))]
+              target-module-id
+              next-module)]
           [_
             (lower-function-body-local-names-in-module
               rest
-              (if (string-eq module target-module)
+              (if (= module-id target-module-id)
                 (lower-name-env-add-local-decl
                   base-names
                   base-cache
@@ -5068,7 +5084,8 @@
                 base-names)
               base-cache
               target-module
-              module)]))]))
+              target-module-id
+              module-id)]))]))
 
 (define (lower-function-body-name-cache-for-module
   [decls : AstDeclList]
@@ -5092,7 +5109,8 @@
           module-base-names
           base-cache
           module
-          "")))))
+          (intern module)
+          (intern ""))))))
 
 (define (lower-function-decl-count-one [decl : AstDecl]) : i64
   (match decl

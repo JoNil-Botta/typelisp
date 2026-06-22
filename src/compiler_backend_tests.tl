@@ -5927,7 +5927,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "}{z}")
               (compiler-backend-string-contains? asm "tail_mask_")
@@ -5956,7 +5956,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
@@ -5985,7 +5985,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $0,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
@@ -6014,7 +6014,7 @@
             (backend-and8
               (compiler-backend-string-contains? asm "    vpcmpq $1,")
               (compiler-backend-string-contains? asm "    kandw ")
-              (compiler-backend-string-contains? asm "    knotw ")
+              (compiler-backend-string-contains? asm "    kandnw ")
               (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "    vmovdqu64 %zmm")
               (compiler-backend-string-contains? asm "{%k")
@@ -6401,10 +6401,37 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    kandw %k2, %k1, %k1\n")
-        (compiler-backend-string-contains? asm "    knotw %k1, %k1\n")
+        (compiler-backend-string-contains? asm "    kandnw %k1, %k7, %k1\n")
+        (not (compiler-backend-string-contains? asm "    knotw %k1, %k1\n"))
         (not
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k2"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
+  (match (compiler-backend-emit-avx512-mask-not
+    (compiler-backend-avx512-mask-not-assignments)
+    1
+    (IrValueVar 0)
+    lanes
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-not-shortens-ok?) : bool
+  (and
+    (compiler-backend-avx512-mask-not-emits?
+      8
+      "    movl $255, %eax\n    kmovw %eax, %k7\n    kandnw %k1, %k7, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 16 "    knotw %k1, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 32 "    knotd %k1, %k2\n")
+    (compiler-backend-avx512-mask-not-emits? 64 "    knotq %k1, %k2\n")))
 
 (define (compiler-backend-avx512-mask-binop-same-dst-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
@@ -6518,6 +6545,7 @@
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))
@@ -8897,6 +8925,106 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-bit-and-low-mask-immediate-ok?) : bool
+  (and
+    (backend-and4
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$255"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzbq %al, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65535"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzwq %ax, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$255"
+        (AstTyU32))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzbl %al, %eax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65535"
+        (AstTyU32))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzwl %ax, %eax\n")]
+        [(CompilerBackendNoAsm) false]))
+    (backend-and4
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$254"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $254, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$256"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $256, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65280"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $65280, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitOr)
+        "$255"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    orq $255, %rax\n")]
+        [(CompilerBackendNoAsm) false]))))
+
+(define (compiler-backend-bit-and-low-mask-direct-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyI64))
+      CompilerRegVarTypeNil)
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r15"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil))
+    1
+    (IrBinBitAnd)
+    (IrValueVar 0)
+    rhs
+    (AstTyI64)))
+
+(define (compiler-backend-bit-and-low-mask-direct-ok?) : bool
+  (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 255))
+    [(OkCompilerBackend byte-asm)
+      (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 65535))
+        [(OkCompilerBackend word-asm)
+          (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 254))
+            [(OkCompilerBackend negative-asm)
+              (and
+                (backend-and4
+                  (compiler-backend-string-contains?
+                    byte-asm
+                    "    movzbq %r12b, %r12\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      byte-asm
+                      "    andq $255, %r12\n"))
+                  (compiler-backend-string-contains?
+                    word-asm
+                    "    movzwq %r12w, %r12\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      word-asm
+                      "    andq $65535, %r12\n")))
+                (compiler-backend-string-contains?
+                  negative-asm
+                  "    andq $254, %r12\n"))]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -10948,7 +11076,10 @@
     (compiler-backend-closure-emit-shape-ok?)
     (compiler-backend-alloc-runtime-shape-ok?)
     (backend-and8
-      (compiler-backend-scalar-wide-ops-ok?)
+      (and
+        (compiler-backend-scalar-wide-ops-ok?)
+        (compiler-backend-bit-and-low-mask-immediate-ok?)
+        (compiler-backend-bit-and-low-mask-direct-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

@@ -5676,6 +5676,40 @@
     0
     (compiler-live-set-empty)))
 
+(define (compiler-reg-coalesce-root-set-from-vars-from
+  [parents : (Array i64)]
+  [source : CompilerLiveI64Set]
+  [index : i64]
+  [out : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (if (>= index (array-length parents))
+    out
+    (let
+      [root : i64 (array-ref parents index)]
+      [mapped : i64
+        (if (and (>= root 0) (< root (array-length parents)))
+          root
+          index)]
+      (compiler-reg-coalesce-root-set-from-vars-from
+        parents
+        source
+        (+ index 1)
+        (if (compiler-live-set-contains? source index)
+          (compiler-live-set-insert out mapped)
+          out)))))
+
+(define (compiler-reg-coalesce-root-set-from-vars
+  [coalesce : CompilerRegCoalesceMap]
+  [source : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (let
+    [parents : (Array i64) (struct-get coalesce parents)]
+    (if (= (array-length parents) 0)
+      source
+      (compiler-reg-coalesce-root-set-from-vars-from
+        parents
+        source
+        0
+        (compiler-live-set-empty)))))
+
 ;; #3489 (PR2): expand a per-root assignment table to all original vars -- every
 ;; member of a coalesce class inherits its root's location (register or spill
 ;; slot). This realises the coalesce: the copy `member <- root` becomes
@@ -5806,6 +5840,16 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-merged-root-set coalesce)
         (compiler-live-set-empty))]
+    ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
+    ;; roots, so original-var exclusions must block the root. Otherwise a root
+    ;; may get a register even though one merged member is a call argument or
+    ;; parameter that must stay stack/ABI-homed; on Windows that let a stack
+    ;; CreateFileA argument inherit %r9 after the same call clobbered %r9 for the
+    ;; fourth ABI argument.
+    [eff-blocked : CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (compiler-reg-coalesce-root-set-from-vars coalesce blocked)
+        blocked)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
@@ -5822,7 +5866,7 @@
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates eff-intervals type-info blocked false)
+        (compiler-reg-candidates eff-intervals type-info eff-blocked false)
         (compiler-reg-sysv-integer-registers)
         CompilerRegActiveNil
         assignment-table
@@ -5842,7 +5886,7 @@
         allow-caller-saved-zero-call
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-zero-call-candidates
-          (compiler-reg-candidates eff-intervals type-info blocked false)
+          (compiler-reg-candidates eff-intervals type-info eff-blocked false)
           (compiler-reg-zero-call-caller-saved-integer-registers)
           CompilerRegActiveNil
           integer-assignments
@@ -5860,7 +5904,7 @@
           integer-with-caller-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           func
-          (compiler-reg-candidates eff-intervals type-info blocked false)
+          (compiler-reg-candidates eff-intervals type-info eff-blocked false)
           integer-with-caller-assignments
           eff-index
           group-vars)
@@ -5875,7 +5919,7 @@
         [(CompilerRegCallSaveAssignState _ shadows) shadows])]
     [scalar-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        (compiler-reg-candidates eff-intervals type-info blocked true)
+        (compiler-reg-candidates eff-intervals type-info eff-blocked true)
         (compiler-reg-xmm-registers)
         CompilerRegActiveNil
         integer-call-assignments
@@ -10366,6 +10410,10 @@
         [roots : CompilerLiveI64Set
           (compiler-reg-coalesce-merged-root-set
             (CompilerRegCoalesceMap parents))]
+        [mapped-blocked : CompilerLiveI64Set
+          (compiler-reg-coalesce-root-set-from-vars
+            (CompilerRegCoalesceMap parents)
+            (compiler-live-set2 1 4))]
         (and
           ordinary-root-conflicts
           root-hole-reuses
@@ -10375,7 +10423,12 @@
           (compiler-live-set-contains? roots 2)
           (not (compiler-live-set-contains? roots 1))
           (not (compiler-live-set-contains? roots 3))
-          (not (compiler-live-set-contains? roots 4)))))))
+          (not (compiler-live-set-contains? roots 4))
+          (compiler-live-set-contains? mapped-blocked 0)
+          (compiler-live-set-contains? mapped-blocked 4)
+          (not (compiler-live-set-contains? mapped-blocked 1))
+          (not (compiler-live-set-contains? mapped-blocked 2))
+          (not (compiler-live-set-contains? mapped-blocked 3)))))))
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : CompilerRegVarTypes
   (let

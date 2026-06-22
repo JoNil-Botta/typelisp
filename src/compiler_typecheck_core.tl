@@ -4087,17 +4087,23 @@
         (match (tc-lookup-unsafe-id env lookup-id)
           [(OkTcTypeUnsafe ty unsafe)
             (if unsafe
-              (match (tc-require-unsafe env lookup-name)
+              (match (tc-require-unsafe
+                env
+                (tc-source-lookup-display-name ctx name lookup-name))
                 [(OkTcUnit)
-                  (match (tc-qualified-value-visible-ok ctx lookup-name)
+                  (match (tc-source-value-visible-ok ctx name lookup-name)
                     [(OkTcUnit) (OkTcType ty)]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcUnit message) (ErrTcType message)])
-              (match (tc-qualified-value-visible-ok ctx lookup-name)
+              (match (tc-source-value-visible-ok ctx name lookup-name)
                 [(OkTcUnit) (OkTcType ty)]
                 [(ErrTcUnit message) (ErrTcType message)]))]
           [(ErrTcTypeUnsafe message)
-            (tc-variant-constructor-type-for-lookup-or ctx lookup-name message)]))]
+            (tc-variant-constructor-type-for-lookup-or
+              ctx
+              lookup-name
+              (tc-source-lookup-display-name ctx name lookup-name)
+              (tc-source-unbound-display-message ctx name lookup-name message))]))]
     [(ErrTcString message) (ErrTcType message)]))
 
 (define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
@@ -5589,9 +5595,57 @@
                   (intern current-module)
                   alias
                   (intern ""))
-                  [(TcSomeString _)
-                    (TcSomeString (compiler-symbol-module-key alias base))]
+                  [(TcSomeString target-module)
+                    (TcSomeString
+                      (compiler-symbol-module-key target-module base))]
                   [(TcNoString) (TcNoString)])])])))))
+
+(define (tc-source-alias-display-key [ctx : TcContext] [name : String]) : TcMaybeString
+  (let
+    [n : i64 (string-length name)]
+    [first-dot : i64 (tc-name-first-dot name)]
+    (if (or (<= first-dot 0) (>= first-dot (- n 1)))
+      (TcNoString)
+      (let
+        [alias : String (substring name 0 first-dot)]
+        [base-start : i64 (+ first-dot 1)]
+        [base : String (substring name base-start (- n base-start))]
+        (match ctx
+          [(TcContext program _ _ current-module _)
+            (match program
+              [(AstProgram decls-box)
+                (let
+                  [target : String
+                    (macro-resolve-qualified-module
+                      (box-get decls-box)
+                      current-module
+                      alias)]
+                  (if (string-eq target alias)
+                    (TcNoString)
+                    (TcSomeString (compiler-symbol-module-key alias base))))])])))))
+
+(define (tc-source-lookup-display-name
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]) : String
+  (match (tc-source-alias-display-key ctx source-name)
+    [(TcSomeString display-name) display-name]
+    [(TcNoString) lookup-name]))
+
+(define (tc-source-unbound-display-message
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]
+  [message : String]) : String
+  (let
+    [lookup-unbound : String
+      (string-append "typecheck: unbound name " lookup-name)]
+    (match (tc-source-alias-display-key ctx source-name)
+      [(TcSomeString display-name)
+        (if (string-eq message lookup-unbound)
+          (string-append "typecheck: unbound name " display-name)
+          message)]
+      [(TcNoString) message])))
 
 (define (tc-source-dotted-full-path-key [ctx : TcContext] [name : String]) : TcMaybeString
   (let
@@ -5803,17 +5857,57 @@
             display-name
             target-module))])))
 
-(define (tc-qualified-name-export-visible-ok
+(define (tc-qualified-export-visible-ok-with-source
   [ctx : TcContext]
   [kind-name : String]
-  [name : String]) : ResultTcUnit
+  [source-name : String]
+  [lookup-name : String]
+  [target-module : String]
+  [export-name : String]) : ResultTcUnit
+  (if (string-eq target-module (tc-context-module ctx))
+    OkTcUnit
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (match (compiler-exports-lookup-id
+          exports
+          (intern kind-name)
+          (intern target-module)
+          (intern export-name))
+          [(SomeI64 _) OkTcUnit]
+          [(NoneI64)
+            (ErrTcUnit
+              (tc-qualified-access-private-message
+                kind-name
+                (tc-source-lookup-display-name ctx source-name lookup-name)
+                target-module))])]
+      [(ErrCompilerExports message) (ErrTcUnit message)])))
+
+(define (tc-qualified-name-export-visible-ok-with-display
+  [ctx : TcContext]
+  [kind-name : String]
+  [name : String]
+  [display-name : String]) : ResultTcUnit
   (if (tc-name-qualified? name)
     (let
       [qualifier : String (tc-qualified-name-module name)]
       [base : String (tc-qualified-name-base name)]
       [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+      (tc-qualified-export-visible-ok
+        ctx
+        kind-name
+        display-name
+        target-module
+        base))
     OkTcUnit))
+
+(define (tc-qualified-name-export-visible-ok
+  [ctx : TcContext]
+  [kind-name : String]
+  [name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok-with-display ctx kind-name name name))
 
 (define (tc-qualified-type-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
   (tc-qualified-name-export-visible-ok ctx (compiler-export-kind-type) name))
@@ -5838,7 +5932,10 @@
     [(SomeI64 handle) (tc-value-export-kind-for-handle handle)]
     [(NoneI64) (compiler-export-kind-value)]))
 
-(define (tc-qualified-value-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+(define (tc-qualified-value-visible-ok-with-display
+  [ctx : TcContext]
+  [name : String]
+  [display-name : String]) : ResultTcUnit
   (if (tc-name-qualified? name)
     (let
       [qualifier : String (tc-qualified-name-module name)]
@@ -5846,7 +5943,35 @@
       [target-module : String (tc-qualified-access-target-module ctx qualifier)]
       [kind-name : String
         (tc-qualified-value-export-kind ctx target-module base)]
-      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+      (tc-qualified-export-visible-ok
+        ctx
+        kind-name
+        display-name
+        target-module
+        base))
+    OkTcUnit))
+
+(define (tc-qualified-value-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (tc-qualified-value-visible-ok-with-display ctx name name))
+
+(define (tc-source-value-visible-ok
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]) : ResultTcUnit
+  (if (tc-name-qualified? lookup-name)
+    (let
+      [qualifier : String (tc-qualified-name-module lookup-name)]
+      [base : String (tc-qualified-name-base lookup-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [kind-name : String
+        (tc-qualified-value-export-kind ctx target-module base)]
+      (tc-qualified-export-visible-ok-with-source
+        ctx
+        kind-name
+        source-name
+        lookup-name
+        target-module
+        base))
     OkTcUnit))
 
 (define (tc-qualified-field-visible-ok
@@ -5875,6 +6000,34 @@
     ctx
     (compiler-export-kind-variant)
     variant-name))
+
+(define (tc-qualified-variant-visible-ok-with-display
+  [ctx : TcContext]
+  [variant-name : String]
+  [display-name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok-with-display
+    ctx
+    (compiler-export-kind-variant)
+    variant-name
+    display-name))
+
+(define (tc-source-variant-visible-ok
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]) : ResultTcUnit
+  (if (tc-name-qualified? lookup-name)
+    (let
+      [qualifier : String (tc-qualified-name-module lookup-name)]
+      [base : String (tc-qualified-name-base lookup-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (tc-qualified-export-visible-ok-with-source
+        ctx
+        (compiler-export-kind-variant)
+        source-name
+        lookup-name
+        target-module
+        base))
+    OkTcUnit))
 
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
@@ -20737,6 +20890,7 @@
 (define (tc-variant-constructor-type-for-lookup-or
   [ctx : TcContext]
   [lookup-name : String]
+  [display-name : String]
   [not-found-message : String]) : ResultTcType
   (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
     [(OkTcString variant-key)
@@ -20744,7 +20898,10 @@
         (tc-context-registries ctx)
         variant-key)
         [(SomeI64 handle)
-          (match (tc-qualified-variant-visible-ok ctx variant-key)
+          (match (tc-qualified-variant-visible-ok-with-display
+            ctx
+            variant-key
+            display-name)
             [(OkTcUnit)
               (match (tc-variant-owner-name ctx handle)
                 [(OkTcString owner)
@@ -21214,6 +21371,23 @@
         (ErrTcEnv "typecheck: literal pattern type mismatch"))]
     [(ErrTcType message) (ErrTcEnv message)]))
 
+(define (tc-bind-scalar-match-pattern
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPatWildcard) (OkTcEnv env)]
+    [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
+    [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
+    [(AstPatVariant name _)
+      (if (tc-box-pattern-name? name)
+        (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
+        (ErrTcEnv
+          "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
+    [_
+      (ErrTcEnv
+        "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
+
 (define (tc-bind-sub-pattern-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -21258,7 +21432,7 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-qualified-variant-visible-ok ctx lookup-name)
+        (match (tc-source-variant-visible-ok ctx variant-name lookup-name)
           [(OkTcUnit)
             (match (tc-variant-owner-name ctx handle)
               [(OkTcString owner)
@@ -21664,7 +21838,7 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-qualified-variant-visible-ok ctx lookup-name)
+        (match (tc-source-variant-visible-ok ctx variant-name lookup-name)
           [(OkTcUnit)
             (match (tc-variant-owner-name ctx handle)
               [(OkTcString owner)
@@ -21832,19 +22006,7 @@
               [_
                 (ErrTcEnv
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
-          [_
-            (match pattern
-              [(AstPatWildcard) (OkTcEnv env)]
-              [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
-              [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
-              [(AstPatVariant name _)
-                (if (tc-box-pattern-name? name)
-                  (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
-                  (ErrTcEnv
-                    "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
-              [_
-                (ErrTcEnv
-                  "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))]
+          [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
     [(AstTyEnum enum-name)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -21924,6 +22086,10 @@
           (ErrTcEnv
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
     [(AstTyExpr) (tc-bind-expr-match-pattern ctx env pattern)]
+    [(AstTyVar name)
+      (if (= name (intern "ExprClause"))
+        (tc-bind-expr-clause-match-pattern ctx env pattern)
+        (tc-bind-scalar-match-pattern env scrut-ty pattern))]
     [(AstTyBox inner-ty)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
@@ -21937,19 +22103,7 @@
               (ErrTcEnv
                 "typecheck: Box match only supports (box ...), binding, or wildcard patterns")))]
         [_ (ErrTcEnv "typecheck: unsupported Box match pattern")])]
-    [_
-      (match pattern
-        [(AstPatWildcard) (OkTcEnv env)]
-        [(AstPatBinding name) (OkTcEnv (tc-bind-id env name scrut-ty))]
-        [(AstPatLiteral lit) (tc-bind-literal-pattern env lit scrut-ty)]
-        [(AstPatVariant name _)
-          (if (tc-box-pattern-name? name)
-            (ErrTcEnv "typecheck: box pattern requires Box scrutinee")
-            (ErrTcEnv
-              "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
-        [_
-          (ErrTcEnv
-            "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]))
+    [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
 
 (define (tc-match-arm-type
   [ctx : TcContext]
@@ -22222,6 +22376,45 @@
         [args : AstPatternList (box-get args-box)]
         (tc-bind-expr-variant-pattern ctx env (intern-str variant-name) args))]
     [_ (ErrTcEnv "typecheck: unsupported Expr match pattern")]))
+
+(define (tc-expr-clause-pattern-name? [name : i64]) : bool
+  (= name (intern "ExprClause")))
+
+(define (tc-bind-expr-clause-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPatWildcard) (OkTcEnv env)]
+    [(AstPatBinding name)
+      (OkTcEnv (tc-bind-id env name (tc-macro-expr-clause-type)))]
+    [(AstPatVariant variant-name args-box)
+      (if (tc-expr-clause-pattern-name? variant-name)
+        (tc-bind-sub-pattern-list
+          ctx
+          env
+          (box-get args-box)
+          (tc-type-list2 (AstTyExpr) (AstTyExpr)))
+        (ErrTcEnv
+          (str-cat
+            "typecheck: unknown ExprClause constructor "
+            (intern-str variant-name))))]
+    [_ (ErrTcEnv "typecheck: unsupported ExprClause match pattern")]))
+
+(define (tc-expr-clause-pattern-irrefutable?
+  [ctx : TcContext]
+  [pattern : AstPattern]) : bool
+  (match pattern
+    [(AstPatWildcard) true]
+    [(AstPatBinding _) true]
+    [(AstPatVariant name args-box)
+      (if (tc-expr-clause-pattern-name? name)
+        (tc-pattern-list-irrefutable?
+          ctx
+          (box-get args-box)
+          (tc-type-list2 (AstTyExpr) (AstTyExpr)))
+        false)]
+    [_ false]))
 
 (define (tc-enum-has-single-variant?
   [ctx : TcContext]
@@ -22567,6 +22760,13 @@
             (intern-str name)
             (box-get args-box))]
         [_ false])]
+    [(AstTyVar name)
+      (if (= name (intern "ExprClause"))
+        (tc-expr-clause-pattern-irrefutable? ctx pattern)
+        (match pattern
+          [(AstPatWildcard) true]
+          [(AstPatBinding _) true]
+          [_ false]))]
     [_
       (match pattern
         [(AstPatWildcard) true]
@@ -24171,22 +24371,39 @@
                   (match (tc-lookup-unsafe-id env lookup-id)
                     [(OkTcTypeUnsafe ty unsafe)
                       (if unsafe
-                        (match (tc-require-unsafe env lookup-name)
+                        (match (tc-require-unsafe
+                          env
+                          (tc-source-lookup-display-name
+                            ctx
+                            name-text
+                            lookup-name))
                           [(OkTcUnit)
-                            (match (tc-qualified-value-visible-ok
+                            (match (tc-source-value-visible-ok
                               ctx
+                              name-text
                               lookup-name)
                               [(OkTcUnit) (OkTcType ty)]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])
-                        (match (tc-qualified-value-visible-ok ctx lookup-name)
+                        (match (tc-source-value-visible-ok
+                          ctx
+                          name-text
+                          lookup-name)
                           [(OkTcUnit) (OkTcType ty)]
                           [(ErrTcUnit message) (ErrTcType message)]))]
                     [(ErrTcTypeUnsafe message)
                       (tc-variant-constructor-type-for-lookup-or
                         ctx
                         lookup-name
-                        message)]))]
+                        (tc-source-lookup-display-name
+                          ctx
+                          name-text
+                          lookup-name)
+                        (tc-source-unbound-display-message
+                          ctx
+                          name-text
+                          lookup-name
+                          message))]))]
               [(ErrTcString message) (ErrTcType message)]))))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
@@ -32157,13 +32374,24 @@
   [key : String]) : AstGeneratedDeclMeta
   (AstSomeGeneratedDeclMeta generator item AstExprNil key))
 
+(define (macro-import-placeholder-kind? [kind : AstImportKind]) : bool
+  (match kind
+    [(AstImportMacro _ _) true]
+    [(AstImportMacroDecls _ _) true]
+    [_ false]))
+
 (define (macro-wrap-generated-decl
   [decl : AstDecl]
   [generator : String]
   [key : String]) : AstDecl
   (match decl
     [(AstDeclModule _) decl]
-    [(AstDeclImport _) decl]
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (if (macro-import-placeholder-kind? kind)
+        (ast-decl-comptime-decl-with-meta
+          (macro-generated-meta generator "import" key)
+          decl)
+        decl)]
     [(AstDeclExport _) decl]
     [_
       (match (gen-decl-visible-name decl)
@@ -36124,6 +36352,36 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match template
+          [(AstDeclImport (AstImportSpec kind _ _ alias span))
+            (if (macro-import-placeholder-kind? kind)
+              (match kind
+                [(AstImportMacro call-id context)
+                  (macro-expand-module-import
+                    ctx
+                    top-env
+                    orig-decls
+                    module
+                    call-id
+                    context
+                    alias
+                    span
+                    decl-path)]
+                [(AstImportMacroDecls call-id context)
+                  (macro-expand-decls-splice
+                    ctx
+                    top-env
+                    orig-decls
+                    module
+                    call-id
+                    context
+                    decl-path)]
+                [_ (macro-single-decl-expansion decl decl-path)])
+              (macro-single-decl-expansion decl decl-path))]
+          [_ (macro-single-decl-expansion decl decl-path)]))]
     [(AstDeclImport (AstImportSpec kind _ _ alias span))
       (match kind
         [(AstImportMacro call-id context)

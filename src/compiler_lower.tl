@@ -820,7 +820,12 @@
                       (tc-variant-constructor-type-for-lookup-or
                         ctx
                         lookup-name
-                        message)])])])]
+                        (tc-source-lookup-display-name ctx name lookup-name)
+                        (tc-source-unbound-display-message
+                          ctx
+                          name
+                          lookup-name
+                          message))])])])]
         [(ErrTcString message) (ErrTcType message)]))))
 
 (define (lower-lookup-type-id

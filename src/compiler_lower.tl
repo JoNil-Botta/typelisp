@@ -5072,8 +5072,8 @@
 
 (define (lower-function-body-name-cache-for-module
   [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
+  [_paths : AstDeclPathList]
+  [_entry-path : String]
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [module : String]) : LowerNameCache
@@ -5534,8 +5534,8 @@
     (string-i64-map-contains? dispatch-variants logical-name)))
 
 (define (lower-export-value-item-kept?
-  [entry-path : String]
-  [decl-path : String]
+  [_entry-path : String]
+  [_decl-path : String]
   [module : String]
   [names : LowerNameCache]
   [all-functions : StringI64Map]

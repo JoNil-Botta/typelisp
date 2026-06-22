@@ -3597,7 +3597,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/structuralReplace - legacy method name routed to position-based replacement
+;; tl/replace - legacy method name routed to position-based replacement
 ;; tl/deleteFunction - legacy method name routed to position-based deletion
 ;; Helper: get offset from LspDeclEntry start position
 (define (lsp-offset-from-entry-start [text : String] [entry : LspDeclEntry]) : i64
@@ -3777,7 +3777,7 @@
             (str-cat text-before second-text middle first-text text-after)]
           (lsp-write-structural-edit-success id docs result))])))
 
-;; tl/structuralMove - Move a form by name or position.
+;; tl/move - Move a form by name or position.
 (define (lsp-handle-tl-structural-move
   [id : json.Json]
   [params : json.Json]
@@ -3889,7 +3889,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/getTypeAt - Type of expression at cursor
+;; tl/getType - Type of expression at cursor
 (define (lsp-handle-tl-get-type-at
   [id : json.Json]
   [params : json.Json]
@@ -4418,7 +4418,7 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/structuralReplace"))
+          (if (and (not handled) (string-eq method "tl/replace"))
             (begin
               (set! handled true)
               (let
@@ -4452,7 +4452,7 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/structuralMove"))
+          (if (and (not handled) (string-eq method "tl/move"))
             (begin
               (set! handled true)
               (let
@@ -4488,7 +4488,7 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/getTypeAt"))
+          (if (and (not handled) (string-eq method "tl/getType"))
             (begin
               (set! handled true)
               (let
@@ -4614,24 +4614,6 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/batchEdit"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
-                  [(json.JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
-                        [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-batch-edit id params docs))]
-                        [(json.JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(json.JsonMissing) unit])))
-            unit)
           (if (and (not handled) (string-eq method "tl/projectSearch"))
             (begin
               (set! handled true)
@@ -4666,7 +4648,7 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/deleteAt"))
+          (if (and (not handled) (string-eq method "tl/delete"))
             (begin
               (set! handled true)
               (let
@@ -4700,43 +4682,7 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/replaceBodyAt"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
-                  [(json.JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
-                        [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-replace-body id params docs))]
-                        [(json.JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(json.JsonMissing) unit])))
-            unit)
-          (if (and (not handled) (string-eq method "tl/replacePatternAt"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
-                  [(json.JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
-                        [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-replace-pattern-at id params docs))]
-                        [(json.JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(json.JsonMissing) unit])))
-            unit)
-          (if (and (not handled) (string-eq method "tl/readFormAt"))
+          (if (and (not handled) (string-eq method "tl/read"))
             (begin
               (set! handled true)
               (let
@@ -5082,7 +5028,6 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; Pure text transformation helpers for tl/batchEdit.
 (define (lsp-replace-body-text
   [text : String]
   [name : String]
@@ -5305,100 +5250,6 @@
           (OkLspEdit result)
           (ErrLspEdit "Declaration not found"))))))
 
-(define (lsp-batch-edit-step
-  [text : String]
-  [edit-kind : String]
-  [edit-params : json.Json]) : LspEditResult
-  (cond
-    [(string-eq edit-kind "replace-body")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "newBody")
-            [(OkLspJsonText new-body)
-              (lsp-replace-body-text text name new-body)]
-            [(MissingLspJsonText) (ErrLspEdit "replace-body: missing newBody")])]
-        [(MissingLspJsonText) (ErrLspEdit "replace-body: missing name")])]
-    [(string-eq edit-kind "replace-pattern")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "oldPattern")
-            [(OkLspJsonText old-pattern)
-              (match (lsp-json-string-field edit-params "newPattern")
-                [(OkLspJsonText new-pattern)
-                  (lsp-replace-pattern-text text name old-pattern new-pattern)]
-                [(MissingLspJsonText)
-                  (ErrLspEdit "replace-pattern: missing newPattern")])]
-            [(MissingLspJsonText)
-              (ErrLspEdit "replace-pattern: missing oldPattern")])]
-        [(MissingLspJsonText) (ErrLspEdit "replace-pattern: missing name")])]
-    [(string-eq edit-kind "structural-replace")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "newText")
-            [(OkLspJsonText new-text)
-              (lsp-structural-replace-text text name new-text)]
-            [(MissingLspJsonText)
-              (ErrLspEdit "structural-replace: missing newText")])]
-        [(MissingLspJsonText) (ErrLspEdit "structural-replace: missing name")])]
-    [else (ErrLspEdit (str-cat "Unknown edit kind: " edit-kind))]))
-
-(define (lsp-batch-edit-apply [text : String] [edits : json.JsonList]) : LspEditResult
-  (match edits
-    [(json.JsonListNil) (OkLspEdit text)]
-    [(json.JsonListCons first rest)
-      (match first
-        [(json.JsonObject _)
-          (match (lsp-json-string-field first "kind")
-            [(OkLspJsonText kind)
-              (match (lsp-batch-edit-step text kind first)
-                [(OkLspEdit new-text)
-                  (lsp-batch-edit-apply new-text (box-get rest))]
-                [(ErrLspEdit err) (ErrLspEdit err)])]
-            [(MissingLspJsonText) (ErrLspEdit "Edit missing 'kind' field")])]
-        [_ (ErrLspEdit "Edit is not a json.Json object")])]))
-
-(define (lsp-handle-tl-batch-edit
-  [id : json.Json]
-  [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
-  (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
-      (let
-        [edits-key : String "edits"]
-        (match (json.json-object-get params (& edits-key))
-          [(json.JsonFound edits-value)
-            (match edits-value
-              [(json.JsonArray edits-list)
-                (match (lsp-batch-edit-apply text (box-get edits-list))
-                  [(OkLspEdit result-text)
-                    (let
-                      [formatted : String (lsp-format-edit-text result-text)]
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool true)
-                            "text"
-                            (json.JsonString formatted)))
-                        (LspContinue docs)))]
-                  [(ErrLspEdit err)
-                    (begin
-                      (lsp-write-error id -32600 err)
-                      (LspContinue docs))])]
-              [_
-                (begin
-                  (lsp-write-error id -32600 "edits must be an array")
-                  (LspContinue docs))])]
-          [(json.JsonMissing)
-            (begin
-              (lsp-write-error id -32600 "Missing edits parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
-
 (test
   lsp-validate-forms-smoke
   (unless
@@ -5492,7 +5343,7 @@
                     (substring text form-end (- (string-length text) form-end))]
                   (OkLspEdit (str-cat before new-text after)))))))))))
 
-;; tl/structuralReplaceAt - Replace form at position (line, character)
+;; tl/replaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at
   [id : json.Json]
   [params : json.Json]
@@ -5580,7 +5431,7 @@
                     ""
                     (substring text actual-start (- form-end actual-start))))))))))))
 
-;; tl/deleteAt - Delete the form at a given position
+;; tl/delete - Delete the form at a given position
 (define (lsp-handle-tl-delete-at
   [id : json.Json]
   [params : json.Json]
@@ -5893,7 +5744,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/replacePatternAt - Replace pattern in function at a given position
+;; tl/replacePattern - Replace pattern in function at a given position
 (define (lsp-handle-tl-replace-pattern-at
   [id : json.Json]
   [params : json.Json]
@@ -5961,7 +5812,7 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-;; tl/readFormAt - Read the form at a given position
+;; tl/read - Read the form at a given position
 (define (lsp-handle-tl-read-form-at
   [id : json.Json]
   [params : json.Json]

@@ -3162,22 +3162,26 @@ borrowing and owned/borrowed text distinctions are deferred to #807.
 ```
 
 ```lisp test=ignore name=move-reject-aggregate-reuse reason="negative example for future move-only aggregate checks"
+(import "stdlib/string.tl")
+
 (define (bad-string-reuse [s : String]) : i64
   (let [taken s]
-    (length s)))
+    (string-length s)))
 ```
 
-The `let` binding moves `s` into `taken`; the later `length` inspection is a
-use-after-move even though `length` itself is non-consuming.
+The `let` binding moves `s` into `taken`; the later `string-length` inspection
+is a use-after-move even though `string-length` itself is non-consuming.
 
 ```lisp test=ignore name=move-reject-consumed-function-arg reason="negative example for future move-only call argument checks"
+(import "stdlib/string.tl")
+
 (define (take-string [s : String]) : i64
-  (length s))
+  (string-length s))
 
 (define (bad-call-reuse [s : String]) : i64
   (begin
     (take-string s)
-    (length s)))
+    (string-length s)))
 ```
 
 The call to `take-string` consumes `s` because ordinary parameters are
@@ -3205,12 +3209,14 @@ copyable. Moving the `String` field out directly is not allowed:
 ```
 
 ```lisp test=check name=move-match-payload-consumes-scrutinee
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
 
 (define (name-score [s : String]) : i64
-  (length s))
+  (string-length s))
 
 (define (score [m : MaybeName]) : i64
   (match m
@@ -3222,6 +3228,8 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 `name-score`.
 
 ```lisp test=ignore name=move-reject-match-scrutinee-reuse reason="negative example for future match move checks"
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
@@ -3229,10 +3237,10 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 (define (bad-match-reuse [m : MaybeName]) : i64
   (begin
     (match m
-      [(SomeName s) (length s)]
+      [(SomeName s) (string-length s)]
       [NoName 0])
     (match m
-      [(SomeName s) (length s)]
+      [(SomeName s) (string-length s)]
       [NoName 0])))
 ```
 
@@ -3240,12 +3248,14 @@ The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
 
 ```lisp test=check name=borrowed-enum-match-non-consuming
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
 
 (define (borrowed-name-score [s : (& m str)]) : i64
-  (length s))
+  (string-length s))
 
 (define (borrowed-score [m : MaybeName]) : i64
   (match (& m)
@@ -6270,6 +6280,8 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### String operations
 
 ```lisp test=run name=string-length exit=5 stdout=""
+(import "stdlib/string.tl")
+
 (define (main) : i64
   (let
     [s : String "hello"]

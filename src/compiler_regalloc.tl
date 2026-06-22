@@ -4876,23 +4876,6 @@
         candidates)]
     [_ candidates]))
 
-(define (compiler-reg-remat-single-def-vars
-  [candidates : CompilerLiveI64Set]
-  [def-counts : (Array i64)]) : CompilerLiveI64Set
-  (let
-    [out : CompilerLiveI64Set (compiler-live-set-empty)]
-    [var : i64 0]
-    (begin
-      (while (< var (array-length def-counts))
-        (begin
-          (if (and
-            (compiler-live-set-contains? candidates var)
-            (= (array-ref def-counts var) 1))
-            (set! out (compiler-live-set-insert out var))
-            unit)
-          (set! var (+ var 1))))
-      out)))
-
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
 
@@ -4910,9 +4893,9 @@
           var)]
       (compiler-live-set-contains? merged-roots mapped))))
 
-(define (compiler-reg-remat-discount-spill-weights!
+(define (compiler-reg-remat-discount-single-def-spill-weights!
   [weights : (Array i64)]
-  [remat-vars : CompilerLiveI64Set]
+  [def-status : (Array i64)]
   [coalesce : CompilerRegCoalesceMap]) : unit
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
@@ -4921,89 +4904,100 @@
     [var : i64 0]
     (while (< var (array-length weights))
       (begin
-        (if (and
-          (compiler-live-set-contains? remat-vars var)
-          (not
-            (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
-          (array-set!
-            weights
-            var
-            (compiler-reg-remat-discount-weight (array-ref weights var)))
-          unit)
+        (let
+          [status : i64
+            (if (< var (array-length def-status))
+              (array-ref def-status var)
+              0)]
+          (if (and
+            (= (bit-and status 1) 1)
+            (= (/ status 2) 1)
+            (not
+              (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+            (array-set!
+              weights
+              var
+              (compiler-reg-remat-discount-weight (array-ref weights var)))
+            unit))
         (set! var (+ var 1))))))
+
+(define (compiler-reg-remat-status-candidate-add-instr!
+  [def-status : (Array i64)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrMov dst value _)
+      (if (and
+        (compiler-reg-remat-value? value)
+        (>= dst 0)
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        unit)]
+    [_ unit]))
 
 (define (compiler-reg-ref-counts-add-instr-weighted-remat!
   [counts : (Array i64)]
-  [def-counts : (Array i64)]
+  [def-status : (Array i64)]
   [instr : CompilerIrInstr]
-  [weight : i64]
-  [candidates : CompilerLiveI64Set]) : CompilerLiveI64Set
+  [weight : i64]) : unit
   (let
     [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
     [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
     (begin
       (compiler-reg-ref-counts-add-set-weighted! counts uses weight)
       (compiler-reg-ref-counts-add-set-weighted! counts defs weight)
-      (compiler-reg-ref-counts-add-set! def-counts defs)
-      (compiler-reg-remat-candidates-add-instr candidates instr))))
+      (compiler-reg-ref-counts-add-set-weighted! def-status defs 2)
+      (compiler-reg-remat-status-candidate-add-instr! def-status instr))))
 
 (define (compiler-reg-ref-counts-seq-weighted-remat!
   [counts : (Array i64)]
-  [def-counts : (Array i64)]
+  [def-status : (Array i64)]
   [instrs : CompilerIrInstrSeq]
-  [weight : i64]
-  [candidates : CompilerLiveI64Set]) : CompilerLiveI64Set
+  [weight : i64]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
-    [out : CompilerLiveI64Set candidates]
     (begin
       (while (< index count)
         (begin
-          (set!
-            out
-            (compiler-reg-ref-counts-add-instr-weighted-remat!
-              counts
-              def-counts
-              (array-ref slots index)
-              weight
-              out))
+          (compiler-reg-ref-counts-add-instr-weighted-remat!
+            counts
+            def-status
+            (array-ref slots index)
+            weight)
           (set! index (+ index 1))))
-      out)))
+      unit)))
 
 (define (compiler-reg-ref-counts-blocks-weighted-remat!
   [counts : (Array i64)]
-  [def-counts : (Array i64)]
+  [def-status : (Array i64)]
   [blocks : CompilerIrBlockList]
   [depths : (Array i64)]
-  [block-index : i64]
-  [candidates : CompilerLiveI64Set]) : CompilerLiveI64Set
+  [block-index : i64]) : unit
   (match blocks
-    [(IrBlockNil) candidates]
+    [(IrBlockNil) unit]
     [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-reg-ref-counts-blocks-weighted-remat!
-            counts
-            def-counts
-            (box-get rest)
-            depths
-            (+ block-index 1)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
             (compiler-reg-ref-counts-seq-weighted-remat!
               counts
-              def-counts
+              def-status
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index))
-              candidates))])]
+              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+        (compiler-reg-ref-counts-blocks-weighted-remat!
+          counts
+          def-status
+          (box-get rest)
+          depths
+          (+ block-index 1)))]
     [(IrBlockArray seq)
       (compiler-reg-ref-counts-blocks-weighted-remat!
         counts
-        def-counts
+        def-status
         (compiler-ir-block-seq-to-list seq)
         depths
-        block-index
-        candidates)]))
+        block-index)]))
 
 (define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
     i64)
@@ -5035,22 +5029,20 @@
     [(IrFunction _ _ _ vars blocks)
       (let
         [counts : (Array i64) (make-array i64 vars)]
-        [def-counts : (Array i64) (make-array i64 vars)]
+        [def-status : (Array i64) (make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
-          (compiler-reg-fill-i64-array def-counts 0)
-          (compiler-reg-remat-discount-spill-weights!
+          (compiler-reg-fill-i64-array def-status 0)
+          (compiler-reg-ref-counts-blocks-weighted-remat!
             counts
-            (compiler-reg-remat-single-def-vars
-              (compiler-reg-ref-counts-blocks-weighted-remat!
-                counts
-                def-counts
-                blocks
-                depths
-                0
-                (compiler-live-set-empty))
-              def-counts)
+            def-status
+            blocks
+            depths
+            0)
+          (compiler-reg-remat-discount-single-def-spill-weights!
+            counts
+            def-status
             coalesce)
           counts))]))
 
@@ -6041,22 +6033,27 @@
       (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
+    [integer-register-count : i64
+      (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))]
+    [remat-weight-needed : bool
+      (or
+        (>
+          (compiler-reg-interval-list-count integer-candidates)
+          integer-register-count)
+        (> (compiler-live-set-count group-vars) 0))]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
     ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
     ;; discriminator). An empty array selects the original furthest-end policy,
     ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
     [eviction-ref-counts : (Array i64)
       (if allow-caller-saved-zero-call
-        ;; #3489 (PR2): score each class's eviction by its hottest member.
-        (compiler-reg-merge-ref-counts
-          coalesce
-          (if (>
-            (compiler-reg-interval-list-count integer-candidates)
-            (compiler-reg-string-list-count
-              (compiler-reg-sysv-integer-registers)))
+        (if remat-weight-needed
+          ;; #3489 (PR2): score each class's eviction by its hottest member.
+          (compiler-reg-merge-ref-counts
+            coalesce
             (compiler-reg-function-spill-weights-remat func coalesce)
-            (compiler-reg-function-spill-weights func))
-          (array-length (struct-get interval-index starts)))
+            (array-length (struct-get interval-index starts)))
+          (make-array i64 0))
         (make-array i64 0))]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates

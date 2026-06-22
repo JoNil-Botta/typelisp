@@ -119,6 +119,8 @@
   -1)
 (define compiler-builtin-id-array-length : i64
   -1)
+(define compiler-builtin-id-private-array-length : i64
+  -1)
 (define compiler-builtin-id-cpuid : i64
   -1)
 (define compiler-builtin-id-xgetbv : i64
@@ -147,11 +149,11 @@
 (define (compiler-builtin-ids-state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 68)]
+    [ids : (Array i64) (make-array i64 69)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 68)
+      (while (< i 69)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -364,18 +366,22 @@
     (compiler-builtin-ids-state-set!
       state
       64
-      compiler-builtin-id-tl-private-string-length)
+      compiler-builtin-id-private-array-length)
     (compiler-builtin-ids-state-set!
       state
       65
-      compiler-builtin-id-tl-private-string-ref)
+      compiler-builtin-id-tl-private-string-length)
     (compiler-builtin-ids-state-set!
       state
       66
-      compiler-builtin-id-tl-private-string-eq)
+      compiler-builtin-id-tl-private-string-ref)
     (compiler-builtin-ids-state-set!
       state
       67
+      compiler-builtin-id-tl-private-string-eq)
+    (compiler-builtin-ids-state-set!
+      state
+      68
       compiler-builtin-id-tl-private-string-to-int)))
 
 (define (compiler-builtin-ids-state-capture) : CompilerBuiltinIdsState
@@ -571,17 +577,20 @@
       compiler-builtin-id-tl-atomic-i32-cas-ptr
       (compiler-builtin-ids-state-ref state 63))
     (set!
-      compiler-builtin-id-tl-private-string-length
+      compiler-builtin-id-private-array-length
       (compiler-builtin-ids-state-ref state 64))
     (set!
-      compiler-builtin-id-tl-private-string-ref
+      compiler-builtin-id-tl-private-string-length
       (compiler-builtin-ids-state-ref state 65))
     (set!
-      compiler-builtin-id-tl-private-string-eq
+      compiler-builtin-id-tl-private-string-ref
       (compiler-builtin-ids-state-ref state 66))
     (set!
+      compiler-builtin-id-tl-private-string-eq
+      (compiler-builtin-ids-state-ref state 67))
+    (set!
       compiler-builtin-id-tl-private-string-to-int
-      (compiler-builtin-ids-state-ref state 67))))
+      (compiler-builtin-ids-state-ref state 68))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -690,6 +699,9 @@
       (set! compiler-builtin-id-string-ref (intern "string-ref"))
       (set! compiler-builtin-id-char-at (intern "char-at"))
       (set! compiler-builtin-id-array-length (intern "array-length"))
+      (set!
+        compiler-builtin-id-private-array-length
+        (intern "__tl_array-length"))
       (set! compiler-builtin-id-cpuid (intern "cpuid"))
       (set! compiler-builtin-id-xgetbv (intern "xgetbv"))
       (set! compiler-builtin-id-clone (intern "clone"))
@@ -1030,16 +1042,22 @@
 (define (compiler-builtin-lower-length-call-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any3?
-      name-id
-      compiler-builtin-id-array-length
-      compiler-builtin-id-length
-      compiler-builtin-id-tl-private-string-length)))
+    (or
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-array-length
+        compiler-builtin-id-length
+        compiler-builtin-id-string-length
+        compiler-builtin-id-private-array-length)
+      (= name-id compiler-builtin-id-tl-private-string-length))))
 
 (define (compiler-builtin-lower-array-length-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-array-length)))
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-array-length
+      compiler-builtin-id-private-array-length)))
 
 (define (compiler-builtin-lower-cpuid-id? [name-id : i64]) : bool
   (begin

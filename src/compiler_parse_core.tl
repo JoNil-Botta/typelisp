@@ -854,13 +854,31 @@
         (sym-i64-bind out "make-array" (compiler-parse-tag-expr-make-array)))
       (set!
         out
+        (sym-i64-bind
+          out
+          "__tl_make-array"
+          (compiler-parse-tag-expr-make-array)))
+      (set!
+        out
         (sym-i64-bind out "array-ref" (compiler-parse-tag-expr-array-ref)))
+      (set!
+        out
+        (sym-i64-bind out "__tl_array-ref" (compiler-parse-tag-expr-array-ref)))
       (set!
         out
         (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
       (set!
         out
+        (sym-i64-bind out "__tl_array-set!" (compiler-parse-tag-expr-array-set)))
+      (set!
+        out
         (sym-i64-bind out "array-push!" (compiler-parse-tag-expr-array-push)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "__tl_array-push!"
+          (compiler-parse-tag-expr-array-push)))
       (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
       (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
       (set!

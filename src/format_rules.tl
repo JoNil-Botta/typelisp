@@ -1,8 +1,9 @@
 ;; format_rules.tl - TypeLisp-aware formatter rules (#367).
 ;;
-;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
-;; gofmt-like first pass for common TypeLisp special forms while still building
-;; `Doc` values for width-aware rendering.
+;; `format_core.tl` stays syntax-neutral. This module adds deterministic
+;; gofmt-like rules for common TypeLisp special forms. The normal source
+;; formatting path renders those rules directly from the CST; the retained Doc
+;; wrappers are compatibility coverage for the reusable layout algebra.
 (import "../stdlib/io.tl")
 (import "format_tokens.tl")
 (import "format_cst.tl")
@@ -658,10 +659,2136 @@
       (format-rules-delimited-doc "[" (box-get items) "]")]
     [(FmtCstForms items) (format-rules-forms-doc (box-get items))]))
 
-;; Streaming source renderer for the normal `fmt`/LSP path. It preserves the
-;; existing nested layout rules but avoids allocating one full-file Doc tree:
-;; top-level CST forms and their separators are emitted incrementally into the
-;; render buffer.
+;; Direct CST layout interpreter for the normal `fmt`/LSP path. `emit=false`
+;; computes the same capped flat width as `flat-width-capped`; `emit=true`
+;; writes the same bytes as `render-doc-into`. Keeping both modes in one set of
+;; rule walkers prevents the hot path from allocating per-form Doc trees while
+;; preserving the existing grouping decisions.
+(define (format-rules-layout-text
+  [text : String]
+  [emit : bool]
+  [_width : i64]
+  [_indent : i64]
+  [col : i64]
+  [_flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [text-width : i64 (string-length text)]
+      (begin
+        (fmt-render-buf-append buf text)
+        (+ col text-width)))
+    (if (> col limit)
+      col
+      (+ col (string-length text)))))
+
+(define (format-rules-layout-soft-line
+  [emit : bool]
+  [_width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (if flat
+      (begin
+        (fmt-render-buf-append buf " ")
+        (+ col 1))
+      (begin
+        (render-newline-into! buf indent)
+        indent))
+    (if (> col limit)
+      col
+      (+ col 1))))
+
+(define (format-rules-layout-hard-line
+  [emit : bool]
+  [_width : i64]
+  [indent : i64]
+  [col : i64]
+  [_flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (begin
+      (render-newline-into! buf indent)
+      indent)
+    (if (> col limit)
+      col
+      (+ col 1000000))))
+
+(define (format-rules-layout-cst
+  [node : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match node
+    [(FmtCstAtom tok)
+      (format-rules-layout-text
+        (format-token-text tok)
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstComment text)
+      (format-rules-layout-text text emit width indent col flat limit buf)]
+    [(FmtCstPrefix tok child)
+      (format-rules-layout-cst
+        (box-get child)
+        emit
+        width
+        indent
+        (format-rules-layout-text
+          (format-token-text tok)
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)]
+    [(FmtCstList items)
+      (format-rules-layout-list
+        (box-get items)
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstBracketList items)
+      (format-rules-layout-delimited
+        "["
+        (box-get items)
+        "]"
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstForms items)
+      (format-rules-layout-forms
+        (box-get items)
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-space-cst
+  [node : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-cst
+    node
+    emit
+    width
+    indent
+    (format-rules-layout-text " " emit width indent col flat limit buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-colon-pair
+  [colon : FormatCst]
+  [next : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-space-cst
+    next
+    emit
+    width
+    indent
+    (format-rules-layout-cst colon emit width indent col flat limit buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-return-type-tail
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-colon-pair
+    colon
+    typ
+    emit
+    width
+    indent
+    (format-rules-layout-text " " emit width indent col flat limit buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-return-type-breakable-tail-inner
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-colon-pair
+    colon
+    typ
+    emit
+    width
+    indent
+    (format-rules-layout-soft-line emit width indent col flat limit buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-return-type-breakable-tail
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-return-type-breakable-tail-inner
+          colon
+          typ
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (format-rules-layout-return-type-breakable-tail-inner
+        colon
+        typ
+        true
+        width
+        indent
+        col
+        (<= flat-width remaining)
+        limit
+        buf))
+    (format-rules-layout-return-type-breakable-tail-inner
+      colon
+      typ
+      false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-inline-tail
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (format-rules-layout-inline-tail
+        (box-get rest)
+        emit
+        width
+        indent
+        (format-rules-layout-space-cst
+          node
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-hard-tail
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (let
+        [tail : FormatCstList (box-get rest)]
+        (if (format-rules-node-colon? node)
+          (match tail
+            [(FmtCstCons next after-next-box)
+              (if (format-rules-node-comment? next)
+                (let
+                  [after-line : i64
+                    (format-rules-layout-hard-line
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)]
+                  [after-node : i64
+                    (format-rules-layout-cst
+                      node
+                      emit
+                      width
+                      indent
+                      after-line
+                      flat
+                      limit
+                      buf)]
+                  (format-rules-layout-hard-tail
+                    tail
+                    emit
+                    width
+                    indent
+                    after-node
+                    flat
+                    limit
+                    buf))
+                (let
+                  [after-next : FormatCstList (box-get after-next-box)]
+                  [after-line : i64
+                    (format-rules-layout-hard-line
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)]
+                  [after-pair : i64
+                    (format-rules-layout-colon-pair
+                      node
+                      next
+                      emit
+                      width
+                      indent
+                      after-line
+                      flat
+                      limit
+                      buf)]
+                  (match after-next
+                    [(FmtCstNil) after-pair]
+                    [_
+                      (format-rules-layout-hard-tail
+                        after-next
+                        emit
+                        width
+                        indent
+                        after-pair
+                        flat
+                        limit
+                        buf)])))]
+            [_
+              (format-rules-layout-cst
+                node
+                emit
+                width
+                indent
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)])
+          (let
+            [after-node : i64
+              (format-rules-layout-cst
+                node
+                emit
+                width
+                indent
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)]
+            (match tail
+              [(FmtCstNil)
+                (if (format-rules-node-comment? node)
+                  (format-rules-layout-hard-line
+                    emit
+                    width
+                    indent
+                    after-node
+                    flat
+                    limit
+                    buf)
+                  after-node)]
+              [_
+                (format-rules-layout-hard-tail
+                  tail
+                  emit
+                  width
+                  indent
+                  after-node
+                  flat
+                  limit
+                  buf)]))))]))
+
+(define (format-rules-layout-tail-separator
+  [previous-comment : bool]
+  [node : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (or previous-comment (format-rules-node-comment? node))
+    (format-rules-layout-hard-line emit width indent col flat limit buf)
+    (format-rules-layout-soft-line emit width indent col flat limit buf)))
+
+(define (format-rules-layout-list-tail
+  [previous-comment : bool]
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (let
+        [tail : FormatCstList (box-get rest)]
+        [after-separator : i64
+          (format-rules-layout-tail-separator
+            previous-comment
+            node
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)]
+        (if (format-rules-node-colon? node)
+          (match tail
+            [(FmtCstCons next after-next-box)
+              (if (format-rules-node-comment? next)
+                (format-rules-layout-list-tail
+                  false
+                  tail
+                  emit
+                  width
+                  indent
+                  (format-rules-layout-cst
+                    node
+                    emit
+                    width
+                    indent
+                    after-separator
+                    flat
+                    limit
+                    buf)
+                  flat
+                  limit
+                  buf)
+                (let
+                  [after-next : FormatCstList (box-get after-next-box)]
+                  [after-pair : i64
+                    (format-rules-layout-colon-pair
+                      node
+                      next
+                      emit
+                      width
+                      indent
+                      after-separator
+                      flat
+                      limit
+                      buf)]
+                  (match after-next
+                    [(FmtCstNil) after-pair]
+                    [_
+                      (format-rules-layout-list-tail
+                        (format-rules-node-comment? next)
+                        after-next
+                        emit
+                        width
+                        indent
+                        after-pair
+                        flat
+                        limit
+                        buf)])))]
+            [_
+              (format-rules-layout-cst
+                node
+                emit
+                width
+                indent
+                after-separator
+                flat
+                limit
+                buf)])
+          (let
+            [after-node : i64
+              (format-rules-layout-cst
+                node
+                emit
+                width
+                indent
+                after-separator
+                flat
+                limit
+                buf)]
+            (match tail
+              [(FmtCstNil)
+                (if (format-rules-node-comment? node)
+                  (format-rules-layout-hard-line
+                    emit
+                    width
+                    indent
+                    after-node
+                    flat
+                    limit
+                    buf)
+                  after-node)]
+              [_
+                (format-rules-layout-list-tail
+                  (format-rules-node-comment? node)
+                  tail
+                  emit
+                  width
+                  indent
+                  after-node
+                  flat
+                  limit
+                  buf)]))))]))
+
+(define (format-rules-layout-list-items
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (let
+        [tail : FormatCstList (box-get rest)]
+        [after-node : i64
+          (format-rules-layout-cst node emit width indent col flat limit buf)]
+        (match tail
+          [(FmtCstNil)
+            (if (format-rules-node-comment? node)
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)
+              after-node)]
+          [_
+            (format-rules-layout-list-tail
+              (format-rules-node-comment? node)
+              tail
+              emit
+              width
+              indent
+              after-node
+              flat
+              limit
+              buf)]))]))
+
+(define (format-rules-layout-delimited-inner
+  [open : String]
+  [items : FormatCstList]
+  [close : String]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    close
+    emit
+    width
+    indent
+    (format-rules-layout-list-items
+      items
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-text open emit width indent col flat limit buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-delimited
+  [open : String]
+  [items : FormatCstList]
+  [close : String]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-delimited-inner
+          open
+          items
+          close
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (format-rules-layout-delimited-inner
+        open
+        items
+        close
+        true
+        width
+        indent
+        col
+        (<= flat-width remaining)
+        limit
+        buf))
+    (format-rules-layout-delimited-inner
+      open
+      items
+      close
+      false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-inline-form-inner
+  [head : String]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-inline-tail
+      rest
+      emit
+      width
+      indent
+      (format-rules-layout-text
+        head
+        emit
+        width
+        indent
+        (format-rules-layout-text "(" emit width indent col flat limit buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-inline-form
+  [head : String]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-inline-form-inner
+          head
+          rest
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (format-rules-layout-inline-form-inner
+        head
+        rest
+        true
+        width
+        indent
+        col
+        (<= flat-width remaining)
+        limit
+        buf))
+    (format-rules-layout-inline-form-inner
+      head
+      rest
+      false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-line-form
+  [head : String]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-hard-tail
+      rest
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-text
+        head
+        emit
+        width
+        indent
+        (format-rules-layout-text "(" emit width indent col flat limit buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-first-line-form
+  [head : String]
+  [first : FormatCst]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-hard-tail
+      rest
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-space-cst
+        first
+        emit
+        width
+        indent
+        (format-rules-layout-text
+          head
+          emit
+          width
+          indent
+          (format-rules-layout-text "(" emit width indent col flat limit buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-first-or-line-form
+  [head : String]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match rest
+    [(FmtCstNil)
+      (format-rules-layout-inline-form
+        head
+        FmtCstNil
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstCons first tail)
+      (format-rules-layout-first-line-form
+        head
+        first
+        (box-get tail)
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-let-binding-annotated-inner
+  [name : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [init : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    "]"
+    emit
+    width
+    indent
+    (format-rules-layout-cst
+      init
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-soft-line
+        emit
+        width
+        (+ indent 2)
+        (format-rules-layout-space-cst
+          typ
+          emit
+          width
+          indent
+          (format-rules-layout-space-cst
+            colon
+            emit
+            width
+            indent
+            (format-rules-layout-cst
+              name
+              emit
+              width
+              indent
+              (format-rules-layout-text
+                "["
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)
+            flat
+            limit
+            buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-let-binding-annotated
+  [name : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [init : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-let-binding-annotated-inner
+          name
+          colon
+          typ
+          init
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (format-rules-layout-let-binding-annotated-inner
+        name
+        colon
+        typ
+        init
+        true
+        width
+        indent
+        col
+        (<= flat-width remaining)
+        limit
+        buf))
+    (format-rules-layout-let-binding-annotated-inner
+      name
+      colon
+      typ
+      init
+      false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-let-binding-unannotated-inner
+  [name : FormatCst]
+  [init : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    "]"
+    emit
+    width
+    indent
+    (format-rules-layout-cst
+      init
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-soft-line
+        emit
+        width
+        (+ indent 2)
+        (format-rules-layout-cst
+          name
+          emit
+          width
+          indent
+          (format-rules-layout-text "[" emit width indent col flat limit buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-let-binding-unannotated
+  [name : FormatCst]
+  [init : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if emit
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-let-binding-unannotated-inner
+          name
+          init
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (format-rules-layout-let-binding-unannotated-inner
+        name
+        init
+        true
+        width
+        indent
+        col
+        (<= flat-width remaining)
+        limit
+        buf))
+    (format-rules-layout-let-binding-unannotated-inner
+      name
+      init
+      false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-let-item-list
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstCons name after-name-box)
+      (let
+        [after-name : FormatCstList (box-get after-name-box)]
+        (match after-name
+          [(FmtCstCons second after-second-box)
+            (let
+              [after-second : FormatCstList (box-get after-second-box)]
+              (match after-second
+                [(FmtCstNil)
+                  (format-rules-layout-let-binding-unannotated
+                    name
+                    second
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)]
+                [(FmtCstCons typ after-typ-box)
+                  (let
+                    [after-typ : FormatCstList (box-get after-typ-box)]
+                    (match after-typ
+                      [(FmtCstCons init after-init-box)
+                        (match (box-get after-init-box)
+                          [(FmtCstNil)
+                            (if (format-rules-node-colon? second)
+                              (format-rules-layout-let-binding-annotated
+                                name
+                                second
+                                typ
+                                init
+                                emit
+                                width
+                                indent
+                                col
+                                flat
+                                limit
+                                buf)
+                              (format-rules-layout-delimited
+                                "["
+                                items
+                                "]"
+                                emit
+                                width
+                                indent
+                                col
+                                flat
+                                limit
+                                buf))]
+                          [_
+                            (format-rules-layout-delimited
+                              "["
+                              items
+                              "]"
+                              emit
+                              width
+                              indent
+                              col
+                              flat
+                              limit
+                              buf)])]
+                      [_
+                        (format-rules-layout-delimited
+                          "["
+                          items
+                          "]"
+                          emit
+                          width
+                          indent
+                          col
+                          flat
+                          limit
+                          buf)]))]
+                [_
+                  (format-rules-layout-delimited
+                    "["
+                    items
+                    "]"
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)]))]
+          [_
+            (format-rules-layout-delimited
+              "["
+              items
+              "]"
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)]))]
+    [_
+      (format-rules-layout-delimited
+        "["
+        items
+        "]"
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-let-item
+  [node : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match node
+    [(FmtCstBracketList items)
+      (format-rules-layout-let-item-list
+        (box-get items)
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [_ (format-rules-layout-cst node emit width indent col flat limit buf)]))
+
+(define (format-rules-layout-let-tail
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (let
+        [tail : FormatCstList (box-get rest)]
+        [after-node : i64
+          (format-rules-layout-let-item
+            node
+            emit
+            width
+            indent
+            (format-rules-layout-hard-line emit width indent col flat limit buf)
+            flat
+            limit
+            buf)]
+        (match tail
+          [(FmtCstNil)
+            (if (format-rules-node-comment? node)
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)
+              after-node)]
+          [_
+            (format-rules-layout-let-tail
+              tail
+              emit
+              width
+              indent
+              after-node
+              flat
+              limit
+              buf)]))]))
+
+(define (format-rules-layout-let
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-let-tail
+      (format-rules-let-rest rest)
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-text
+        "let"
+        emit
+        width
+        indent
+        (format-rules-layout-text "(" emit width indent col flat limit buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-signature-annotated
+  [head : String]
+  [target : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [body-items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-hard-tail
+      body-items
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-return-type-tail
+        colon
+        typ
+        emit
+        width
+        (+ indent 2)
+        (format-rules-layout-space-cst
+          target
+          emit
+          width
+          indent
+          (format-rules-layout-text
+            head
+            emit
+            width
+            indent
+            (format-rules-layout-text "(" emit width indent col flat limit buf)
+            flat
+            limit
+            buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-define-metadata-annotated
+  [target : FormatCst]
+  [metadata : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [body-items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-hard-tail
+      body-items
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-return-type-breakable-tail
+        colon
+        typ
+        emit
+        width
+        (+ indent 2)
+        (format-rules-layout-cst
+          metadata
+          emit
+          width
+          (+ indent 2)
+          (format-rules-layout-hard-line
+            emit
+            width
+            (+ indent 2)
+            (format-rules-layout-space-cst
+              target
+              emit
+              width
+              indent
+              (format-rules-layout-text
+                "define"
+                emit
+                width
+                indent
+                (format-rules-layout-text
+                  "("
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)
+            flat
+            limit
+            buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-define-body
+  [target : FormatCst]
+  [body-items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (format-rules-layout-text
+    ")"
+    emit
+    width
+    indent
+    (format-rules-layout-hard-tail
+      body-items
+      emit
+      width
+      (+ indent 2)
+      (format-rules-layout-space-cst
+        target
+        emit
+        width
+        indent
+        (format-rules-layout-text
+          "define"
+          emit
+          width
+          indent
+          (format-rules-layout-text "(" emit width indent col flat limit buf)
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)
+      flat
+      limit
+      buf)
+    flat
+    limit
+    buf))
+
+(define (format-rules-layout-define
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match rest
+    [(FmtCstCons target after-target-box)
+      (let
+        [after-target : FormatCstList (box-get after-target-box)]
+        (match after-target
+          [(FmtCstCons second after-second-box)
+            (let
+              [after-second : FormatCstList (box-get after-second-box)]
+              (if (format-rules-node-colon? second)
+                (match after-second
+                  [(FmtCstCons typ body-box)
+                    (match (box-get body-box)
+                      [(FmtCstNil)
+                        (format-rules-layout-first-or-line-form
+                          "define"
+                          rest
+                          emit
+                          width
+                          indent
+                          col
+                          flat
+                          limit
+                          buf)]
+                      [_
+                        (format-rules-layout-signature-annotated
+                          "define"
+                          target
+                          second
+                          typ
+                          (box-get body-box)
+                          emit
+                          width
+                          indent
+                          col
+                          flat
+                          limit
+                          buf)])]
+                  [_
+                    (format-rules-layout-first-or-line-form
+                      "define"
+                      rest
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)])
+                (if (format-rules-node-colon-list? second)
+                  (match after-second
+                    [(FmtCstCons colon after-colon-box)
+                      (if (format-rules-node-colon? colon)
+                        (match (box-get after-colon-box)
+                          [(FmtCstCons typ body-box)
+                            (match (box-get body-box)
+                              [(FmtCstNil)
+                                (format-rules-layout-first-or-line-form
+                                  "define"
+                                  rest
+                                  emit
+                                  width
+                                  indent
+                                  col
+                                  flat
+                                  limit
+                                  buf)]
+                              [_
+                                (format-rules-layout-define-metadata-annotated
+                                  target
+                                  second
+                                  colon
+                                  typ
+                                  (box-get body-box)
+                                  emit
+                                  width
+                                  indent
+                                  col
+                                  flat
+                                  limit
+                                  buf)])]
+                          [_
+                            (format-rules-layout-first-or-line-form
+                              "define"
+                              rest
+                              emit
+                              width
+                              indent
+                              col
+                              flat
+                              limit
+                              buf)])
+                        (format-rules-layout-first-or-line-form
+                          "define"
+                          rest
+                          emit
+                          width
+                          indent
+                          col
+                          flat
+                          limit
+                          buf))]
+                    [_
+                      (format-rules-layout-first-or-line-form
+                        "define"
+                        rest
+                        emit
+                        width
+                        indent
+                        col
+                        flat
+                        limit
+                        buf)])
+                  (format-rules-layout-define-body
+                    target
+                    after-target
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf))))]
+          [_
+            (format-rules-layout-first-or-line-form
+              "define"
+              rest
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)]))]
+    [_
+      (format-rules-layout-first-or-line-form
+        "define"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-defmacro
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match rest
+    [(FmtCstCons target after-target-box)
+      (match (box-get after-target-box)
+        [(FmtCstCons colon after-colon-box)
+          (if (format-rules-node-colon? colon)
+            (match (box-get after-colon-box)
+              [(FmtCstCons typ body-box)
+                (match (box-get body-box)
+                  [(FmtCstNil)
+                    (format-rules-layout-first-or-line-form
+                      "defmacro"
+                      rest
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)]
+                  [_
+                    (format-rules-layout-signature-annotated
+                      "defmacro"
+                      target
+                      colon
+                      typ
+                      (box-get body-box)
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)])]
+              [_
+                (format-rules-layout-first-or-line-form
+                  "defmacro"
+                  rest
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)])
+            (format-rules-layout-first-or-line-form
+              "defmacro"
+              rest
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf))]
+        [_
+          (format-rules-layout-first-or-line-form
+            "defmacro"
+            rest
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)])]
+    [_
+      (format-rules-layout-first-or-line-form
+        "defmacro"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-lambda
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match rest
+    [(FmtCstCons target after-target-box)
+      (match (box-get after-target-box)
+        [(FmtCstCons colon after-colon-box)
+          (if (format-rules-node-colon? colon)
+            (match (box-get after-colon-box)
+              [(FmtCstCons typ body-box)
+                (match (box-get body-box)
+                  [(FmtCstNil)
+                    (format-rules-layout-first-or-line-form
+                      "lambda"
+                      rest
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)]
+                  [_
+                    (format-rules-layout-signature-annotated
+                      "lambda"
+                      target
+                      colon
+                      typ
+                      (box-get body-box)
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)])]
+              [_
+                (format-rules-layout-first-or-line-form
+                  "lambda"
+                  rest
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)])
+            (format-rules-layout-first-or-line-form
+              "lambda"
+              rest
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf))]
+        [_
+          (format-rules-layout-first-or-line-form
+            "lambda"
+            rest
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)])]
+    [_
+      (format-rules-layout-first-or-line-form
+        "lambda"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-special-list
+  [head : FormatCst]
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (cond
+    [(format-rules-node-symbol? head "import")
+      (format-rules-layout-inline-form
+        "import"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "include-str")
+      (format-rules-layout-inline-form
+        "include-str"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "extern")
+      (format-rules-layout-inline-form
+        "extern"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "define")
+      (format-rules-layout-define rest emit width indent col flat limit buf)]
+    [(format-rules-node-symbol? head "defmacro")
+      (format-rules-layout-defmacro rest emit width indent col flat limit buf)]
+    [(format-rules-node-symbol? head "defenum")
+      (format-rules-layout-first-or-line-form
+        "defenum"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "defstruct")
+      (format-rules-layout-first-or-line-form
+        "defstruct"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "lambda")
+      (format-rules-layout-lambda rest emit width indent col flat limit buf)]
+    [(format-rules-node-symbol? head "let")
+      (format-rules-layout-let rest emit width indent col flat limit buf)]
+    [(format-rules-node-symbol? head "if")
+      (format-rules-layout-first-or-line-form
+        "if"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "while")
+      (format-rules-layout-first-or-line-form
+        "while"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "begin")
+      (format-rules-layout-line-form
+        "begin"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "unsafe")
+      (format-rules-layout-line-form
+        "unsafe"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(format-rules-node-symbol? head "match")
+      (format-rules-layout-first-or-line-form
+        "match"
+        rest
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [else
+      (format-rules-layout-delimited
+        "("
+        (FmtCstCons head (box rest))
+        ")"
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-colon-list
+  [rest : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match rest
+    [(FmtCstCons key tail)
+      (let
+        [name : String (format-rules-node-symbol-name key)]
+        (if (> (string-length name) 0)
+          (format-rules-layout-inline-form
+            (string-append ":" name)
+            (box-get tail)
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)
+          (format-rules-layout-delimited
+            "("
+            (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
+            ")"
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)))]
+    [_
+      (format-rules-layout-delimited
+        "("
+        (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
+        ")"
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-list
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil)
+      (format-rules-layout-delimited
+        "("
+        FmtCstNil
+        ")"
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstCons head rest)
+      (if (format-rules-node-colon? head)
+        (format-rules-layout-colon-list
+          (box-get rest)
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)
+        (format-rules-layout-special-list
+          head
+          (box-get rest)
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf))]))
+
+(define (format-rules-layout-forms-tail
+  [previous : FormatCst]
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (format-rules-layout-forms-tail
+        node
+        (box-get rest)
+        emit
+        width
+        indent
+        (format-rules-layout-cst
+          node
+          emit
+          width
+          indent
+          (if (format-rules-node-comment? previous)
+            (format-rules-layout-hard-line emit width indent col flat limit buf)
+            (if (format-rules-adjacent-top-forms? previous node)
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)))
+          flat
+          limit
+          buf)
+        flat
+        limit
+        buf)]))
+
+(define (format-rules-layout-forms
+  [items : FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (match items
+    [(FmtCstNil) col]
+    [(FmtCstCons node rest)
+      (format-rules-layout-forms-tail
+        node
+        (box-get rest)
+        emit
+        width
+        indent
+        (format-rules-layout-cst node emit width indent col flat limit buf)
+        flat
+        limit
+        buf)]))
+
 (define (format-rules-render-hard-line-into [indent : i64] [buf : FmtRenderBuf]) : i64
   (begin
     (render-newline-into! buf indent)
@@ -689,7 +2816,7 @@
   [indent : i64]
   [col : i64]
   [buf : FmtRenderBuf]) : i64
-  (render-doc-into (format-rules-cst-doc node) width indent col false buf))
+  (format-rules-layout-cst node true width indent col false 0 buf))
 
 (define (format-rules-render-forms-tail-into
   [previous : FormatCst]

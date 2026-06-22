@@ -173,6 +173,7 @@ stdlib_manifest() {
 arena.tl
 atomic.tl
 args.tl
+array.tl
 byte_buf.tl
 comptime.tl
 core_macros.tl

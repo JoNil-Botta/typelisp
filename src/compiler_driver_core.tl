@@ -392,9 +392,11 @@
 (define (compiler-driver-enable-language-cfgs [cfgs : SymI64Env]) : SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
-      (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-      "feature-str-view")
-    "feature-private-string-intrinsics"))
+      (compiler-cfg-enable
+        (compiler-cfg-enable cfgs "feature-ptr-addr-of")
+        "feature-str-view")
+      "feature-private-string-intrinsics")
+    "array-helper-intrinsics"))
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]

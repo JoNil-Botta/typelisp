@@ -71,6 +71,9 @@ check_source_docs() {
             pending_doc = 1
             next
         }
+        /^[[:space:]]*;;[[:space:]]*lint-allow:/ {
+            next
+        }
         /^[[:space:]]*$/ {
             next
         }

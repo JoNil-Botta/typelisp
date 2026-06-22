@@ -4155,7 +4155,7 @@
     [name : String (intern-str name-id)]
     [def-ctx : TcContext (tc-context-with-module ctx module)]
     (if (>= (intern-first-dot name-id) 0)
-      (tc-lookup-dotted-source-visible ctx env name)
+      (tc-lookup-dotted-source-visible def-ctx env name)
       (match (tc-hygiene-definition-env ctx module)
         [(OkTcEnv def-env)
           (match (tc-lookup-unsafe-id def-env name-id)
@@ -35868,7 +35868,7 @@
     (macro-call-decl-from-source-name
       ctx
       decls
-      (tc-context-module ctx)
+      definition-module
       lookup-name
       call-expr)
     (macro-call-decl-from-name

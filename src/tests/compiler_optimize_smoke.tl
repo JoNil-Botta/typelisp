@@ -23,6 +23,234 @@
 ;; only when every self-test passes.
 (import "../compiler_optimize.tl")
 
+(define (opt-count-switch-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-count-switch-instr-seq-from
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(IrInstrSwitch _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-count-switch-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-switch-instr-seq-from instrs 0 0))
+
+(define (opt-count-switch-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-switch-instr-seq instrs)
+            (opt-count-switch-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-switch-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-switch-case-list-count [cases : CompilerIrSwitchCaseList]) : i64
+  (match cases
+    [(IrSwitchCaseNil) 0]
+    [(IrSwitchCaseCons _ rest)
+      (+ 1 (opt-switch-case-list-count (box-get rest)))]))
+
+(define (opt-switch-entry-base [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) (- 0 1)]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ base _ _) base]
+              [_ (- 0 1)])
+            (- 0 1))])]))
+
+(define (opt-switch-entry-case-count [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) 0]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ _ cases _) (opt-switch-case-list-count cases)]
+              [_ 0])
+            0)])]))
+
+(define (opt-switch-entry-default-label [blocks : CompilerIrBlockList]) : String
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) ""]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ _ _ default-label) default-label]
+              [_ ""])
+            "")])]))
+
+(define (opt-switch-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons (IrParam "tag" (AstTyI64) 0) (IrParamNil)))
+
+(define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "switch_form" (opt-switch-test-params) (AstTyI64) 16 blocks))
+
+(define (opt-switch-test-compare-block
+  [label : String]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrBinOp eq-var IrBinEq (IrValueVar 0) (IrValueI64 tag) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar eq-var) arm-label next-label)
+        (IrInstrNil)))))
+
+(define (opt-switch-test-extra-compare-block
+  [label : String]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrBinOp eq-var IrBinEq (IrValueVar 0) (IrValueI64 tag) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrMov 9 (IrValueI64 99) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar eq-var) arm-label next-label)
+          (IrInstrNil))))))
+
+(define (opt-switch-test-return-block [label : String] [value : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueI64 value)))
+      (IrInstrNil))))
+
+(define (opt-switch-test-chain-blocks
+  [tag0 : i64]
+  [tag1 : i64]
+  [tag2 : i64]
+  [tag3 : i64]
+  [default-label : String]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-compare-block "entry" tag0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" tag1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" tag2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block
+                  "cmp3"
+                  tag3
+                  4
+                  "case3"
+                  default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (IrBlockNil)))))))))))
+
+(define (opt-switch-test-short-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-compare-block "entry" 0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "fallback")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-return-block "fallback" 99)
+                (IrBlockNil)))))))))
+
+(define (opt-switch-test-extra-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-extra-compare-block "entry" 0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block "cmp3" 3 4 "case3" "fallback")
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block "fallback" 99)
+                    (IrBlockNil)))))))))))
+
+(define (compiler-optimize-switch-form-self-test) : i64
+  (let
+    [dense-source : CompilerIrBlockList
+      (opt-switch-test-chain-blocks 2 0 1 3 "fallback")]
+    [dense : CompilerIrFunction
+      (opt-switch-form-function (opt-switch-test-function dense-source))]
+    [dense-blocks : CompilerIrBlockList (opt-function-blocks dense)]
+    [short : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-short-blocks)))]
+    [sparse : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 3 4 "fallback")))]
+    [duplicate : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 1 2 "fallback")))]
+    [extra : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-extra-blocks)))]
+    [level1 : CompilerIrFunction
+      (optimize-function-with-level (opt-switch-test-function dense-source) 1)]
+    [level2 : CompilerIrFunction
+      (optimize-function-with-level (opt-switch-test-function dense-source) 2)]
+    (cond
+      [(not (= (opt-count-switch-blocks dense-blocks) 1)) 1]
+      [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
+      [(not (= (opt-switch-entry-case-count dense-blocks) 4)) 3]
+      [(not
+          (string-eq (opt-switch-entry-default-label dense-blocks) "fallback"))
+        4]
+      [(opt-block-list-has-label? dense-blocks "cmp1") 5]
+      [(opt-block-list-has-label? dense-blocks "cmp2") 6]
+      [(opt-block-list-has-label? dense-blocks "cmp3") 7]
+      [(not (opt-verify-ok? (opt-verify-function dense))) 8]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks short)) 0)) 9]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks sparse)) 0)) 10]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks duplicate)) 0)) 11]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks extra)) 0)) 12]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks level1)) 0)) 13]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks level2)) 1)) 14]
+      [else 42])))
+
 (define (smoke-mov-dst-var-type?
   [instrs : CompilerIrInstrList]
   [dst : i64]
@@ -622,6 +850,7 @@
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-switch-form-self-test) 42) (return 1))
     (unless (= (compiler-optimize-natural-loop-self-test) 42) (return 1))
     (unless (= (compiler-optimize-loop-rotation-self-test) 42) (return 1))
     (unless (= (compiler-optimize-licm-self-test) 42) (return 1))

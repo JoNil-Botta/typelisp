@@ -1565,6 +1565,43 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
+(define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
+  "(module tc.macro.context.helper)
+(define (bump [value : i64]) : i64 (+ value 1))
+(export (value bump))")
+
+(define (compiler-typecheck-smoke-macro-dependency-provider-source) : String
+  "(module tc.macro.context.provider)
+(import \"tc_macro_context_helper.tl\" module tc.macro.context.helper as helper)
+(defmacro (bumped [value : i64]) : i64
+  `(helper.bump ,value))
+(export (macro bumped))")
+
+(define (compiler-typecheck-smoke-macro-dependency-entry-source) : String
+  "(import \"tc_macro_context_provider.tl\" module tc.macro.context.provider as provider)
+(define (main) : i64 (provider.bumped 41))")
+
+(define (compiler-typecheck-smoke-macro-dependency-context-ok?) : bool
+  (let
+    [helper : String "target/tc_macro_context_helper.tl"]
+    [provider : String "target/tc_macro_context_provider.tl"]
+    [entry : String "target/tc_macro_context_entry.tl"]
+    [roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    (begin
+      (write-file
+        helper
+        (compiler-typecheck-smoke-macro-dependency-helper-source))
+      (write-file
+        provider
+        (compiler-typecheck-smoke-macro-dependency-provider-source))
+      (write-file
+        entry
+        (compiler-typecheck-smoke-macro-dependency-entry-source))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -1604,5 +1641,8 @@
     (unless
       (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
       (panic "typecheck: prefix cache flat local smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-macro-dependency-context-ok?)
+      (panic "typecheck: macro dependency context smoke failed"))
     (macro-alias-cache-reset!)
     42))

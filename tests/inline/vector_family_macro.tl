@@ -23,40 +23,35 @@
 (test
   named-vector-family-two-local-aggregate-families
   (let
-    [points : VecFamilyPointVec
-      (vec-family-point-vec-push
-        (vec-family-point-vec-push
-          (vec-family-point-vec-with-capacity 1)
-          (VecFamilyPoint 1 2))
-        (VecFamilyPoint 3 4))]
-    [spans : VecFamilySpanVec
-      (vec-family-span-vec-push (vec-family-span-vec-new) (VecFamilySpan 5 7))]
+    [points : VecFamilyPointVec (vec-family-point-vec-with-capacity 1)]
+    [spans : VecFamilySpanVec (vec-family-span-vec-new)]
     (begin
-      (assert-i64-eq (vec-family-point-vec-len points) 2 "point family len")
+      (vec-family-point-vec-push (&mut points) (VecFamilyPoint 1 2))
+      (vec-family-point-vec-push (&mut points) (VecFamilyPoint 3 4))
+      (vec-family-span-vec-push (&mut spans) (VecFamilySpan 5 7))
+      (assert-i64-eq (vec-family-point-vec-len (& points)) 2 "point family len")
       (assert-i64-eq
-        (vec-family-point-vec-capacity points)
+        (vec-family-point-vec-capacity (& points))
         2
         "point family grew")
       (assert-i64-eq
         (vec-family-point-score
-          (vec-family-point-vec-get points 1 (VecFamilyPoint 0 0)))
+          (vec-family-point-vec-get (& points) 1 (VecFamilyPoint 0 0)))
         34
         "point family get")
-      (let
-        [updated : VecFamilyPointVec
-          (vec-family-point-vec-set! points 0 (VecFamilyPoint 9 8))]
-        (assert-i64-eq
-          (vec-family-point-score
-            (vec-family-point-vec-get updated 0 (VecFamilyPoint 0 0)))
-          98
-          "point family set!"))
-      (assert-i64-eq (vec-family-span-vec-len spans) 1 "span family len")
+      (vec-family-point-vec-set! (&mut points) 0 (VecFamilyPoint 9 8))
       (assert-i64-eq
-        (vec-family-span-vec-capacity spans)
+        (vec-family-point-score
+          (vec-family-point-vec-get (& points) 0 (VecFamilyPoint 0 0)))
+        98
+        "point family set!")
+      (assert-i64-eq (vec-family-span-vec-len (& spans)) 1 "span family len")
+      (assert-i64-eq
+        (vec-family-span-vec-capacity (& spans))
         4
         "span family default capacity")
       (assert-i64-eq
         (vec-family-span-end
-          (vec-family-span-vec-get spans 0 (VecFamilySpan 0 0)))
+          (vec-family-span-vec-get (& spans) 0 (VecFamilySpan 0 0)))
         12
         "span family get"))))

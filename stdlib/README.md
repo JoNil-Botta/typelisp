@@ -10,6 +10,11 @@ builds support local path dependencies and `pkg:<alias>/...` imports through
 TypeLisp still does not define registry or version solving, default
 installed-root discovery, namespace isolation, or an implicit prelude.
 
+The in-tree unsized `(Array T)` migration census lives in
+[`DYNAMIC_ARRAY_CENSUS.md`](DYNAMIC_ARRAY_CENSUS.md). Check it before adding a
+new public growable collection surface or migrating an existing dynamic-array
+use.
+
 ## Current Modules
 
 - `arena.tl`: first-class arena helper declarations for manual allocation

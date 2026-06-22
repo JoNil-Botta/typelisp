@@ -14537,6 +14537,474 @@
 (defenum OptFunctionPassResult
   (OptFunctionPassResult CompilerIrFunction bool))
 
+(defenum OptSwitchIndexTag
+  (OptNoSwitchIndexTag)
+  (OptSomeSwitchIndexTag i64 i64))
+
+(defenum OptSwitchCompare
+  (OptNoSwitchCompare)
+  (OptSomeSwitchCompare i64 i64 i64 String String))
+
+(defenum OptSwitchCandidateList
+  (OptSwitchCandidateNil)
+  (OptSwitchCandidateCons
+    String
+    i64
+    i64
+    String
+    String
+    (Box OptSwitchCandidateList)))
+
+(defenum OptSwitchMaybeLabel
+  (OptSwitchNoLabel)
+  (OptSwitchSomeLabel String))
+
+(defenum OptMaybeSwitchChain
+  (OptNoSwitchChain)
+  (OptSomeSwitchChain i64 i64 i64 String OptSwitchCandidateList))
+
+(defenum OptSwitchRewriteResult
+  (OptSwitchRewriteResult CompilerIrBlockList OptLabelSet bool))
+
+(define (opt-switch-use-count [uses : (Array i64)] [var : i64]) : i64
+  (if (< var 0)
+    0
+    (if (>= var (array-length uses))
+      0
+      (array-ref uses var))))
+
+(define (opt-switch-index-tag-from-values
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : OptSwitchIndexTag
+  (match lhs
+    [(IrValueVar var)
+      (match rhs
+        [(IrValueI64 tag) (OptSomeSwitchIndexTag var tag)]
+        [_ (OptNoSwitchIndexTag)])]
+    [(IrValueI64 tag)
+      (match rhs
+        [(IrValueVar var) (OptSomeSwitchIndexTag var tag)]
+        [_ (OptNoSwitchIndexTag)])]
+    [_ (OptNoSwitchIndexTag)]))
+
+(define (opt-switch-parse-compare-block
+  [block : CompilerIrBlock]
+  [uses : (Array i64)]) : OptSwitchCompare
+  (match block
+    [(IrBlock _ instrs)
+      (if (= (compiler-ir-instr-seq-count instrs) 2)
+        (match (compiler-ir-instr-seq-ref instrs 0)
+          [(IrInstrBinOp eq-var op lhs rhs _)
+            (if (opt-binop-eq op IrBinEq)
+              (match (opt-switch-index-tag-from-values lhs rhs)
+                [(OptSomeSwitchIndexTag index-var tag)
+                  (match (compiler-ir-instr-seq-ref instrs 1)
+                    [(IrInstrBranch (IrValueVar cond-var) arm-label next-label)
+                      (if (and
+                        (= cond-var eq-var)
+                        (= (opt-switch-use-count uses eq-var) 1))
+                        (OptSomeSwitchCompare
+                          index-var
+                          tag
+                          eq-var
+                          arm-label
+                          next-label)
+                        (OptNoSwitchCompare))]
+                    [_ (OptNoSwitchCompare)])]
+                [(OptNoSwitchIndexTag) (OptNoSwitchCompare)])
+              (OptNoSwitchCompare))]
+          [_ (OptNoSwitchCompare)])
+        (OptNoSwitchCompare))]))
+
+(define (opt-switch-candidate-empty? [items : OptSwitchCandidateList]) : bool
+  (match items
+    [(OptSwitchCandidateNil) true]
+    [_ false]))
+
+(define (opt-switch-candidate-count [items : OptSwitchCandidateList]) : i64
+  (match items
+    [(OptSwitchCandidateNil) 0]
+    [(OptSwitchCandidateCons _ _ _ _ _ rest)
+      (+ 1 (opt-switch-candidate-count (box-get rest)))]))
+
+(define (opt-switch-candidate-has-tag?
+  [items : OptSwitchCandidateList]
+  [tag : i64]) : bool
+  (match items
+    [(OptSwitchCandidateNil) false]
+    [(OptSwitchCandidateCons _ item-tag _ _ _ rest)
+      (if (= item-tag tag)
+        true
+        (opt-switch-candidate-has-tag? (box-get rest) tag))]))
+
+(define (opt-switch-candidate-has-label?
+  [items : OptSwitchCandidateList]
+  [label : String]) : bool
+  (match items
+    [(OptSwitchCandidateNil) false]
+    [(OptSwitchCandidateCons item-label _ _ _ _ rest)
+      (if (string-eq item-label label)
+        true
+        (opt-switch-candidate-has-label? (box-get rest) label))]))
+
+(define (opt-switch-candidate-min-from
+  [items : OptSwitchCandidateList]
+  [current : i64]) : i64
+  (match items
+    [(OptSwitchCandidateNil) current]
+    [(OptSwitchCandidateCons _ tag _ _ _ rest)
+      (opt-switch-candidate-min-from
+        (box-get rest)
+        (if (< tag current)
+          tag
+          current))]))
+
+(define (opt-switch-candidate-max-from
+  [items : OptSwitchCandidateList]
+  [current : i64]) : i64
+  (match items
+    [(OptSwitchCandidateNil) current]
+    [(OptSwitchCandidateCons _ tag _ _ _ rest)
+      (opt-switch-candidate-max-from
+        (box-get rest)
+        (if (> tag current)
+          tag
+          current))]))
+
+(define (opt-switch-candidate-min [items : OptSwitchCandidateList]) : i64
+  (match items
+    [(OptSwitchCandidateCons _ tag _ _ _ rest)
+      (opt-switch-candidate-min-from (box-get rest) tag)]
+    [(OptSwitchCandidateNil) 0]))
+
+(define (opt-switch-candidate-max [items : OptSwitchCandidateList]) : i64
+  (match items
+    [(OptSwitchCandidateCons _ tag _ _ _ rest)
+      (opt-switch-candidate-max-from (box-get rest) tag)]
+    [(OptSwitchCandidateNil) 0]))
+
+(define (opt-switch-candidate-label-for-tag
+  [items : OptSwitchCandidateList]
+  [tag : i64]) : OptSwitchMaybeLabel
+  (match items
+    [(OptSwitchCandidateNil) (OptSwitchNoLabel)]
+    [(OptSwitchCandidateCons _ item-tag _ arm-label _ rest)
+      (if (= item-tag tag)
+        (OptSwitchSomeLabel arm-label)
+        (opt-switch-candidate-label-for-tag (box-get rest) tag))]))
+
+(define (opt-switch-build-cases-desc
+  [items : OptSwitchCandidateList]
+  [tag : i64]
+  [min-tag : i64]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (if (< tag min-tag)
+    acc
+    (match (opt-switch-candidate-label-for-tag items tag)
+      [(OptSwitchSomeLabel label)
+        (opt-switch-build-cases-desc
+          items
+          (- tag 1)
+          min-tag
+          (compiler-ir-switch-case-cons tag label acc))]
+      [(OptSwitchNoLabel) acc])))
+
+(define (opt-switch-build-cases
+  [items : OptSwitchCandidateList]
+  [min-tag : i64]
+  [max-tag : i64]) : CompilerIrSwitchCaseList
+  (opt-switch-build-cases-desc items max-tag min-tag IrSwitchCaseNil))
+
+(define (opt-switch-block-starts-with-phi?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptNoBlock) true]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 0)
+            false
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrPhi _ _ _) true]
+              [_ false]))])]))
+
+(define (opt-switch-targets-safe-from?
+  [blocks : CompilerIrBlockList]
+  [all-items : OptSwitchCandidateList]
+  [items : OptSwitchCandidateList]
+  [default-label : String]) : bool
+  (if (or
+    (opt-switch-candidate-has-label? all-items default-label)
+    (opt-switch-block-starts-with-phi? blocks default-label))
+    false
+    (match items
+      [(OptSwitchCandidateNil) true]
+      [(OptSwitchCandidateCons _ _ _ arm-label _ rest)
+        (and
+          (not (opt-switch-candidate-has-label? all-items arm-label))
+          (not (opt-switch-block-starts-with-phi? blocks arm-label))
+          (opt-switch-targets-safe-from?
+            blocks
+            all-items
+            (box-get rest)
+            default-label))])))
+
+(define (opt-switch-targets-safe?
+  [blocks : CompilerIrBlockList]
+  [items : OptSwitchCandidateList]
+  [default-label : String]) : bool
+  (opt-switch-targets-safe-from? blocks items items default-label))
+
+(define (opt-switch-single-pred-from?
+  [index : OptCfgIndex]
+  [label : String]
+  [pred : String]) : bool
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+    (and (= (opt-label-count preds) 1) (opt-label-contains preds pred))))
+
+(define (opt-switch-finalize-chain
+  [blocks : CompilerIrBlockList]
+  [index-var : i64]
+  [items : OptSwitchCandidateList]
+  [default-label : String]) : OptMaybeSwitchChain
+  (if (or (= index-var (- 0 1)) (opt-switch-candidate-empty? items))
+    (OptNoSwitchChain)
+    (let
+      [count : i64 (opt-switch-candidate-count items)]
+      [min-tag : i64 (opt-switch-candidate-min items)]
+      [max-tag : i64 (opt-switch-candidate-max items)]
+      (if (and
+        (>= count 4)
+        (= (+ (- max-tag min-tag) 1) count)
+        (opt-switch-targets-safe? blocks items default-label))
+        (OptSomeSwitchChain index-var min-tag max-tag default-label items)
+        (OptNoSwitchChain)))))
+
+(define (opt-switch-collect-parsed
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (Array i64)]
+  [label : String]
+  [index-var : i64]
+  [prev-label : String]
+  [seen : OptLabelSet]
+  [items : OptSwitchCandidateList]
+  [candidate-index : i64]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : OptMaybeSwitchChain
+  (if (and (!= index-var (- 0 1)) (!= candidate-index index-var))
+    (opt-switch-finalize-chain blocks index-var items label)
+    (let
+      [first? : bool (= index-var (- 0 1))]
+      [chain-index : i64
+        (if first?
+          candidate-index
+          index-var)]
+      (if (or
+        (opt-switch-candidate-has-tag? items tag)
+        (and
+          (not first?)
+          (not (opt-switch-single-pred-from? index label prev-label))))
+        (OptNoSwitchChain)
+        (opt-switch-collect-chain
+          blocks
+          index
+          uses
+          next-label
+          chain-index
+          label
+          (opt-label-add seen label)
+          (OptSwitchCandidateCons
+            label
+            tag
+            eq-var
+            arm-label
+            next-label
+            (box items)))))))
+
+(define (opt-switch-collect-chain
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (Array i64)]
+  [label : String]
+  [index-var : i64]
+  [prev-label : String]
+  [seen : OptLabelSet]
+  [items : OptSwitchCandidateList]) : OptMaybeSwitchChain
+  (if (opt-label-contains seen label)
+    (OptNoSwitchChain)
+    (match (opt-cfg-find-block blocks label)
+      [(OptNoBlock) (opt-switch-finalize-chain blocks index-var items label)]
+      [(OptSomeBlock block)
+        (match (opt-switch-parse-compare-block block uses)
+          [(OptNoSwitchCompare)
+            (opt-switch-finalize-chain blocks index-var items label)]
+          [(OptSomeSwitchCompare
+              candidate-index
+              tag
+              eq-var
+              arm-label
+              next-label)
+            (opt-switch-collect-parsed
+              blocks
+              index
+              uses
+              label
+              index-var
+              prev-label
+              seen
+              items
+              candidate-index
+              tag
+              eq-var
+              arm-label
+              next-label)])])))
+
+(define (opt-switch-skip-candidate-labels
+  [items : OptSwitchCandidateList]
+  [first-label : String]
+  [skip : OptLabelSet]) : OptLabelSet
+  (match items
+    [(OptSwitchCandidateNil) skip]
+    [(OptSwitchCandidateCons label _ _ _ _ rest)
+      (opt-switch-skip-candidate-labels
+        (box-get rest)
+        first-label
+        (if (string-eq label first-label)
+          skip
+          (opt-label-add skip label)))]))
+
+(define (opt-switch-rewrite-block
+  [block : CompilerIrBlock]
+  [chain : OptMaybeSwitchChain]) : CompilerIrBlock
+  (match block
+    [(IrBlock label _)
+      (match chain
+        [(OptSomeSwitchChain index-var min-tag max-tag default-label items)
+          (compiler-ir-block
+            label
+            (compiler-ir-instr-cons
+              (IrInstrSwitch
+                (IrValueVar index-var)
+                min-tag
+                (opt-switch-build-cases items min-tag max-tag)
+                default-label)
+              (IrInstrNil)))]
+        [(OptNoSwitchChain) block])]))
+
+(define (opt-switch-rewrite-blocks-from
+  [remaining : CompilerIrBlockList]
+  [all-blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (Array i64)]
+  [skip : OptLabelSet]) : OptSwitchRewriteResult
+  (match remaining
+    [(IrBlockNil) (OptSwitchRewriteResult (IrBlockNil) skip false)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (opt-label-contains skip label)
+            (match (opt-switch-rewrite-blocks-from
+              (box-get rest)
+              all-blocks
+              index
+              uses
+              skip)
+              [(OptSwitchRewriteResult tail next-skip _)
+                (OptSwitchRewriteResult tail next-skip true)])
+            (match (opt-switch-collect-chain
+              all-blocks
+              index
+              uses
+              label
+              (- 0 1)
+              ""
+              (OptLabelNil)
+              (OptSwitchCandidateNil))
+              [(OptSomeSwitchChain
+                  index-var
+                  min-tag
+                  max-tag
+                  default-label
+                  items)
+                (let
+                  [next-skip : OptLabelSet
+                    (opt-switch-skip-candidate-labels items label skip)]
+                  (match (opt-switch-rewrite-blocks-from
+                    (box-get rest)
+                    all-blocks
+                    index
+                    uses
+                    next-skip)
+                    [(OptSwitchRewriteResult tail final-skip _)
+                      (OptSwitchRewriteResult
+                        (compiler-ir-block-cons
+                          (opt-switch-rewrite-block
+                            block
+                            (OptSomeSwitchChain
+                              index-var
+                              min-tag
+                              max-tag
+                              default-label
+                              items))
+                          tail)
+                        final-skip
+                        true)]))]
+              [(OptNoSwitchChain)
+                (match (opt-switch-rewrite-blocks-from
+                  (box-get rest)
+                  all-blocks
+                  index
+                  uses
+                  skip)
+                  [(OptSwitchRewriteResult tail final-skip changed)
+                    (OptSwitchRewriteResult
+                      (compiler-ir-block-cons block tail)
+                      final-skip
+                      changed)])]))])]
+    [(IrBlockArray seq)
+      (opt-switch-rewrite-blocks-from
+        (compiler-ir-block-seq-to-list seq)
+        all-blocks
+        index
+        uses
+        skip)]))
+
+(define (opt-switch-form-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+        [index : OptCfgIndex (opt-cfg-index-build blocks)]
+        [rewrite : OptSwitchRewriteResult
+          (opt-switch-rewrite-blocks-from
+            blocks
+            blocks
+            index
+            uses
+            (OptLabelNil))]
+        (match rewrite
+          [(OptSwitchRewriteResult rewritten _ changed)
+            (if changed
+              (let
+                [reachable : CompilerIrBlockList
+                  (opt-cfg-reachable-block-order rewritten)]
+                [next : CompilerIrFunction
+                  (IrFunction name params ret-ty frame reachable)]
+                (match (opt-verify-function next)
+                  [(OkCompilerOptimizeVerify) (OptFunctionPassResult next true)]
+                  [(ErrCompilerOptimizeVerify _)
+                    (OptFunctionPassResult func false)]))
+              (OptFunctionPassResult func false))]))]))
+
+(define (opt-switch-form-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-switch-form-function-pass func)
+    [(OptFunctionPassResult next _) next]))
+
 (define (optimize-function-max-iterations) : i64
   2)
 
@@ -18574,6 +19042,33 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
                           unit)]
+                      [_t-switch : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [switch-input : CompilerIrFunction
+                        (IrFunction name params ret-ty ssa-frame cfg)]
+                      [switch-result : OptFunctionPassResult
+                        (opt-switch-form-function-pass switch-input)]
+                      [switched : CompilerIrFunction
+                        (match switch-result
+                          [(OptFunctionPassResult f _) f])]
+                      [switch-changed : bool
+                        (match switch-result
+                          [(OptFunctionPassResult _ changed) changed])]
+                      [switch-blocks : CompilerIrBlockList
+                        (opt-function-blocks switched)]
+                      [switch-context : OptCfgContext
+                        (if run-heavy?
+                          (if switch-changed
+                            (opt-cfg-context-build switch-blocks)
+                            cfg-context)
+                          (opt-cfg-context-empty))]
+                      [_p-switch : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "switch"
+                            name
+                            _t-switch)
+                          unit)]
                       [_t-preheaders : i64
                         (cfg compile-profile (profile-now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
@@ -18588,12 +19083,22 @@
                         (if run-heavy?
                           (let
                             [preheaders-input : CompilerIrFunction
-                              (IrFunction name params ret-ty ssa-frame cfg)]
+                              (IrFunction
+                                name
+                                params
+                                ret-ty
+                                ssa-frame
+                                switch-blocks)]
                             (opt-loop-preheaders-function-with-context-result
-                              cfg-context
+                              switch-context
                               preheaders-input))
                           (OptFunctionCtxResult
-                            (IrFunction name params ret-ty ssa-frame cfg)
+                            (IrFunction
+                              name
+                              params
+                              ret-ty
+                              ssa-frame
+                              switch-blocks)
                             (opt-cfg-context-empty)))]
                       [preheaders : CompilerIrFunction
                         (match preheaders-result
@@ -31683,6 +32188,234 @@
       (opt-label-contains successors "one")
       (opt-label-contains successors "two")
       (opt-label-contains successors "other"))))
+
+(define (opt-count-switch-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-count-switch-instr-seq-from
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(IrInstrSwitch _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-count-switch-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-switch-instr-seq-from instrs 0 0))
+
+(define (opt-count-switch-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (opt-count-switch-instr-seq instrs)
+            (opt-count-switch-blocks (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-count-switch-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-switch-case-list-count [cases : CompilerIrSwitchCaseList]) : i64
+  (match cases
+    [(IrSwitchCaseNil) 0]
+    [(IrSwitchCaseCons _ rest)
+      (+ 1 (opt-switch-case-list-count (box-get rest)))]))
+
+(define (opt-switch-entry-base [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) (- 0 1)]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ base _ _) base]
+              [_ (- 0 1)])
+            (- 0 1))])]))
+
+(define (opt-switch-entry-case-count [blocks : CompilerIrBlockList]) : i64
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) 0]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ _ cases _) (opt-switch-case-list-count cases)]
+              [_ 0])
+            0)])]))
+
+(define (opt-switch-entry-default-label [blocks : CompilerIrBlockList]) : String
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptNoBlock) ""]
+    [(OptSomeBlock block)
+      (match block
+        [(IrBlock _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(IrInstrSwitch _ _ _ default-label) default-label]
+              [_ ""])
+            "")])]))
+
+(define (opt-switch-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons (IrParam "tag" (AstTyI64) 0) (IrParamNil)))
+
+(define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "switch_form" (opt-switch-test-params) (AstTyI64) 16 blocks))
+
+(define (opt-switch-test-compare-block
+  [label : String]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrBinOp eq-var IrBinEq (IrValueVar 0) (IrValueI64 tag) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar eq-var) arm-label next-label)
+        (IrInstrNil)))))
+
+(define (opt-switch-test-extra-compare-block
+  [label : String]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrBinOp eq-var IrBinEq (IrValueVar 0) (IrValueI64 tag) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrMov 9 (IrValueI64 99) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar eq-var) arm-label next-label)
+          (IrInstrNil))))))
+
+(define (opt-switch-test-return-block [label : String] [value : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueI64 value)))
+      (IrInstrNil))))
+
+(define (opt-switch-test-chain-blocks
+  [tag0 : i64]
+  [tag1 : i64]
+  [tag2 : i64]
+  [tag3 : i64]
+  [default-label : String]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-compare-block "entry" tag0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" tag1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" tag2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block
+                  "cmp3"
+                  tag3
+                  4
+                  "case3"
+                  default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (IrBlockNil)))))))))))
+
+(define (opt-switch-test-short-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-compare-block "entry" 0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "fallback")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-return-block "fallback" 99)
+                (IrBlockNil)))))))))
+
+(define (opt-switch-test-extra-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-extra-compare-block "entry" 0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block "cmp3" 3 4 "case3" "fallback")
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block "fallback" 99)
+                    (IrBlockNil)))))))))))
+
+(define (compiler-optimize-switch-form-self-test) : i64
+  (let
+    [dense-source : CompilerIrBlockList
+      (opt-switch-test-chain-blocks 2 0 1 3 "fallback")]
+    [dense : CompilerIrFunction
+      (opt-switch-form-function (opt-switch-test-function dense-source))]
+    [dense-blocks : CompilerIrBlockList (opt-function-blocks dense)]
+    [short : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-short-blocks)))]
+    [sparse : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 3 4 "fallback")))]
+    [duplicate : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 1 2 "fallback")))]
+    [extra : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-extra-blocks)))]
+    [level1 : CompilerIrFunction
+      (optimize-function-with-level (opt-switch-test-function dense-source) 1)]
+    [level2 : CompilerIrFunction
+      (optimize-function-with-level (opt-switch-test-function dense-source) 2)]
+    (cond
+      [(not (= (opt-count-switch-blocks dense-blocks) 1)) 1]
+      [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
+      [(not (= (opt-switch-entry-case-count dense-blocks) 4)) 3]
+      [(not
+          (string-eq (opt-switch-entry-default-label dense-blocks) "fallback"))
+        4]
+      [(opt-block-list-has-label? dense-blocks "cmp1") 5]
+      [(opt-block-list-has-label? dense-blocks "cmp2") 6]
+      [(opt-block-list-has-label? dense-blocks "cmp3") 7]
+      [(not (opt-verify-ok? (opt-verify-function dense))) 8]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks short)) 0)) 9]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks sparse)) 0)) 10]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks duplicate)) 0)) 11]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks extra)) 0)) 12]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks level1)) 0)) 13]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks level2)) 1)) 14]
+      [else 42])))
 
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))

@@ -622,6 +622,7 @@
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-switch-form-self-test) 42) (return 1))
     (unless (= (compiler-optimize-natural-loop-self-test) 42) (return 1))
     (unless (= (compiler-optimize-loop-rotation-self-test) 42) (return 1))
     (unless (= (compiler-optimize-licm-self-test) 42) (return 1))

@@ -43,8 +43,16 @@
 
 (define (intern-private-string-eq [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (intern-private-string-length left)]
-    [right-len : i64 (intern-private-string-length right)]
+    [left-len : i64
+      (cfg
+        feature-private-string-intrinsics
+        (__tl_string_length left)
+        (intern-private-string-length left))]
+    [right-len : i64
+      (cfg
+        feature-private-string-intrinsics
+        (__tl_string_length right)
+        (intern-private-string-length right))]
     (if (not (= left-len right-len))
       false
       (unsafe
@@ -78,6 +86,47 @@
                           (set! same false)))
                       same))
                   false)))))))))
+
+(defmacro (intern-private-string-eq-places [left : Expr] [right : Expr]) : bool
+  (cfg
+    feature-private-string-intrinsics
+    `(let
+      [left-len : i64 (__tl_string_length ,left)]
+      [right-len : i64 (__tl_string_length ,right)]
+      (if (not (= left-len right-len))
+        false
+        (unsafe
+          (let
+            [lp : (Ptr u8) (string-data (& ,left))]
+            [rp : (Ptr u8) (string-data (& ,right))]
+            (if (= (ptr->int lp) (ptr->int rp))
+              true
+              (let
+                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+                [words : i64 (shr left-len 3)]
+                [i : i64 0]
+                [same : bool true]
+                (begin
+                  (while (and same (< i words))
+                    (if (=
+                      (ptr-read (ptr-offset lw i))
+                      (ptr-read (ptr-offset rw i)))
+                      (set! i (+ i 1))
+                      (set! same false)))
+                  (if same
+                    (let
+                      [j : i64 (* words 8)]
+                      (begin
+                        (while (and same (< j left-len))
+                          (if (=
+                            (cast (ptr-read (ptr-offset lp j)) : i64)
+                            (cast (ptr-read (ptr-offset rp j)) : i64))
+                            (set! j (+ j 1))
+                            (set! same false)))
+                        same))
+                    false))))))))
+    `(intern-private-string-eq ,left ,right)))
 
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 (define (intern-capacity) : i64
@@ -506,7 +555,7 @@
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (intern-private-string-eq slot-key name)
+                (intern-private-string-eq-places slot-key name)
                 false)
                 (begin
                   (set! out slot-id)
@@ -592,7 +641,7 @@
                 (set! done true))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (intern-private-string-eq slot-key name)
+                (intern-private-string-eq-places slot-key name)
                 false)
                 (begin
                   (set! out (InternLookupFound slot-id))

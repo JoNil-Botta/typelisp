@@ -607,7 +607,9 @@ reference loops; `--backend-mode avx2|avx512` supports a first contiguous
 map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
 `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
 compatibility dynamic-buffer copies and bool-valued map results through private
-mask conversion.
+mask conversion. Contiguous maps may borrow generated vector backing storage or
+generated full-slice storage before the `foreach` body, so public APIs can use
+vector/slice views instead of exposing `(Array T)` parameters.
 Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;

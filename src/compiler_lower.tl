@@ -12699,6 +12699,72 @@
           (ErrLowerExpr
             (lower-diagnostic "lower: arena builtin expects one argument"))]))))
 
+(define (lower-tls-current-arena-read-call
+  [state : LowerState]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values
+        state
+        "tl_tls_current_arena_load"
+        IrValueNil
+        result-ty)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: tls-current-arena expects no arguments"))]))
+
+(define (lower-tls-current-arena-set-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg-node rest-box)
+      (let
+        [arg : AstExpr (ast-node-get arg-node)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprNil)
+            (match (lower-expr ctx state env type-env arg)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr arg-state arg-value arg-ty)
+                    (match (lower-cast-value
+                      arg-state
+                      arg-value
+                      arg-ty
+                      (AstTyI64))
+                      [(LowerExpr cast-state cast-value _)
+                        (lower-runtime-call-values
+                          cast-state
+                          "tl_tls_current_arena_store"
+                          (compiler-ir-value-cons cast-value IrValueNil)
+                          result-ty)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+          [_
+            (ErrLowerExpr
+              (lower-diagnostic
+                "lower: tls-current-arena-set! expects exactly one argument"))]))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: tls-current-arena-set! expects exactly one argument"))]))
+
+(define (lower-tls-current-arena-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name-id : i64]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (compiler-builtin-lower-tls-current-arena-read-id? name-id)
+    (lower-tls-current-arena-read-call state args result-ty)
+    (lower-tls-current-arena-set-call ctx state env type-env args result-ty)))
+
 ;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
 ;; array values allocate fresh storage and recursively clone each element; Box
@@ -20959,6 +21025,17 @@
                           result-ty)]
                       [(and
                           builtin-available
+                          (compiler-builtin-lower-tls-current-arena-id? name-id))
+                        (lower-tls-current-arena-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name-id
+                          args
+                          result-ty)]
+                      [(and
+                          builtin-available
                           (lower-bootstrap-runtime-builtin-id? name-id))
                         (lower-bootstrap-runtime-call
                           ctx
@@ -25832,6 +25909,20 @@
                   (LowerSomeArrayVar
                     var-id
                     (tc-type-without-regions (ty-node-get elem-ty)))]
+                [(AstTyRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
+                [(AstTyMutRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
         [NoneI64 LowerNoArrayVar])]
@@ -43958,6 +44049,34 @@
         (if flag (return 7) unit)
         42))))"))
 
+(define (compiler-lower-tls-current-arena-source) : String
+  "(define (main) : i64
+  (let
+    [arena : i64 (tls-current-arena)]
+    (begin
+      (unsafe (tls-current-arena-set! arena))
+      arena)))")
+
+(define (compiler-lower-tls-current-arena-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tls-current-arena-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_tls_current_arena_load")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_tls_current_arena_store")
+              1))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-in-arena-shape-ok?) : bool
   (let
     [ok : bool true]
@@ -44019,6 +44138,12 @@
 
 (define (compiler-lower-avx2-foreach-map-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-foreach-borrowed-array-map-source) : String
+  "(define (fill [a : (& a (Array i64))] [b : (& b (Array i64))] [out : (&mut out (Array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
@@ -44202,6 +44327,10 @@
   (and
     (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      4)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       4)
     (compiler-lower-avx2-foreach-map-source-shape-ok?
@@ -44446,6 +44575,10 @@
   (and
     (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       8)
     (compiler-lower-avx512-foreach-map-source-shape-ok?
@@ -46297,6 +46430,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-in-arena-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-tls-current-arena-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-repr-c-shape-ok?)

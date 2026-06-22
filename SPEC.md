@@ -328,8 +328,8 @@ semantics are deferred to a future feature.
 - Not valid as a global initializer.
 - New public APIs must not introduce `(Array T)` as a growable collection type.
   During migration, intentionally runtime-sized uses are limited to vector
-  backing storage (#3577/#3579), SPMD lanes and result buffers until the
-  vector/slice surface lands (#3578), binary/byte compatibility while
+  backing storage (#3577/#3579), SPMD lanes and result buffers through the
+  vector/slice surface, binary/byte compatibility while
   `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
   compiler-internal pools. Final rejection/removal of public unsized
   `(Array T)` is tracked by #3581.
@@ -3709,9 +3709,11 @@ Current compatibility dynamic-buffer use cases:
 
 The public SPMD surface should not require users to spell unsized `(Array T)`
 after the array migration completes. Runtime-sized SPMD inputs and outputs are
-an intentionally dynamic use during migration; #3578 replaces them with
 vector/slice-style sources and mutable destinations that borrow storage instead
-of copying whole collections.
+of copying whole collections. Generated vector `slots`/`slots-mut` accessors
+and generated full-slice `slots` fields may be borrowed before a `foreach` body;
+the body then uses ordinary `array-ref`/`array-set!` over those borrowed backing
+arrays.
 
 Uniform and varying rules:
 
@@ -3724,7 +3726,7 @@ Uniform and varying rules:
 - `array-set!` with a varying index or value performs one write per active
   logical program instance.
 - There is no public `(varying T)` or mask type in the first source surface.
-  Public vector, mask, and `(varying T)` type spellings are reserved and
+  Public SIMD vector, mask, and `(varying T)` type spellings are reserved and
   rejected; varying information is inferred inside `foreach`, and vector/mask
   values are internal to lowering.
 - `let` bindings inside the `foreach` body may be uniform or varying by
@@ -4148,7 +4150,7 @@ Rules:
 
 Unsupported in the current SPMD implementation:
 
-- Public vector types and public mask types.
+- Public SIMD vector types and public mask types.
 - Non-atomic scatter writes, vector lowering for general gather reads, and
   general non-contiguous memory operations beyond scalar gather-only reads.
 - Scans, general shuffles, general atomics beyond the explicit integer element
@@ -4980,7 +4982,7 @@ codegen:
 
 | Symbol(s) | Disposition |
 |-----------|-------------|
-| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Revisit after #3290 provides a suitable TLS access design. |
+| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
 | `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
@@ -5005,6 +5007,16 @@ initializers run; Windows x64 stores the current arena in the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
 current-arena slot before calling user code, so the worker's first allocation
 creates an independent default arena chain.
+
+The compiler provides two allocation-free current-arena TLS intrinsics for
+runtime-prelude code: `(tls-current-arena)` returns the current arena handle as
+`i64`, and `(tls-current-arena-set! arena)` writes that handle and requires an
+`unsafe` context. They lower directly to the platform TLS access used by the
+backend helpers (`%fs:tl_current_arena@tpoff` on Linux and `GS:0x28` on
+Windows), emit no calls, and require no imports, so they are valid in
+`stdlib/runtime.tl` before ordinary allocation is available. They intentionally
+name only the current-arena slot; arbitrary TLS slots remain out of scope until a
+separate source-level design exists.
 
 `tl_arena_make` creates an ordinary first-class arena whose bump cursor is
 single-threaded. `tl_arena_make_atomic` creates an arena handle with the same

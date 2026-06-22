@@ -99,6 +99,7 @@ spmd_corpus() {
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/uniform_zip_i64.tl
+tests/spmd/vector_slice_surface_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl

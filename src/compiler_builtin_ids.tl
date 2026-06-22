@@ -141,6 +141,14 @@
   -1)
 (define compiler-builtin-id-arena-rewind : i64
   -1)
+(define compiler-builtin-id-tls-current-arena : i64
+  -1)
+(define compiler-builtin-id-tls-current-arena-set-bang : i64
+  -1)
+(define compiler-builtin-id-tl-tls-current-arena-load : i64
+  -1)
+(define compiler-builtin-id-tl-tls-current-arena-store : i64
+  -1)
 
 (defstruct CompilerBuiltinIdsState
   (generation (Array i64))
@@ -149,11 +157,11 @@
 (define (compiler-builtin-ids-state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 69)]
+    [ids : (Array i64) (make-array i64 73)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 69)
+      (while (< i 73)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -382,7 +390,23 @@
     (compiler-builtin-ids-state-set!
       state
       68
-      compiler-builtin-id-tl-private-string-to-int)))
+      compiler-builtin-id-tl-private-string-to-int)
+    (compiler-builtin-ids-state-set!
+      state
+      69
+      compiler-builtin-id-tls-current-arena)
+    (compiler-builtin-ids-state-set!
+      state
+      70
+      compiler-builtin-id-tls-current-arena-set-bang)
+    (compiler-builtin-ids-state-set!
+      state
+      71
+      compiler-builtin-id-tl-tls-current-arena-load)
+    (compiler-builtin-ids-state-set!
+      state
+      72
+      compiler-builtin-id-tl-tls-current-arena-store)))
 
 (define (compiler-builtin-ids-state-capture) : CompilerBuiltinIdsState
   (let
@@ -590,7 +614,19 @@
       (compiler-builtin-ids-state-ref state 67))
     (set!
       compiler-builtin-id-tl-private-string-to-int
-      (compiler-builtin-ids-state-ref state 68))))
+      (compiler-builtin-ids-state-ref state 68))
+    (set!
+      compiler-builtin-id-tls-current-arena
+      (compiler-builtin-ids-state-ref state 69))
+    (set!
+      compiler-builtin-id-tls-current-arena-set-bang
+      (compiler-builtin-ids-state-ref state 70))
+    (set!
+      compiler-builtin-id-tl-tls-current-arena-load
+      (compiler-builtin-ids-state-ref state 71))
+    (set!
+      compiler-builtin-id-tl-tls-current-arena-store
+      (compiler-builtin-ids-state-ref state 72))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -712,6 +748,16 @@
       (set! compiler-builtin-id-arena-set-bang (intern "arena-set!"))
       (set! compiler-builtin-id-arena-destroy (intern "arena-destroy"))
       (set! compiler-builtin-id-arena-rewind (intern "arena-rewind"))
+      (set! compiler-builtin-id-tls-current-arena (intern "tls-current-arena"))
+      (set!
+        compiler-builtin-id-tls-current-arena-set-bang
+        (intern "tls-current-arena-set!"))
+      (set!
+        compiler-builtin-id-tl-tls-current-arena-load
+        (intern "tl_tls_current_arena_load"))
+      (set!
+        compiler-builtin-id-tl-tls-current-arena-store
+        (intern "tl_tls_current_arena_store"))
       (set! compiler-builtin-generation (intern-generation)))))
 
 (define (compiler-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool
@@ -970,6 +1016,24 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-env-path-separator)))
 
+(define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tl-tls-current-arena-load
+      compiler-builtin-id-tl-tls-current-arena-store)))
+
+(define (compiler-builtin-backend-tls-current-arena-load-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-tls-current-arena-load)))
+
+(define (compiler-builtin-backend-tls-current-arena-store-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-tls-current-arena-store)))
+
 (define (compiler-builtin-lower-bootstrap-runtime-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -1033,6 +1097,19 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-arena-destroy)))
+
+(define (compiler-builtin-lower-tls-current-arena-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tls-current-arena
+      compiler-builtin-id-tls-current-arena-set-bang)))
+
+(define (compiler-builtin-lower-tls-current-arena-read-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tls-current-arena)))
 
 (define (compiler-builtin-lower-string-ref-call-id? [name-id : i64]) : bool
   (begin
@@ -1108,6 +1185,12 @@
 
 (define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
   (compiler-builtin-lower-clone-id? name-id))
+
+(define (compiler-builtin-typecheck-tls-current-arena-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-tls-current-arena-id? name-id))
+
+(define (compiler-builtin-typecheck-tls-current-arena-read-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-tls-current-arena-read-id? name-id))
 
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
   (begin

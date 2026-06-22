@@ -6411,6 +6411,36 @@
 (define (compiler-typecheck-unsafe-fn-body-still-safe-source) : String
   "(unsafe (define (read-it [p : (Ptr i64)]) : i64 (ptr-read p)))")
 
+(define (compiler-typecheck-tls-current-arena-read-source) : String
+  "(define (main) : i64 (tls-current-arena))")
+
+(define (compiler-typecheck-tls-current-arena-set-source) : String
+  "(define (main [arena : i64]) : unit
+  (tls-current-arena-set! arena))")
+
+(define (compiler-typecheck-tls-current-arena-unsafe-set-source) : String
+  "(define (main [arena : i64]) : unit
+  (unsafe (tls-current-arena-set! arena)))")
+
+(define (compiler-typecheck-tls-current-arena-shadow-source) : String
+  "(define (tls-current-arena) : i64 17)
+(define (tls-current-arena-set! [arena : i64]) : unit unit)
+(define (main) : i64
+  (begin
+    (tls-current-arena-set! 41)
+    (tls-current-arena)))")
+
+(define (compiler-typecheck-tls-current-arena-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-tls-current-arena-read-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-tls-current-arena-set-source)
+      "typecheck: tls-current-arena-set! requires unsafe context")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-tls-current-arena-unsafe-set-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-tls-current-arena-shadow-source))))
+
 (define (compiler-typecheck-unsafe-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
@@ -7643,6 +7673,9 @@
     (if (compiler-typecheck-unsafe-decl-tests-ok?)
       unit
       (panic "typecheck: unsafe declaration tests failed"))
+    (if (compiler-typecheck-tls-current-arena-tests-ok?)
+      unit
+      (panic "typecheck: tls current arena tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
       (panic "typecheck: arena unsafe primitive tests failed"))

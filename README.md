@@ -81,6 +81,11 @@ of imitating transitional patterns still present in the tree:
   and borrowed `bytes` views, not mutable `str` or `TextBuf` (#2782). Current
   `(Array u8)` and `String` byte plumbing is compatibility surface until the
   stdlib byte-buffer module lands.
+- **Arrays**: public `Array` is moving to fixed-size-only `(Array T N)`.
+  Runtime-sized/growable collections should use vector or slice-style stdlib
+  APIs, with private dynamic-buffer storage reserved for vector backing,
+  SPMD lanes during migration, binary/FFI/runtime buffers, and compiler
+  internals (#3576, #3577, #3578, #3579, #3581).
 - **Mutation**: in-place mutation is the direction: struct field-place
   assignment uses `(set! (struct-get place field) value)` or local dotted sugar
   `(set! place.field value)` (#1521), and boxed storage uses `(box-take b)`
@@ -201,7 +206,7 @@ struct/enum fields, and (optionally) `let` bindings.
 ;; Zero/identity initialization
 (let ([n : i64 (init)]
       [text : String (init : String)]
-      [items : (Array i64) (make-array i64 4)])
+      [items : (Array i64 4) (init : (Array i64 4))])
   (+ n (array-ref items 0)))
 ```
 
@@ -209,16 +214,17 @@ struct/enum fields, and (optionally) `let` bindings.
 narrowing, and truncation; `f64` <-> `f32` precision changes; and integer/char
 <-> float conversions (float -> integer truncates toward zero).
 `(init : T)` constructs a valid initialized value for supported `T`;
-contextual `(init)` works where an expected type is known. `make-array`
-initializes every live element under the same ZII rules.
+contextual `(init)` works where an expected type is known. Compatibility
+`make-array` initializes every live element under the same ZII rules while the
+runtime-sized collection surface migrates to vectors/private buffers.
 
 ### Types
 
 ```
 i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 ByteBuf           ; specified owned mutable byte buffer
-(Array t)         ; dynamic, runtime-sized array
-(Array t n)       ; fixed-size array (by-value returns supported)
+(Array t n)       ; fixed-size array (public Array end state)
+(Array t)         ; compatibility runtime-sized buffer during migration
 (Tuple t1 t2 ...) ; tuple (by-value params/returns supported)
 (Box t)           ; specified arena-owned indirection for recursive aggregates
 (& r t)           ; specified immutable reference tied to lifetime/arena r
@@ -586,18 +592,19 @@ the same operation. `(set! (struct-get place field) value)` and
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
 Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, dynamic arrays, tuples/structs/enums, and fixed
-arrays, including nested aggregate and fixed-array contents that are recursively
-deep-copied. The aggregate captures snapshot their storage onto the heap so the
-environment can outlive the creating frame. Local non-escaping closures may
+function values, `String`, compatibility dynamic arrays, tuples/structs/enums,
+and fixed arrays, including nested aggregate and fixed-array contents that are
+recursively deep-copied. The aggregate captures snapshot their storage onto the
+heap so the environment can outlive the creating frame. Local non-escaping closures may
 capture immutable references (#2280); escaping closures still reject reference
 captures, and mutation of captured names is rejected (#2552).
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2|avx512` supports a first contiguous
 map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
-`f32`, and `f64` lanes, with AVX-512 additionally supporting bool dynamic-array
-copies and bool-valued map results through private mask conversion.
+`f32`, and `f64` lanes, with AVX-512 additionally supporting bool
+compatibility dynamic-buffer copies and bool-valued map results through private
+mask conversion.
 Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
@@ -619,9 +626,12 @@ gang width.
 
 ### Builtins
 
-Compiler-owned builtins are `make-array`, `array-ref`, `array-set!`,
-`array-length`/`length`, and the compatibility string slice/format helpers
-`substring`/`string-slice` and `int->string`.
+Compiler-owned compatibility builtins are `print`, `print-bool`,
+`print-newline`, `make-array`, `array-ref`, `array-set!`,
+`array-length`/`length`; imported `stdlib/string.tl` string helpers
+`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`,
+`string->int`; compatibility string slice/format helpers
+`substring`/`string-slice`, `int->string`; and `panic`/`error`.
 Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
 argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 `stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
@@ -652,14 +662,17 @@ dereference/write/offset/cast operations require `(unsafe ...)`. The selfhost
 compiler implements that surface for FFI/runtime work; it is not the future safe
 reference/borrow model.
 
-`String` values are immutable at the source level. Dynamic arrays are mutable
-buffers reached through a live owner handle or an exclusive mutable reference;
-`array-set!` and `array-push!` reject immutable-reference receivers. Struct
-fields can be mutated in place with `(set! (struct-get place field) value)` or
+`String` values are immutable at the source level. Compatibility dynamic arrays
+are mutable buffers reached through a live owner handle or an exclusive mutable
+reference; `array-set!` and `array-push!` reject immutable-reference receivers.
+That unsized `(Array T)` surface is transitional: public growable collections
+should move to vector/slice APIs and private dynamic buffers while fixed
+`(Array T N)` remains the public `Array` direction. Struct fields can be
+mutated in place with `(set! (struct-get place field) value)` or
 `(set! place.field value)` when the receiver is an owned storage place or
-mutable reference; immutable reference receivers are rejected. The current IR/ABI may
-still carry aggregate values through pointer-shaped heap handles in positions
-not covered by the new layout-query contract. Heap allocation uses a
+mutable reference; immutable reference receivers are rejected. The current
+IR/ABI may still carry aggregate values through pointer-shaped heap handles in
+positions not covered by the new layout-query contract. Heap allocation uses a
 backend-emitted `tl_alloc` bump allocator and allocations live until process
 exit. See [SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and
 specified model.
@@ -921,8 +934,8 @@ through the TypeLisp-owned build/run path.
 `scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
 `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`,
 `u64`, `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
-dynamic-array copies and bool-valued map results through private mask
-conversion. SIMD backend modes also support eligible `spmd-reduce` array folds.
+compatibility dynamic-buffer copies and bool-valued map results through private
+mask conversion. SIMD backend modes also support eligible `spmd-reduce` array folds.
 Scalar `spmd-reduce` and `spmd-scan` lowering supports `sum`, `min`, `max`,
 `all`, and `any` over the SPEC.md supported types.
 For `i8`/`u8` lanes, `+` is vectorized and `*` is rejected in explicit SIMD
@@ -978,8 +991,9 @@ lockfile. These flags are rejected for source-file builds.
 Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
 x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/unit,
 `if`/`while`/`begin`, local & global variables, direct and indirect calls,
-`cast`, enums + `match`, structs + field access/mutation, dynamic arrays, strings,
-`extern`, multi-file modules, scalar `foreach`, an initial SIMD `foreach`
+`cast`, enums + `match`, structs + field access/mutation, fixed arrays,
+compatibility dynamic arrays, strings, `extern`, multi-file modules, scalar
+`foreach`, an initial SIMD `foreach`
 map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (indirect/closure tail

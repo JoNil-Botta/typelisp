@@ -912,7 +912,21 @@
       (if (cfg
         feature-compiler-private-string-intrinsics
         (__tl_string_eq (array-ref (string-vec-slots v) index) x)
-        (vector-string-eq (array-ref (string-vec-slots v) index) x))
+        (let
+          [candidate : String (array-ref (string-vec-slots v) index)]
+          [n : i64 (string-length candidate)]
+          [i : i64 0]
+          [same : bool (= n (string-length x))]
+          (begin
+            (while (if same
+              (< i n)
+              false)
+              (begin
+                (if (= (string-ref candidate i) (string-ref x i))
+                  unit
+                  (set! same false))
+                (set! i (+ i 1))))
+            same)))
         true
         (string-vec-contains-from? v x (+ index 1))))))
 

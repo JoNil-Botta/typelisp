@@ -6,7 +6,7 @@
 ;# state, and the iterator state's module exposes `next`, taking `&mut Iter` and
 ;# returning an option-like result. The current flat stdlib compatibility names
 ;# keep their module prefix, so this module's first concrete iterator is
-;# `i64-range-iterator` plus `i64-range-next`.
+;# `range` / `range-inclusive`, `i64-range-iterator`, and `i64-range-next`.
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning
@@ -17,7 +17,8 @@
 ;# (import stdlib.iterator as iter)
 ;# (define (main) : i64
 ;#   (let
-;#     [it : iter.I64RangeIter (iter.i64-range-iterator 0 3)]
+;#     [items : iter.I64Range (iter.range 0 3)]
+;#     [it : iter.I64RangeIter (iter.i64-range-iterator items)]
 ;#     [sum : i64 0]
 ;#     [done : bool false]
 ;#     (begin
@@ -29,30 +30,69 @@
 ;# ```
 (module stdlib.iterator)
 
-;: Iterator state for a half-open `i64` range `[current, end)`.
+;: Scalar `i64` range iterable. Half-open ranges yield `[start, end)`;
+;: inclusive ranges yield `[start, end]`.
+(defstruct I64Range
+  (start i64)
+  (end i64)
+  (inclusive bool))
+
+;: Iterator state for an `I64Range`.
 (defstruct I64RangeIter
   (current i64)
-  (end i64))
+  (end i64)
+  (inclusive bool)
+  (exhausted bool))
 
 ;: Option-like result returned by `i64-range-next`.
 (defenum I64RangeNext
   (I64RangeDone)
   (I64RangeItem i64))
 
-;: Build an iterator over the half-open range `[start, end)`. Empty and
+;: Build a scalar iterable over the half-open range `[start, end)`. Empty and
 ;: descending ranges are valid and yield no items.
-(define (i64-range-iterator [start : i64] [end : i64]) : I64RangeIter
-  (I64RangeIter start end))
+(define (range [start : i64] [end : i64]) : I64Range
+  (I64Range start end false))
+
+;: Build a scalar iterable over the inclusive range `[start, end]`. Empty
+;: descending ranges are valid and yield no items. The iterator state records
+;: exhaustion directly, so an inclusive maximum `i64` endpoint is valid.
+(define (range-inclusive [start : i64] [end : i64]) : I64Range
+  (I64Range start end true))
+
+;: Build an iterator for `items`.
+(define (i64-range-iterator [items : I64Range]) : I64RangeIter
+  (let
+    [start : i64 (struct-get items start)]
+    [end : i64 (struct-get items end)]
+    [inclusive : bool (struct-get items inclusive)]
+    [empty : bool
+      (if inclusive
+        (> start end)
+        (>= start end))]
+    (I64RangeIter start end inclusive empty)))
 
 ;: Return the next range item and advance the iterator, or `I64RangeDone` when
-;: `current >= end`. Calling again after exhaustion returns `I64RangeDone`.
+;: exhausted. Calling again after exhaustion returns `I64RangeDone`.
 (define (i64-range-next [iter : (&mut iter I64RangeIter)]) : I64RangeNext
-  (let
-    [current : i64 (struct-get iter current)]
-    (if (>= current (struct-get iter end))
-      (I64RangeDone)
+  (if (struct-get iter exhausted)
+    (I64RangeDone)
+    (let
+      [current : i64 (struct-get iter current)]
+      [end : i64 (struct-get iter end)]
+      [inclusive : bool (struct-get iter inclusive)]
       (begin
-        (set! (struct-get iter current) (+ current 1))
+        (if inclusive
+          (if (= current end)
+            (set! (struct-get iter exhausted) true)
+            (set! (struct-get iter current) (+ current 1)))
+          (let
+            [next-current : i64 (+ current 1)]
+            (begin
+              (set! (struct-get iter current) next-current)
+              (if (= next-current end)
+                (set! (struct-get iter exhausted) true)
+                (set! (struct-get iter exhausted) false)))))
         (I64RangeItem current)))))
 
 ;: Return true when a range next-result is exhausted.
@@ -71,9 +111,9 @@
 
 (cfg
   test
-  (define (iterator-test-range-sum [start : i64] [end : i64]) : i64
+  (define (iterator-test-range-sum [items : I64Range]) : i64
     (let
-      [iter : I64RangeIter (i64-range-iterator start end)]
+      [iter : I64RangeIter (i64-range-iterator items)]
       [sum : i64 0]
       [done : bool false]
       (begin
@@ -85,28 +125,77 @@
 
 (cfg
   test
+  (define (iterator-test-expect-next
+    [iter : (&mut iter I64RangeIter)]
+    [expected : i64]
+    [message : String]) : unit
+    (test.assert-i64-eq
+      (i64-range-value-or (i64-range-next iter) -1)
+      expected
+      message)))
+
+(cfg
+  test
+  (define (iterator-test-expect-done
+    [iter : (&mut iter I64RangeIter)]
+    [message : String]) : unit
+    (test.assert-true (i64-range-done? (i64-range-next iter)) message)))
+
+(cfg
+  test
   (define (iterator-test-main) : i64
     (begin
-      (test.assert-i64-eq (iterator-test-range-sum 0 0) 0 "empty range sum")
       (test.assert-i64-eq
-        (iterator-test-range-sum 5 3)
+        (iterator-test-range-sum (range 0 0))
+        0
+        "empty range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range 5 3))
         0
         "descending range sum")
-      (test.assert-i64-eq (iterator-test-range-sum 4 5) 4 "single range sum")
-      (test.assert-i64-eq (iterator-test-range-sum 1 4) 6 "multi range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range 4 5))
+        4
+        "single range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range 1 4))
+        6
+        "multi range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range-inclusive 1 3))
+        6
+        "inclusive range sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range-inclusive 3 3))
+        3
+        "inclusive singleton sum")
+      (test.assert-i64-eq
+        (iterator-test-range-sum (range-inclusive 5 3))
+        0
+        "inclusive descending range sum")
       (let
-        [iter : I64RangeIter (i64-range-iterator 7 8)]
+        [iter : I64RangeIter (i64-range-iterator (range 7 8))]
         (begin
-          (test.assert-i64-eq
-            (i64-range-value-or (i64-range-next (&mut iter)) -1)
-            7
-            "first next yields value")
-          (test.assert-true
-            (i64-range-done? (i64-range-next (&mut iter)))
-            "second next exhausted")
-          (test.assert-true
-            (i64-range-done? (i64-range-next (&mut iter)))
+          (iterator-test-expect-next (&mut iter) 7 "first next yields value")
+          (iterator-test-expect-done (&mut iter) "second next exhausted")
+          (iterator-test-expect-done
+            (&mut iter)
             "repeated next stays exhausted")))
+      (let
+        [iter : I64RangeIter
+          (i64-range-iterator
+            (range-inclusive 9223372036854775807 9223372036854775807))]
+        (begin
+          (iterator-test-expect-next
+            (&mut iter)
+            9223372036854775807
+            "inclusive max endpoint yields")
+          (iterator-test-expect-done
+            (&mut iter)
+            "inclusive max endpoint exhausts")
+          (iterator-test-expect-done
+            (&mut iter)
+            "inclusive max endpoint repeated exhaustion")))
       42)))
 
 (cfg
@@ -116,14 +205,23 @@
     (test.assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
 
 (export
+  (value range)
+  (value range-inclusive)
   (value i64-range-iterator)
   (value i64-range-next)
   (value i64-range-done?)
   (value i64-range-value-or)
+  (type I64Range)
   (type I64RangeIter)
   (type I64RangeNext)
+  (constructor I64Range)
   (constructor I64RangeIter)
+  (field I64Range start)
+  (field I64Range end)
+  (field I64Range inclusive)
   (field I64RangeIter current)
   (field I64RangeIter end)
+  (field I64RangeIter inclusive)
+  (field I64RangeIter exhausted)
   (variant I64RangeDone)
   (variant I64RangeItem))

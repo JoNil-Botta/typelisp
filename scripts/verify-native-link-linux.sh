@@ -659,6 +659,7 @@ verify_compiler_driver_stdlib_json() {
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
 (import "stdlib/json.tl")
+(import "stdlib/string.tl")
 
 (define (main) : i64
   (let

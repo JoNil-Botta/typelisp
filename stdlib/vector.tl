@@ -88,6 +88,26 @@
 ;# ```
 (module stdlib.vector)
 
+;: Local string equality fallback used when bootstrapping with a compiler that
+;: does not yet expose private string intrinsics.
+(cfg
+  (not feature-compiler-private-string-intrinsics)
+  (define (vector-string-eq [a : String] [b : String]) : bool
+    (let
+      [n : i64 (string-length a)]
+      [i : i64 0]
+      [same : bool (= n (string-length b))]
+      (begin
+        (while (if same
+          (< i n)
+          false)
+          (begin
+            (if (= (string-ref a i) (string-ref b i))
+              unit
+              (set! same false))
+            (set! i (+ i 1))))
+        same))))
+
 ;: Emit a generated growable vector module for element type `T`.
 (defmacro (vector [T : type]) : Module
   (let
@@ -892,7 +912,7 @@
       (if (cfg
         feature-compiler-private-string-intrinsics
         (__tl_string_eq (array-ref (string-vec-slots v) index) x)
-        (string-eq (array-ref (string-vec-slots v) index) x))
+        (vector-string-eq (array-ref (string-vec-slots v) index) x))
         true
         (string-vec-contains-from? v x (+ index 1))))))
 

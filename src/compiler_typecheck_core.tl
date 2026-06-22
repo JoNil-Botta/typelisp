@@ -34559,6 +34559,70 @@
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
+(define (macro-unqualified-imported-call-decl-with-exports
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [target-module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (compiler-exports-lookup-id
+    exports
+    (intern (compiler-export-kind-macro))
+    (intern target-module)
+    (intern lookup-name))
+    [(SomeI64 handle)
+      (match (macro-decl-at-index-in-module
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle)
+        target-module)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
+    [(NoneI64)
+      (match (compiler-symbols-lookup-macro-in-module-id
+        (tc-context-symbols ctx)
+        (intern target-module)
+        (intern lookup-name))
+        [(SomeI64 _)
+          (ErrMacroCallDecl
+            (ctfe-diagnostic-at-expr
+              call-expr
+              (macro-private-message lookup-name)))]
+        [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])]))
+
+(define (macro-unqualified-imported-call-decl
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (macro-import-alias-target-ids decls (intern module) "" (intern ""))
+    [(TcSomeString target-module)
+      (if (string-eq target-module module)
+        (OkMacroCallDecl (MacroNoDecl))
+        (if macro-expand-exports-ready
+          (macro-unqualified-imported-call-decl-with-exports
+            ctx
+            macro-expand-exports-value
+            target-module
+            lookup-name
+            call-expr)
+          (match (build-compiler-exports-with
+            (tc-context-program ctx)
+            (tc-context-symbols ctx)
+            (tc-context-registries ctx))
+            [(OkCompilerExports exports)
+              (macro-unqualified-imported-call-decl-with-exports
+                ctx
+                exports
+                target-module
+                lookup-name
+                call-expr)]
+            [(ErrCompilerExports message)
+              (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))]
+    [(TcNoString) (OkMacroCallDecl (MacroNoDecl))]))
+
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -34579,11 +34643,22 @@
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64)
-      (macro-prelude-call-decl
-        (tc-context-with-module ctx module)
+      (match (macro-unqualified-imported-call-decl
+        ctx
         decls
+        module
         lookup-name
-        call-expr)]))
+        call-expr)
+        [(OkMacroCallDecl imported-decl)
+          (match imported-decl
+            [(MacroNoDecl)
+              (macro-prelude-call-decl
+                (tc-context-with-module ctx module)
+                decls
+                lookup-name
+                call-expr)]
+            [_ (OkMacroCallDecl imported-decl)])]
+        [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])]))
 
 (define (macro-call-decl-from-name
   [ctx : TcContext]
@@ -34711,7 +34786,22 @@
                     [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
               [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
           [_ (OkMacroCallDeclModule maybe-decl module)])]
-      [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)])))
+      [(ErrMacroCallDecl primary-diag)
+        (match context
+          [(AstSomeModuleName context-module)
+            (if (string-eq context-module module)
+              (ErrMacroCallDeclModule primary-diag)
+              (match (macro-call-decl
+                (tc-context-with-module ctx context-module)
+                func
+                decls
+                call-expr)
+                [(OkMacroCallDecl context-decl)
+                  (match context-decl
+                    [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
+                    [_ (OkMacroCallDeclModule context-decl context-module)])]
+                [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
+          [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])])))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str-cat

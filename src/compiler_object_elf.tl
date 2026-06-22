@@ -4,13 +4,13 @@
 
 (define (compiler-object-elf-string-length [text : String]) : i64
   (cfg
-    feature-private-string-intrinsics
+    feature-compiler-private-string-intrinsics
     (__tl_string_length text)
     (string-length text)))
 
 (define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
   (cfg
-    feature-private-string-intrinsics
+    feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
     (string-ref text index)))
 

@@ -15,6 +15,18 @@
 (import "compiler_float.tl")
 (import "../stdlib/string.tl")
 
+(defmacro (ctfe-private-string-length [text : Expr]) : i64
+  (cfg
+    feature-compiler-private-string-intrinsics
+    `(__tl_string_length ,text)
+    `(string-length ,text)))
+
+(defmacro (ctfe-private-string-ref [text : Expr] [index : Expr]) : char
+  (cfg
+    feature-compiler-private-string-intrinsics
+    `(__tl_string_ref ,text ,index)
+    `(string-ref ,text ,index)))
+
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
 ;; from #1137 for macro transformers.
 (defenum CompilerCtfeValue
@@ -373,8 +385,8 @@
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
-    [text-len : i64 (__tl_string_length text)]
-    [prefix-len : i64 (__tl_string_length prefix)]
+    [text-len : i64 (ctfe-private-string-length text)]
+    [prefix-len : i64 (ctfe-private-string-length prefix)]
     (if (< text-len prefix-len)
       false
       (let
@@ -383,8 +395,8 @@
         (begin
           (while (and same (< i prefix-len))
             (if (=
-              (cast (__tl_string_ref text i) : i64)
-              (cast (__tl_string_ref prefix i) : i64))
+              (cast (ctfe-private-string-ref text i) : i64)
+              (cast (ctfe-private-string-ref prefix i) : i64))
               (set! i (+ i 1))
               (set! same false)))
           same)))))
@@ -392,12 +404,12 @@
 (define (ctfe-string-has-module-separator? [name : String]) : bool
   (let
     [i : i64 0]
-    [n : i64 (__tl_string_length name)]
+    [n : i64 (ctfe-private-string-length name)]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
         (let
-          [c : i64 (cast (__tl_string_ref name i) : i64)]
+          [c : i64 (cast (ctfe-private-string-ref name i) : i64)]
           (if (or (= c 46) (= c 47))
             (set! found true)
             (set! i (+ i 1)))))
@@ -406,21 +418,21 @@
 (define (ctfe-string-contains-string-token? [name : String]) : bool
   (let
     [i : i64 0]
-    [n : i64 (__tl_string_length name)]
+    [n : i64 (ctfe-private-string-length name)]
     [found : bool false]
     (begin
       (while (and (not found) (<= (+ i 6) n))
         (if (and
-          (= (cast (__tl_string_ref name i) : i64) 115)
+          (= (cast (ctfe-private-string-ref name i) : i64) 115)
           (and
-            (= (cast (__tl_string_ref name (+ i 1)) : i64) 116)
+            (= (cast (ctfe-private-string-ref name (+ i 1)) : i64) 116)
             (and
-              (= (cast (__tl_string_ref name (+ i 2)) : i64) 114)
+              (= (cast (ctfe-private-string-ref name (+ i 2)) : i64) 114)
               (and
-                (= (cast (__tl_string_ref name (+ i 3)) : i64) 105)
+                (= (cast (ctfe-private-string-ref name (+ i 3)) : i64) 105)
                 (and
-                  (= (cast (__tl_string_ref name (+ i 4)) : i64) 110)
-                  (= (cast (__tl_string_ref name (+ i 5)) : i64) 103))))))
+                  (= (cast (ctfe-private-string-ref name (+ i 4)) : i64) 110)
+                  (= (cast (ctfe-private-string-ref name (+ i 5)) : i64) 103))))))
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -467,19 +479,19 @@
 (define (ctfe-hygiene-global-base [name : String]) : String
   (substring
     name
-    (__tl_string_length (ctfe-hygiene-global-prefix))
+    (ctfe-private-string-length (ctfe-hygiene-global-prefix))
     (-
-      (__tl_string_length name)
-      (__tl_string_length (ctfe-hygiene-global-prefix)))))
+      (ctfe-private-string-length name)
+      (ctfe-private-string-length (ctfe-hygiene-global-prefix)))))
 
 (define (ctfe-hygiene-context-separator-index [payload : String]) : i64
   (let
     [i : i64 0]
-    [n : i64 (__tl_string_length payload)]
+    [n : i64 (ctfe-private-string-length payload)]
     [found : i64 -1]
     (begin
       (while (and (< i n) (< found 0))
-        (if (= (cast (__tl_string_ref payload i) : i64) 124)
+        (if (= (cast (ctfe-private-string-ref payload i) : i64) 124)
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -493,7 +505,10 @@
         payload
         (let
           [start : i64 (+ sep 1)]
-          (substring payload start (- (__tl_string_length payload) start)))))
+          (substring
+            payload
+            start
+            (- (ctfe-private-string-length payload) start)))))
     name))
 
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String

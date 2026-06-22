@@ -50,15 +50,9 @@
             (None)
             (Some String))
           (define (key-length [key : (& key str)]) : i64
-            (cfg
-              feature-private-string-intrinsics
-              (__tl_string_length key)
-              (string-length key)))
+            (string-length key))
           (define (key-ref [key : (& key str)] [index : i64]) : char
-            (cfg
-              feature-private-string-intrinsics
-              (__tl_string_ref key index)
-              (string-ref key index)))
+            (string-ref key index))
           (define (hash-normalize [value : i64]) : i64
             (let
               [m : i64 2147483647]
@@ -82,25 +76,22 @@
                     (set! i (+ i 1))))
                 hash)))
           (define (key-eq-borrowed? [left : String] [right : (& right str)]) : bool
-            (cfg
-              feature-private-string-intrinsics
-              (__tl_string_eq (& left) right)
-              (let
-                [left-len : i64 (key-length (& left))]
-                [right-len : i64 (key-length right)]
-                (if (not (= left-len right-len))
-                  false
-                  (let
-                    [i : i64 0]
-                    [same : bool true]
-                    (begin
-                      (while (if same
-                        (< i left-len)
-                        false)
-                        (if (= (key-ref (& left) i) (key-ref right i))
-                          (set! i (+ i 1))
-                          (set! same false)))
-                      same))))))
+            (let
+              [left-len : i64 (key-length (& left))]
+              [right-len : i64 (key-length right)]
+              (if (not (= left-len right-len))
+                false
+                (let
+                  [i : i64 0]
+                  [same : bool true]
+                  (begin
+                    (while (if same
+                      (< i left-len)
+                      false)
+                      (if (= (key-ref (& left) i) (key-ref right i))
+                        (set! i (+ i 1))
+                        (set! same false)))
+                    same)))))
           (define (round-capacity [capacity : i64]) : i64
             (let
               [rounded : i64 1]
@@ -597,7 +588,7 @@
       [value : String (strset.entry-key-or entry "")]
       (if (string-eq value "")
         fallback
-        (__tl_string_length (& value))))))
+        (string-length (& value))))))
 
 (cfg
   test

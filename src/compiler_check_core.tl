@@ -41,9 +41,11 @@
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable
-        (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-        "feature-str-view")
-      "feature-private-string-intrinsics")
+        (compiler-cfg-enable
+          (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+          "feature-str-view")
+        "feature-private-string-intrinsics")
+      "feature-compiler-private-string-intrinsics")
     "array-helper-intrinsics"))
 
 (define (compiler-check-diagnostic-with-fallback-path
@@ -403,6 +405,56 @@
 (define answer : i64 42)
 (define (main) : i64 answer)")
 
+(define (compiler-check-direct-source [path : String] [source : String]) : ResultCompilerCheck
+  (begin
+    (compiler-check-reset-pools!)
+    (match (compiler-load-parse-source-diagnostic-escaping
+      path
+      source
+      (compiler-check-language-cfgs))
+      [(OkAstProgramDiagnostic program)
+        (match program
+          [(AstProgram decls-box)
+            (compiler-check-program-with-paths-cache
+              path
+              (box-get decls-box)
+              AstDeclPathNil
+              (string-vec-new)
+              (compiler-typecheck-prefix-cache-scope
+                "typecheck-prefix-check"
+                (string-vec-new)
+                (compiler-check-language-cfgs)))])]
+      [(ErrAstProgramDiagnostic diag) (ErrCompilerCheck diag)])))
+
+(define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
+  (match (compiler-check-direct-source path source)
+    [(OkCompilerCheck _) true]
+    [(ErrCompilerCheck _) false]))
+
+(define (compiler-check-direct-source-error-ok?
+  [path : String]
+  [source : String]
+  [want : String]) : bool
+  (match (compiler-check-direct-source path source)
+    [(OkCompilerCheck _) false]
+    [(ErrCompilerCheck diag)
+      (string-eq (compiler-diagnostic-message diag) want)]))
+
+(define (compiler-check-qualified-export-cache-exported-source) : String
+  "(module a)
+(export (value x))
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")
+
+(define (compiler-check-qualified-export-cache-private-source) : String
+  "(module a)
+(define x : i64 1)
+(module b)
+(import a)
+(define (main) : i64 a.x)")
+
 (define (compiler-check-implicit-core-prelude-source) : String
   "(import \"stdlib/array.tl\" module stdlib.array as arr)
 (define (main) : i64
@@ -477,23 +529,37 @@
           [(OkCompilerSymbols symbols)
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
-                (let
-                  [ctx : TcContext
-                    (TcContext
-                      program
-                      symbols
-                      registries
-                      ""
-                      (ast-node-pool-context-capture-active))]
-                  (and
-                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
-                    (compiler-check-inline-layout-name-ok?
-                      ctx
-                      "AstVariantDefList")))]
+                (match (build-compiler-exports-with program symbols registries)
+                  [(OkCompilerExports exports)
+                    (let
+                      [ctx : TcContext
+                        (TcContext
+                          program
+                          symbols
+                          registries
+                          exports
+                          ""
+                          (ast-node-pool-context-capture-active))]
+                      (and
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstTypeList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstExprList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstPatternList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstDeclList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstParamList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstVariantDefList")))]
+                  [(ErrCompilerExports _) false])]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false]))]
     [(ErrCompilerLoadWithPaths _) false]))
@@ -504,6 +570,16 @@
     (compiler-check-export-source))
     [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
     [(ErrCompilerCheck _) false]))
+
+(define (compiler-check-qualified-export-cache-reset-ok?) : bool
+  (and
+    (compiler-check-direct-source-ok?
+      "tests/qualified_export_cache_exported.tl"
+      (compiler-check-qualified-export-cache-exported-source))
+    (compiler-check-direct-source-error-ok?
+      "tests/qualified_export_cache_private.tl"
+      (compiler-check-qualified-export-cache-private-source)
+      "typecheck: private value a/x from module a")))
 
 (define (compiler-check-virtual-error-ok?) : bool
   (match (compiler-check-source
@@ -649,6 +725,13 @@
       (return
         (begin
           (panic "compiler-check: export smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-check-qualified-export-cache-reset-ok?)
+      (return
+        (begin
+          (panic "compiler-check: qualified export cache reset smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

@@ -8,19 +8,21 @@
 ;# List nodes, builder values, vectors, and arrays created by conversion helpers
 ;# allocate in the active arena.
 ;#
-;# Usage: `(import "stdlib/list.tl")`
+;# Usage: `(import stdlib.list)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/list.tl")
+;# (import stdlib.list)
 ;# (define (main) : i64
-;#   (string-list-count
-;#     (string-list-builder-build
-;#       (string-list-builder-push
-;#         (string-list-builder-push (string-list-builder-empty) "first")
+;#   (list.string-list-count
+;#     (list.string-list-builder-build
+;#       (list.string-list-builder-push
+;#         (list.string-list-builder-push (list.string-list-builder-empty) "first")
 ;#         "second"))))
 ;# ```
-(import "string.tl")
-(import "vector.tl")
+(module stdlib.list)
+
+(import stdlib.string)
+(import stdlib.vector)
 
 ;: Immutable list of strings.
 (defenum StringList
@@ -59,7 +61,7 @@
   (match items
     [(StringNil) false]
     [(StringCons head rest)
-      (if (string-eq head value)
+      (if (string.string-eq head value)
         true
         (string-list-contains? (box-get rest) value))]))
 
@@ -133,7 +135,7 @@
 
 ;: Build a list from `v`, preserving vector order.
 (define (string-list-from-vec-from
-  [v : StringVec]
+  [v : vector.StringVec]
   [index : i64]
   [acc : StringList]) : StringList
   (if (< index 0)
@@ -141,24 +143,24 @@
     (string-list-from-vec-from
       v
       (- index 1)
-      (StringCons (string-vec-get v index "") (box acc)))))
+      (StringCons (vector.string-vec-get v index "") (box acc)))))
 
 ;: Build a list from `v`, preserving vector order.
-(define (string-list-from-vec [v : StringVec]) : StringList
-  (string-list-from-vec-from v (- (string-vec-len v) 1) (StringNil)))
+(define (string-list-from-vec [v : vector.StringVec]) : StringList
+  (string-list-from-vec-from v (- (vector.string-vec-len v) 1) (StringNil)))
 
 ;: Append `items` into `out` in order.
-(define (string-list-to-vec-into [items : StringList] [out : StringVec]) : StringVec
+(define (string-list-to-vec-into [items : StringList] [out : vector.StringVec]) : vector.StringVec
   (match items
     [(StringNil) out]
     [(StringCons head rest)
-      (string-list-to-vec-into (box-get rest) (string-vec-push out head))]))
+      (string-list-to-vec-into (box-get rest) (vector.string-vec-push out head))]))
 
 ;: Copy `items` into a fresh `StringVec`, preserving list order.
-(define (string-list-to-vec [items : StringList]) : StringVec
+(define (string-list-to-vec [items : StringList]) : vector.StringVec
   (string-list-to-vec-into
     items
-    (string-vec-with-capacity (string-list-count items))))
+    (vector.string-vec-with-capacity (string-list-count items))))
 
 ;: Return an empty builder.
 (define (string-list-builder-empty) : StringListBuilder
@@ -185,7 +187,8 @@
   (string-list-builder-build-onto builder (StringNil)))
 
 ;; Inline coverage migrated from stdlib/tests/list_api.tl (#3082).
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.io))
+(cfg test (import stdlib.test))
 
 (cfg
   test
@@ -193,7 +196,7 @@
     [actual : String]
     [expected : String]
     [message : String]) : unit
-    (assert-string-eq (& actual) (& expected) message)))
+    (test.assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
@@ -202,7 +205,7 @@
     [message : String]) : unit
     (match items
       [(StringNil) unit]
-      [_ (panic message)])))
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -214,8 +217,8 @@
       [(StringCons a rest)
         (match (box-get rest)
           [(StringNil) (list-test-assert-owned-string-eq a first message)]
-          [_ (panic message)])]
-      [_ (panic message)])))
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -237,10 +240,10 @@
                       (list-test-assert-owned-string-eq a first message)
                       (list-test-assert-owned-string-eq b second message)
                       (list-test-assert-owned-string-eq c third message))]
-                  [_ (panic message)])]
-              [_ (panic message)])]
-          [_ (panic message)])]
-      [_ (panic message)])))
+                  [_ (io.panic message)])]
+              [_ (io.panic message)])]
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -266,11 +269,11 @@
                           (list-test-assert-owned-string-eq b second message)
                           (list-test-assert-owned-string-eq c third message)
                           (list-test-assert-owned-string-eq d fourth message))]
-                      [_ (panic message)])]
-                  [_ (panic message)])]
-              [_ (panic message)])]
-          [_ (panic message)])]
-      [_ (panic message)])))
+                      [_ (io.panic message)])]
+                  [_ (io.panic message)])]
+              [_ (io.panic message)])]
+          [_ (io.panic message)])]
+      [_ (io.panic message)])))
 
 (cfg
   test
@@ -281,7 +284,7 @@
     [third : String]
     [message : String]) : unit
     (begin
-      (assert-i64-eq (array-length items) 3 message)
+      (test.assert-i64-eq (array-length items) 3 message)
       (list-test-assert-owned-string-eq (array-ref items 0) first message)
       (list-test-assert-owned-string-eq (array-ref items 1) second message)
       (list-test-assert-owned-string-eq (array-ref items 2) third message))))
@@ -289,23 +292,23 @@
 (cfg
   test
   (define (list-test-assert-string-vec3
-    [items : StringVec]
+    [items : vector.StringVec]
     [first : String]
     [second : String]
     [third : String]
     [message : String]) : unit
     (begin
-      (assert-i64-eq (string-vec-len items) 3 message)
+      (test.assert-i64-eq (vector.string-vec-len items) 3 message)
       (list-test-assert-owned-string-eq
-        (string-vec-get items 0 "missing")
+        (vector.string-vec-get items 0 "missing")
         first
         message)
       (list-test-assert-owned-string-eq
-        (string-vec-get items 1 "missing")
+        (vector.string-vec-get items 1 "missing")
         second
         message)
       (list-test-assert-owned-string-eq
-        (string-vec-get items 2 "missing")
+        (vector.string-vec-get items 2 "missing")
         third
         message))))
 
@@ -341,16 +344,19 @@
           (string-list-single "one")
           "one"
           "string-list single")
-        (assert-i64-eq
+        (test.assert-i64-eq
           (string-list-count (string-list-empty))
           0
           "string-list empty count")
-        (assert-i64-eq
+        (test.assert-i64-eq
           (string-list-builder-count
             (string-list-builder-push (string-list-builder-empty) "one"))
           1
           "builder count")
-        (assert-i64-eq (string-list-count built) 3 "string-list built count")
+        (test.assert-i64-eq
+          (string-list-count built)
+          3
+          "string-list built count")
         (list-test-assert-string-list3
           built
           "alpha"
@@ -374,10 +380,10 @@
           "middle"
           "right"
           "append order")
-        (assert-true
+        (test.assert-true
           (string-list-contains? built "beta")
           "contains reports existing item")
-        (assert-false
+        (test.assert-false
           (string-list-contains? built "delta")
           "contains reports missing item")
         (list-test-assert-string-list3
@@ -426,4 +432,36 @@
 
 (cfg
   test
-  (test list-api (assert-i64-eq (list-test-main) 42 "list-api fixture result")))
+  (test
+    list-api
+    (test.assert-i64-eq (list-test-main) 42 "list-api fixture result")))
+
+(export
+  (value string-list-empty)
+  (value string-list-cons)
+  (value string-list-push-front)
+  (value string-list-single)
+  (value string-list-count)
+  (value string-list-contains?)
+  (value string-list-reverse-onto)
+  (value string-list-reverse)
+  (value string-list-append)
+  (value string-list-from-array-rev)
+  (value string-list-from-array)
+  (value string-list-to-array-fill)
+  (value string-list-to-array)
+  (value string-list-from-vec-from)
+  (value string-list-from-vec)
+  (value string-list-to-vec-into)
+  (value string-list-to-vec)
+  (value string-list-builder-empty)
+  (value string-list-builder-push)
+  (value string-list-builder-count)
+  (value string-list-builder-build-onto)
+  (value string-list-builder-build)
+  (type StringList)
+  (type StringListBuilder)
+  (constructor StringListBuilder)
+  (field StringListBuilder items)
+  (variant StringNil)
+  (variant StringCons))

@@ -8,7 +8,9 @@
 ;; call emission.
 (import "../stdlib/io.tl")
 (import "../stdlib/string.tl")
+(import "../stdlib/str_cat.tl")
 (import "compiler_liveness.tl")
+(cfg test (import stdlib.test))
 
 (defenum CompilerRegStringList
   (CompilerRegStringNil)
@@ -11037,7 +11039,7 @@
   test
   (test
     regalloc-call-span-census
-    (assert-i64-eq
+    (test.assert-i64-eq
       (compiler-regalloc-self-test)
       42
       "regalloc call-span census fixture result")))

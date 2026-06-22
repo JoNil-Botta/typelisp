@@ -41,10 +41,13 @@
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf "stdlib/tests/arena_policy_escape_text_buf.tl")
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
+(include-str compiler-embedded-stdlib-tests-args-api "stdlib/tests/args_api.tl")
 (include-str compiler-embedded-stdlib-tests-byte-buf-api "stdlib/tests/byte_buf_api.tl")
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
+(include-str compiler-embedded-stdlib-tests-env-api "stdlib/tests/env_api.tl")
+(include-str compiler-embedded-stdlib-tests-fs-api "stdlib/tests/fs_api.tl")
 (include-str compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live "stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-bytes "stdlib/tests/io_stdio_bytes.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-lines "stdlib/tests/io_stdio_lines.tl")
@@ -54,6 +57,7 @@
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
 (include-str compiler-embedded-stdlib-tests-process-runtime "stdlib/tests/process_runtime.tl")
+(include-str compiler-embedded-stdlib-tests-process-runtime-stderr "stdlib/tests/process_runtime_stderr.tl")
 (include-str compiler-embedded-stdlib-tests-profile-api "stdlib/tests/profile_api.tl")
 (include-str compiler-embedded-stdlib-tests-sort-api "stdlib/tests/sort_api.tl")
 (include-str compiler-embedded-stdlib-tests-sync-api "stdlib/tests/sync_api.tl")
@@ -181,6 +185,12 @@
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed))
         unit)
+      (if (string-eq suffix "tests/args_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-args-api))
+        unit)
       (if (string-eq suffix "tests/byte_buf_api.tl")
         (set!
           source
@@ -204,6 +214,18 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-core-macros-api))
+        unit)
+      (if (string-eq suffix "tests/env_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-env-api))
+        unit)
+      (if (string-eq suffix "tests/fs_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-fs-api))
         unit)
       (if (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
         (set!
@@ -258,6 +280,12 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-runtime))
+        unit)
+      (if (string-eq suffix "tests/process_runtime_stderr.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-process-runtime-stderr))
         unit)
       (if (string-eq suffix "tests/profile_api.tl")
         (set!

@@ -31,13 +31,13 @@
 
 (define (intern-private-string-length [text : String]) : i64
   (cfg
-    feature-private-string-intrinsics
+    feature-compiler-private-string-intrinsics
     (__tl_string_length text)
     (string-length text)))
 
 (define (intern-private-string-ref [text : String] [index : i64]) : char
   (cfg
-    feature-private-string-intrinsics
+    feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
     (string-ref text index)))
 
@@ -45,12 +45,12 @@
   (let
     [left-len : i64
       (cfg
-        feature-private-string-intrinsics
+        feature-compiler-private-string-intrinsics
         (__tl_string_length left)
         (intern-private-string-length left))]
     [right-len : i64
       (cfg
-        feature-private-string-intrinsics
+        feature-compiler-private-string-intrinsics
         (__tl_string_length right)
         (intern-private-string-length right))]
     (if (not (= left-len right-len))
@@ -89,7 +89,7 @@
 
 (defmacro (intern-private-string-eq-places [left : Expr] [right : Expr]) : bool
   (cfg
-    feature-private-string-intrinsics
+    feature-compiler-private-string-intrinsics
     `(let
       [left-len : i64 (__tl_string_length ,left)]
       [right-len : i64 (__tl_string_length ,right)]
@@ -189,7 +189,7 @@
 (define intern-slice-cache3-ready : bool
   false)
 (define intern-persistent-arena : i64
-  (intern-arena-current))
+  (intern-arena-make))
 (define intern-persistent-storage-enabled : bool
   false)
 
@@ -201,6 +201,15 @@
 
 (define (intern-persistent-storage-on?) : bool
   intern-persistent-storage-enabled)
+
+(define (intern-persistent-arena-reset!) : unit
+  (let
+    [old-arena : i64 intern-persistent-arena]
+    [new-arena : i64 (intern-arena-make)]
+    (begin
+      (set! intern-persistent-arena new-arena)
+      (unsafe
+        (intern-arena-destroy old-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
@@ -249,7 +258,7 @@
       (string-data (& s)))
     0
     (cfg
-      feature-private-string-intrinsics
+      feature-compiler-private-string-intrinsics
       (__tl_string_length s)
       (intern-private-string-length s))))
 
@@ -311,9 +320,18 @@
       text
       0
       (cfg
-        feature-private-string-intrinsics
+        feature-compiler-private-string-intrinsics
         (__tl_string_length text)
         (intern-private-string-length text)))))
+
+(define (intern-persist-range! [index : i64] [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [name : String (array-ref intern-pool-slots index)]
+      (begin
+        (array-set! intern-pool-slots index (intern-persistent-copy name))
+        (intern-persist-range! (+ index 1) count)))))
 
 (define (intern-string-slice-eq?
   [name : String]
@@ -322,7 +340,7 @@
   [len : i64]) : bool
   (if (=
     (cfg
-      feature-private-string-intrinsics
+      feature-compiler-private-string-intrinsics
       (__tl_string_length name)
       (intern-private-string-length name))
     len)
@@ -354,7 +372,7 @@
     [i : i64 0]
     [n : i64
       (cfg
-        feature-private-string-intrinsics
+        feature-compiler-private-string-intrinsics
         (__tl_string_length name)
         (intern-private-string-length name))]
     [slash : i64 -1]
@@ -364,7 +382,7 @@
         (let
           [c : char
             (cfg
-              feature-private-string-intrinsics
+              feature-compiler-private-string-intrinsics
               (__tl_string_ref name i)
               (intern-private-string-ref name i))]
           (begin
@@ -391,7 +409,7 @@
               base-start
               (-
                 (cfg
-                  feature-private-string-intrinsics
+                  feature-compiler-private-string-intrinsics
                   (__tl_string_length name)
                   (intern-private-string-length name))
                 base-start))]

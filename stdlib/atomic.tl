@@ -5,16 +5,18 @@
 ;# and `i64`, have sequentially consistent ordering, and synchronize only the
 ;# exact addressed element. Ordinary `array-set!` remains non-atomic.
 ;#
-;# Usage: `(import "stdlib/atomic.tl")`
+;# Usage: `(import stdlib.atomic)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/atomic.tl")
+;# (import stdlib.atomic)
 ;#
 ;# (define (add-counts [ix : (Array i64)] [out : (Array i64)] [n : i64]) : unit
 ;#   (foreach
 ;#     ([i : i64 0 n])
-;#     (atomic-i64-add! out (array-ref ix i) 1)))
+;#     (atomic.atomic-i64-add! out (array-ref ix i) 1)))
 ;# ```
+(module stdlib.atomic)
+
 ;: Sequentially consistent atomic load of one `i64` array element.
 (extern (atomic-i64-load [items : (Array i64)] [index : i64]) : i64 (:symbol "tl_atomic_i64_load"))
 
@@ -44,3 +46,13 @@
   [items : (Array i32)]
   [index : i64]
   [delta : i32]) : i32 (:symbol "tl_atomic_i32_fetch_add"))
+
+(export
+  (value atomic-i64-load)
+  (value atomic-i64-store!)
+  (value atomic-i64-add!)
+  (value atomic-i64-fetch-add!)
+  (value atomic-i32-load)
+  (value atomic-i32-store!)
+  (value atomic-i32-add!)
+  (value atomic-i32-fetch-add!))

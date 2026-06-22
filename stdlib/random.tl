@@ -7,14 +7,14 @@
 ;# variation. The optional `random-system-seed` wrapper reads a platform seed
 ;# through direct FFI.
 ;#
-;# Usage: `(import "stdlib/random.tl")`
+;# Usage: `(import stdlib.random)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/random.tl")
+;# (import stdlib.random)
 ;# (define (main) : i64
-;#   (match (random-bounded (random-seed 1) 10)
-;#     [(OkRandomBounded _ value) value]
-;#     [(ErrRandomBounded _) 0]))
+;#   (let
+;#     [draw : random.RandomDraw (random.random-next (random.random-seed 1))]
+;#     (random.random-draw-value draw)))
 ;# ```
 ;#
 ;# `RandomState`, draw results, and compatibility weight-list cons nodes are
@@ -22,9 +22,11 @@
 ;# `I64Vec` weighted-index helpers scan caller-owned storage directly. The
 ;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
 ;# `i64` overflow and remains portable across current TypeLisp targets.
-(import "io.tl")
-(import "string.tl")
-(import "vector.tl")
+(module stdlib.random)
+
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.vector)
 
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
 (defstruct RandomState
@@ -69,11 +71,11 @@
     [buf : (MutPtr u8)]
     [len : i64]
     [flags : i64]) : i64
-    (io-linux-syscall-status
+    (io.io-linux-syscall-status
       (unsafe
         (syscall
           318
-          (io-linux-ptr-arg
+          (io.io-linux-ptr-arg
             (unsafe
               (ptr-cast buf : (Ptr u8))))
           len
@@ -273,11 +275,13 @@
 ;:
 ;: The result index is zero-based in vector order. Empty vectors, negative
 ;: weights, and vectors whose total weight is zero return structured errors.
-(define (random-weighted-index-vec [state : RandomState] [weights : I64Vec]) : RandomWeightedIndexResult
+(define (random-weighted-index-vec
+  [state : RandomState]
+  [weights : vector.I64Vec]) : RandomWeightedIndexResult
   (random-weighted-index-array-prefix
     state
-    (i64-vec-slots weights)
-    (i64-vec-len weights)
+    (vector.i64-vec-slots weights)
+    (vector.i64-vec-len weights)
     "random: weight vector must not be empty"))
 
 ;: Count weight-list entries.
@@ -414,7 +418,7 @@
   (match (random-system-seed)
     [(OkSystemSeed seed) (random-seed seed)]
     [(ErrSystemSeed err)
-      (panic
+      (io.panic
         (match err
           [(RandomSystemSeedUnavailable message) message]))]))
 
@@ -422,7 +426,7 @@
 (define (random-test-assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
-    (panic message)))
+    (io.panic message)))
 
 ;: Inline test assertion for `i64` equality.
 (define (random-test-assert-i64-eq
@@ -436,7 +440,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (random-test-assert-true (string-eq actual expected) message))
+  (random-test-assert-true (string.string-eq actual expected) message))
 
 ;: Assert that a system seed result succeeded and was normalized.
 (define (random-test-assert-system-seed-ok [result : ResultSystemSeed]) : unit
@@ -447,12 +451,13 @@
         (random-test-assert-true
           (< seed (random-modulus))
           "system seed normalized"))]
-    [(ErrSystemSeed _) (panic "system seed should succeed on supported hosts")]))
+    [(ErrSystemSeed _)
+      (io.panic "system seed should succeed on supported hosts")]))
 
 ;: Assert that a system seed result carries an error payload.
 (define (random-test-assert-system-seed-error [result : ResultSystemSeed]) : unit
   (match result
-    [(OkSystemSeed _) (panic "expected system seed error")]
+    [(OkSystemSeed _) (io.panic "expected system seed error")]
     [(ErrSystemSeed err)
       (match err
         [(RandomSystemSeedUnavailable message)
@@ -471,14 +476,14 @@
       (begin
         (random-test-assert-i64-eq (random-state-seed state) want-state message)
         (random-test-assert-i64-eq value want-value message))]
-    [(ErrRandomBounded err) (panic err)]))
+    [(ErrRandomBounded err) (io.panic err)]))
 
 ;: Assert that a bounded draw failed with the expected message.
 (define (random-test-assert-bounded-error
   [result : RandomBoundedResult]
   [want-message : String]) : unit
   (match result
-    [(OkRandomBounded _ _) (panic "expected bounded random error")]
+    [(OkRandomBounded _ _) (io.panic "expected bounded random error")]
     [(ErrRandomBounded err)
       (random-test-assert-owned-string-eq err want-message want-message)]))
 
@@ -493,14 +498,14 @@
       (begin
         (random-test-assert-i64-eq (random-state-seed state) want-state message)
         (random-test-assert-i64-eq index want-index message))]
-    [(ErrRandomWeightedIndex err) (panic err)]))
+    [(ErrRandomWeightedIndex err) (io.panic err)]))
 
 ;: Assert that a weighted-index draw failed with the expected message.
 (define (random-test-assert-weighted-error
   [result : RandomWeightedIndexResult]
   [want-message : String]) : unit
   (match result
-    [(OkRandomWeightedIndex _ _) (panic "expected weighted random error")]
+    [(OkRandomWeightedIndex _ _) (io.panic "expected weighted random error")]
     [(ErrRandomWeightedIndex err)
       (random-test-assert-owned-string-eq err want-message want-message)]))
 
@@ -544,7 +549,7 @@
             (random-test-assert-true (< value upper) "bounded draw below upper")
             (set! current next)
             (set! i (+ i 1)))]
-        [(ErrRandomBounded err) (panic err)]))))
+        [(ErrRandomBounded err) (io.panic err)]))))
 
 ;: Weighted-list fixture with zeros around positive buckets.
 (define (random-test-weighted-fixture) : RandomWeightList
@@ -581,18 +586,20 @@
       weights)))
 
 ;: Weighted-vector fixture with zeros around positive buckets.
-(define (random-test-weighted-vector-fixture) : I64Vec
-  (i64-vec-push
-    (i64-vec-push (i64-vec-push (i64-vec-push (i64-vec-new) 0) 10) 0)
+(define (random-test-weighted-vector-fixture) : vector.I64Vec
+  (vector.i64-vec-push
+    (vector.i64-vec-push
+      (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 10)
+      0)
     5))
 
 ;: Weighted-vector fixture whose total is zero.
-(define (random-test-weighted-zero-vector) : I64Vec
-  (i64-vec-push (i64-vec-push (i64-vec-new) 0) 0))
+(define (random-test-weighted-zero-vector) : vector.I64Vec
+  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 0))
 
 ;: Weighted-vector fixture with a negative weight.
-(define (random-test-weighted-negative-vector) : I64Vec
-  (i64-vec-push (i64-vec-push (i64-vec-new) 1) -1))
+(define (random-test-weighted-negative-vector) : vector.I64Vec
+  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 1) -1))
 
 (test
   random-api
@@ -654,7 +661,7 @@
         (random-test-weighted-negative-array))
       "random: weight must not be negative")
     (random-test-assert-weighted-error
-      (random-weighted-index-vec (random-seed 1) (i64-vec-new))
+      (random-weighted-index-vec (random-seed 1) (vector.i64-vec-new))
       "random: weight vector must not be empty")
     (random-test-assert-weighted-error
       (random-weighted-index-vec
@@ -718,3 +725,57 @@
           (< (random-state-seed state1) (random-modulus))
           "random-from-system seed normalized")))
     unit))
+
+(export
+  (value random-state-seed)
+  (value random-draw-state)
+  (value random-draw-value)
+  (value random-modulus)
+  (value random-multiplier)
+  (value random-schrage-q)
+  (value random-schrage-r)
+  (value random-normalize-seed-value)
+  (value random-seed)
+  (value random-next)
+  (value random-bounded)
+  (value random-weight-list-empty)
+  (value random-weight-list-cons)
+  (value random-weight-list-empty?)
+  (value random-weight-array-total-from)
+  (value random-weight-array-total-prefix)
+  (value random-weight-array-scan-from)
+  (value random-weighted-index-array-prefix)
+  (value random-weighted-index-array)
+  (value random-weighted-index-vec)
+  (value random-weight-list-count-from)
+  (value random-weight-list-fill-array)
+  (value random-weight-list-to-array)
+  (value random-weight-list-total)
+  (value random-weighted-index)
+  (value random-system-seed-unavailable)
+  (value random-system-seed)
+  (value random-from-system)
+  (type RandomState)
+  (type RandomDraw)
+  (type RandomBoundedResult)
+  (type RandomSystemSeedError)
+  (type ResultSystemSeed)
+  (type RandomWeightList)
+  (type RandomWeightedIndexResult)
+  (type RandomWeightTotalResult)
+  (constructor RandomState)
+  (constructor RandomDraw)
+  (field RandomState seed)
+  (field RandomDraw state)
+  (field RandomDraw value)
+  (variant OkRandomBounded)
+  (variant ErrRandomBounded)
+  (variant RandomSystemSeedUnavailable)
+  (variant OkSystemSeed)
+  (variant ErrSystemSeed)
+  (variant RandomWeightNil)
+  (variant RandomWeightCons)
+  (variant OkRandomWeightedIndex)
+  (variant ErrRandomWeightedIndex)
+  (variant OkRandomWeightTotal)
+  (variant ErrRandomWeightTotal))

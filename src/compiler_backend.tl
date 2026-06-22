@@ -22011,6 +22011,33 @@
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (compiler-backend-runtime-prelude-helper-function?
+  [name : String]
+  [helper : String]) : bool
+  (and
+    (or
+      (compiler-backend-string-contains? name "stdlib/runtime.tl::")
+      (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
+    (string-eq (compiler-backend-symbol-leaf name) helper)))
+
+(define (compiler-backend-function-list-defines-runtime-prelude-helper?
+  [functions : CompilerIrFunctionList]
+  [helper : String]) : bool
+  (match functions
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (if (compiler-backend-runtime-prelude-helper-function? name helper)
+            true
+            (compiler-backend-function-list-defines-runtime-prelude-helper?
+              (box-get rest)
+              helper))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-ir-function-seq-to-list seq)
+        helper)]))
+
 (define (compiler-backend-extern-list-references?
   [externs : CompilerIrExternList]
   [name : String]) : bool
@@ -22640,6 +22667,28 @@
       (compiler-backend-runtime-index-defines? index "tl_str_view")]
     [defines-concat : bool
       (compiler-backend-runtime-index-defines-concat? index)]
+    [provides-substring : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-substring")]
+    [provides-str-view : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-str-view")]
+    [provides-concat : bool
+      (backend-or4
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat3")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat4")
+        (compiler-backend-function-list-defines-runtime-prelude-helper?
+          functions
+          "tl-runtime-string-concat5"))]
     [_defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [_defines-string-to-int : bool
@@ -22648,6 +22697,10 @@
       (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
       (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
+    [provides-int-to-string : bool
+      (compiler-backend-function-list-defines-runtime-prelude-helper?
+        functions
+        "tl-runtime-int-to-string")]
     [_defines-print-err : bool
       (compiler-backend-runtime-index-defines? index "tl_print_err")]
     [_defines-print-str : bool
@@ -22920,14 +22973,21 @@
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
-    [needs-substring : bool (and (not defines-substring) calls-substring)]
-    [needs-str-view : bool (and (not defines-str-view) calls-str-view)]
-    [needs-concat : bool (and (not defines-concat) calls-concat)]
+    ;; Migrated string helpers live in stdlib/runtime.tl, but the backend owns
+    ;; their fixed ABI labels once those prelude helpers are emitted.
+    [needs-substring : bool
+      (or provides-substring (and (not defines-substring) calls-substring))]
+    [needs-str-view : bool
+      (or provides-str-view (and (not defines-str-view) calls-str-view))]
+    [needs-concat : bool
+      (or provides-concat (and (not defines-concat) calls-concat))]
     [_needs-string-eq : bool false]
     [_needs-string-to-int : bool false]
     [_needs-hash-string : bool false]
     [needs-int-to-string : bool
-      (and (not defines-int-to-string) calls-int-to-string)]
+      (or
+        provides-int-to-string
+        (and (not defines-int-to-string) calls-int-to-string))]
     [_direct-abort : bool false]
     [needs-print-err : bool false]
     [needs-print-str : bool false]
@@ -29678,6 +29738,50 @@ tl_memcpy:
           (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
           (not (compiler-backend-string-contains? asm "tl_substring:\n"))
           (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-unused-str-view-extern-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "stdlib/runtime.tl::tl-runtime-str-view"
+        IrParamNil
+        (AstTyI64)
+        0
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+              IrInstrNil))
+          IrBlockNil))
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          0
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil))
+    (compiler-ir-extern-cons
+      (compiler-ir-extern-default "tl_str_view" (AstTyI64))
+      IrExternNil)))
+
+(define (compiler-backend-unused-str-view-extern-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-unused-str-view-extern-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".globl tl_str_view\n")
+        (compiler-backend-string-contains? asm "tl_str_view:\n")
+        (not (compiler-backend-string-contains? asm ".extern tl_str_view\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool

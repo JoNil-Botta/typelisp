@@ -6,6 +6,7 @@
 ;; directory).
 (import "stdlib/string.tl")
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define io-smoke-path : String
   "target/stdlib_io_smoke_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")

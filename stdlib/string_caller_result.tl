@@ -3,7 +3,9 @@
 ;# This module stays separate from `string.tl` while the compatibility wrapper
 ;# keeps the owned `String` API. It exposes helpers that may return
 ;# caller-provided text without copying.
-(import "string.tl")
+(module stdlib.string_caller_result)
+
+(import stdlib.string)
 
 ;: Result for lifetime-preserving string replacement.
 ;:
@@ -52,7 +54,7 @@
   [result : (StringReplaceResult text old replacement)]) : String
   (if (string-replace-result-owned? result)
     (struct-get result owned)
-    (substring-borrowed
+    (string.substring-borrowed
       (struct-get result borrowed)
       0
       (string-length (struct-get result borrowed)))))
@@ -71,7 +73,7 @@
           [ok : bool true]
           (begin
             (while (and ok (< j olen))
-              (if (char-eq (string-ref s (+ i j)) (string-ref old j))
+              (if (string.char-eq (string-ref s (+ i j)) (string-ref old j))
                 (set! j (+ j 1))
                 (set! ok false)))
             (if ok
@@ -90,11 +92,11 @@
   (let
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
-    [prefix : String (substring-borrowed s 0 index)]
-    [prefix-new : String (string-append-borrowed (& prefix) new)]
+    [prefix : String (string.substring-borrowed s 0 index)]
+    [prefix-new : String (string.string-append-borrowed (& prefix) new)]
     [suffix : String
-      (substring-borrowed s (+ index olen) (- (- hlen index) olen))]
-    (string-append prefix-new suffix)))
+      (string.substring-borrowed s (+ index olen) (- (- hlen index) olen))]
+    (string.string-append prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.
@@ -124,7 +126,7 @@
 (define (string-caller-result-test-string-eq
   [actual : String]
   [expected : String]) : unit
-  (if (string-eq actual expected)
+  (if (string.string-eq actual expected)
     unit
     (string-caller-result-test-fail)))
 
@@ -170,3 +172,20 @@
       (string-caller-result-test-string-eq
         (string-replace-result-string helper-owned)
         "alrena"))))
+
+(export
+  (value string-replace-result-borrowed?)
+  (value string-replace-result-owned?)
+  (value string-replace-borrowed-result)
+  (value string-replace-owned-result-like)
+  (value string-replace-result-string)
+  (value string-replace-find-index)
+  (value string-replace-owned-at)
+  (value string-replace-result)
+  (type StringReplaceResult)
+  (constructor StringReplaceResult)
+  (field StringReplaceResult borrowed)
+  (field StringReplaceResult old-text)
+  (field StringReplaceResult replacement-text)
+  (field StringReplaceResult owned)
+  (field StringReplaceResult is-owned))

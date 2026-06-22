@@ -424,51 +424,61 @@
       recorded)))
 
 (define (compiler-load-session-note-persistent!) : unit
-  (begin
-    (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ast-floor)
-        0
-        (ast-node-pool-len))
-      unit)
-    (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ty-floor)
-        0
-        (ty-node-pool-len))
-      unit)
-    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state intern-floor)
-        0
-        (intern-pool-len))
-      unit)))
+  (let
+    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [new-intern-floor : i64 (intern-pool-len)]
+    (begin
+      (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ast-floor)
+          0
+          (ast-node-pool-len))
+        unit)
+      (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ty-floor)
+          0
+          (ty-node-pool-len))
+        unit)
+      (if (> new-intern-floor old-intern-floor)
+        (begin
+          (intern-persist-range! old-intern-floor new-intern-floor)
+          (array-set!
+            (struct-get compiler-load-active-session-state intern-floor)
+            0
+            new-intern-floor))
+        unit))))
 
 (define (compiler-load-session-note-persistent-with-pools!
   [pools : AstNodePoolContext]) : unit
-  (begin
-    (if (>
-      (ast-node-pool-context-expr-len pools)
-      (compiler-load-session-ast-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ast-floor)
-        0
-        (ast-node-pool-context-expr-len pools))
-      unit)
-    (if (>
-      (ast-node-pool-context-type-len pools)
-      (compiler-load-session-ty-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state ty-floor)
-        0
-        (ast-node-pool-context-type-len pools))
-      unit)
-    (if (> (intern-pool-len) (compiler-load-session-intern-floor-value))
-      (array-set!
-        (struct-get compiler-load-active-session-state intern-floor)
-        0
-        (intern-pool-len))
-      unit)))
+  (let
+    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [new-intern-floor : i64 (intern-pool-len)]
+    (begin
+      (if (>
+        (ast-node-pool-context-expr-len pools)
+        (compiler-load-session-ast-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ast-floor)
+          0
+          (ast-node-pool-context-expr-len pools))
+        unit)
+      (if (>
+        (ast-node-pool-context-type-len pools)
+        (compiler-load-session-ty-floor-value))
+        (array-set!
+          (struct-get compiler-load-active-session-state ty-floor)
+          0
+          (ast-node-pool-context-type-len pools))
+        unit)
+      (if (> new-intern-floor old-intern-floor)
+        (begin
+          (intern-persist-range! old-intern-floor new-intern-floor)
+          (array-set!
+            (struct-get compiler-load-active-session-state intern-floor)
+            0
+            new-intern-floor))
+        unit))))
 
 (define (compiler-load-session-ast-floor-value) : i64
   (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
@@ -500,9 +510,7 @@
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (begin
     (set! compiler-load-active-session-state state)
-    (if (compiler-load-session-cache-enabled?)
-      (intern-persistent-storage-enable!)
-      (intern-persistent-storage-disable!))))
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-enable!) : unit
   (begin
@@ -510,7 +518,7 @@
       (struct-get compiler-load-active-session-state cache-enabled)
       0
       true)
-    (intern-persistent-storage-enable!)))
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
   (if enabled
@@ -536,7 +544,8 @@
     (array-set! (struct-get state program-admission-ready) 0 false)
     (array-set! (struct-get state program-cache-hit-count) 0 0)
     (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)))
+    (array-set! (struct-get state program-cache-store-count) 0 0)
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
   (begin
@@ -544,7 +553,8 @@
       (struct-get compiler-load-active-session-state program-cache-enabled)
       0
       false)
-    (compiler-load-program-cache-clear!)))
+    (compiler-load-program-cache-clear!)
+    (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-state-program-cache-set-enabled!
   [state : CompilerLoadSessionState]
@@ -3220,6 +3230,8 @@
   [entry-path : String]
   [decl-path : String]) : String
   (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
     [base : String (compiler-load-dirname entry-path)]
     [base-len : i64 (string-length base)]
     [decl-len : i64 (string-length decl-path)]
@@ -3231,7 +3243,11 @@
   [entry-path : String]
   [decl-path : String]
   [source-name : String]) : String
-  (if (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+  (if (and
+    (string-eq
+      (compiler-load-normalize-path decl-path)
+      (compiler-load-normalize-path entry-path))
+    (string-eq source-name "main"))
     "main"
     (string-append
       (string-append
@@ -3242,12 +3258,13 @@
 (define (compiler-load-package-entry-main?
   [entry-path : String]
   [decl-path : String]
-  [module : String]
+  [_module : String]
   [source-name : String]) : bool
   (and
-    (string-eq decl-path entry-path)
-    (string-eq source-name "main")
-    (or (string-eq module "") (string-eq module "main"))))
+    (string-eq
+      (compiler-load-normalize-path decl-path)
+      (compiler-load-normalize-path entry-path))
+    (string-eq source-name "main")))
 
 (define (compiler-load-root-prefix [root : String]) : String
   (compiler-load-join-root-path root ""))
@@ -4400,6 +4417,31 @@
         (sym-i64-contains seen "app.main"))]
     [(ErrCompilerLoadWithPaths _) false]))
 
+(define (compiler-load-entry-moduled-main-ok?) : bool
+  (and
+    (compiler-load-package-entry-main?
+      "src/app.tl"
+      "src/app.tl"
+      "app.main"
+      "main")
+    (compiler-load-package-entry-main?
+      "src\\app.tl"
+      "src/app.tl"
+      "app.main"
+      "main")
+    (not
+      (compiler-load-package-entry-main?
+        "src/app.tl"
+        "src/lib.tl"
+        "app.main"
+        "main"))
+    (not
+      (compiler-load-package-entry-main?
+        "src/app.tl"
+        "src/app.tl"
+        "app.main"
+        "helper"))))
+
 (define (compiler-load-expected-module-conflict-ok?) : bool
   (match (compiler-load-source-with-paths-and-roots-expect
     "src/lib.tl"
@@ -4836,6 +4878,47 @@
           (set! ok false))
         (compiler-load-session-cache-disable-for-test!)
         ok))))
+
+(define (compiler-load-session-program-cache-disable-persistent-off-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
+    (let
+      [ok : bool (not (intern-persistent-storage-on?))]
+      (begin
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
+(define (compiler-load-session-cache-enable-persistent-off-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (let
+      [ok : bool (not (intern-persistent-storage-on?))]
+      (begin
+        (compiler-load-session-cache-disable-for-test!)
+        ok))))
+
+(define (compiler-load-session-persistent-floor-interns-ok?) : bool
+  (begin
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
+    (let
+      [id : i64
+        (with-scratch
+          (let
+            [name : String (string-append "cache.floor." "transient")]
+            [interned : i64 (intern name)]
+            (begin
+              (compiler-load-session-note-persistent!)
+              interned)))]
+      (begin
+        (compiler-load-session-reset-interns!)
+        (let
+          [again : i64 (intern "cache.floor.transient")]
+          [ok : bool (= id again)]
+          (begin
+            (compiler-load-session-cache-disable-for-test!)
+            ok))))))
 
 (define (compiler-load-session-cache-local-common-dep-ok?) : bool
   (let
@@ -7402,6 +7485,13 @@
           ;; lint-allow: unreachable-code
           0)))
     (unless
+      (compiler-load-entry-moduled-main-ok?)
+      (return
+        (begin
+          (panic "compiler-load: entry moduled main smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
       (compiler-load-expected-module-conflict-ok?)
       (return
         (begin
@@ -7448,6 +7538,30 @@
       (return
         (begin
           (panic "compiler-load: session cache entry cold smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-program-cache-disable-persistent-off-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: disabled program cache left persistent intern storage on")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-cache-enable-persistent-off-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: session cache enable left persistent intern storage on")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-load-session-persistent-floor-interns-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: session cache intern floor kept scratch storage")
           ;; lint-allow: unreachable-code
           0)))
     (unless

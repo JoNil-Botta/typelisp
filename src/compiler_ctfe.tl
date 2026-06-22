@@ -142,26 +142,49 @@
   (CtfeNoReflectInfo)
   (CtfeSomeReflectInfo CtfeReflectInfo))
 
+(defenum CtfeModuleExportInfo
+  (CtfeModuleExportInfo String String String AstType))
+
+(comptime-decl
+  (:generated vector-family CtfeModuleExportInfoList "CtfeModuleExportInfo")
+  (defstruct CtfeModuleExportInfoList
+    (slots (Array CtfeModuleExportInfo))
+    (len i64)))
+
+(defenum CtfeMaybeModuleExportInfo
+  (CtfeNoModuleExportInfo)
+  (CtfeSomeModuleExportInfo CtfeModuleExportInfo))
+
 ;; Immutable name -> value environment plus immutable type metadata tables. Newest
 ;; value binding sits at the front so lookup finds the most recent shadowing
 ;; binding first; metadata lives at the root and is shared by extensions.
 (defenum CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
+  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList CtfeModuleExportInfoList)
   (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))
 
 (define (ctfe-env-empty) : CtfeEnv
-  (CtfeEnvNil (ctfe-layout-info-list-empty) (ctfe-reflect-info-list-empty)))
+  (CtfeEnvNil
+    (ctfe-layout-info-list-empty)
+    (ctfe-reflect-info-list-empty)
+    (ctfe-module-export-info-list-empty)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
-  (CtfeEnvNil layouts (ctfe-reflect-info-list-empty)))
+  (CtfeEnvNil
+    layouts
+    (ctfe-reflect-info-list-empty)
+    (ctfe-module-export-info-list-empty)))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
-  (CtfeEnvNil (ctfe-layout-info-list-empty) reflections))
+  (CtfeEnvNil
+    (ctfe-layout-info-list-empty)
+    reflections
+    (ctfe-module-export-info-list-empty)))
 
 (define (ctfe-env-with-metadata
   [layouts : CtfeLayoutInfoList]
-  [reflections : CtfeReflectInfoList]) : CtfeEnv
-  (CtfeEnvNil layouts reflections))
+  [reflections : CtfeReflectInfoList]
+  [module-exports : CtfeModuleExportInfoList]) : CtfeEnv
+  (CtfeEnvNil layouts reflections module-exports))
 
 (define (ctfe-env-extend
   [env : CtfeEnv]
@@ -275,6 +298,27 @@
       (array-set! slots n value)
       (CtfeReflectInfoList slots (+ n 1)))))
 
+(define (ctfe-module-export-info-list-with-capacity [capacity : i64]) : CtfeModuleExportInfoList
+  (CtfeModuleExportInfoList (make-array CtfeModuleExportInfo capacity) 0))
+
+(define (ctfe-module-export-info-list-empty) : CtfeModuleExportInfoList
+  (ctfe-module-export-info-list-with-capacity 0))
+
+(define (ctfe-module-export-info-list-ref
+  [items : CtfeModuleExportInfoList]
+  [index : i64]) : CtfeModuleExportInfo
+  (array-ref (struct-get items slots) index))
+
+(define (ctfe-module-export-info-list-push
+  [items : CtfeModuleExportInfoList]
+  [value : CtfeModuleExportInfo]) : CtfeModuleExportInfoList
+  (let
+    [n : i64 (struct-get items len)]
+    [slots : (Array CtfeModuleExportInfo) (struct-get items slots)]
+    (begin
+      (array-set! slots n value)
+      (CtfeModuleExportInfoList slots (+ n 1)))))
+
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
   (match info
     [(CtfeLayoutInfo name _ _ _ _) name]))
@@ -342,13 +386,55 @@
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
-    [(CtfeEnvNil layouts _) layouts]
+    [(CtfeEnvNil layouts _ _) layouts]
     [(CtfeEnvCons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
-    [(CtfeEnvNil _ reflections) reflections]
+    [(CtfeEnvNil _ reflections _) reflections]
     [(CtfeEnvCons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
+
+(define (ctfe-env-module-exports [env : CtfeEnv]) : CtfeModuleExportInfoList
+  (match env
+    [(CtfeEnvNil _ _ module-exports) module-exports]
+    [(CtfeEnvCons _ _ _ rest) (ctfe-env-module-exports (box-get rest))]))
+
+(define (ctfe-module-export-info-lookup-from
+  [exports : CtfeModuleExportInfoList]
+  [module : String]
+  [kind : String]
+  [name : String]
+  [index : i64]) : CtfeMaybeModuleExportInfo
+  (if (< index 0)
+    (CtfeNoModuleExportInfo)
+    (let
+      [info : CtfeModuleExportInfo
+        (ctfe-module-export-info-list-ref exports index)]
+      (match info
+        [(CtfeModuleExportInfo export-module export-kind export-name _)
+          (if (and
+            (string-eq export-module module)
+            (string-eq export-kind kind)
+            (string-eq export-name name))
+            (CtfeSomeModuleExportInfo info)
+            (ctfe-module-export-info-lookup-from
+              exports
+              module
+              kind
+              name
+              (- index 1)))]))))
+
+(define (ctfe-module-export-info-lookup
+  [exports : CtfeModuleExportInfoList]
+  [module : String]
+  [kind : String]
+  [name : String]) : CtfeMaybeModuleExportInfo
+  (ctfe-module-export-info-lookup-from
+    exports
+    module
+    kind
+    name
+    (- (struct-get exports len) 1)))
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
@@ -357,7 +443,7 @@
 
 (define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
   (match env
-    [(CtfeEnvNil _ _) (CtfeNoValue)]
+    [(CtfeEnvNil _ _ _) (CtfeNoValue)]
     [(CtfeEnvCons key value _ rest)
       (if (string-eq key name)
         (CtfeSomeValue value)
@@ -365,7 +451,7 @@
 
 (define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
   (match env
-    [(CtfeEnvNil _ _) (AstNoType)]
+    [(CtfeEnvNil _ _ _) (AstNoType)]
     [(CtfeEnvCons key _ ty rest)
       (if (string-eq key name)
         (AstSomeType ty)
@@ -2228,6 +2314,141 @@
     [(string-eq name "function-param-type") true]
     [else (string-eq name "function-return-type")]))
 
+(define (ctfe-module-export-query-name? [name : String]) : bool
+  (or
+    (string-eq name "module-export-value?")
+    (string-eq name "module-export-type?")
+    (string-eq name "module-export-macro?")
+    (string-eq name "module-export-value-type")
+    (string-eq name "module-export-type")
+    (string-eq name "module-export-macro-type")))
+
+(define (ctfe-module-export-query-kind [name : String]) : String
+  (if (or
+    (string-eq name "module-export-value?")
+    (string-eq name "module-export-value-type"))
+    "value"
+    (if (or
+      (string-eq name "module-export-type?")
+      (string-eq name "module-export-type"))
+      "type"
+      "macro")))
+
+(define (ctfe-module-export-type-query? [name : String]) : bool
+  (or
+    (string-eq name "module-export-value-type")
+    (string-eq name "module-export-type")
+    (string-eq name "module-export-macro-type")))
+
+(define (ctfe-module-export-missing-message
+  [query-name : String]
+  [kind : String]
+  [module : String]
+  [name : String]) : String
+  (string-append
+    query-name
+    (string-append
+      ": module "
+      (string-append
+        module
+        (string-append
+          " does not export "
+          (string-append kind (string-append " " name)))))))
+
+(define (ctfe-eval-module-export-query-with-strings
+  [query-name : String]
+  [module : String]
+  [export-name : String]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (let
+    [kind : String (ctfe-module-export-query-kind query-name)]
+    [lookup : CtfeMaybeModuleExportInfo
+      (ctfe-module-export-info-lookup
+        (ctfe-env-module-exports env)
+        module
+        kind
+        export-name)]
+    (if (ctfe-module-export-type-query? query-name)
+      (match lookup
+        [(CtfeSomeModuleExportInfo info)
+          (match info
+            [(CtfeModuleExportInfo _ _ _ ty) (OkCtfe (CtfeType ty) fuel)])]
+        [(CtfeNoModuleExportInfo)
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              (ctfe-module-export-missing-message
+                query-name
+                kind
+                module
+                export-name)))])
+      (match lookup
+        [(CtfeSomeModuleExportInfo _) (OkCtfe (CtfeBool true) fuel)]
+        [(CtfeNoModuleExportInfo) (OkCtfe (CtfeBool false) fuel)]))))
+
+(define (ctfe-eval-module-export-query
+  [query-name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons module-arg tail)
+      (let
+        [module-arg : AstExpr (ast-node-get module-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons name-arg rest)
+            (let
+              [name-arg : AstExpr (ast-node-get name-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg
+                    module-arg
+                    expr
+                    env
+                    fuel
+                    query-name)
+                    [(ErrCtfeStringArg d) (ErrCtfe d)]
+                    [(OkCtfeStringArg module module-fuel)
+                      (match (ctfe-eval-string-arg
+                        name-arg
+                        expr
+                        env
+                        module-fuel
+                        query-name)
+                        [(ErrCtfeStringArg d) (ErrCtfe d)]
+                        [(OkCtfeStringArg export-name name-fuel)
+                          (ctfe-eval-module-export-query-with-strings
+                            query-name
+                            module
+                            export-name
+                            expr
+                            env
+                            name-fuel)])])]
+                [_
+                  (ErrCtfe
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      (string-append
+                        query-name
+                        " expects exactly two String arguments")))]))]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                (string-append
+                  query-name
+                  " expects exactly two String arguments")))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          (string-append query-name " expects exactly two String arguments")))]))
+
 (define (ctfe-eval-one-type-reflection
   [name : String]
   [args : AstExprList]
@@ -2949,6 +3170,18 @@
     [(ctfe-stdlib-comptime-helper-name? name "expr-splice") "expr-splice"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-if") "expr-if"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-type") "expr-type"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-value?")
+      "module-export-value?"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-type?")
+      "module-export-type?"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-macro?")
+      "module-export-macro?"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-value-type")
+      "module-export-value-type"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-type")
+      "module-export-type"]
+    [(ctfe-stdlib-comptime-helper-name? name "module-export-macro-type")
+      "module-export-macro-type"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool?") "expr-bool?"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool-value")
       "expr-bool-value"]
@@ -3882,6 +4115,8 @@
             (ctfe-eval-offset-query args expr env fuel)]
           [(ctfe-reflection-query-name? raw-name)
             (ctfe-eval-reflection-query raw-name args expr env fuel)]
+          [(ctfe-module-export-query-name? call-name)
+            (ctfe-eval-module-export-query call-name args expr env fuel)]
           [(or (string-eq raw-name "string-eq") (string-eq raw-name "string=?"))
             (ctfe-eval-string-eq-call raw-name args expr env fuel)]
           [(or
@@ -8274,6 +8509,82 @@
         (set! ok false))
       ok)))
 
+(define (compiler-ctfe-module-export-query-ok?) : bool
+  (let
+    [module-name : String "ctfe.module.exports"]
+    [exports : CtfeModuleExportInfoList
+      (ctfe-module-export-info-list-push
+        (ctfe-module-export-info-list-push
+          (ctfe-module-export-info-list-push
+            (ctfe-module-export-info-list-with-capacity 3)
+            (CtfeModuleExportInfo
+              module-name
+              "value"
+              "make"
+              (ast-ty-func (ast-type-cons (AstTyI64) AstTypeNil) (AstTyBool))))
+          (CtfeModuleExportInfo
+            module-name
+            "type"
+            "PublicBox"
+            (AstTyStruct (intern "ctfe.module.exports/PublicBox"))))
+        (CtfeModuleExportInfo
+          module-name
+          "macro"
+          "emit"
+          (ast-ty-func (ast-type-cons (AstTyExpr) AstTypeNil) (AstTyI64))))]
+    [env : CtfeEnv
+      (ctfe-env-with-metadata
+        (ctfe-layout-info-list-empty)
+        (ctfe-reflect-info-list-empty)
+        exports)]
+    [module-expr : i64
+      (ast-node-push (AstExprLiteral (AstLitString module-name)))]
+    [make-expr : i64 (ast-node-push (AstExprLiteral (AstLitString "make")))]
+    [type-expr : i64
+      (ast-node-push (AstExprLiteral (AstLitString "PublicBox")))]
+    [macro-expr : i64 (ast-node-push (AstExprLiteral (AstLitString "emit")))]
+    [missing-expr : i64
+      (ast-node-push (AstExprLiteral (AstLitString "missing")))]
+    (and
+      (string-eq
+        (ctfe-comptime-helper-call-name "stdlib.comptime/module-export-value?")
+        "module-export-value?")
+      (compiler-ctfe-eval-bool-ok?
+        (compiler-ctfe-call2 "module-export-value?" module-expr make-expr)
+        env
+        true)
+      (compiler-ctfe-eval-bool-ok?
+        (compiler-ctfe-call2 "module-export-type?" module-expr type-expr)
+        env
+        true)
+      (compiler-ctfe-eval-bool-ok?
+        (compiler-ctfe-call2 "module-export-macro?" module-expr macro-expr)
+        env
+        true)
+      (compiler-ctfe-eval-bool-ok?
+        (compiler-ctfe-call2 "module-export-value?" module-expr type-expr)
+        env
+        false)
+      (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call2 "module-export-value-type" module-expr make-expr)
+        env
+        (ast-ty-func (ast-type-cons (AstTyI64) AstTypeNil) (AstTyBool)))
+      (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call2 "module-export-type" module-expr type-expr)
+        env
+        (AstTyStruct (intern "ctfe.module.exports/PublicBox")))
+      (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call2 "module-export-macro-type" module-expr macro-expr)
+        env
+        (ast-ty-func (ast-type-cons (AstTyExpr) AstTypeNil) (AstTyI64)))
+      (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call2
+          "module-export-value-type"
+          module-expr
+          missing-expr)
+        env
+        "module-export-value-type: module ctfe.module.exports does not export value missing"))))
+
 ;; --- self-tests (#1137 additions) -------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
 ;; compare it structurally, extract its parts, and verify list ops.
@@ -8565,6 +8876,7 @@
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
+    (unless (compiler-ctfe-module-export-query-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))

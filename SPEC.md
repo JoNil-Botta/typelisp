@@ -4370,6 +4370,25 @@ V1 primitive names and signatures are fixed as follows:
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
 
+Module export reflection is also compile-time-only metadata. It deliberately
+uses canonical module identity strings, such as the result of
+`type-nominal-module`, and does not introduce runtime `Module` handles.
+
+| Primitive | Result | Notes |
+| --- | --- | --- |
+| `(module-export-value? module-expr name-expr)` | `bool` | True when `module-expr` exports a value named `name-expr`. Constructors, variants, and fields remain separate export kinds and are not reported as ordinary values. |
+| `(module-export-type? module-expr name-expr)` | `bool` | True when the module exports a nominal type with that name. |
+| `(module-export-macro? module-expr name-expr)` | `bool` | True when the module exports a macro with that name. |
+| `(module-export-value-type module-expr name-expr)` | `type` | Exported value type; function values reflect as function types that can be inspected with `function-param-*` and `function-return-type`. Missing exports are diagnostics. |
+| `(module-export-type module-expr name-expr)` | `type` | Exported nominal type. Missing exports are diagnostics. |
+| `(module-export-macro-type module-expr name-expr)` | `type` | Exported macro signature represented as a function type over macro operand types and produced type. Missing exports are diagnostics. |
+
+`module-expr` and `name-expr` must evaluate to compile-time `String` values.
+Missing-export diagnostics name the queried module, export kind, and export
+name. The boolean query forms are the non-panicking path for probing optional
+APIs; the `*-type` forms are assertion-style queries for code generators that
+need to validate a required shape.
+
 Selfhost v1 implements this surface in CTFE for explicit `(comptime ...)` folds
 and comptime parameter evaluation. `String` and `type` metadata remain
 compile-time-only; programs may compare or compose them in CTFE, but direct

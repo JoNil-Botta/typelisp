@@ -232,6 +232,9 @@
           "%r15"
           (compiler-reg-string-cons "%rbx" CompilerRegStringNil))))))
 
+(define (compiler-reg-sysv-integer-register-count) : i64
+  5)
+
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that
 ;; would need prologue/epilogue save/restore, and are used only for intervals
@@ -2558,11 +2561,15 @@
                     tail)]
                 [(CompilerRegNoType) tail])))])]))
 
-(define (compiler-reg-interval-list-count [intervals : CompilerRegIntervalList]) : i64
-  (match intervals
-    [(CompilerRegIntervalNil) 0]
-    [(CompilerRegIntervalCons _ rest)
-      (+ 1 (compiler-reg-interval-list-count (box-get rest)))]))
+(define (compiler-reg-interval-list-more-than?
+  [intervals : CompilerRegIntervalList]
+  [limit : i64]) : bool
+  (if (< limit 0)
+    true
+    (match intervals
+      [(CompilerRegIntervalNil) false]
+      [(CompilerRegIntervalCons _ rest)
+        (compiler-reg-interval-list-more-than? (box-get rest) (- limit 1))])))
 
 (define (compiler-reg-vector-defs-instr
   [instr : CompilerIrInstr]
@@ -6031,15 +6038,15 @@
         blocked)]
     [integer-candidates : CompilerRegIntervalList
       (compiler-reg-candidates eff-intervals type-info eff-blocked false)]
+    [integer-registers : CompilerRegStringList
+      (compiler-reg-sysv-integer-registers)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
-    [integer-register-count : i64
-      (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))]
     [remat-weight-needed : bool
       (or
-        (>
-          (compiler-reg-interval-list-count integer-candidates)
-          integer-register-count)
+        (compiler-reg-interval-list-more-than?
+          integer-candidates
+          (compiler-reg-sysv-integer-register-count))
         (> (compiler-live-set-count group-vars) 0))]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
     ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
@@ -6058,7 +6065,7 @@
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
         integer-candidates
-        (compiler-reg-sysv-integer-registers)
+        integer-registers
         CompilerRegActiveNil
         assignment-table
         moves

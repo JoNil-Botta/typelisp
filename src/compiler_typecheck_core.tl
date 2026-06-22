@@ -51,6 +51,7 @@
     AstProgram
     CompilerSymbols
     CompilerRegistries
+    CompilerExports
     String
     AstNodePoolContext))
 
@@ -521,16 +522,16 @@
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _ pools)
-      (TcContext program symbols registries module pools)]))
+    [(TcContext program symbols registries exports _ pools)
+      (TcContext program symbols registries exports module pools)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module _) module]))
+    [(TcContext _ _ _ _ module _) module]))
 
 (define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
   (match ctx
-    [(TcContext _ _ _ _ pools) pools]))
+    [(TcContext _ _ _ _ _ pools) pools]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (ast-node-pool-context-capture-active! (tc-context-pools ctx)))
@@ -5558,7 +5559,7 @@
 
 (define (tc-imported-module-identity? [ctx : TcContext] [module-name : String]) : bool
   (match ctx
-    [(TcContext program _ _ current-module _)
+    [(TcContext program _ _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (tc-imported-module-identity-ids?
@@ -5580,7 +5581,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ current-module _)
+          [(TcContext program _ _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (match (macro-import-alias-target-ids
@@ -5685,7 +5686,7 @@
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
     (match ctx
-      [(TcContext _ _ registries module _)
+      [(TcContext _ _ registries _ module _)
         (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
           (let
             [module-key : String (compiler-symbol-module-key module name)]
@@ -5758,7 +5759,7 @@
   [ctx : TcContext]
   [qualifier : String]) : String
   (match ctx
-    [(TcContext program _ _ current-module _)
+    [(TcContext program _ _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -5777,66 +5778,10 @@
         " "
         (string-append name (string-append " from module " target-module))))))
 
-;; #2944: tc-qualified-export-visible-ok rebuilt the whole-program export table
-;; on every cross-module qualified reference - O(program) per reference, so
-;; O(program^2) over a dotted-import-heavy file. The table is invariant for a
-;; file's typecheck pass, so memoize it. Build into a dedicated persistent arena
-;; (mirroring tc-hygiene-module-env-cache-arena) so the cached table survives the
-;; scratch arenas reset during per-decl typechecking. Cleared per file by
-;; compiler-typecheck-reset-file-state!.
-(define tc-qualified-exports-ready : bool
-  false)
-(define tc-qualified-exports-value : CompilerExports
-  (compiler-exports-empty))
-(define tc-qualified-exports-arena : i64
-  0)
-
-(define (tc-qualified-exports-arena-handle) : i64
-  (begin
-    (if (= tc-qualified-exports-arena 0)
-      (set! tc-qualified-exports-arena (arena-make))
-      unit)
-    tc-qualified-exports-arena))
-
-(define (tc-qualified-exports-reset!) : unit
-  (begin
-    (set! tc-qualified-exports-ready false)
-    (set! tc-qualified-exports-value (compiler-exports-empty))
-    (if (= tc-qualified-exports-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena-destroy tc-qualified-exports-arena))
-        (set! tc-qualified-exports-arena 0)))))
-
-;; Ensure the per-file export table is built and cached. The freshly built
-;; `exports` is moved into the global and never read back locally (CompilerExports
-;; is a move type); callers read tc-qualified-exports-value directly afterward,
-;; mirroring macro-expand-exports-value.
-(define (tc-qualified-exports-ensure! [ctx : TcContext]) : ResultTcUnit
-  (if tc-qualified-exports-ready
-    OkTcUnit
-    (let
-      [prev-arena : i64 (arena-current)]
-      [_switched : unit
-        (unsafe
-          (arena-set! (tc-qualified-exports-arena-handle)))]
-      [built : ResultCompilerExports
-        (build-compiler-exports-with
-          (tc-context-program ctx)
-          (tc-context-symbols ctx)
-          (tc-context-registries ctx))]
-      (begin
-        (unsafe
-          (arena-set! prev-arena))
-        (match built
-          [(OkCompilerExports exports)
-            (begin
-              (set! tc-qualified-exports-value exports)
-              (set! tc-qualified-exports-ready true)
-              OkTcUnit)]
-          [(ErrCompilerExports message) (ErrTcUnit message)])))))
-
+;; #2944: qualified visibility checks use the whole-program export table. Build
+;; that table once during typecheck setup and carry it in TcContext so each
+;; cross-module qualified reference can do an O(1) lookup without rebuilding or
+;; reading another program's exports in batched check/lint/doc-test processes.
 (define (tc-qualified-export-visible-ok
   [ctx : TcContext]
   [kind-name : String]
@@ -5845,21 +5790,18 @@
   [export-name : String]) : ResultTcUnit
   (if (string-eq target-module (tc-context-module ctx))
     OkTcUnit
-    (match (tc-qualified-exports-ensure! ctx)
-      [(OkTcUnit)
-        (match (compiler-exports-lookup-id
-          tc-qualified-exports-value
-          (intern kind-name)
-          (intern target-module)
-          (intern export-name))
-          [(SomeI64 _) OkTcUnit]
-          [(NoneI64)
-            (ErrTcUnit
-              (tc-qualified-access-private-message
-                kind-name
-                display-name
-                target-module))])]
-      [(ErrTcUnit message) (ErrTcUnit message)])))
+    (match (compiler-exports-lookup-id
+      (tc-context-exports ctx)
+      (intern kind-name)
+      (intern target-module)
+      (intern export-name))
+      [(SomeI64 _) OkTcUnit]
+      [(NoneI64)
+        (ErrTcUnit
+          (tc-qualified-access-private-message
+            kind-name
+            display-name
+            target-module))])))
 
 (define (tc-qualified-name-export-visible-ok
   [ctx : TcContext]
@@ -6306,7 +6248,7 @@
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx
-        [(TcContext program symbols _ _ _)
+        [(TcContext program symbols _ _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -6322,7 +6264,7 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6406,7 +6348,7 @@
   [name : String]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -6490,7 +6432,7 @@
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-symbols-lookup-type symbols name)
         [(SomeI64 handle)
           (match (compiler-symbols-decl-at-index
@@ -11094,7 +11036,7 @@
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols registries module _)
+    [(TcContext _ symbols registries _ module _)
       (let
         [lookup-name : String
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -15028,7 +14970,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -18608,15 +18550,19 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _ _) program]))
+    [(TcContext program _ _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _ _) symbols]))
+    [(TcContext _ symbols _ _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _ _) registries]))
+    [(TcContext _ _ registries _ _ _) registries]))
+
+(define (tc-context-exports [ctx : TcContext]) : CompilerExports
+  (match ctx
+    [(TcContext _ _ _ exports _ _) exports]))
 
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
@@ -19167,7 +19113,7 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -19194,7 +19140,7 @@
 
 (define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-symbols-lookup-type symbols enum-name)
         [(SomeI64 handle)
           (if (=
@@ -20419,7 +20365,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -37241,79 +37187,93 @@
                         symbols
                         registries)
                         [(OkCompilerExports exports)
-                          (begin
-                            (set! macro-expand-exports-value exports)
-                            (set! macro-expand-exports-ready true)
-                            (set! macro-expand-active-module "")
-                            (set!
-                              macro-expand-macro-names
-                              (macro-collect-macro-names
-                                decls
-                                (tc-string-list-add
-                                  (tc-string-list-add (TcStringNil) "when")
-                                  "unless")))
-                            (let
-                              [ctx : TcContext
-                                (TcContext
-                                  program
-                                  symbols
-                                  registries
-                                  ""
-                                  (ast-node-pool-context-capture-active))]
-                              (match (tc-stdlib-comptime-surface-ok ctx)
-                                [(OkTcUnit)
-                                  (match (tc-build-top-env ctx program)
-                                    [(OkTcEnv top-env)
-                                      (begin
-                                        (tc-hygiene-reset-active-top-env!
-                                          top-env)
-                                        (tc-context-capture-active-pools! ctx)
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-profile-finish
-                                            "macro_setup"))
-                                        (set!
-                                          macro-expand-ctfe-env-value
-                                          (tc-ctfe-env ctx))
-                                        (set! macro-expand-ctfe-env-ready true)
-                                        (cfg
-                                          compile-profile
-                                          (compiler-tc-profile-start))
-                                        (match (macro-expand-decls
-                                          ctx
-                                          top-env
-                                          decls
-                                          decls
-                                          paths
-                                          ""
-                                          (not has-defmacro))
-                                          [(OkMacroDeclsWithPaths ndecls npaths)
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-profile-finish
-                                                  "macro_walk"))
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-macro-profile-emit))
-                                              (OkMacroExpand
-                                                (ast-program ndecls)
-                                                npaths))]
-                                          [(ErrMacroDeclsWithPaths diag)
-                                            (begin
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-profile-finish
-                                                  "macro_walk"))
-                                              (cfg
-                                                compile-profile
-                                                (compiler-tc-macro-profile-emit))
-                                              (ErrMacroExpand diag))]))]
-                                    [(ErrTcEnv message)
+                          (match (build-compiler-exports-with
+                            program
+                            symbols
+                            registries)
+                            [(OkCompilerExports ctx-exports)
+                              (begin
+                                (set! macro-expand-exports-value exports)
+                                (set! macro-expand-exports-ready true)
+                                (set! macro-expand-active-module "")
+                                (set!
+                                  macro-expand-macro-names
+                                  (macro-collect-macro-names
+                                    decls
+                                    (tc-string-list-add
+                                      (tc-string-list-add (TcStringNil) "when")
+                                      "unless")))
+                                (let
+                                  [ctx : TcContext
+                                    (TcContext
+                                      program
+                                      symbols
+                                      registries
+                                      ctx-exports
+                                      ""
+                                      (ast-node-pool-context-capture-active))]
+                                  (match (tc-stdlib-comptime-surface-ok ctx)
+                                    [(OkTcUnit)
+                                      (match (tc-build-top-env ctx program)
+                                        [(OkTcEnv top-env)
+                                          (begin
+                                            (tc-hygiene-reset-active-top-env!
+                                              top-env)
+                                            (tc-context-capture-active-pools!
+                                              ctx)
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-profile-finish
+                                                "macro_setup"))
+                                            (set!
+                                              macro-expand-ctfe-env-value
+                                              (tc-ctfe-env ctx))
+                                            (set!
+                                              macro-expand-ctfe-env-ready
+                                              true)
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-profile-start))
+                                            (match (macro-expand-decls
+                                              ctx
+                                              top-env
+                                              decls
+                                              decls
+                                              paths
+                                              ""
+                                              (not has-defmacro))
+                                              [(OkMacroDeclsWithPaths
+                                                  ndecls
+                                                  npaths)
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-profile-finish
+                                                      "macro_walk"))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-macro-profile-emit))
+                                                  (OkMacroExpand
+                                                    (ast-program ndecls)
+                                                    npaths))]
+                                              [(ErrMacroDeclsWithPaths diag)
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-profile-finish
+                                                      "macro_walk"))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-macro-profile-emit))
+                                                  (ErrMacroExpand diag))]))]
+                                        [(ErrTcEnv message)
+                                          (ErrMacroExpand
+                                            (tc-diag-at-start message))])]
+                                    [(ErrTcUnit message)
                                       (ErrMacroExpand
-                                        (tc-diag-at-start message))])]
-                                [(ErrTcUnit message)
-                                  (ErrMacroExpand (tc-diag-at-start message))])))]
+                                        (tc-diag-at-start message))])))]
+                            [(ErrCompilerExports message)
+                              (ErrMacroExpand (tc-diag-at-start message))])]
                         [(ErrCompilerExports message)
                           (ErrMacroExpand (tc-diag-at-start message))])]
                     [(ErrCompilerRegistries message)
@@ -38565,13 +38525,14 @@
         (match (build-compiler-registries-with-symbols program symbols)
           [(OkCompilerRegistries registries)
             (match (build-compiler-exports-with program symbols registries)
-              [(OkCompilerExports _)
+              [(OkCompilerExports exports)
                 (let
                   [ctx : TcContext
                     (TcContext
                       program
                       symbols
                       registries
+                      exports
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-stdlib-comptime-surface-ok ctx)
@@ -38673,7 +38634,6 @@
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
-    (tc-qualified-exports-reset!)
     (macro-alias-cache-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)

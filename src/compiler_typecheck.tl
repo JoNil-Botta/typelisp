@@ -117,13 +117,14 @@
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
               (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports _)
+                [(OkCompilerExports exports)
                   (let
                     [ctx : TcContext
                       (TcContext
                         program
                         symbols
                         registries
+                        exports
                         ""
                         (ast-node-pool-context-capture-active))]
                     (match (tc-program-source-types-policy-ok ctx program)
@@ -1498,6 +1499,7 @@
                       program
                       symbols
                       registries
+                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
@@ -1555,6 +1557,7 @@
                       program
                       symbols
                       registries
+                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
@@ -1646,6 +1649,7 @@
                       program
                       symbols
                       registries
+                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
@@ -1670,6 +1674,7 @@
                       program
                       symbols
                       registries
+                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
@@ -1734,6 +1739,7 @@
                     program
                     symbols
                     registries
+                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
@@ -1762,6 +1768,7 @@
                     program
                     symbols
                     registries
+                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
@@ -1811,6 +1818,7 @@
                     program
                     symbols
                     registries
+                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]

@@ -3948,16 +3948,21 @@
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
-          (let
-            [ctx : TcContext (TcContext program symbols registries "" pools)]
-            (match (tc-build-top-env ctx program)
-              [(OkTcEnv top-env)
-                (begin
-                  (tc-context-capture-active-pools! ctx)
-                  (OkLowerCloneRoots
-                    (lower-clone-roots-program ctx top-env names program)))]
-              [(ErrTcEnv message)
-                (ErrLowerCloneRoots (lower-diagnostic message))]))]
+          (match (build-compiler-exports-with program symbols registries)
+            [(OkCompilerExports exports)
+              (let
+                [ctx : TcContext
+                  (TcContext program symbols registries exports "" pools)]
+                (match (tc-build-top-env ctx program)
+                  [(OkTcEnv top-env)
+                    (begin
+                      (tc-context-capture-active-pools! ctx)
+                      (OkLowerCloneRoots
+                        (lower-clone-roots-program ctx top-env names program)))]
+                  [(ErrTcEnv message)
+                    (ErrLowerCloneRoots (lower-diagnostic message))]))]
+            [(ErrCompilerExports message)
+              (ErrLowerCloneRoots (lower-diagnostic message))])]
         [(ErrCompilerRegistries message)
           (ErrLowerCloneRoots (lower-diagnostic message))])]
     [(ErrCompilerSymbols message)
@@ -6153,7 +6158,7 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -9211,7 +9216,7 @@
                             fail-label
                             scrut-reg-group?)
                           (match ctx
-                            [(TcContext _ symbols registries _ _)
+                            [(TcContext _ symbols registries _ _ _)
                               (match (compiler-registries-lookup-variant-id
                                 registries
                                 nested-name)
@@ -9504,7 +9509,7 @@
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       [nested-name-str : String (intern-str nested-name)]
                       (match ctx
-                        [(TcContext _ symbols registries _ _)
+                        [(TcContext _ symbols registries _ _ _)
                           (match (compiler-registries-lookup-variant-id
                             registries
                             nested-name)
@@ -9955,7 +9960,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -10717,7 +10722,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match (tc-program-enum-variants program enum-name)
         [(OkAstVariantDefList variants)
           (match (lower-reserve-heap-storage
@@ -11773,7 +11778,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [enum-name : String (tc-result-info-enum-name return-info)]
         [err-name : String (tc-result-info-err-name return-info)]
@@ -11905,7 +11910,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         (match (compiler-registries-lookup-variant registries ok-name)
@@ -12006,7 +12011,7 @@
 
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ _ module _)
       (match (if (and
         (> (string-length module) 0)
         (not (tc-name-qualified? name)))
@@ -13303,7 +13308,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -13431,7 +13436,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -31535,7 +31540,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -31718,7 +31723,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -33147,7 +33152,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -33286,7 +33291,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]

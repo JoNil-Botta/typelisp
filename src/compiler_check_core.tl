@@ -50,9 +50,7 @@
     diag))
 
 (define (compiler-check-reset-pools!) : unit
-  (begin
-    (compiler-load-session-reset-pools!)
-    (compiler-typecheck-reset-file-state!)))
+  (compiler-load-session-reset-pools!))
 
 (define (compiler-check-program-with-paths-cache
   [path : String]
@@ -519,23 +517,37 @@
           [(OkCompilerSymbols symbols)
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
-                (let
-                  [ctx : TcContext
-                    (TcContext
-                      program
-                      symbols
-                      registries
-                      ""
-                      (ast-node-pool-context-capture-active))]
-                  (and
-                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
-                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
-                    (compiler-check-inline-layout-name-ok?
-                      ctx
-                      "AstVariantDefList")))]
+                (match (build-compiler-exports-with program symbols registries)
+                  [(OkCompilerExports exports)
+                    (let
+                      [ctx : TcContext
+                        (TcContext
+                          program
+                          symbols
+                          registries
+                          exports
+                          ""
+                          (ast-node-pool-context-capture-active))]
+                      (and
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstTypeList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstExprList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstPatternList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstDeclList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstParamList")
+                        (compiler-check-inline-layout-name-ok?
+                          ctx
+                          "AstVariantDefList")))]
+                  [(ErrCompilerExports _) false])]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false]))]
     [(ErrCompilerLoadWithPaths _) false]))

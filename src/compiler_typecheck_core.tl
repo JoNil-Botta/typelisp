@@ -35315,9 +35315,12 @@
   [symbols : CompilerSymbols]
   [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup-id
-    exports
-    (intern (compiler-export-kind-macro))
+  ;; Everything is exported by default: the implicit core_macros prelude resolves
+  ;; its macros straight from the module's symbol table rather than an export
+  ;; list. core_macros declares exactly the prelude macros, so this resolves the
+  ;; same set (`and`, `or`, `when`, `unless`, `cond`).
+  (match (compiler-symbols-lookup-macro-in-module-id
+    symbols
     (intern module-name)
     (intern lookup-name))
     [(SomeI64 handle)

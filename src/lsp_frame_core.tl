@@ -53,6 +53,10 @@
   (FoundDefLoc String i64 i64 i64)
   (MissingDefLoc))
 
+(defenum LspImportTarget
+  (FoundLspImportTarget String i64 i64)
+  (MissingLspImportTarget))
+
 (defenum LspDefSource
   (FoundDefSource String i64)
   (MissingDefSource))
@@ -1381,9 +1385,98 @@
 
 ;; Resolve `needle` to a definition: the current document first, then any other
 ;; open document.
-;; Collect every (import "spec") spec from the document, skipping strings and
-;; comments so embedded source never yields a false import.
-(define (lsp-collect-imports [text : String] [acc : StringVec]) : StringVec
+(define (lsp-dotted-import-tl-suffix? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    (if (< n 3)
+      false
+      (string-eq (substring name (- n 3) 3) ".tl"))))
+
+(define (lsp-dotted-import-name-valid? [name : String]) : bool
+  (let
+    [n : i64 (string-length name)]
+    [i : i64 0]
+    [ok : bool (and (> n 0) (not (lsp-dotted-import-tl-suffix? name)))]
+    [last-was-dot : bool true]
+    (begin
+      (while ok
+        (if (< i n)
+          (let
+            [c : char (string-ref name i)]
+            (if (or (char-eq c '/') (char-eq c '\\') (char-eq c ':'))
+              (set! ok false)
+              (if (char-eq c '.')
+                (if last-was-dot
+                  (set! ok false)
+                  (begin
+                    (set! last-was-dot true)
+                    (set! i (+ i 1))))
+                (begin
+                  (set! last-was-dot false)
+                  (set! i (+ i 1))))))
+          (set! ok false)))
+      (and (= i n) (not last-was-dot)))))
+
+(define (lsp-resolve-module-import-target
+  [path : String]
+  [module-name : String]
+  [stdlib-roots : StringVec]) : String
+  (match (compiler-load-resolve-module-import-with-roots
+    (compiler-load-dirname path)
+    module-name
+    stdlib-roots)
+    [(OkPkgResolve resolved) (compiler-load-normalize-path resolved)]
+    [(ErrPkgResolve _) module-name]))
+
+(define (lsp-resolve-import-target-at
+  [text : String]
+  [path : String]
+  [stdlib-roots : StringVec]
+  [operand-start : i64]) : LspImportTarget
+  (let
+    [n : i64 (string-length text)]
+    (if (>= operand-start n)
+      MissingLspImportTarget
+      (let
+        [c : char (string-ref text operand-start)]
+        (cond
+          [(= c '"')
+            (let
+              [str-end : i64 (lsp-skip-string text operand-start n)]
+              [content-start : i64 (+ operand-start 1)]
+              [content-end : i64 (- str-end 1)]
+              [spec : String
+                (substring text content-start (- content-end content-start))]
+              [resolved : String
+                (compiler-load-normalize-path
+                  (compiler-load-resolve-import-with-roots
+                    path
+                    spec
+                    stdlib-roots))]
+              (FoundLspImportTarget resolved content-start content-end))]
+          [(lsp-ident-char? c)
+            (let
+              [module-end : i64 (lsp-scan-ident text operand-start n)]
+              [module-name : String
+                (substring text operand-start (- module-end operand-start))]
+              (if (lsp-dotted-import-name-valid? module-name)
+                (FoundLspImportTarget
+                  (lsp-resolve-module-import-target
+                    path
+                    module-name
+                    stdlib-roots)
+                  operand-start
+                  module-end)
+                MissingLspImportTarget))]
+          [else MissingLspImportTarget])))))
+
+;; Collect every import target from the document, skipping strings and comments
+;; so embedded source never yields a false import.
+(define (lsp-collect-import-targets
+  [text : String]
+  [path : String]
+  [stdlib-roots : StringVec]
+  [acc : StringVec]) : StringVec
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -1405,21 +1498,70 @@
                     (substring text kw-start (- kw-end kw-start))
                     "import"))
                   (let
-                    [q : i64 (lsp-skip-space text kw-end n)]
-                    (if (and (< q n) (= (string-ref text q) '"'))
-                      (let
-                        [str-end : i64 (lsp-skip-string text q n)]
+                    [operand-start : i64 (lsp-skip-space text kw-end n)]
+                    (match (lsp-resolve-import-target-at
+                      text
+                      path
+                      stdlib-roots
+                      operand-start)
+                      [(FoundLspImportTarget resolved _ end)
                         (begin
-                          (set!
-                            out
-                            (string-vec-push
-                              out
-                              (substring text (+ q 1) (- str-end (+ q 2)))))
-                          (set! i str-end)))
-                      (set! i (+ i 1))))
+                          (set! out (string-vec-push out resolved))
+                          (set! i end))]
+                      [(MissingLspImportTarget) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       out)))
+
+(define (lsp-import-target-at-offset
+  [text : String]
+  [path : String]
+  [stdlib-roots : StringVec]
+  [off : i64]) : LspImportTarget
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [target : LspImportTarget MissingLspImportTarget]
+    (begin
+      (while (and
+        (< i n)
+        (match target
+          [(FoundLspImportTarget _ _ _) false]
+          [(MissingLspImportTarget) true]))
+        (let
+          [c : char (string-ref text i)]
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (and
+                  (> kw-end kw-start)
+                  (string-eq
+                    (substring text kw-start (- kw-end kw-start))
+                    "import"))
+                  (let
+                    [operand-start : i64 (lsp-skip-space text kw-end n)]
+                    (match (lsp-resolve-import-target-at
+                      text
+                      path
+                      stdlib-roots
+                      operand-start)
+                      [(FoundLspImportTarget resolved start end)
+                        (begin
+                          (if (and (>= off start) (< off end))
+                            (set!
+                              target
+                              (FoundLspImportTarget resolved start end))
+                            unit)
+                          (set! i end))]
+                      [(MissingLspImportTarget) (set! i (+ i 1))]))
+                  (set! i (+ i 1))))]
+            [else (set! i (+ i 1))])))
+      target)))
 
 (defstruct LspModuleSet
   (paths StringVec)
@@ -1457,21 +1599,18 @@
   [stdlib-roots : StringVec]
   [set : LspModuleSet]) : LspModuleSet
   (let
-    [specs : StringVec (lsp-collect-imports text (string-vec-new))]
+    [paths : StringVec
+      (lsp-collect-import-targets
+        text
+        importer-path
+        stdlib-roots
+        (string-vec-new))]
     [out : LspModuleSet set]
     [j : i64 0]
     (begin
-      (while (< j (string-vec-len specs))
+      (while (< j (string-vec-len paths))
         (begin
-          (set!
-            out
-            (lsp-module-set-add-path
-              out
-              (compiler-load-normalize-path
-                (compiler-load-resolve-import-with-roots
-                  importer-path
-                  (string-vec-get specs j "")
-                  stdlib-roots))))
+          (set! out (lsp-module-set-add-path out (string-vec-get paths j "")))
           (set! j (+ j 1))))
       out)))
 
@@ -1591,21 +1730,29 @@
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
+        [import-target : LspImportTarget
+          (lsp-import-target-at-offset text path stdlib-roots off)]
         [sym : String (lsp-symbol-at-offset text off)]
-        (if (string-eq sym "")
-          (lsp-write-response id json.JsonNull)
-          (match (lsp-find-definition
-            docs
-            uri
-            path
-            text
-            stdlib-roots
-            (lsp-symbol-base sym))
-            [(FoundDefLoc def-uri def-line def-col def-len)
-              (lsp-write-response
-                id
-                (lsp-definition-location def-uri def-line def-col def-len))]
-            [(MissingDefLoc) (lsp-write-response id json.JsonNull)])))]
+        (match import-target
+          [(FoundLspImportTarget resolved _ _)
+            (lsp-write-response
+              id
+              (lsp-definition-location (lsp-path-to-file-uri resolved) 1 1 1))]
+          [(MissingLspImportTarget)
+            (if (string-eq sym "")
+              (lsp-write-response id json.JsonNull)
+              (match (lsp-find-definition
+                docs
+                uri
+                path
+                text
+                stdlib-roots
+                (lsp-symbol-base sym))
+                [(FoundDefLoc def-uri def-line def-col def-len)
+                  (lsp-write-response
+                    id
+                    (lsp-definition-location def-uri def-line def-col def-len))]
+                [(MissingDefLoc) (lsp-write-response id json.JsonNull)]))]))]
     [(MissingLspDocument) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-definition
@@ -3050,20 +3197,15 @@
       [(json.JsonMissing) (lsp-write-response id json.JsonNull)])))
 
 ;; --------------------------------------------------------------------------
-;; Document links (textDocument/documentLink): make (import "spec") paths
-;; clickable, navigating to the resolved module file.
+;; Document links (textDocument/documentLink): make import operands clickable,
+;; navigating to the resolved module file.
 ;; --------------------------------------------------------------------------
 (define (lsp-document-link-json
   [text : String]
-  [path : String]
-  [stdlib-roots : StringVec]
+  [resolved : String]
   [content-start : i64]
   [content-end : i64]) : json.Json
   (let
-    [spec : String (substring text content-start (- content-end content-start))]
-    [resolved : String
-      (compiler-load-normalize-path
-        (compiler-load-resolve-import-with-roots path spec stdlib-roots))]
     [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
     [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
     (lsp-json-object2
@@ -3102,23 +3244,21 @@
                     (substring text kw-start (- kw-end kw-start))
                     "import"))
                   (let
-                    [q : i64 (lsp-skip-space text kw-end n)]
-                    (if (and (< q n) (= (string-ref text q) '"'))
-                      (let
-                        [str-end : i64 (lsp-skip-string text q n)]
+                    [operand-start : i64 (lsp-skip-space text kw-end n)]
+                    (match (lsp-resolve-import-target-at
+                      text
+                      path
+                      stdlib-roots
+                      operand-start)
+                      [(FoundLspImportTarget resolved start end)
                         (begin
                           (set!
                             acc
                             (lsp-json-list-cons
-                              (lsp-document-link-json
-                                text
-                                path
-                                stdlib-roots
-                                (+ q 1)
-                                (- str-end 1))
+                              (lsp-document-link-json text resolved start end)
                               acc))
-                          (set! i str-end)))
-                      (set! i (+ i 1))))
+                          (set! i end))]
+                      [(MissingLspImportTarget) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       acc)))

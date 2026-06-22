@@ -5611,7 +5611,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ current-module _)
+          [(TcContext program _ _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (let
@@ -5866,24 +5866,18 @@
   [export-name : String]) : ResultTcUnit
   (if (string-eq target-module (tc-context-module ctx))
     OkTcUnit
-    (match (build-compiler-exports-with
-      (tc-context-program ctx)
-      (tc-context-symbols ctx)
-      (tc-context-registries ctx))
-      [(OkCompilerExports exports)
-        (match (compiler-exports-lookup-id
-          exports
-          (intern kind-name)
-          (intern target-module)
-          (intern export-name))
-          [(SomeI64 _) OkTcUnit]
-          [(NoneI64)
-            (ErrTcUnit
-              (tc-qualified-access-private-message
-                kind-name
-                (tc-source-lookup-display-name ctx source-name lookup-name)
-                target-module))])]
-      [(ErrCompilerExports message) (ErrTcUnit message)])))
+    (match (compiler-exports-lookup-id
+      (tc-context-exports ctx)
+      (intern kind-name)
+      (intern target-module)
+      (intern export-name))
+      [(SomeI64 _) OkTcUnit]
+      [(NoneI64)
+        (ErrTcUnit
+          (tc-qualified-access-private-message
+            kind-name
+            (tc-source-lookup-display-name ctx source-name lookup-name)
+            target-module))])))
 
 (define (tc-qualified-name-export-visible-ok-with-display
   [ctx : TcContext]

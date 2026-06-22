@@ -1,4 +1,7 @@
 (import stdlib.io)
+
+;; lint-allow: unused-import
+(import stdlib.string)
 (import stdlib.test)
 
 (define pipe-stdin-read-size : i64

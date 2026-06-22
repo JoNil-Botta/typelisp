@@ -5,6 +5,7 @@
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/vector.tl")
+(import "stdlib/string.tl")
 
 (define (assert-owned-string-eq
   [actual : String]

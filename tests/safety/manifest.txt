@@ -41,6 +41,10 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cas
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|unbound name print
 unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|unbound name panic
+unimported_string_length_reject|check-fail|tests/safety/unimported_string_length_reject.tl|-|unbound name string-length
+unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|unbound name string-ref
+unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|unbound name string-eq
+unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|unbound name string->int
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`

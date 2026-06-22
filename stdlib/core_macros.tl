@@ -156,7 +156,7 @@
         (begin
           (/ 1 0)
           unit))
-      (if (string-eq (cond [true "yes"] [else "no"]) "yes")
+      (if (cond [true true] [else false])
         unit
         (begin
           (/ 1 0)

@@ -2,6 +2,8 @@
 ; (#631). Returned closures read after the creator frame has gone away, so each
 ; case only passes if capture snapshots fixed-array storage and rewrites nested
 ; aggregate handles onto the heap.
+(import "stdlib/string.tl")
+
 (defstruct Point
   (x i64)
   (y i64))

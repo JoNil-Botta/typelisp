@@ -595,7 +595,7 @@ verify_compiler_driver_string_runtime() {
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
 (define (main) : i64
-  (+ (string-length "0123456789") (cast (char-at " x" 0) : i64)))
+  (+ (__tl_string_length "0123456789") (cast (__tl_string_ref " x" 0) : i64)))
 EOF
 
     echo "[selfhost-native] compiler_driver string runtime helpers"
@@ -659,6 +659,7 @@ verify_compiler_driver_stdlib_json() {
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
 (import "stdlib/json.tl")
+(import "stdlib/string.tl")
 
 (define (main) : i64
   (let
@@ -715,7 +716,7 @@ EOF
     _oob_src="$_dir/string-oob.tl"
     _oob_asm="$_dir/string-oob.s"
     cat > "$_oob_src" <<'EOF'
-(define (main) : i64 (cast (string-ref "x" 1) : i64))
+(define (main) : i64 (cast (__tl_string_ref "x" 1) : i64))
 EOF
 
     echo "[selfhost-native] compiler_driver runtime trap output"

@@ -4,6 +4,7 @@
 ;; every helper behaves as expected. Scratch files live under the gitignored
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
+(import "stdlib/string.tl")
 (import "stdlib/io.tl")
 (import "stdlib/string.tl")
 

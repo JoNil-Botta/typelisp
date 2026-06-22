@@ -1,4 +1,6 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
+(import "../stdlib/string.tl")
+
 (defenum CompilerObjectSectionKind
   (ObjectSectionText)
   (ObjectSectionData)

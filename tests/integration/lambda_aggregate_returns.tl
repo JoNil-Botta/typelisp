@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (defenum Box
   (BoxI i64))
 

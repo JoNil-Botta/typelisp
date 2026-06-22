@@ -21,6 +21,7 @@
 ;# ```
 (module stdlib.list)
 
+(import stdlib.string)
 (import stdlib.vector)
 
 ;: Immutable list of strings.
@@ -60,7 +61,7 @@
   (match items
     [(StringNil) false]
     [(StringCons head rest)
-      (if (string-eq head value)
+      (if (string.string-eq head value)
         true
         (string-list-contains? (box-get rest) value))]))
 

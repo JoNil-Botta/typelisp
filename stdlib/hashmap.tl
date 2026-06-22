@@ -54,6 +54,9 @@
 
 (import stdlib.hash as hash_mod)
 
+;; lint-allow: unused-import
+(import stdlib.string)
+
 ;: Stable descriptor identity for generated `String`-key hashmap families.
 (define (hashmap-string-key-descriptor-key) : String
   "stdlib/hashmap/string-key-v1")

@@ -149,13 +149,13 @@
   [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref name i)]
+          [c : char (intern-private-string-ref name i)]
           (begin
             (if (= c '/')
               (set! slash i)
@@ -178,7 +178,7 @@
             (intern-substring
               name
               base-start
-              (- (string-length name) base-start))]
+              (- (intern-private-string-length name) base-start))]
           (begin
             (array-set! (struct-get state pool-qualified-slots) id true)
             (array-set!
@@ -222,7 +222,7 @@
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq slot-key name)
                 false)
                 (begin
                   (set! out slot-id)
@@ -252,7 +252,7 @@
                 (set! done true))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq slot-key name)
                 false)
                 (begin
                   (set! out (InternLookupFound slot-id))
@@ -298,8 +298,10 @@
   (and
     (= (intern-state-qualified-last-slash state id) last-slash)
     (= (intern-state-qualified? state id) qualified)
-    (string-eq (intern-state-qualified-module state id) module-name)
-    (string-eq (intern-state-qualified-base state id) base-name)))
+    (intern-private-string-eq
+      (intern-state-qualified-module state id)
+      module-name)
+    (intern-private-string-eq (intern-state-qualified-base state id) base-name)))
 
 (define (intern-state-isolation-tests-ok?) : bool
   (let
@@ -338,7 +340,7 @@
       (unless (= (intern-state-intern state-a "alpha") 0) (set! ok false))
       (unless (= (intern-state-pool-len state-b) 3) (set! ok false))
       (unless
-        (string-eq (intern-state-str state-b b-bravo) "bravo")
+        (intern-private-string-eq (intern-state-str state-b b-bravo) "bravo")
         (set! ok false))
       (match (intern-state-lookup state-b "alpha")
         [(InternLookupFound found) (unless (= found b-alpha) (set! ok false))]
@@ -353,5 +355,7 @@
         [(InternLookupFound _) (set! ok false)])
       (unless (= (intern-state-intern state-b "drop") b-mark) (set! ok false))
       (unless (= (intern-state-pool-len state-a) 1) (set! ok false))
-      (unless (string-eq (intern-state-str state-a 0) "alpha") (set! ok false))
+      (unless
+        (intern-private-string-eq (intern-state-str state-a 0) "alpha")
+        (set! ok false))
       ok)))

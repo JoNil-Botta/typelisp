@@ -40,8 +40,12 @@
 (define (compiler-check-language-cfgs) : SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
-      (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-      "feature-str-view")
+      (compiler-cfg-enable
+        (compiler-cfg-enable
+          (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+          "feature-str-view")
+        "feature-private-string-intrinsics")
+      "feature-compiler-private-string-intrinsics")
     "array-helper-intrinsics"))
 
 (define (compiler-check-diagnostic-with-fallback-path

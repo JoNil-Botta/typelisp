@@ -1,4 +1,5 @@
 (import "stdlib/thread.tl")
+(import "stdlib/string.tl")
 
 (defstruct ThreadText
   (text String))

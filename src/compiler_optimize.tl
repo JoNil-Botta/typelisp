@@ -12564,9 +12564,11 @@
 ;; This first induction slice recognizes canonical `i64` loop-carried phis:
 ;; `i = phi(preheader_seed, latch_next)` where `latch_next` is `i +/- const`.
 ;; It then strength-reduces one repeated derived offset/address family per loop
-;; by adding a matching derived phi. The pass deliberately rejects loops with
-;; stores, calls, allocation, or unknown-effect instructions and leaves bounds
-;; checks in place. The function verifier gates the final rewritten function.
+;; by adding a matching derived phi. Ordinary stores and calls do not invalidate
+;; the affine SSA recurrence, but allocation, vector/predicated memory, syscall,
+;; target-probe, copy-bytes, and tail-call shapes stay fail-closed. Bounds
+;; checks are left in place. The function verifier gates the final rewritten
+;; function.
 (defenum OptInductionPhiInputs
   (OptNoInductionPhiInputs)
   (OptSomeInductionPhiInputs CompilerIrValue i64))
@@ -12873,7 +12875,6 @@
 (define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrAlloc _ _) true]
-    [(IrInstrStorePtr _ _ _) true]
     [(IrInstrCopyBytes _ _ _) true]
     [(IrInstrVectorStore payload-box)
       (match (box-get payload-box)
@@ -12884,17 +12885,7 @@
     [(IrInstrCpuId _ _ _ _) true]
     [(IrInstrXgetbv _ _) true]
     [(IrInstrSyscall _ _) true]
-    [(IrInstrCall _ _ _ _) true]
-    [(IrInstrCallIndirect _ _ _ _) true]
-    [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
-    [(IrInstrStore _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [_ false]))
 
@@ -33404,6 +33395,50 @@
               (IrInstrNil)))
           (IrBlockNil))))))
 
+(define (opt-induction-loop-local-base-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrMov 7 (IrValueI64 100) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrGep 4 (IrValueVar 7) (IrValueVar 3) (AstTyU8))
+              (compiler-ir-instr-cons
+                (IrInstrLoad 6 (IrValueVar 4) (AstTyU8))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 3)
+                    (IrValueI64 1)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
 (define (opt-induction-no-preheader-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -33495,6 +33530,9 @@
     [store-func : CompilerIrFunction
       (opt-induction-optimized-function (opt-induction-store-blocks))]
     [store-blocks : CompilerIrBlockList (opt-function-blocks store-func)]
+    [local-base-func : CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-loop-local-base-blocks))]
+    [local-base : CompilerIrBlockList (opt-function-blocks local-base-func)]
     [no-preheader-func : CompilerIrFunction
       (opt-induction-optimized-function (opt-induction-no-preheader-blocks))]
     [no-preheader : CompilerIrBlockList (opt-function-blocks no-preheader-func)]
@@ -33516,14 +33554,18 @@
       [(not (= (opt-blocks-mov-src-var unsupported 4 (- 0 1)) (- 0 1))) 15]
       [(not (= (opt-count-mul-label-blocks unsupported "body") 2)) 16]
       [(not (opt-verify-ok? (opt-verify-function call-func))) 17]
-      [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) (- 0 1))) 18]
-      [(not (= (opt-count-mul-label-blocks call-blocks "body") 1)) 19]
-      [(not (opt-verify-ok? (opt-verify-function store-func))) 20]
-      [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) (- 0 1))) 21]
-      [(not (= (opt-count-mul-label-blocks store-blocks "body") 1)) 22]
-      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 23]
-      [(not (= (opt-count-phi-blocks no-preheader) 1)) 24]
-      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 25]
+      [(not (= (opt-blocks-mov-src-var call-blocks 4 (- 0 1)) 33)) 18]
+      [(not (= (opt-count-mul-label-blocks call-blocks "body") 0)) 19]
+      [(not (= (opt-count-direct-call-name-blocks call-blocks "tl_noop") 1)) 20]
+      [(not (opt-verify-ok? (opt-verify-function store-func))) 21]
+      [(not (= (opt-blocks-mov-src-var store-blocks 4 (- 0 1)) 33)) 22]
+      [(not (= (opt-count-mul-label-blocks store-blocks "body") 0)) 23]
+      [(not (opt-verify-ok? (opt-verify-function local-base-func))) 24]
+      [(not (= (opt-blocks-mov-src-var local-base 4 (- 0 1)) (- 0 1))) 25]
+      [(not (= (opt-count-gep-label-blocks local-base "body") 1)) 26]
+      [(not (opt-verify-ok? (opt-verify-function no-preheader-func))) 27]
+      [(not (= (opt-count-phi-blocks no-preheader) 1)) 28]
+      [(not (= (opt-count-mul-label-blocks no-preheader "body") 1)) 29]
       [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList

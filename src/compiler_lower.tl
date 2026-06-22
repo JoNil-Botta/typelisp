@@ -25741,6 +25741,20 @@
                   (LowerSomeArrayVar
                     var-id
                     (tc-type-without-regions (ty-node-get elem-ty)))]
+                [(AstTyRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
+                [(AstTyMutRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
         [NoneI64 LowerNoArrayVar])]
@@ -43887,6 +43901,12 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
+(define (compiler-lower-foreach-borrowed-array-map-source) : String
+  "(define (fill [a : (& a (Array i64))] [b : (& b (Array i64))] [out : (&mut out (Array i64))] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
 (define (compiler-lower-avx2-foreach-map-i32-source) : String
   "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64]) : unit
   (foreach
@@ -44066,6 +44086,10 @@
   (and
     (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      4)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       4)
     (compiler-lower-avx2-foreach-map-source-shape-ok?
@@ -44310,6 +44334,10 @@
   (and
     (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       8)
     (compiler-lower-avx512-foreach-map-source-shape-ok?

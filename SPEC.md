@@ -328,8 +328,8 @@ semantics are deferred to a future feature.
 - Not valid as a global initializer.
 - New public APIs must not introduce `(Array T)` as a growable collection type.
   During migration, intentionally runtime-sized uses are limited to vector
-  backing storage (#3577/#3579), SPMD lanes and result buffers until the
-  vector/slice surface lands (#3578), binary/byte compatibility while
+  backing storage (#3577/#3579), SPMD lanes and result buffers through the
+  vector/slice surface, binary/byte compatibility while
   `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
   compiler-internal pools. Final rejection/removal of public unsized
   `(Array T)` is tracked by #3581.
@@ -3720,9 +3720,11 @@ Current compatibility dynamic-buffer use cases:
 
 The public SPMD surface should not require users to spell unsized `(Array T)`
 after the array migration completes. Runtime-sized SPMD inputs and outputs are
-an intentionally dynamic use during migration; #3578 replaces them with
 vector/slice-style sources and mutable destinations that borrow storage instead
-of copying whole collections.
+of copying whole collections. Generated vector `slots`/`slots-mut` accessors
+and generated full-slice `slots` fields may be borrowed before a `foreach` body;
+the body then uses ordinary `array-ref`/`array-set!` over those borrowed backing
+arrays.
 
 Uniform and varying rules:
 
@@ -3735,7 +3737,7 @@ Uniform and varying rules:
 - `array-set!` with a varying index or value performs one write per active
   logical program instance.
 - There is no public `(varying T)` or mask type in the first source surface.
-  Public vector, mask, and `(varying T)` type spellings are reserved and
+  Public SIMD vector, mask, and `(varying T)` type spellings are reserved and
   rejected; varying information is inferred inside `foreach`, and vector/mask
   values are internal to lowering.
 - `let` bindings inside the `foreach` body may be uniform or varying by
@@ -4160,7 +4162,7 @@ Rules:
 
 Unsupported in the current SPMD implementation:
 
-- Public vector types and public mask types.
+- Public SIMD vector types and public mask types.
 - Non-atomic scatter writes, vector lowering for general gather reads, and
   general non-contiguous memory operations beyond scalar gather-only reads.
 - Scans, general shuffles, general atomics beyond the explicit integer element

@@ -266,8 +266,10 @@ use.
   `(import (vector String) as svec)`. Each instantiation provides a generated
   module namespace with `Vec`, `Pop`, `new`, `with-capacity`, immutable-ref
   reads, mutable-ref `push` / `set` / `pop` updates, mutable `len-mut` /
-  `slots-mut` accessors for generated in-place algorithms, conversion helpers,
-  and fold/map/contains helpers. The family metadata is not scalar-only: checked
+  `slots-mut` accessors for generated in-place algorithms and SPMD loops,
+  conversion helpers, and fold/map/contains helpers. Borrow `slots` /
+  `slots-mut` outside `foreach` when SPMD code needs backing storage without
+  public `(Array T)` signatures. The family metadata is not scalar-only: checked
   fixtures cover
   nominal enum and struct element types, with `push`/`set!` moving values into
   array slots, `pop` moving the last element out, and growth/snapshot helpers
@@ -286,11 +288,15 @@ use.
   `(slice T)` module macro over the matching `(vector T)` module and explicit
   `(Array T)` live prefixes. Import the file with
   `(import "stdlib/vector_slice.tl")`, then instantiate concrete modules such as
-  `(import (slice i64) as i64s)`. Each generated module provides `Slice`,
-  `Source`, `from-vec`, `from-array`, `all-vec`, `get`, `len`, `is-empty?`,
-  `sub-slice`, `to-array`, `to-vec`, and value-threaded iterator helpers.
-  Invalid ranges return empty views, and explicit copy boundaries allocate
-  owned array/vector storage.
+  `(import (slice i64) as i64s)`. Each generated module provides immutable
+  `Slice`, mutable `MutSlice`, `from-vec`, `from-array`, `all-vec`,
+  `from-vec-mut`, `from-array-mut`, `all-vec-mut`, `get`, `set`, `len`,
+  `mut-len`, `is-empty?`, `mut-is-empty?`, `sub-slice`, `to-array`, `to-vec`,
+  and value-threaded iterator helpers. Generated slice fields `slots`, `start`,
+  and `len` are exported so SPMD code can borrow backing storage before a
+  `foreach` body while keeping public signatures on vector/slice views. Invalid
+  ranges return empty views, and explicit copy boundaries allocate owned
+  array/vector storage.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
   environment) from a configured Developer Command Prompt. Import it with
   `(import "stdlib/msvc.tl")`.
@@ -439,7 +445,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `range`, `range-inclusive`, and `i64-range-*` helpers in `iterator.tl` | `range` constructs a half-open scalar iterable over `[start, end)`, and `range-inclusive` constructs an inclusive scalar iterable over `[start, end]` without computing `end + 1`. `i64-range-iterator` constructs non-allocating iterator state from that range value. `i64-range-next` mutates only the iterator state and returns an `I64RangeNext` option-like value; exhaustion and repeated exhaustion do not allocate. The future scalar `for` macro should discover the flat compatibility constructor/step pair as `i64-range-iterator` and `i64-range-next` for `I64Range` until the final module-level protocol reflection replaces these names. |
 | `ChannelI64`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel-i64-close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
-| `(slice T)` generated helpers in `vector_slice.tl` | `Slice` constructors, `get`, `len`, `is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
+| `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
 | `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent ordinary arena handle, `arena-make-atomic` creates an independent atomic arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |

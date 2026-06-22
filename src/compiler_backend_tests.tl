@@ -8614,6 +8614,106 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-bit-and-low-mask-immediate-ok?) : bool
+  (and
+    (backend-and4
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$255"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzbq %al, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65535"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzwq %ax, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$255"
+        (AstTyU32))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzbl %al, %eax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65535"
+        (AstTyU32))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    movzwl %ax, %eax\n")]
+        [(CompilerBackendNoAsm) false]))
+    (backend-and4
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$254"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $254, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$256"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $256, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitAnd)
+        "$65280"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    andq $65280, %rax\n")]
+        [(CompilerBackendNoAsm) false])
+      (match (compiler-backend-binop-immediate-asm
+        (IrBinBitOr)
+        "$255"
+        (AstTyI64))
+        [(CompilerBackendSomeAsm asm) (string-eq asm "    orq $255, %rax\n")]
+        [(CompilerBackendNoAsm) false]))))
+
+(define (compiler-backend-bit-and-low-mask-direct-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyI64))
+      CompilerRegVarTypeNil)
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r15"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil))
+    1
+    (IrBinBitAnd)
+    (IrValueVar 0)
+    rhs
+    (AstTyI64)))
+
+(define (compiler-backend-bit-and-low-mask-direct-ok?) : bool
+  (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 255))
+    [(OkCompilerBackend byte-asm)
+      (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 65535))
+        [(OkCompilerBackend word-asm)
+          (match (compiler-backend-bit-and-low-mask-direct-asm (IrValueI64 254))
+            [(OkCompilerBackend negative-asm)
+              (and
+                (backend-and4
+                  (compiler-backend-string-contains?
+                    byte-asm
+                    "    movzbq %r12b, %r12\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      byte-asm
+                      "    andq $255, %r12\n"))
+                  (compiler-backend-string-contains?
+                    word-asm
+                    "    movzwq %r12w, %r12\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      word-asm
+                      "    andq $65535, %r12\n")))
+                (compiler-backend-string-contains?
+                  negative-asm
+                  "    andq $254, %r12\n"))]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -10664,7 +10764,10 @@
     (compiler-backend-closure-emit-shape-ok?)
     (compiler-backend-alloc-runtime-shape-ok?)
     (backend-and8
-      (compiler-backend-scalar-wide-ops-ok?)
+      (and
+        (compiler-backend-scalar-wide-ops-ok?)
+        (compiler-backend-bit-and-low-mask-immediate-ok?)
+        (compiler-backend-bit-and-low-mask-direct-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

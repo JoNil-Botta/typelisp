@@ -2534,8 +2534,9 @@
                     ", %k7\n    "
                     (string-append "kandn" mask-suffix)
                     " "
+                    "%k7, "
                     src-reg
-                    ", %k7, "
+                    ", "
                     dst-reg
                     "\n")))]
             [(ErrBackendReg message)

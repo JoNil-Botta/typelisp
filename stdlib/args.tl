@@ -12,25 +12,27 @@
 ;# is involved; `args-parse-argv*` only reads the raw argv accessors from
 ;# `stdlib/io.tl`.
 ;#
-;# Usage: `(import "stdlib/args.tl")`
+;# Usage: `(import stdlib.args)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/args.tl")
-;# (define specs : ArgsOptionSpecList
-;#   (args-option-spec-cons
-;#     (args-value-option "output" "output" "o")
-;#     (args-option-spec-cons
-;#       (args-flag-option "verbose" "verbose" "v")
-;#       (args-option-spec-empty))))
+;# (import stdlib.args)
+;# (define specs : args.ArgsOptionSpecList
+;#   (args.args-option-spec-cons
+;#     (args.args-value-option "output" "output" "o")
+;#     (args.args-option-spec-cons
+;#       (args.args-flag-option "verbose" "verbose" "v")
+;#       (args.args-option-spec-empty))))
 ;# (define (main) : i64
-;#   (match (args-parse-argv specs 1)
-;#     [(OkArgsParsed parsed)
-;#       (if (args-option-present? parsed "verbose") 1 0)]
-;#     [(ErrArgsParsed _) 2]))
+;#   (match (args.args-parse-argv specs 1)
+;#     [(args.OkArgsParsed parsed)
+;#       (if (args.args-option-present? parsed "verbose") 1 0)]
+;#     [(args.ErrArgsParsed _) 2]))
 ;# ```
-(import "io.tl")
-(import "list.tl")
-(import "string.tl")
+(module stdlib.args)
+
+(import stdlib.io)
+(import stdlib.list)
+(import stdlib.string)
 
 ;: Option arity: a boolean flag consumes no value, while a value flag consumes
 ;: the following argv string.
@@ -67,7 +69,7 @@
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
   (options ArgsOptionList)
-  (positionals StringList))
+  (positionals list.StringList))
 
 ;: Structured parse errors.
 (defenum ArgsError
@@ -88,7 +90,7 @@
 ;: is produced.
 (defstruct ArgsParseState
   (options ArgsOptionList)
-  (positionals StringList)
+  (positionals list.StringList)
   (stop-options bool))
 
 ;: Internal successful step result: next state plus next argv index.
@@ -143,17 +145,17 @@
 
 ;: Return true when `spec` has the long spelling `name`.
 (define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
-  (and
-    (not (string-eq (args-option-spec-long spec) ""))
-    (string-eq (args-option-spec-long spec) name)))
+  (if (not (string.string-eq (args-option-spec-long spec) ""))
+    (string.string-eq (args-option-spec-long spec) name)
+    false))
 
 ;: Return true when `spec` has the short spelling `name`.
 (define (args-option-spec-matches-short?
   [spec : ArgsOptionSpec]
   [name : String]) : bool
-  (and
-    (not (string-eq (args-option-spec-short spec) ""))
-    (string-eq (args-option-spec-short spec) name)))
+  (if (not (string.string-eq (args-option-spec-short spec) ""))
+    (string.string-eq (args-option-spec-short spec) name)
+    false))
 
 ;: Return an empty parsed option list.
 (define (args-option-list-empty) : ArgsOptionList
@@ -196,7 +198,7 @@
     [(ArgsOptionNil) 0]
     [(ArgsOptionCons head rest)
       (+
-        (if (string-eq (args-option-name head) name)
+        (if (string.string-eq (args-option-name head) name)
           1
           0)
         (args-option-list-count (box-get rest) name))]))
@@ -217,9 +219,9 @@
       (args-option-list-value-or
         (box-get rest)
         name
-        (if (and
-          (string-eq (args-option-name head) name)
-          (args-option-has-value? head))
+        (if (if (string.string-eq (args-option-name head) name)
+          (args-option-has-value? head)
+          false)
           (args-option-value head)
           fallback))]))
 
@@ -228,7 +230,7 @@
   (struct-get parsed options))
 
 ;: Return the positional arguments in input order.
-(define (args-parsed-positionals [parsed : ArgsParsed]) : StringList
+(define (args-parsed-positionals [parsed : ArgsParsed]) : list.StringList
   (struct-get parsed positionals))
 
 ;: Count option occurrences in a parsed result.
@@ -249,9 +251,10 @@
 ;: Render a parse error as a diagnostic message.
 (define (args-error-message [error : ArgsError]) : String
   (match error
-    [(ArgsUnknownOption option) (string-append "args: unknown option " option)]
+    [(ArgsUnknownOption option)
+      (string.string-append "args: unknown option " option)]
     [(ArgsMissingValue option)
-      (string-append "args: missing value for " option)]))
+      (string.string-append "args: missing value for " option)]))
 
 ;: Return true for unknown-option errors.
 (define (args-error-unknown-option? [error : ArgsError]) : bool
@@ -273,30 +276,30 @@
 
 ;: Return true when `token` is exactly `--`.
 (define (args-end-of-options-token? [token : String]) : bool
-  (string-eq token "--"))
+  (string.string-eq token "--"))
 
 ;: Return true when `token` looks like an option token rather than a positional.
 (define (args-option-looking-token? [token : String]) : bool
-  (and (> (string-length token) 1) (char-eq (string-ref token 0) '-')))
+  (and (> (string-length token) 1) (string.char-eq (string-ref token 0) '-')))
 
 ;: Return true when `token` has the supported long spelling `--name`.
 (define (args-long-token? [token : String]) : bool
   (and
     (> (string-length token) 2)
-    (char-eq (string-ref token 0) '-')
-    (char-eq (string-ref token 1) '-')))
+    (string.char-eq (string-ref token 0) '-')
+    (string.char-eq (string-ref token 1) '-')))
 
 ;: Return true when `token` has the supported short spelling `-x`.
 (define (args-short-token? [token : String]) : bool
-  (and (= (string-length token) 2) (char-eq (string-ref token 0) '-')))
+  (and (= (string-length token) 2) (string.char-eq (string-ref token 0) '-')))
 
 ;: Return the long name portion of a supported long token.
 (define (args-token-long-name [token : String]) : String
-  (substring token 2 (- (string-length token) 2)))
+  (string.substring token 2 (- (string-length token) 2)))
 
 ;: Return the short name portion of a supported short token.
 (define (args-token-short-name [token : String]) : String
-  (substring token 1 1))
+  (string.substring token 1 1))
 
 ;: Find a spec by long spelling.
 (define (args-find-spec-long [specs : ArgsOptionSpecList] [name : String]) : ArgsMaybeOptionSpec
@@ -326,7 +329,7 @@
 
 ;: Return a fresh empty parse state.
 (define (args-parse-state-empty) : ArgsParseState
-  (ArgsParseState (ArgsOptionNil) (StringNil) false))
+  (ArgsParseState (ArgsOptionNil) (list.StringNil) false))
 
 ;: Add a positional token to a parse state.
 (define (args-parse-state-add-positional
@@ -334,7 +337,7 @@
   [value : String]) : ArgsParseState
   (ArgsParseState
     (struct-get state options)
-    (StringCons value (box (struct-get state positionals)))
+    (list.StringCons value (box (struct-get state positionals)))
     (struct-get state stop-options)))
 
 ;: Add a parsed option occurrence to a parse state.
@@ -361,7 +364,15 @@
 (define (args-parse-state-finish [state : ArgsParseState]) : ArgsParsed
   (ArgsParsed
     (args-option-list-reverse (struct-get state options))
-    (string-list-reverse (struct-get state positionals))))
+    (list.string-list-reverse (struct-get state positionals))))
+
+;: Finish parser field accumulators into the public ordered result.
+(define (args-parse-finish-fields
+  [options : ArgsOptionList]
+  [positionals : list.StringList]) : ArgsParsed
+  (ArgsParsed
+    (args-option-list-reverse options)
+    (list.string-list-reverse positionals)))
 
 ;: Advance past one positional token.
 (define (args-advance-positional
@@ -417,21 +428,21 @@
   [index : i64]) : ResultArgsParseAdvance
   (cond
     [(struct-get state stop-options)
-      (args-advance-positional state current index)]
-    [(args-end-of-options-token? current)
-      (args-advance-end-of-options state index)]
-    [(args-option-looking-token? current)
-      (match (args-find-spec-token specs current)
+      (stdlib.args.args-advance-positional state current index)]
+    [(stdlib.args.args-end-of-options-token? current)
+      (stdlib.args.args-advance-end-of-options state index)]
+    [(stdlib.args.args-option-looking-token? current)
+      (match (stdlib.args.args-find-spec-token specs current)
         [(ArgsNoOptionSpec) (ErrArgsParseAdvance (ArgsUnknownOption current))]
         [(ArgsSomeOptionSpec spec)
-          (args-advance-known-option
+          (stdlib.args.args-advance-known-option
             state
             spec
             current
             next-value
             has-next
             index)])]
-    [else (args-advance-positional state current index)]))
+    [else (stdlib.args.args-advance-positional state current index)]))
 
 ;: Clamp a sequence start index to zero.
 (define (args-clamp-start [start : i64]) : i64
@@ -451,14 +462,16 @@
       non-negative)))
 
 ;: Parse the array range `[index, end)` with `state`.
-(define (args-parse-array-loop
+(define (args-parse-array-loop-fields
   [specs : ArgsOptionSpecList]
   [argv : (Array String)]
   [index : i64]
   [end : i64]
-  [state : ArgsParseState]) : ResultArgsParsed
+  [options : ArgsOptionList]
+  [positionals : list.StringList]
+  [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
-    (OkArgsParsed (args-parse-state-finish state))
+    (OkArgsParsed (args-parse-finish-fields options positionals))
     (let
       [current : String (array-ref argv index)]
       [has-next : bool (< (+ index 1) end)]
@@ -466,15 +479,84 @@
         (if has-next
           (array-ref argv (+ index 1))
           "")]
-      (match (args-parse-step specs state current next-value has-next index)
-        [(ErrArgsParseAdvance error) (ErrArgsParsed error)]
-        [(OkArgsParseAdvance advance)
-          (args-parse-array-loop
+      (cond
+        [stop-options
+          (args-parse-array-loop-fields
             specs
             argv
-            (struct-get advance next-index)
+            (+ index 1)
             end
-            (struct-get advance state))]))))
+            options
+            (list.StringCons current (box positionals))
+            stop-options)]
+        [(stdlib.args.args-end-of-options-token? current)
+          (args-parse-array-loop-fields
+            specs
+            argv
+            (+ index 1)
+            end
+            options
+            positionals
+            true)]
+        [(stdlib.args.args-option-looking-token? current)
+          (match (stdlib.args.args-find-spec-token specs current)
+            [(ArgsNoOptionSpec) (ErrArgsParsed (ArgsUnknownOption current))]
+            [(ArgsSomeOptionSpec spec)
+              (if (stdlib.args.args-option-arity-value?
+                (stdlib.args.args-option-spec-arity spec))
+                (if has-next
+                  (args-parse-array-loop-fields
+                    specs
+                    argv
+                    (+ index 2)
+                    end
+                    (ArgsOptionCons
+                      (ArgsOption
+                        (stdlib.args.args-option-spec-name spec)
+                        next-value
+                        true)
+                      (box options))
+                    positionals
+                    stop-options)
+                  (ErrArgsParsed (ArgsMissingValue current)))
+                (args-parse-array-loop-fields
+                  specs
+                  argv
+                  (+ index 1)
+                  end
+                  (ArgsOptionCons
+                    (ArgsOption
+                      (stdlib.args.args-option-spec-name spec)
+                      ""
+                      false)
+                    (box options))
+                  positionals
+                  stop-options))])]
+        [else
+          (args-parse-array-loop-fields
+            specs
+            argv
+            (+ index 1)
+            end
+            options
+            (list.StringCons current (box positionals))
+            stop-options)]))))
+
+;: Bridge an `ArgsParseState` into the field-based array parser loop.
+(define (args-parse-array-loop
+  [specs : ArgsOptionSpecList]
+  [argv : (Array String)]
+  [index : i64]
+  [end : i64]
+  [state : ArgsParseState]) : ResultArgsParsed
+  (args-parse-array-loop-fields
+    specs
+    argv
+    index
+    end
+    (struct-get state options)
+    (struct-get state positionals)
+    (struct-get state stop-options)))
 
 ;: Parse the array range `[start, end)`. Negative bounds clamp to zero and end
 ;: clamps to the array length.
@@ -485,37 +567,165 @@
   [end : i64]) : ResultArgsParsed
   (let
     [limit : i64 (array-length argv)]
-    [first : i64 (args-clamp-start start)]
-    [last : i64 (args-clamp-end end limit)]
-    (args-parse-array-loop specs argv first last (args-parse-state-empty))))
+    [i : i64 (stdlib.args.args-clamp-start start)]
+    [last : i64 (stdlib.args.args-clamp-end end limit)]
+    [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
+    [positionals : list.StringList (list.StringNil)]
+    [stop-options : bool false]
+    [failed : bool false]
+    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
+    (begin
+      (while (and (< i last) (not failed))
+        (let
+          [current : String (array-ref argv i)]
+          [has-next : bool (< (+ i 1) last)]
+          [next-value : String
+            (if has-next
+              (array-ref argv (+ i 1))
+              "")]
+          (cond
+            [stop-options
+              (begin
+                (set! positionals (list.StringCons current (box positionals)))
+                (set! i (+ i 1)))]
+            [(stdlib.args.args-end-of-options-token? current)
+              (begin
+                (set! stop-options true)
+                (set! i (+ i 1)))]
+            [(stdlib.args.args-option-looking-token? current)
+              (match (stdlib.args.args-find-spec-token specs current)
+                [(stdlib.args.ArgsNoOptionSpec)
+                  (begin
+                    (set! error (stdlib.args.ArgsUnknownOption current))
+                    (set! failed true))]
+                [(stdlib.args.ArgsSomeOptionSpec spec)
+                  (if (stdlib.args.args-option-arity-value?
+                    (stdlib.args.args-option-spec-arity spec))
+                    (if has-next
+                      (begin
+                        (set!
+                          options
+                          (stdlib.args.ArgsOptionCons
+                            (stdlib.args.ArgsOption
+                              (stdlib.args.args-option-spec-name spec)
+                              next-value
+                              true)
+                            (box options)))
+                        (set! i (+ i 2)))
+                      (begin
+                        (set! error (stdlib.args.ArgsMissingValue current))
+                        (set! failed true)))
+                    (begin
+                      (set!
+                        options
+                        (stdlib.args.ArgsOptionCons
+                          (stdlib.args.ArgsOption
+                            (stdlib.args.args-option-spec-name spec)
+                            ""
+                            false)
+                          (box options)))
+                      (set! i (+ i 1))))])]
+            [else
+              (begin
+                (set! positionals (list.StringCons current (box positionals)))
+                (set! i (+ i 1)))])))
+      (if failed
+        (stdlib.args.ErrArgsParsed error)
+        (stdlib.args.OkArgsParsed
+          (args-parse-finish-fields options positionals))))))
 
 ;: Parse the full argv array.
 (define (args-parse-array [specs : ArgsOptionSpecList] [argv : (Array String)]) : ResultArgsParsed
   (args-parse-array-range specs argv 0 (array-length argv)))
 
 ;: Parse process argv range `[index, end)` with `state`.
+(define (args-parse-argv-loop-fields
+  [specs : ArgsOptionSpecList]
+  [index : i64]
+  [end : i64]
+  [options : ArgsOptionList]
+  [positionals : list.StringList]
+  [stop-options : bool]) : ResultArgsParsed
+  (if (>= index end)
+    (OkArgsParsed (args-parse-finish-fields options positionals))
+    (let
+      [current : String (io.arg index)]
+      [has-next : bool (< (+ index 1) end)]
+      [next-value : String
+        (if has-next
+          (io.arg (+ index 1))
+          "")]
+      (cond
+        [stop-options
+          (args-parse-argv-loop-fields
+            specs
+            (+ index 1)
+            end
+            options
+            (list.StringCons current (box positionals))
+            stop-options)]
+        [(stdlib.args.args-end-of-options-token? current)
+          (args-parse-argv-loop-fields
+            specs
+            (+ index 1)
+            end
+            options
+            positionals
+            true)]
+        [(stdlib.args.args-option-looking-token? current)
+          (match (stdlib.args.args-find-spec-token specs current)
+            [(ArgsNoOptionSpec) (ErrArgsParsed (ArgsUnknownOption current))]
+            [(ArgsSomeOptionSpec spec)
+              (if (stdlib.args.args-option-arity-value?
+                (stdlib.args.args-option-spec-arity spec))
+                (if has-next
+                  (args-parse-argv-loop-fields
+                    specs
+                    (+ index 2)
+                    end
+                    (ArgsOptionCons
+                      (ArgsOption
+                        (stdlib.args.args-option-spec-name spec)
+                        next-value
+                        true)
+                      (box options))
+                    positionals
+                    stop-options)
+                  (ErrArgsParsed (ArgsMissingValue current)))
+                (args-parse-argv-loop-fields
+                  specs
+                  (+ index 1)
+                  end
+                  (ArgsOptionCons
+                    (ArgsOption
+                      (stdlib.args.args-option-spec-name spec)
+                      ""
+                      false)
+                    (box options))
+                  positionals
+                  stop-options))])]
+        [else
+          (args-parse-argv-loop-fields
+            specs
+            (+ index 1)
+            end
+            options
+            (list.StringCons current (box positionals))
+            stop-options)]))))
+
+;: Bridge an `ArgsParseState` into the field-based process argv parser loop.
 (define (args-parse-argv-loop
   [specs : ArgsOptionSpecList]
   [index : i64]
   [end : i64]
   [state : ArgsParseState]) : ResultArgsParsed
-  (if (>= index end)
-    (OkArgsParsed (args-parse-state-finish state))
-    (let
-      [current : String (arg index)]
-      [has-next : bool (< (+ index 1) end)]
-      [next-value : String
-        (if has-next
-          (arg (+ index 1))
-          "")]
-      (match (args-parse-step specs state current next-value has-next index)
-        [(ErrArgsParseAdvance error) (ErrArgsParsed error)]
-        [(OkArgsParseAdvance advance)
-          (args-parse-argv-loop
-            specs
-            (struct-get advance next-index)
-            end
-            (struct-get advance state))]))))
+  (args-parse-argv-loop-fields
+    specs
+    index
+    end
+    (struct-get state options)
+    (struct-get state positionals)
+    (struct-get state stop-options)))
 
 ;: Parse the process argv range `[start, end)`. Negative bounds clamp to zero
 ;: and end clamps to `(arg-count)`.
@@ -524,20 +734,83 @@
   [start : i64]
   [end : i64]) : ResultArgsParsed
   (let
-    [limit : i64 (arg-count)]
-    [first : i64 (args-clamp-start start)]
-    [last : i64 (args-clamp-end end limit)]
-    (args-parse-argv-loop specs first last (args-parse-state-empty))))
+    [limit : i64 (io.arg-count)]
+    [i : i64 (stdlib.args.args-clamp-start start)]
+    [last : i64 (stdlib.args.args-clamp-end end limit)]
+    [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
+    [positionals : list.StringList (list.StringNil)]
+    [stop-options : bool false]
+    [failed : bool false]
+    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
+    (begin
+      (while (and (< i last) (not failed))
+        (let
+          [current : String (io.arg i)]
+          [has-next : bool (< (+ i 1) last)]
+          [next-value : String
+            (if has-next
+              (io.arg (+ i 1))
+              "")]
+          (cond
+            [stop-options
+              (begin
+                (set! positionals (list.StringCons current (box positionals)))
+                (set! i (+ i 1)))]
+            [(stdlib.args.args-end-of-options-token? current)
+              (begin
+                (set! stop-options true)
+                (set! i (+ i 1)))]
+            [(stdlib.args.args-option-looking-token? current)
+              (match (stdlib.args.args-find-spec-token specs current)
+                [(stdlib.args.ArgsNoOptionSpec)
+                  (begin
+                    (set! error (stdlib.args.ArgsUnknownOption current))
+                    (set! failed true))]
+                [(stdlib.args.ArgsSomeOptionSpec spec)
+                  (if (stdlib.args.args-option-arity-value?
+                    (stdlib.args.args-option-spec-arity spec))
+                    (if has-next
+                      (begin
+                        (set!
+                          options
+                          (stdlib.args.ArgsOptionCons
+                            (stdlib.args.ArgsOption
+                              (stdlib.args.args-option-spec-name spec)
+                              next-value
+                              true)
+                            (box options)))
+                        (set! i (+ i 2)))
+                      (begin
+                        (set! error (stdlib.args.ArgsMissingValue current))
+                        (set! failed true)))
+                    (begin
+                      (set!
+                        options
+                        (stdlib.args.ArgsOptionCons
+                          (stdlib.args.ArgsOption
+                            (stdlib.args.args-option-spec-name spec)
+                            ""
+                            false)
+                          (box options)))
+                      (set! i (+ i 1))))])]
+            [else
+              (begin
+                (set! positionals (list.StringCons current (box positionals)))
+                (set! i (+ i 1)))])))
+      (if failed
+        (stdlib.args.ErrArgsParsed error)
+        (stdlib.args.OkArgsParsed
+          (args-parse-finish-fields options positionals))))))
 
 ;: Parse process argv from `start` through `(arg-count)`.
 (define (args-parse-argv [specs : ArgsOptionSpecList] [start : i64]) : ResultArgsParsed
-  (args-parse-argv-range specs start (arg-count)))
+  (args-parse-argv-range specs start (io.arg-count)))
 
 ;: Inline test assertion for boolean predicates.
 (define (args-test-assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
-    (panic message)))
+    (io.panic message)))
 
 ;: Inline test assertion for `i64` equality.
 (define (args-test-assert-i64-eq
@@ -551,7 +824,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (args-test-assert-true (string-eq actual expected) message))
+  (args-test-assert-true (string.string-eq actual expected) message))
 
 ;: Build the option specs used by argv parser inline tests.
 (define (args-test-specs) : ArgsOptionSpecList
@@ -626,64 +899,68 @@
 (define (args-test-expect-ok [result : ResultArgsParsed] [message : String]) : ArgsParsed
   (match result
     [(OkArgsParsed parsed) parsed]
-    [(ErrArgsParsed _) (panic message)]))
+    [(ErrArgsParsed _) (io.panic message)]))
 
 ;: Unwrap a failed argv parse result for inline tests.
 (define (args-test-expect-error [result : ResultArgsParsed] [message : String]) : ArgsError
   (match result
-    [(OkArgsParsed _) (panic message)]
+    [(OkArgsParsed _) (io.panic message)]
     [(ErrArgsParsed error) error]))
 
 ;: Assert that a string list is empty.
 (define (args-test-assert-string-list-empty
-  [items : StringList]
+  [items : list.StringList]
   [message : String]) : unit
-  (match items
-    [(StringNil) unit]
-    [_ (panic message)]))
+  (args-test-assert-i64-eq (list.string-list-count items) 0 message))
 
 ;: Assert that a string list contains exactly two strings.
 (define (args-test-assert-string-list2
-  [items : StringList]
+  [items : list.StringList]
   [first : String]
   [second : String]
   [message : String]) : unit
-  (match items
-    [(StringCons a rest)
-      (match (box-get rest)
-        [(StringCons b tail)
-          (match (box-get tail)
-            [(StringNil)
-              (begin
-                (args-test-assert-owned-string-eq a first message)
-                (args-test-assert-owned-string-eq b second message))]
-            [_ (panic message)])]
-        [_ (panic message)])]
-    [_ (panic message)]))
+  (let
+    [values : (Array String) (list.string-list-to-array items)]
+    (begin
+      (args-test-assert-i64-eq
+        (array-length values)
+        2
+        (string.string-append message " count"))
+      (args-test-assert-owned-string-eq
+        (array-ref values 0)
+        first
+        (string.string-append message " first"))
+      (args-test-assert-owned-string-eq
+        (array-ref values 1)
+        second
+        (string.string-append message " second")))))
 
 ;: Assert that a string list contains exactly three strings.
 (define (args-test-assert-string-list3
-  [items : StringList]
+  [items : list.StringList]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
-  (match items
-    [(StringCons a rest)
-      (match (box-get rest)
-        [(StringCons b more)
-          (match (box-get more)
-            [(StringCons c tail)
-              (match (box-get tail)
-                [(StringNil)
-                  (begin
-                    (args-test-assert-owned-string-eq a first message)
-                    (args-test-assert-owned-string-eq b second message)
-                    (args-test-assert-owned-string-eq c third message))]
-                [_ (panic message)])]
-            [_ (panic message)])]
-        [_ (panic message)])]
-    [_ (panic message)]))
+  (let
+    [values : (Array String) (list.string-list-to-array items)]
+    (begin
+      (args-test-assert-i64-eq
+        (array-length values)
+        3
+        (string.string-append message " count"))
+      (args-test-assert-owned-string-eq
+        (array-ref values 0)
+        first
+        (string.string-append message " first"))
+      (args-test-assert-owned-string-eq
+        (array-ref values 1)
+        second
+        (string.string-append message " second"))
+      (args-test-assert-owned-string-eq
+        (array-ref values 2)
+        third
+        (string.string-append message " third")))))
 
 ;: Exercise an empty argv sequence.
 (define (args-test-empty-argv) : unit
@@ -704,14 +981,23 @@
 ;: Exercise positional-only argv parsing.
 (define (args-test-positionals-only) : unit
   (let
+    [argv : (Array String) (args-test-array3 "src.tl" "out.s" "-")]
     [parsed : ArgsParsed
       (args-test-expect-ok
-        (args-parse-array
-          (args-test-specs)
-          (args-test-array3 "src.tl" "out.s" "-"))
+        (begin
+          (args-test-assert-i64-eq
+            (array-length argv)
+            3
+            "args-test-array3 length")
+          (args-parse-array (args-test-specs) argv))
         "positional-only argv should parse")]
     (args-test-assert-string-list3
-      (args-parsed-positionals parsed)
+      (begin
+        (args-test-assert-i64-eq
+          (list.string-list-count (args-parsed-positionals parsed))
+          3
+          "positionals parsed count")
+        (args-parsed-positionals parsed))
       "src.tl"
       "out.s"
       "-"
@@ -835,15 +1121,105 @@
         "--output=file"
         "equals spelling carries original token"))))
 
-(test
-  args-api
-  (begin
-    (args-test-empty-argv)
-    (args-test-positionals-only)
-    (args-test-flags-around-positionals)
-    (args-test-end-of-options)
-    (args-test-missing-value)
-    (args-test-unknown-option)
-    (args-test-repeated-options)
-    (args-test-equals-spelling-unsupported)
-    unit))
+(export
+  (value args-option-spec-empty)
+  (value args-option-spec-cons)
+  (value args-flag-option)
+  (value args-value-option)
+  (value args-option-spec-name)
+  (value args-option-spec-long)
+  (value args-option-spec-short)
+  (value args-option-spec-arity)
+  (value args-option-arity-value?)
+  (value args-option-spec-matches-long?)
+  (value args-option-spec-matches-short?)
+  (value args-option-list-empty)
+  (value args-option-list-cons)
+  (value args-option-name)
+  (value args-option-value)
+  (value args-option-has-value?)
+  (value args-option-list-reverse-onto)
+  (value args-option-list-reverse)
+  (value args-option-list-count)
+  (value args-option-list-present?)
+  (value args-option-list-value-or)
+  (value args-parsed-options)
+  (value args-parsed-positionals)
+  (value args-option-count)
+  (value args-option-present?)
+  (value args-option-value-or)
+  (value args-error-message)
+  (value args-error-unknown-option?)
+  (value args-error-missing-value?)
+  (value args-error-option)
+  (value args-end-of-options-token?)
+  (value args-option-looking-token?)
+  (value args-long-token?)
+  (value args-short-token?)
+  (value args-token-long-name)
+  (value args-token-short-name)
+  (value args-find-spec-long)
+  (value args-find-spec-short)
+  (value args-find-spec-token)
+  (value args-parse-state-empty)
+  (value args-parse-state-add-positional)
+  (value args-parse-state-add-option)
+  (value args-parse-state-stop-options)
+  (value args-parse-state-finish)
+  (value args-advance-positional)
+  (value args-advance-end-of-options)
+  (value args-advance-known-option)
+  (value args-parse-step)
+  (value args-clamp-start)
+  (value args-clamp-end)
+  (value args-parse-array-loop)
+  (value args-parse-array-range)
+  (value args-parse-array)
+  (value args-parse-argv-loop)
+  (value args-parse-argv-range)
+  (value args-parse-argv)
+  (type ArgsOptionArity)
+  (type ArgsOptionSpec)
+  (type ArgsOptionSpecList)
+  (type ArgsOption)
+  (type ArgsOptionList)
+  (type ArgsParsed)
+  (type ArgsError)
+  (type ResultArgsParsed)
+  (type ArgsMaybeOptionSpec)
+  (type ArgsParseState)
+  (type ArgsParseAdvance)
+  (type ResultArgsParseAdvance)
+  (constructor ArgsOptionSpec)
+  (constructor ArgsOption)
+  (constructor ArgsParsed)
+  (constructor ArgsParseState)
+  (constructor ArgsParseAdvance)
+  (field ArgsOptionSpec name)
+  (field ArgsOptionSpec long)
+  (field ArgsOptionSpec short)
+  (field ArgsOptionSpec arity)
+  (field ArgsOption name)
+  (field ArgsOption value)
+  (field ArgsOption has-value)
+  (field ArgsParsed options)
+  (field ArgsParsed positionals)
+  (field ArgsParseState options)
+  (field ArgsParseState positionals)
+  (field ArgsParseState stop-options)
+  (field ArgsParseAdvance state)
+  (field ArgsParseAdvance next-index)
+  (variant ArgsFlag)
+  (variant ArgsValue)
+  (variant ArgsOptionSpecNil)
+  (variant ArgsOptionSpecCons)
+  (variant ArgsOptionNil)
+  (variant ArgsOptionCons)
+  (variant ArgsUnknownOption)
+  (variant ArgsMissingValue)
+  (variant OkArgsParsed)
+  (variant ErrArgsParsed)
+  (variant ArgsNoOptionSpec)
+  (variant ArgsSomeOptionSpec)
+  (variant OkArgsParseAdvance)
+  (variant ErrArgsParseAdvance))

@@ -1,4 +1,5 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
+(import stdlib.json)
 (import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains? [items : StringVec] [needle : String]) : bool
@@ -58,15 +59,15 @@
         (tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
         (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
-          [hints : JsonList (lsp-inlay-build src 0 0)]
-          [rendered : String (json-stringify (lsp-json-array hints))]
+          [hints : json.JsonList (lsp-inlay-build src 0 0)]
+          [rendered : String (json.json-stringify (lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
           (begin
             (tc-inlay-hints-disable!)
             (and
-              (= (json-list-count hints) 2)
+              (= (json.json-list-count hints) 2)
               (string-contains (& rendered) (& type-label))
               (string-contains (& rendered) (& total-pos))
               (string-contains (& rendered) (& next-pos)))))))))
@@ -78,7 +79,7 @@
       [(OkFormatString formatted)
         (let
           [rendered : String
-            (json-stringify (lsp-formatting-edit messy formatted))]
+            (json.json-stringify (lsp-formatting-edit messy formatted))]
           [sig : String "(define (f) : i64"]
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]

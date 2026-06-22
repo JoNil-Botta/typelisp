@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define (sum-tail [n : i64] [acc : i64]) : i64
   (if (= n 0)

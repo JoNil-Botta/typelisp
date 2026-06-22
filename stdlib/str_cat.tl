@@ -5,21 +5,56 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: `(import "stdlib/str_cat.tl")` then `(str-cat a b c)`. The macro owns
-;# its concat helper dependency, so callers do not need to import
-;# `stdlib/string.tl` unless they use string helpers directly.
+;# Usage in current flat-import callers: import this module, then call
+;# `(str-cat a b c)`. A dotted external `str_cat.str-cat` call still needs
+;# imported-macro dependency alias support before its helper calls can stay
+;# independent of the caller's imports.
 ;#
-;# ```typelisp
-;# (import "stdlib/str_cat.tl")
+;# ```lisp
+;# (import "../stdlib/str_cat.tl")
 ;#
 ;# (define (greet [name : String]) : String
 ;#   (str-cat "hello, " name "!"))
 ;# ```
-(import "string.tl")
-(cfg test (import "test.tl"))
-(cfg test (import "hashmap.tl"))
+(module stdlib.str_cat)
 
-(cfg (not test) (module stdlib.str-cat))
+(import stdlib.string)
+(cfg test (import stdlib.test))
+(cfg test (import stdlib.hashmap))
+
+;: Local aliases for the flat helper names emitted by `str-cat` today. External
+;: callers still provide these through legacy flat imports; these definitions
+;: keep this module's own inline tests independent of a legacy stdlib import.
+(define (string-append [left : String] [right : String]) : String
+  (string.string-append left right))
+
+;: Local alias for three-part string concatenation.
+(define (string-concat3 [a : String] [b : String] [c : String]) : String
+  (string.string-concat3 a b c))
+
+;: Local alias for four-part string concatenation.
+(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string.string-concat4 a b c d))
+
+;: Local alias for five-part string concatenation.
+(define (string-concat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string.string-concat5 a b c d e))
+
+;: Local alias for concatenating a packed dynamic string array.
+(define (string-concat-all [parts : (Array String)]) : String
+  (string.string-concat-all parts))
+
+;: Local alias for appending one part into a packed concatenation array.
+(define (string-concat-all-pack-part
+  [parts : (Array String)]
+  [index : i64]
+  [value : String]) : (Array String)
+  (string.string-concat-all-pack-part parts index value))
 
 ;: Internal recursive pack step used by `str-cat` expansion.
 ;:
@@ -86,7 +121,7 @@
 (cfg
   test
   (define (str-cat-api-eq [got : String] [want : String]) : i64
-    (if (string-eq got want)
+    (if (string.string-eq got want)
       1
       0)))
 
@@ -138,7 +173,8 @@
   test
   (define (str-cat-api-generated-ok) : bool
     (>=
-      (i64-i64-map-capacity (i64-i64-map-put (i64-i64-map-with-capacity 8) 1 7))
+      (hashmap.i64-i64-map-capacity
+        (hashmap.i64-i64-map-put (hashmap.i64-i64-map-with-capacity 8) 1 7))
       8)))
 
 (cfg
@@ -154,4 +190,4 @@
   test
   (test
     str-cat-api
-    (assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))
+    (test.assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))

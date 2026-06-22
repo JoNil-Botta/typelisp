@@ -676,9 +676,9 @@ EOF
     echo "[selfhost-native] compiler_driver stdlib JSON import graph"
     run_compiler_driver "$_driver" compiler-driver-stdlib-json "$_src" "$_asm"
     for _snippet in \
-        "_tl_stdlib_json_json_parse" \
-        "_tl_stdlib_json_json_stringify" \
-        "_tl_stdlib_json_json_parse_object"
+        "_tl_stdlib_json_stdlib_json_json_parse" \
+        "_tl_stdlib_json_stdlib_json_json_stringify" \
+        "_tl_stdlib_json_stdlib_json_json_parse_object"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stdlib-json
     done

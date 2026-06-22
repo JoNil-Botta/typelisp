@@ -5,7 +5,9 @@
 ;# view over a vector live prefix or an explicit `(Array T)` live prefix. It keeps
 ;# a borrowed source witness plus a borrowed backing-array reference, so the
 ;# checker ties the view to the source owner lifetime.
-(import "vector.tl")
+(module stdlib.vector_slice)
+
+(import stdlib.vector)
 
 ;: Emit a generated borrowed slice module for element type `T`.
 (defmacro (slice [T : type]) : Module
@@ -14,7 +16,8 @@
       (expr-var (string-append "stdlib.vector_slice.generated." (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T) as vec)
+      (import stdlib.vector)
+      (import (vector.vector ,T) as vec)
       (defenum Source
         (:lifetimes source)
         (FromVec (& source vec.Vec))
@@ -181,10 +184,10 @@
 
 (export (macro slice))
 
-(cfg test (import "test.tl"))
-(cfg test (import (vector i64) as i64v))
-(cfg test (import (slice i64) as i64s))
-(cfg test (import (slice i64) as i64s_again))
+(cfg test (import stdlib.test))
+(cfg test (import (stdlib.vector.vector i64) as i64v))
+(cfg test (import (stdlib.vector_slice.slice i64) as i64s))
+(cfg test (import (stdlib.vector_slice.slice i64) as i64s_again))
 
 (cfg
   test
@@ -200,20 +203,20 @@
           [full : (i64s.Slice fv) (i64s.all-vec (& fv))]
           [middle : (i64s.Slice fv) (i64s.from-vec (& fv) 1 2)]
           (begin
-            (assert-i64-eq (i64s.len full) 3 "full slice len")
-            (assert-i64-eq (i64s.len middle) 2 "middle slice len")
-            (assert-i64-eq
+            (test.assert-i64-eq (i64s.len full) 3 "full slice len")
+            (test.assert-i64-eq (i64s.len middle) 2 "middle slice len")
+            (test.assert-i64-eq
               (i64s_again.len middle)
               2
               "duplicate slice import len")
-            (assert-false (i64s.is-empty? middle) "middle slice not empty")
-            (assert-i64-eq (i64s.get middle 0 -1) 6 "middle slice first")
-            (assert-i64-eq (i64s.get middle 1 -1) 7 "middle slice second")
-            (assert-i64-eq
+            (test.assert-false (i64s.is-empty? middle) "middle slice not empty")
+            (test.assert-i64-eq (i64s.get middle 0 -1) 6 "middle slice first")
+            (test.assert-i64-eq (i64s.get middle 1 -1) 7 "middle slice second")
+            (test.assert-i64-eq
               (i64s.get middle 2 -1)
               -1
               "middle slice high fallback")
-            (assert-i64-eq
+            (test.assert-i64-eq
               (i64s.get middle -1 -1)
               -1
               "middle slice negative fallback")
@@ -221,18 +224,18 @@
               [bad-start : (i64s.Slice fv) (i64s.from-vec (& fv) -1 1)]
               [bad-range : (i64s.Slice fv) (i64s.from-vec (& fv) 2 2)]
               (begin
-                (assert-true
+                (test.assert-true
                   (i64s.is-empty? bad-start)
                   "slice negative start -> empty")
-                (assert-true
+                (test.assert-true
                   (i64s.is-empty? bad-range)
                   "slice overrun -> empty")))
             (let
               [tail : (i64s.Slice fv) (i64s.sub-slice middle 1 1)]
               [bad-tail : (i64s.Slice fv) (i64s.sub-slice middle 1 2)]
               (begin
-                (assert-i64-eq (i64s.get tail 0 -1) 7 "sub-slice value")
-                (assert-true
+                (test.assert-i64-eq (i64s.get tail 0 -1) 7 "sub-slice value")
+                (test.assert-true
                   (i64s.is-empty? bad-tail)
                   "sub-slice overrun -> empty")))
             (let
@@ -241,35 +244,38 @@
               [bad-array-range : (i64s.Slice src)
                 (i64s.from-array (& src) 3 1 3)]
               (begin
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (i64s.get from-array 1 -1)
                   6
                   "slice from array reads live prefix")
-                (assert-true
+                (test.assert-true
                   (i64s.is-empty? bad-count)
                   "slice live count past array length -> empty")
-                (assert-true
+                (test.assert-true
                   (i64s.is-empty? bad-array-range)
                   "slice array range past live count -> empty")))
             (let
               [slice-copy : (Array i64) (i64s.to-array middle)]
               [slice-vec : i64v.Vec (i64s.to-vec middle)]
               (begin
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (array-length slice-copy)
                   2
                   "slice copy array length")
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (array-ref slice-copy 0)
                   6
                   "slice copy array first")
                 (array-set! slice-copy 0 0)
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (i64s.get middle 0 -1)
                   6
                   "slice copy independent")
-                (assert-i64-eq (i64v.len (& slice-vec)) 2 "slice to vec len")
-                (assert-i64-eq
+                (test.assert-i64-eq
+                  (i64v.len (& slice-vec))
+                  2
+                  "slice to vec len")
+                (test.assert-i64-eq
                   (i64v.get (& slice-vec) 1 -1)
                   7
                   "slice to vec second")))
@@ -282,22 +288,24 @@
               [step3 : (i64s.IterNext fv) (i64s.next iter2)]
               [iter3 : (i64s.Iter fv) (i64s.iter-state step3)]
               (begin
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (i64s.iter-value-or step1 -1)
                   6
                   "slice iterator first")
-                (assert-i64-eq
+                (test.assert-i64-eq
                   (i64s.iter-value-or step2 -1)
                   7
                   "slice iterator second")
-                (assert-true (i64s.iter-done? step3) "slice iterator exhausted")
-                (assert-true
+                (test.assert-true
+                  (i64s.iter-done? step3)
+                  "slice iterator exhausted")
+                (test.assert-true
                   (i64s.iter-done? (i64s.next iter3))
                   "slice iterator repeated exhaustion")))
             (let
               [empty-slice : (i64s.Slice fv) (i64s.from-vec (& fv) 2 2)]
               [empty-iter : (i64s.Iter fv) (i64s.iterator empty-slice)]
-              (assert-true
+              (test.assert-true
                 (i64s.iter-done? (i64s.next empty-iter))
                 "empty slice iterator exhausted"))))))))
 

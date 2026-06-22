@@ -3,23 +3,25 @@
 ;# Provides assertion helpers for TypeLisp fixtures using stdlib panic and
 ;# non-allocating borrowed string comparison.
 ;#
-;# Usage: `(import "stdlib/test.tl")`
+;# Usage: `(import stdlib.test)`
 ;#
 ;# ```typelisp
-;# (import "stdlib/test.tl")
+;# (import stdlib.test)
 ;# (define (main) : i64
 ;#   (begin
-;#     (assert-true true "expected true")
+;#     (test.assert-true true "expected true")
 ;#     42))
 ;# ```
-(import "io.tl")
-(import "string.tl")
+(module stdlib.test)
+
+(import stdlib.io)
+(import stdlib.string)
 
 ;: Assert that `condition` is true, panicking with `message` when it is false.
 (define (assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
-    (panic message)))
+    (io.panic message)))
 
 ;: Assert that `condition` is false, panicking with `message` when it is true.
 (define (assert-false [condition : bool] [message : String]) : unit
@@ -54,18 +56,18 @@
 ;: owned-string public API.
 ;:
 ;: ```typelisp
-;: (import "stdlib/test.tl")
+;: (import stdlib.test)
 ;: (define (test-doc-assert) : unit
 ;:   (let
 ;:     [actual : String "ok"]
 ;:     [expected : String "ok"]
-;:     (assert-string-eq (& actual) (& expected) "strings should match")))
+;:     (test.assert-string-eq (& actual) (& expected) "strings should match")))
 ;: ```
 (define (assert-string-eq
   [actual : (& actual str)]
   [expected : (& expected str)]
   [message : String]) : unit
-  (assert-true (string-eq-borrowed actual expected) message))
+  (assert-true (string.string-eq-borrowed actual expected) message))
 
 (test
   test-assert-success
@@ -81,3 +83,13 @@
       (assert-f64-eq 1.5 1.5 "f64 equality should pass")
       (assert-char-eq 'A' 'A' "char equality should pass")
       (assert-string-eq (& actual) (& expected) "string equality should pass"))))
+
+(export
+  (value assert-true)
+  (value assert-false)
+  (value assert-bool-eq)
+  (value assert-i64-eq)
+  (value assert-i32-eq)
+  (value assert-f64-eq)
+  (value assert-char-eq)
+  (value assert-string-eq))

@@ -1,4 +1,4 @@
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 ; Must fail: the String returned by string-trim is owned by the inner active
 ; arena and cannot escape to the outer scope.
@@ -9,4 +9,4 @@
       inner
       (let
         [s : String "  scoped  "]
-        (string-trim (& s))))))
+        (string.string-trim (& s))))))

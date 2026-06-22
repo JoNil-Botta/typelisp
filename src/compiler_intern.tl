@@ -90,7 +90,7 @@
 (define intern-slice-cache3-ready : bool
   false)
 (define intern-persistent-arena : i64
-  (intern-arena-current))
+  (intern-arena-make))
 (define intern-persistent-storage-enabled : bool
   false)
 
@@ -102,6 +102,15 @@
 
 (define (intern-persistent-storage-on?) : bool
   intern-persistent-storage-enabled)
+
+(define (intern-persistent-arena-reset!) : unit
+  (let
+    [old-arena : i64 intern-persistent-arena]
+    [new-arena : i64 (intern-arena-make)]
+    (begin
+      (set! intern-persistent-arena new-arena)
+      (unsafe
+        (intern-arena-destroy old-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
@@ -206,6 +215,15 @@
   (if (= (intern-arena-current) intern-persistent-arena)
     text
     (intern-persistent-substring text 0 (string-length text))))
+
+(define (intern-persist-range! [index : i64] [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [name : String (array-ref intern-pool-slots index)]
+      (begin
+        (array-set! intern-pool-slots index (intern-persistent-copy name))
+        (intern-persist-range! (+ index 1) count)))))
 
 (define (intern-string-slice-eq?
   [name : String]

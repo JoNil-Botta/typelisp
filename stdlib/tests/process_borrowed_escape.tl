@@ -1,8 +1,8 @@
-(import "stdlib/process_borrowed.tl")
+(import stdlib.process_borrowed)
 
 ; Must fail: the returned command would borrow executable text allocated in the
 ; inner arena.
-(define (main [outer : String]) : (ProcessBorrowedCommand
+(define (main [outer : String]) : (process_borrowed.ProcessBorrowedCommand
     outer
     outer
     outer
@@ -12,4 +12,4 @@
     inner
     (let
       [exe : String "inner"]
-      (process-borrowed-command-empty (& exe)))))
+      (process_borrowed.process-borrowed-command-empty (& exe)))))

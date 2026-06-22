@@ -1120,7 +1120,7 @@
       "typelisp.pkg")))
 
 (define (build-string-index-from
-  [s : String]
+  [s : (& s str)]
   [needle : char]
   [i : i64]
   [n : i64]) : i64
@@ -1159,31 +1159,35 @@
 (define (build-parse-git-dependency [alias : String] [path : String]) : ResultBuildGitDependency
   (let
     [n : i64 (string-length path)]
-    [hash : i64 (build-string-index-from path '#' 0 n)]
+    [hash : i64 (build-string-index-from (& path) '#' 0 n)]
     (if (<= hash 0)
       (ErrBuildGitDependency
         (build-git-dep-error alias "has invalid normalized path"))
       (let
-        [remote : String (substring path 0 hash)]
-        [pin : String (substring path (+ hash 1) (- n (+ hash 1)))]
+        [remote : String (substring-borrowed (& path) 0 hash)]
+        [pin : String (substring-borrowed (& path) (+ hash 1) (- n (+ hash 1)))]
         [pin-len : i64 (string-length pin)]
-        [eq : i64 (build-string-index-from pin '=' 0 pin-len)]
+        [eq : i64 (build-string-index-from (& pin) '=' 0 pin-len)]
         (if (<= eq 0)
           (ErrBuildGitDependency (build-git-dep-error alias "has invalid pin"))
           (let
-            [kind : String (substring pin 0 eq)]
-            [value : String (substring pin (+ eq 1) (- pin-len (+ eq 1)))]
+            [kind : String (substring-borrowed (& pin) 0 eq)]
+            [value : String
+              (substring-borrowed (& pin) (+ eq 1) (- pin-len (+ eq 1)))]
+            [kind-for-check : String (string-copy-borrowed (& kind))]
             (if (= (string-length value) 0)
               (ErrBuildGitDependency
                 (build-git-dep-error alias "has empty pin"))
-              (if (compiler-load-github-pin-kind-valid? kind)
+              (if (compiler-load-github-pin-kind-valid? kind-for-check)
                 (OkBuildGitDependency (BuildGitDependency remote kind value))
                 (ErrBuildGitDependency
                   (build-git-dep-error alias "has invalid pin kind"))))))))))
 
-(define (build-git-dep-pin-kind [alias : String] [dep : BuildGitDependency]) : ResultPackageCachePinKind
+(define (build-git-dep-pin-kind
+  [alias : String]
+  [dep : (& dep BuildGitDependency)]) : ResultPackageCachePinKind
   (let
-    [kind : String (struct-get dep pin-kind)]
+    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
     (cond
       [(string-eq kind "rev") (OkPackageCachePinKind (PackageCachePinRev))]
       [(string-eq kind "tag") (OkPackageCachePinKind (PackageCachePinTag))]
@@ -1240,20 +1244,24 @@
 (define (build-package-lock-entry-matches?
   [entry : PackageLockEntry]
   [alias : String]
-  [dep : BuildGitDependency]) : bool
+  [dep : (& dep BuildGitDependency)]) : bool
   (match (build-git-dep-pin-kind alias dep)
     [(ErrPackageCachePinKind _) false]
     [(OkPackageCachePinKind kind)
       (and
         (string-eq (struct-get entry alias) alias)
-        (string-eq (struct-get entry url) (struct-get dep remote))
+        (string-eq-borrowed
+          (& (struct-get entry url))
+          (& (struct-get dep remote)))
         (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-        (string-eq (struct-get entry pin-value) (struct-get dep pin-value)))]))
+        (string-eq-borrowed
+          (& (struct-get entry pin-value))
+          (& (struct-get dep pin-value))))]))
 
 (define (build-package-lock-matching-entry
   [entries : PackageLockEntryList]
   [alias : String]
-  [dep : BuildGitDependency]) : BuildMaybeLockEntry
+  [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
   (match (package-lock-entry-list-lookup entries alias)
     [(PackageLockNoEntry) (BuildNoLockEntry)]
     [(PackageLockSomeEntry entry)
@@ -1264,7 +1272,7 @@
 (define (build-package-lock-entry-status
   [entries : PackageLockEntryList]
   [alias : String]
-  [dep : BuildGitDependency]) : BuildPackageLockEntryStatus
+  [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
   (match (package-lock-entry-list-lookup entries alias)
     [(PackageLockNoEntry) (BuildPackageLockEntryMissing)]
     [(PackageLockSomeEntry entry)
@@ -1286,7 +1294,7 @@
 
 (define (build-package-lock-entry
   [alias : String]
-  [dep : BuildGitDependency]
+  [dep : (& dep BuildGitDependency)]
   [commit : String]) : ResultPackageLockEntry
   (match (build-git-dep-pin-kind alias dep)
     [(ErrPackageCachePinKind message) (ErrPackageLockEntry message)]
@@ -1294,20 +1302,27 @@
       (OkPackageLockEntry
         (PackageLockEntry
           alias
-          (struct-get dep remote)
+          (string-copy-borrowed (& (struct-get dep remote)))
           kind
-          (struct-get dep pin-value)
+          (string-copy-borrowed (& (struct-get dep pin-value)))
           commit))]))
 
 (define (build-git-dependency-at-commit
-  [dep : BuildGitDependency]
+  [dep : (& dep BuildGitDependency)]
   [commit : String]) : BuildGitDependency
-  (BuildGitDependency (struct-get dep remote) "rev" commit))
+  (BuildGitDependency
+    (string-copy-borrowed (& (struct-get dep remote)))
+    "rev"
+    commit))
 
-(define (build-git-checkout-ref [dep : BuildGitDependency]) : String
-  (if (string-eq (struct-get dep pin-kind) "branch")
-    (string-append "origin/" (struct-get dep pin-value))
-    (struct-get dep pin-value)))
+(define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
+  (let
+    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
+    (if (string-eq kind "branch")
+      (string-append
+        "origin/"
+        (string-copy-borrowed (& (struct-get dep pin-value))))
+      (string-copy-borrowed (& (struct-get dep pin-value))))))
 
 (define (build-git-executable) : String
   (source-tool-resolve-command "git"))
@@ -1411,8 +1426,14 @@
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
-    [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
-    [deps-dir : String (compiler-load-join-root-path typelisp-dir "git-deps")]
+    [typelisp-dir : String
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& target-dir))
+        "typelisp")]
+    [deps-dir : String
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& typelisp-dir))
+        "git-deps")]
     (cond
       [(not (build-mkdir-ok? target-dir))
         (ErrBuildString
@@ -1441,8 +1462,10 @@
       (file-exists? (build-github-dep-cache-manifest-path manifest-dir alias)))
     (file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
-(define (build-git-dep-rev? [dep : BuildGitDependency]) : bool
-  (string-eq (struct-get dep pin-kind) "rev"))
+(define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
+  (let
+    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
+    (string-eq kind "rev")))
 
 (define (build-package-cache-relative-root) : String
   (compiler-load-join-root-path
@@ -1461,9 +1484,18 @@
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
-    [typelisp-dir : String (compiler-load-join-root-path target-dir "typelisp")]
-    [cache-dir : String (compiler-load-join-root-path typelisp-dir "cache")]
-    [packages-dir : String (compiler-load-join-root-path cache-dir "packages")]
+    [typelisp-dir : String
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& target-dir))
+        "typelisp")]
+    [cache-dir : String
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& typelisp-dir))
+        "cache")]
+    [packages-dir : String
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& cache-dir))
+        "packages")]
     [root : String (package-cache-default-root manifest-dir)]
     (cond
       [(not (build-mkdir-ok? target-dir))
@@ -1502,7 +1534,7 @@
 (define (build-package-cache-staging-path
   [alias : String]
   [root : String]
-  [key : PackageCacheKey]
+  [key : (& key PackageCacheKey)]
   [attempt : i64]) : ResultBuildString
   (if (> attempt 16)
     (ErrBuildString
@@ -1565,7 +1597,7 @@
   [staged-path : String]
   [entry-path : String]
   [relative-entry-root : String]
-  [key : PackageCacheKey]) : ResultBuildString
+  [key : (& key PackageCacheKey)]) : ResultBuildString
   (match (package-cache-finalize-staged staged-path entry-path)
     [(OkIoUnit) (OkBuildString relative-entry-root)]
     [(ErrIoUnit error)
@@ -1579,7 +1611,7 @@
 (define (build-package-cache-write-marker
   [alias : String]
   [staged-path : String]
-  [key : PackageCacheKey]) : ResultBuildString
+  [key : (& key PackageCacheKey)]) : ResultBuildString
   (match (package-cache-write-complete-marker staged-path key)
     [(OkIoUnit) (OkBuildString staged-path)]
     [(ErrIoUnit error)
@@ -1589,7 +1621,7 @@
 (define (build-package-cache-prepare-entry-parents-result
   [alias : String]
   [root : String]
-  [key : PackageCacheKey]) : ResultBuildString
+  [key : (& key PackageCacheKey)]) : ResultBuildString
   (match (package-cache-prepare-entry-parents root key)
     [(OkIoUnit) (OkBuildString root)]
     [(ErrIoUnit error)
@@ -1598,9 +1630,9 @@
 
 (define (build-package-cache-fetch-staged
   [alias : String]
-  [dep : BuildGitDependency]
+  [dep : (& dep BuildGitDependency)]
   [root : String]
-  [key : PackageCacheKey]
+  [key : (& key PackageCacheKey)]
   [entry-path : String]
   [relative-entry-root : String]
   [replace-existing : bool]) : ResultBuildString
@@ -1617,7 +1649,9 @@
         [(OkBuildString staged-path)
           (match (build-run-captured
             (build-git-dep-error alias "git clone")
-            (build-git-clone-command (struct-get dep remote) staged-path))
+            (build-git-clone-command
+              (string-copy-borrowed (& (struct-get dep remote)))
+              staged-path))
             [(ErrBuildString message) (ErrBuildString message)]
             [(OkBuildString _)
               (match (build-run-captured
@@ -1670,16 +1704,19 @@
 (define (build-fetch-github-dependency-cached
   [manifest-dir : String]
   [alias : String]
-  [dep : BuildGitDependency]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
-    [key : PackageCacheKey
-      (PackageCacheKey (struct-get dep remote) (struct-get dep pin-value))]
+    [remote : String (string-copy-borrowed (& (struct-get dep remote)))]
+    [pin-value : String (string-copy-borrowed (& (struct-get dep pin-value)))]
+    [key : PackageCacheKey (PackageCacheKey remote pin-value)]
     [root : String (package-cache-default-root manifest-dir)]
-    [entry-path : String (package-cache-entry-path root key)]
+    [entry-path : String (package-cache-entry-path root (& key))]
+    [relative-root : String (build-package-cache-relative-root)]
     [relative-entry-root : String
       (compiler-load-normalize-path
-        (package-cache-entry-path (build-package-cache-relative-root) key))]
-    [state : PackageCacheEntryState (package-cache-entry-state entry-path key)]
+        (package-cache-entry-path (& relative-root) (& key)))]
+    [state : PackageCacheEntryState
+      (package-cache-entry-state entry-path (& key))]
     (match state
       [(PackageCacheCompleteHit _)
         (if (file-exists? (build-package-cache-manifest-path entry-path))
@@ -1691,7 +1728,7 @@
                 alias
                 dep
                 root
-                key
+                (& key)
                 entry-path
                 relative-entry-root
                 true)]))]
@@ -1703,7 +1740,7 @@
               alias
               dep
               root
-              key
+              (& key)
               entry-path
               relative-entry-root
               false)])]
@@ -1715,7 +1752,7 @@
               alias
               dep
               root
-              key
+              (& key)
               entry-path
               relative-entry-root
               true)])])))
@@ -1723,18 +1760,20 @@
 (define (build-git-clone-if-needed
   [manifest-dir : String]
   [alias : String]
-  [dep : BuildGitDependency]
+  [dep : (& dep BuildGitDependency)]
   [root : String]) : ResultBuildString
   (if (file-exists? (build-github-cache-git-dir manifest-dir alias))
     (OkBuildString root)
     (build-run-captured
       (build-git-dep-error alias "git clone")
-      (build-git-clone-command (struct-get dep remote) root))))
+      (build-git-clone-command
+        (string-copy-borrowed (& (struct-get dep remote)))
+        root))))
 
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
   [alias : String]
-  [dep : BuildGitDependency]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
     [root : String (build-github-dep-cache-root manifest-dir alias)]
     [manifest-path : String
@@ -1767,7 +1806,7 @@
 (define (build-fetch-github-dependency
   [manifest-dir : String]
   [alias : String]
-  [dep : BuildGitDependency]) : ResultBuildString
+  [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (if (not (build-github-cache-needs-git? manifest-dir alias))
     (OkBuildString (build-github-dep-relative-root alias))
     (if (build-git-dep-rev? dep)
@@ -1782,8 +1821,11 @@
   (let
     [locked-commit : String (struct-get entry commit)]
     [locked-dep : BuildGitDependency
-      (build-git-dependency-at-commit dep locked-commit)]
-    (match (build-fetch-github-dependency-cached manifest-dir alias locked-dep)
+      (build-git-dependency-at-commit (& dep) locked-commit)]
+    (match (build-fetch-github-dependency-cached
+      manifest-dir
+      alias
+      (& locked-dep))
       [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
       [(OkBuildString dep-root)
         (OkBuildResolvedGitDependency
@@ -1793,20 +1835,21 @@
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]) : ResultBuildResolvedGitDependency
-  (match (build-fetch-github-dependency manifest-dir alias dep)
+  (match (build-fetch-github-dependency manifest-dir alias (& dep))
     [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
     [(OkBuildString dep-root)
       (let
         [commit-result : ResultBuildString
-          (if (build-git-dep-rev? dep)
-            (OkBuildString (struct-get dep pin-value))
+          (if (build-git-dep-rev? (& dep))
+            (OkBuildString
+              (string-copy-borrowed (& (struct-get dep pin-value))))
             (build-resolve-git-head
               alias
               (build-absolute-dep-root manifest-dir dep-root)))]
         (match commit-result
           [(ErrBuildString message) (ErrBuildResolvedGitDependency message)]
           [(OkBuildString commit)
-            (match (build-package-lock-entry alias dep commit)
+            (match (build-package-lock-entry alias (& dep) commit)
               [(ErrPackageLockEntry message)
                 (ErrBuildResolvedGitDependency message)]
               [(OkPackageLockEntry entry)
@@ -1822,7 +1865,7 @@
   (if (build-package-lock-policy-update? lock-policy)
     (build-resolve-github-dependency-without-lock manifest-dir alias dep)
     (if (build-package-lock-policy-locked? lock-policy)
-      (match (build-package-lock-entry-status lock-entries alias dep)
+      (match (build-package-lock-entry-status lock-entries alias (& dep))
         [(BuildPackageLockEntryMatched entry)
           (build-resolve-github-dependency-from-lock
             manifest-dir
@@ -1835,7 +1878,7 @@
         [(BuildPackageLockEntryStale)
           (ErrBuildResolvedGitDependency
             (build-package-lock-stale-message alias))])
-      (match (build-package-lock-matching-entry lock-entries alias dep)
+      (match (build-package-lock-matching-entry lock-entries alias (& dep))
         [(BuildSomeLockEntry entry)
           (build-resolve-github-dependency-from-lock
             manifest-dir
@@ -1853,24 +1896,29 @@
   (let
     [path : String (struct-get dep path)]
     [alias : String (struct-get dep alias)]
-    (if (compiler-load-github-dependency-path? path)
-      (match (build-parse-git-dependency alias path)
-        [(ErrBuildGitDependency message) (ErrBuildResolvedPkgDep message)]
-        [(OkBuildGitDependency git-dep)
-          (match (build-resolve-github-dependency
-            manifest-dir
-            alias
-            git-dep
-            lock-entries
-            lock-policy)
-            [(ErrBuildResolvedGitDependency message)
-              (ErrBuildResolvedPkgDep message)]
-            [(OkBuildResolvedGitDependency resolved)
-              (OkBuildResolvedPkgDep
-                (BuildResolvedPkgDep
-                  (CompilerPkgDep alias (struct-get resolved dep-root))
-                  (BuildSomeLockEntry (struct-get resolved lock-entry))))])])
-      (OkBuildResolvedPkgDep (BuildResolvedPkgDep dep (BuildNoLockEntry))))))
+    [path-for-kind : String (string-copy-borrowed (& path))]
+    (if (compiler-load-github-dependency-path? path-for-kind)
+      (let
+        [parse-alias : String (string-copy-borrowed (& alias))]
+        [parse-path : String (string-copy-borrowed (& path))]
+        (match (build-parse-git-dependency parse-alias parse-path)
+          [(ErrBuildGitDependency message) (ErrBuildResolvedPkgDep message)]
+          [(OkBuildGitDependency git-dep)
+            (match (build-resolve-github-dependency
+              manifest-dir
+              (string-copy-borrowed (& alias))
+              git-dep
+              lock-entries
+              lock-policy)
+              [(ErrBuildResolvedGitDependency message)
+                (ErrBuildResolvedPkgDep message)]
+              [(OkBuildResolvedGitDependency resolved)
+                (OkBuildResolvedPkgDep
+                  (BuildResolvedPkgDep
+                    (CompilerPkgDep alias (struct-get resolved dep-root))
+                    (BuildSomeLockEntry (struct-get resolved lock-entry))))])]))
+      (OkBuildResolvedPkgDep
+        (BuildResolvedPkgDep (CompilerPkgDep alias path) (BuildNoLockEntry))))))
 
 (define (build-package-resolve-dep
   [manifest-dir : String]
@@ -2274,9 +2322,9 @@
       [(OkBuildPackageGraphState state)
         (OkBuildPackageGraph (BuildPackageGraph (struct-get state order)))])))
 
-(define (build-mkdir-ok? [path : String]) : bool
+(define (build-mkdir-ok? [path : (& path str)]) : bool
   (let
-    [status : i64 (fs-mkdir-status (& path))]
+    [status : i64 (fs-mkdir-status path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
 (define (build-ensure-package-output-dirs
@@ -2286,7 +2334,9 @@
   (let
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [profile-dir : String
-      (compiler-load-join-root-path target-dir (build-profile-name profile))]
+      (compiler-load-join-root-path
+        (string-copy-borrowed (& target-dir))
+        (build-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
 ;: Resolve a manifest `search-paths` value against the manifest directory.
@@ -2448,6 +2498,34 @@
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolDirectObjectStatus
+  (match (build-package-try-render-linux-direct-object
+    kind
+    target
+    opt-level
+    mode
+    emit-entry
+    crt-entry
+    decls
+    paths)
+    [(OkSourceToolString obj)
+      (build-package-write-linux-direct-object-artifact
+        kind
+        target
+        obj-path
+        artifact-path
+        link-inputs
+        obj)]
+    [(ErrSourceToolString message) (SourceToolDirectObjectUnavailable message)]))
+
+(define (build-package-try-render-linux-direct-object
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultSourceToolString
   (if (and
     (source-tool-linux-direct-object-enabled?)
     (compiler-backend-target-linux? target))
@@ -2462,20 +2540,10 @@
       decls
       paths)
       [(OkCompilerDriverObject image)
-        (match (build-package-render-linux-direct-object kind image)
-          [(OkSourceToolString obj)
-            (build-package-write-linux-direct-object-artifact
-              kind
-              target
-              obj-path
-              artifact-path
-              link-inputs
-              obj)]
-          [(ErrSourceToolString message)
-            (SourceToolDirectObjectUnavailable message)])]
+        (build-package-render-linux-direct-object kind image)]
       [(ErrCompilerDriverObject diag)
-        (SourceToolDirectObjectUnavailable (compiler-diagnostic-render diag))])
-    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
+        (ErrSourceToolString (compiler-diagnostic-render diag))])
+    (ErrSourceToolString "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
@@ -2635,15 +2703,41 @@
 (define (build-package-tlci-export-name [module : String] [name : String]) : String
   (compiler-symbol-module-key module name))
 
-(define (build-package-tlci-owned-path? [owner : String] [path : String]) : bool
+(define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
   (if (= (string-length owner) 0)
-    true
+    false
     (let
-      [prefix : String (str-cat owner "/")]
+      [prefix : String (str-cat owner "/stdlib/")]
       [prefix-len : i64 (string-length prefix)]
       (and
         (>= (string-length path) prefix-len)
         (string-eq (substring path 0 prefix-len) prefix)))))
+
+(define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
+  (or
+    (compiler-load-stdlib-import? path)
+    (build-package-tlci-owner-stdlib-path? owner path)))
+
+(define (build-package-tlci-owned-path? [owner : String] [path : String]) : bool
+  (if (build-package-tlci-stdlib-path? owner path)
+    false
+    (if (= (string-length owner) 0)
+      true
+      (let
+        [prefix : String (str-cat owner "/")]
+        [prefix-len : i64 (string-length prefix)]
+        (and
+          (>= (string-length path) prefix-len)
+          (string-eq (substring path 0 prefix-len) prefix))))))
+
+(define (build-package-tlci-export-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclExport _) true]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (build-package-tlci-export-decl? inner))]
+    [_ false]))
 
 (define (build-package-tlci-path-head [paths : AstDeclPathList]) : String
   (match paths
@@ -3105,17 +3199,36 @@
         [(OkBuildPackageTlciExportState state)
           (OkTlciExportList (struct-get state tlci-exports))])]))
 
+(define (build-package-tlci-has-owned-exports?
+  [owner : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String (build-package-tlci-path-head paths)]
+        [rest-paths : AstDeclPathList (build-package-tlci-path-tail paths)]
+        (if (and
+          (build-package-tlci-export-decl? decl)
+          (build-package-tlci-owned-path? owner decl-path))
+          true
+          (build-package-tlci-has-owned-exports? owner rest rest-paths)))]))
+
 (define (build-package-tlci-exports
   [owner : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTlciExportList
-  (match (typecheck-compiler-program-with-paths-checked
-    (ast-program decls)
-    paths)
-    [(ErrCompilerTypecheckChecked diag)
-      (ErrTlciExportList (compiler-diagnostic-render diag))]
-    [(OkCompilerTypecheckChecked _ ctx top-env)
-      (build-package-tlci-exports-from-checked owner decls paths ctx top-env)]))
+  (if (not (build-package-tlci-has-owned-exports? owner decls paths))
+    (OkTlciExportList TlciExportNil)
+    (match (typecheck-compiler-program-with-paths-checked
+      (ast-program decls)
+      paths)
+      [(ErrCompilerTypecheckChecked diag)
+        (ErrTlciExportList (compiler-diagnostic-render diag))]
+      [(OkCompilerTypecheckChecked _ ctx top-env)
+        (build-package-tlci-exports-from-checked owner decls paths ctx top-env)])))
 
 (define (build-package-tlci-metadata
   [manifest : CompilerPkgManifest]
@@ -3148,27 +3261,43 @@
   [needle : String]) : bool
   (string-contains (& haystack) (& needle)))
 
-(define (build-package-write-tlci
-  [path : String]
+(defenum ResultBuildPackageTlciText
+  (OkBuildPackageTlciText String)
+  (ErrBuildPackageTlciText String))
+
+(define (build-package-tlci-text
   [manifest : CompilerPkgManifest]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : SourceToolCommandStatus
+  [paths : AstDeclPathList]) : ResultBuildPackageTlciText
   (match (build-package-tlci-metadata manifest decls paths)
     [(ErrTlciMetadata message)
-      (SourceToolCommandErr
+      (ErrBuildPackageTlciText
         (str-cat "build: failed to build package tlci metadata: " message))]
     [(OkTlciMetadata metadata)
       (match (tlci-emit-image (build-package-tlci-image metadata))
         [(ErrTlciBytes message)
-          (SourceToolCommandErr
+          (ErrBuildPackageTlciText
             (str-cat "build: failed to emit package tlci: " message))]
         [(OkTlciBytes bytes)
-          (source-tool-write-file
-            path
-            (tlci-bytes->string bytes 0 (array-length bytes))
-            "build: failed to write package tlci")])]))
+          (OkBuildPackageTlciText
+            (tlci-bytes->string bytes 0 (array-length bytes)))])]))
+
+(define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
+  (source-tool-write-file path text "build: failed to write package tlci"))
+
+(define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
+  (match paths
+    [(AstDeclPathNil) AstDeclPathNil]
+    [(AstDeclPathCons path rest)
+      (let
+        [tail : AstDeclPathList
+          (build-package-doctest-paths owner (box-get rest))]
+        (if (build-package-tlci-stdlib-path? owner path)
+          tail
+          (ast-decl-path-cons path tail)))]))
 
 (define (build-package-closure-doctest-status
+  [owner : String]
   [entry-path : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
@@ -3188,7 +3317,7 @@
         1)]
     [(OkCompilerLoadWithPaths _ paths _ _)
       (build-doctest-typecheck-package-paths
-        paths
+        (build-package-doctest-paths owner paths)
         stdlib-roots
         manifest-dir
         deps)]))
@@ -3223,7 +3352,7 @@
 
 (define (build-package-tlci-export-test-paths) : AstDeclPathList
   (build-package-tlci-export-test-paths-repeat
-    "stdlib/core_macros.tl"
+    "tlci_meta/stdlib/core_macros.tl"
     3
     (build-package-tlci-export-test-paths-repeat
       "tlci_meta/src/lib.tl"
@@ -3271,11 +3400,51 @@
                         emitted
                         "stdlib.core_macros"))))]))])]))
 
+(define (build-package-tlci-bin-metadata-exports-ok?) : bool
+  (match (parse-ast-source (build-package-tlci-export-test-source))
+    [(ErrAstProgram _) false]
+    [(OkAstProgram program)
+      (match program
+        [(AstProgram decls-box)
+          (match (build-package-tlci-metadata
+            (CompilerPkgManifest
+              "tlci_meta"
+              "0.1.0"
+              (CompilerPkgKindBin)
+              "src/main.tl"
+              (compiler-pkg-deps-empty)
+              (compiler-pkg-link-empty))
+            (box-get decls-box)
+            (build-package-tlci-export-test-paths))
+            [(ErrTlciMetadata _) false]
+            [(OkTlciMetadata metadata)
+              (let
+                [emitted : String (tlci-metadata-emit metadata)]
+                (and
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(package (name \"tlci_meta\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")))])])]))
+
 (test
   build-package-tlci-export-metadata-smoke
   (unless
     (build-package-tlci-export-metadata-smoke-ok?)
     (panic "build package tlci export metadata smoke failed")))
+
+(test
+  build-package-tlci-bin-metadata-exports
+  (unless
+    (build-package-tlci-bin-metadata-exports-ok?)
+    (panic "build package tlci bin metadata exports failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]
@@ -3325,119 +3494,140 @@
         [dep-link-inputs : SourceToolLinkInputs
           (source-tool-link-inputs-from-archives dep-libs)]
         [emit-entry : bool (build-package-kind-entry? kind)]
-        [doctest-status : i64
-          (build-package-closure-doctest-status
-            entry-path
-            target
-            stdlib-roots
-            manifest-dir
-            (struct-get manifest deps)
-            emit-entry)]
-        (if (= doctest-status 0)
-          (begin
-            (compiler-driver-reset-file-state!)
-            (match (compiler-driver-load-package-file-with-runtime-owned
-              entry-path
-              target
-              stdlib-roots
-              manifest-dir
-              name
-              (struct-get manifest deps)
-              emit-entry)
-              [(ErrCompilerLoadWithPaths diag)
-                (begin
-                  (print-error (compiler-diagnostic-render diag))
-                  1)]
-              [(OkCompilerLoadWithPaths decls paths _ _)
-                (let
-                  [metadata-link-inputs : SourceToolLinkInputs
-                    (source-tool-link-inputs-from-decls
-                      decls
-                      (source-tool-link-inputs-empty))]
-                  ;; Merge order: manifest all-target/target inputs, source extern
-                  ;; metadata, then dependency archives (kept positional after the
-                  ;; requested libraries/args).
-                  [effective-link-inputs : SourceToolLinkInputs
-                    (source-tool-link-inputs-merge
-                      (source-tool-link-inputs-merge
-                        manifest-link-inputs
-                        metadata-link-inputs)
-                      dep-link-inputs)]
-                  [crt-entry : bool
-                    (and
-                      emit-entry
-                      (source-tool-linux-crt-entry?
-                        target
-                        effective-link-inputs))]
-                  (match (compiler-driver-emit-package-loaded
-                    ""
-                    target
-                    true
-                    opt-level
-                    mode
-                    emit-entry
-                    crt-entry
-                    decls
-                    paths)
-                    [(ErrCompilerDriver diag)
+        (match (compiler-driver-load-package-file-with-runtime
+          entry-path
+          target
+          stdlib-roots
+          manifest-dir
+          (struct-get manifest deps)
+          emit-entry)
+          [(ErrCompilerLoadWithPaths diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)]
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (let
+              [owned-paths : AstDeclPathList
+                (compiler-load-package-owned-paths-for-decls
+                  name
+                  manifest-dir
+                  stdlib-roots
+                  entry-path
+                  decls
+                  paths)]
+              [metadata-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-from-decls
+                  decls
+                  (source-tool-link-inputs-empty))]
+              ;; Merge order: manifest all-target/target inputs, source extern
+              ;; metadata, then dependency archives (kept positional after the
+              ;; requested libraries/args).
+              [effective-link-inputs : SourceToolLinkInputs
+                (source-tool-link-inputs-merge
+                  (source-tool-link-inputs-merge
+                    manifest-link-inputs
+                    metadata-link-inputs)
+                  dep-link-inputs)]
+              [crt-entry : bool
+                (and
+                  emit-entry
+                  (source-tool-linux-crt-entry? target effective-link-inputs))]
+              (match (compiler-driver-emit-package-loaded
+                ""
+                target
+                true
+                opt-level
+                mode
+                emit-entry
+                crt-entry
+                decls
+                owned-paths)
+                [(ErrCompilerDriver diag)
+                  (begin
+                    (print-error (compiler-diagnostic-render diag))
+                    1)]
+                [(OkCompilerDriver asm)
+                  (match (build-package-tlci-text manifest decls owned-paths)
+                    [(ErrBuildPackageTlciText message)
                       (begin
-                        (print-error (compiler-diagnostic-render diag))
+                        (print-error message)
                         1)]
-                    [(OkCompilerDriver asm)
-                      (match (source-tool-write-file
-                        asm-path
-                        (source-tool-augment-assembly-for-target asm target)
-                        "build: failed to write package assembly")
-                        [(SourceToolCommandErr message)
-                          (begin
-                            (print-error message)
-                            1)]
-                        [(SourceToolCommandOk)
-                          (match (build-package-artifact-status
+                    [(OkBuildPackageTlciText tlci-text)
+                      (let
+                        [direct-object : ResultSourceToolString
+                          (build-package-try-render-linux-direct-object
                             kind
                             target
+                            opt-level
+                            mode
+                            emit-entry
+                            crt-entry
+                            decls
+                            owned-paths)]
+                        [_reset-before-doctests : unit
+                          (compiler-driver-reset-file-state!)]
+                        [doctest-status : i64
+                          (build-doctest-typecheck-package-paths
+                            (build-package-doctest-paths name paths)
+                            stdlib-roots
+                            manifest-dir
+                            (struct-get manifest deps))]
+                        (if (= doctest-status 0)
+                          (match (source-tool-write-file
                             asm-path
-                            obj-path
-                            artifact-path
-                            effective-link-inputs
-                            (build-package-try-linux-direct-object
-                              kind
-                              target
-                              opt-level
-                              mode
-                              emit-entry
-                              crt-entry
-                              decls
-                              paths
-                              obj-path
-                              artifact-path
-                              effective-link-inputs))
+                            (source-tool-augment-assembly-for-target asm target)
+                            "build: failed to write package assembly")
                             [(SourceToolCommandErr message)
                               (begin
                                 (print-error message)
                                 1)]
                             [(SourceToolCommandOk)
-                              (match (build-package-write-tlci
-                                tlci-path
-                                manifest
-                                decls
-                                paths)
-                                [(SourceToolCommandErr message)
-                                  (begin
-                                    (print-error message)
-                                    1)]
-                                [(SourceToolCommandOk)
-                                  (begin
-                                    (print-string
-                                      (string-append
-                                        "Built "
-                                        (string-append artifact-path "\n")))
-                                    (print-string
-                                      (string-append
-                                        "Built "
-                                        (string-append tlci-path "\n")))
-                                    0)])])])]))]))
-          doctest-status)))))
+                              (let
+                                [direct-status : SourceToolDirectObjectStatus
+                                  (match direct-object
+                                    [(OkSourceToolString obj)
+                                      (build-package-write-linux-direct-object-artifact
+                                        kind
+                                        target
+                                        obj-path
+                                        artifact-path
+                                        effective-link-inputs
+                                        obj)]
+                                    [(ErrSourceToolString message)
+                                      (SourceToolDirectObjectUnavailable
+                                        message)])]
+                                (match (build-package-artifact-status
+                                  kind
+                                  target
+                                  asm-path
+                                  obj-path
+                                  artifact-path
+                                  effective-link-inputs
+                                  direct-status)
+                                  [(SourceToolCommandErr message)
+                                    (begin
+                                      (print-error message)
+                                      1)]
+                                  [(SourceToolCommandOk)
+                                    (match (build-package-write-tlci
+                                      tlci-path
+                                      tlci-text)
+                                      [(SourceToolCommandErr message)
+                                        (begin
+                                          (print-error message)
+                                          1)]
+                                      [(SourceToolCommandOk)
+                                        (begin
+                                          (print-string
+                                            (string-append
+                                              "Built "
+                                              (string-append artifact-path "\n")))
+                                          (print-string
+                                            (string-append
+                                              "Built "
+                                              (string-append tlci-path "\n")))
+                                          0)])]))])
+                          doctest-status))])]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))

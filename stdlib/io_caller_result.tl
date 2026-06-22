@@ -3,8 +3,10 @@
 ;# This module stays separate from `io.tl` while the compatibility wrapper keeps
 ;# the owned `String` API. It exposes helpers that may return caller-provided
 ;# fallback text without copying.
-(import "io.tl")
-(import "string.tl")
+(module stdlib.io_caller_result)
+
+(import stdlib.io)
+(import stdlib.string)
 
 ;: Result for `read-file-or-result`.
 ;:
@@ -43,7 +45,7 @@
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
   (if (read-file-or-result-owned? result)
     (struct-get result owned)
-    (string-copy-borrowed (struct-get result fallback))))
+    (string.string-copy-borrowed (struct-get result fallback))))
 
 ;: Read `path`, returning fresh active-arena contents on success or a borrow of
 ;: `fallback` on any structured read error.
@@ -54,10 +56,10 @@
     [result : (ReadFileOrResult fallback)
       (read-file-or-borrowed-result fallback)]
     (begin
-      (match (try-read-file path)
-        [(OkIoString contents)
+      (match (io.try-read-file path)
+        [(io.OkIoString contents)
           (set! result (read-file-or-owned-result-like fallback contents))]
-        [(ErrIoString _) unit])
+        [(io.ErrIoString _) unit])
       result)))
 
 ;: Inline test helper that forces an IO caller-result test failure.
@@ -68,7 +70,7 @@
 
 ;: Inline test assertion for owned string equality.
 (define (io-caller-result-test-string-eq [actual : String] [expected : String]) : unit
-  (if (string-eq actual expected)
+  (if (string.string-eq actual expected)
     unit
     (io-caller-result-test-fail)))
 
@@ -100,3 +102,16 @@
       (io-caller-result-test-string-eq
         (read-file-or-result-string manual-owned)
         "contents"))))
+
+(export
+  (value read-file-or-result-borrowed?)
+  (value read-file-or-result-owned?)
+  (value read-file-or-borrowed-result)
+  (value read-file-or-owned-result-like)
+  (value read-file-or-result-string)
+  (value read-file-or-result)
+  (type ReadFileOrResult)
+  (constructor ReadFileOrResult)
+  (field ReadFileOrResult fallback)
+  (field ReadFileOrResult owned)
+  (field ReadFileOrResult is-owned))

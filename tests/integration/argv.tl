@@ -1,4 +1,5 @@
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 ; refs #215: compiled programs can observe argc/argv preserved from _tl_start.
 (define (main) : i64

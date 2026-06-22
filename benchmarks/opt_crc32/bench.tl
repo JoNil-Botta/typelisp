@@ -9,6 +9,7 @@
 ;# arguments; the accumulator stays in [0, 2^32) so its printed decimal matches
 ;# the C baseline.
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define crc-low-mask : i64
   4294967295)

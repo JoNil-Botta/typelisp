@@ -1,4 +1,4 @@
-(import "stdlib/core_macros.tl" module stdlib.core_macros as core)
+(import stdlib.core_macros as core)
 
 (defenum Expr
   (ECoreMacroShadow i64))

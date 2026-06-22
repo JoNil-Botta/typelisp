@@ -5,7 +5,7 @@
 ;# `stdlib/vector.tl`.
 ;#
 ;# ```typelisp
-;# (import "stdlib/vector_family.tl")
+;# (import stdlib.vector_family as vf)
 ;#
 ;# (defstruct Point
 ;#   (x i64))
@@ -13,13 +13,15 @@
 ;# (defstruct Token
 ;#   (id i64))
 ;#
-;# (vector-family Point PointVec point-vec)
-;# (vector-family Token TokenVec token-vec)
+;# (vf.vector-family Point PointVec point-vec)
+;# (vf.vector-family Token TokenVec token-vec)
 ;#
 ;# (define (main) : i64
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
+(module stdlib.vector_family)
+
 ;: Emit a named growable vector family for element type `T`.
 ;:
 ;: `(vector-family Point PointVec point-vec)` defines `PointVec` plus

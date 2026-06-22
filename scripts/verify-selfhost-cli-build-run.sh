@@ -42,6 +42,32 @@ WORKDIR="$ROOT/target/selfhost-cli-build-run"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+HEARTBEAT_PID=
+
+stop_heartbeat() {
+    if [ -n "${HEARTBEAT_PID:-}" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+        HEARTBEAT_PID=
+    fi
+}
+
+start_heartbeat() {
+    (
+        start=$(date +%s)
+        while :; do
+            sleep 60
+            now=$(date +%s)
+            elapsed=$((now - start))
+            echo "[selfhost-cli-build-run] still running (${elapsed}s)"
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+
+trap stop_heartbeat EXIT INT TERM
+start_heartbeat
+
 CLI_SURFACE_MANIFEST="$ROOT/tests/public-tools/cli-command-surface.txt"
 CLI_SURFACE_DIR="$WORKDIR/cli-surface"
 CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"

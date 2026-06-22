@@ -8,6 +8,7 @@
 ;# reduced modulo a prime so they stay non-negative and the printed decimal
 ;# matches the C baseline. The round count is a runtime argument.
 (import "stdlib/io.tl")
+(import "stdlib/string.tl")
 
 (define vm-prime : i64
   1000000007)

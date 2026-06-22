@@ -62,13 +62,26 @@ tl_current_arena:
 
 .text
 .globl _tl_start
+.globl _tl_stdlib_runtime_runtime_string_length
+_tl_stdlib_runtime_runtime_string_length:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $32, %rsp
+    movq %rdi, -8(%rbp)
+.Lf0_entry:
+    movq -8(%rbp), %r10
+    movq 8(%r10), %rax
+    movq %rax, -24(%rbp)
+    leave
+    ret
+
 .globl _tl_stdlib_runtime_runtime_ptr_arg
 _tl_stdlib_runtime_runtime_ptr_arg:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
     movq %rdi, -8(%rbp)
-.Lf0_entry:
+.Lf1_entry:
     movq -8(%rbp), %rax
     movq %rax, -16(%rbp)
     leave
@@ -82,7 +95,7 @@ _tl_stdlib_runtime_runtime_os_write:
     movq %rdi, -8(%rbp)
     movq %rsi, -16(%rbp)
     movq %rdx, -24(%rbp)
-.Lf1_entry:
+.Lf2_entry:
     movq -16(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_ptr_arg
     movq %rax, -48(%rbp)
@@ -101,7 +114,7 @@ _tl_stdlib_runtime_runtime_os_exit:
     movq %rsp, %rbp
     subq $32, %rsp
     movq %rdi, -8(%rbp)
-.Lf2_entry:
+.Lf3_entry:
     movl $231, %eax
     movq -8(%rbp), %rdi
     syscall
@@ -116,17 +129,18 @@ _tl_stdlib_runtime_runtime_abort_write:
     movq %rsp, %rbp
     subq $80, %rsp
     movq %rdi, -8(%rbp)
-.Lf3_entry:
+.Lf4_entry:
+    movq -8(%rbp), %rdi
+    call _tl_stdlib_runtime_runtime_string_length
+    movq %rax, -16(%rbp)
     movq -8(%rbp), %r10
-    movq 8(%r10), %rax
-    movq %rax, -24(%rbp)
     movq (%r10), %rax
-    movq %rax, -48(%rbp)
+    movq %rax, -40(%rbp)
     movl $2, %edi
-    movq -48(%rbp), %rsi
-    movq -24(%rbp), %rdx
+    movq -40(%rbp), %rsi
+    movq -16(%rbp), %rdx
     call _tl_stdlib_runtime_runtime_os_write
-    movq %rax, -72(%rbp)
+    movq %rax, -64(%rbp)
     leave
     ret
 
@@ -135,7 +149,7 @@ tl_oob_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf4_entry:
+.Lf5_entry:
     leaq .L_tl_str_l30_684964583_949472601(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
@@ -150,7 +164,7 @@ tl_div_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf5_entry:
+.Lf6_entry:
     leaq .L_tl_str_l40_150886025_1314050685(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
@@ -165,7 +179,7 @@ tl_shift_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf6_entry:
+.Lf7_entry:
     leaq .L_tl_str_l29_1993323280_919009571(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
@@ -181,7 +195,7 @@ tl_abort_string:
     movq %rsp, %rbp
     subq $32, %rsp
     movq %rdi, -8(%rbp)
-.Lf7_entry:
+.Lf8_entry:
     movq -8(%rbp), %rdi
     call _tl_stdlib_runtime_runtime_abort_write
     movq %rax, -16(%rbp)
@@ -197,16 +211,16 @@ tl_array_fill8:
     movq %rdi, -8(%rbp)
     movq %rsi, -16(%rbp)
     movq %rdx, -24(%rbp)
-.Lf8_entry:
+.Lf9_entry:
     movq -8(%rbp), %rax
     movq %rax, -32(%rbp)
     movq $0, -48(%rbp)
-.Lf8_while_header.0:
+.Lf9_while_header.0:
     movq -48(%rbp), %rax
     movq -16(%rbp), %r8
     cmpq %r8, %rax
-    jge .Lf8_while_exit.2
-.Lf8_while_body.1:
+    jge .Lf9_while_exit.2
+.Lf9_while_body.1:
     movq -32(%rbp), %r10
     movq -48(%rbp), %r8
     movq -24(%rbp), %rax
@@ -214,8 +228,8 @@ tl_array_fill8:
     movq -48(%rbp), %rax
     addq $1, %rax
     movq %rax, -48(%rbp)
-    jmp .Lf8_while_header.0
-.Lf8_while_exit.2:
+    jmp .Lf9_while_header.0
+.Lf9_while_exit.2:
     leave
     ret
 
@@ -226,7 +240,7 @@ tl_array_zero:
     subq $224, %rsp
     movq %rdi, -8(%rbp)
     movq %rsi, -16(%rbp)
-.Lf9_entry:
+.Lf10_entry:
     movq -16(%rbp), %rax
     movq %rax, %r10
     movq %rax, %r11
@@ -245,34 +259,34 @@ tl_array_zero:
     movq $0, -88(%rbp)
     movq -56(%rbp), %rax
     movq %rax, -96(%rbp)
-.Lf9_while_header.0:
+.Lf10_while_header.0:
     movq -88(%rbp), %rax
     movq -40(%rbp), %r8
     cmpq %r8, %rax
-    jge .Lf9_while_exit.2
-.Lf9_while_body.1:
+    jge .Lf10_while_exit.2
+.Lf10_while_body.1:
     movq -72(%rbp), %r10
     movq -88(%rbp), %r8
     movq $0, (%r10,%r8,8)
     movq -88(%rbp), %rax
     addq $1, %rax
     movq %rax, -88(%rbp)
-    jmp .Lf9_while_header.0
-.Lf9_while_exit.2:
-.Lf9_while_header.3:
+    jmp .Lf10_while_header.0
+.Lf10_while_exit.2:
+.Lf10_while_header.3:
     movq -96(%rbp), %rax
     movq -16(%rbp), %r8
     cmpq %r8, %rax
-    jge .Lf9_while_exit.5
-.Lf9_while_body.4:
+    jge .Lf10_while_exit.5
+.Lf10_while_body.4:
     movq -8(%rbp), %r10
     movq -96(%rbp), %r8
     movb $0, (%r10,%r8,1)
     movq -96(%rbp), %rax
     addq $1, %rax
     movq %rax, -96(%rbp)
-    jmp .Lf9_while_header.3
-.Lf9_while_exit.5:
+    jmp .Lf10_while_header.3
+.Lf10_while_exit.5:
     leave
     ret
 
@@ -281,7 +295,7 @@ tl_region_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf10_entry:
+.Lf11_entry:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
@@ -296,7 +310,7 @@ tl_oom_abort:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
-.Lf11_entry:
+.Lf12_entry:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
@@ -311,7 +325,7 @@ _tl_helper_helper:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf12_entry:
+.Lf13_entry:
     movl $38, %eax
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
@@ -323,7 +337,7 @@ main:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-.Lf13_entry:
+.Lf14_entry:
     call _tl_helper_helper
     movq %rax, -8(%rbp)
     movq _tl_shared_shared(%rip), %r8

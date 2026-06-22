@@ -81,9 +81,9 @@
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
-;: Emit a generated growable vector module for element type `T`.
 (module stdlib.vector)
 
+;: Emit a generated growable vector module for element type `T`.
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr

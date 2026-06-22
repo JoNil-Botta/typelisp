@@ -20,6 +20,8 @@
 ;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
 ;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
 ;# ```
+(module stdlib.vector_family)
+
 ;: Emit a named growable vector family for element type `T`.
 ;:
 ;: `(vector-family Point PointVec point-vec)` defines `PointVec` plus
@@ -28,8 +30,6 @@
 ;: `point-vec-set!`, and private copy/grow helpers. Use this helper when a
 ;: module needs more than one concrete vector instantiation or when stable
 ;: prefixed names are clearer than the one-instantiation `(vector T)` surface.
-(module stdlib.vector_family)
-
 (defmacro (vector-family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
   (match prefix
     [(ExprVar base)

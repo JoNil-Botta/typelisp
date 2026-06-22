@@ -87,9 +87,9 @@
 ;# handle types land (#182/#1632). The public helpers are wrappers over raw
 ;# runtime externs so this module stays formatter-stable until extern metadata
 ;# formatting is fixed (#1827).
-;: Runtime hook backing `arena-make`.
 (module stdlib.arena)
 
+;: Runtime hook backing `arena-make`.
 (extern (tl_arena_make) : i64)
 
 ;: Runtime hook backing `arena-make-atomic`.

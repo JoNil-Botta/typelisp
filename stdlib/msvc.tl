@@ -1033,11 +1033,13 @@
           (msvc-test-assert-string-eq (struct-get sdk version) "10.0.2"))]
       [(MsvcNoSdk) (msvc-test-fail)])))
 
+;: Inline test: verify the default toolset parent candidate list.
 (define (msvc-test-candidates-main) : unit
   (msvc-test-assert-i64-eq
     (vector.string-vec-len (msvc-toolset-parent-candidates))
     8))
 
+;: Inline test: scan a minimal fake toolset parent directory.
 (define (msvc-test-toolset-scan-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1048,6 +1050,7 @@
       (msvc-test-mkdir toolset-parent)
       (msvc-test-assert-toolset-scan toolset-parent))))
 
+;: Inline test fixture: create fake toolset versions without scanning them.
 (define (msvc-test-toolset-fixture-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1061,6 +1064,7 @@
       (msvc-test-make-toolset-version toolset-parent "14.99.0" false)
       unit)))
 
+;: Inline test: choose the newest complete fake toolset version.
 (define (msvc-test-toolset-find-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1086,6 +1090,7 @@
               (msvc-test-assert (not (string.string-eq old-root new-root))))]
           [(MsvcNoToolset) (msvc-test-fail)])))))
 
+;: Inline test: read back fake toolset directory entries.
 (define (msvc-test-toolset-read-dir-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1105,6 +1110,7 @@
             (msvc-test-assert (vector.string-vec-contains? entries "14.99.0")))]
         [(fs.ErrIoStringVec _) (msvc-test-fail)]))))
 
+;: Inline test: scan already-read fake toolset entries.
 (define (msvc-test-toolset-scan-entries-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1142,6 +1148,7 @@
               [(MsvcNoToolset) (msvc-test-fail)])]
           [(fs.ErrIoStringVec _) (msvc-test-fail)])))))
 
+;: Inline test: choose the newest complete fake Windows SDK version.
 (define (msvc-test-sdk-scan-main) : unit
   (let
     [prefix : String "typelisp msvc vector scan"]
@@ -1152,6 +1159,7 @@
       (msvc-test-mkdir sdk-root)
       (msvc-test-assert-sdk-scan sdk-root))))
 
+;: Inline test entry point for the MSVC discovery API.
 (define (msvc-test-api-main) : unit
   (begin
     (msvc-test-candidates-main)

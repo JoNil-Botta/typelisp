@@ -19,12 +19,12 @@
 ;# (define (main) : i64
 ;#   (math.math-i64-clamp (math.math-i64-abs -50) 0 42))
 ;# ```
+(module stdlib.math)
+
 ;: Return the absolute value of an `i64`.
 ;:
 ;: The positive magnitude of the most-negative `i64` is not representable, so
 ;: that value is returned unchanged. Use `math-i64-abs-or` to choose a fallback.
-(module stdlib.math)
-
 (define (math-i64-abs [value : i64]) : i64
   (stdlib.math.math-i64-abs-or value value))
 

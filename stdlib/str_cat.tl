@@ -28,12 +28,15 @@
 (define (string-append [left : String] [right : String]) : String
   (string.string-append left right))
 
+;: Local alias for three-part string concatenation.
 (define (string-concat3 [a : String] [b : String] [c : String]) : String
   (string.string-concat3 a b c))
 
+;: Local alias for four-part string concatenation.
 (define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
   (string.string-concat4 a b c d))
 
+;: Local alias for five-part string concatenation.
 (define (string-concat5
   [a : String]
   [b : String]
@@ -42,9 +45,11 @@
   [e : String]) : String
   (string.string-concat5 a b c d e))
 
+;: Local alias for concatenating a packed dynamic string array.
 (define (string-concat-all [parts : (Array String)]) : String
   (string.string-concat-all parts))
 
+;: Local alias for appending one part into a packed concatenation array.
 (define (string-concat-all-pack-part
   [parts : (Array String)]
   [index : i64]

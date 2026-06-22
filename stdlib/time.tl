@@ -14,9 +14,9 @@
 ;#     [(time.OkTimeMs ms) (if (> ms 0) 42 1)]
 ;#     [(time.ErrTimeMs _) 2]))
 ;# ```
-;: Recoverable time source error.
 (module stdlib.time)
 
+;: Recoverable time source error.
 (defenum TimeError
   (TimeUnavailable String))
 

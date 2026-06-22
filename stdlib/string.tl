@@ -15,9 +15,9 @@
 ;#     [needle : String "ph"]
 ;#     (string.string-contains (& haystack) (& needle))))
 ;# ```
-;: Runtime bounds-check trap shared with array/string indexing.
 (module stdlib.string)
 
+;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
 
 ;: Runtime helper that builds a borrowed string view record without copying

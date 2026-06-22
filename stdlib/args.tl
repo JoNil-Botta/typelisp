@@ -366,6 +366,7 @@
     (args-option-list-reverse (struct-get state options))
     (list.string-list-reverse (struct-get state positionals))))
 
+;: Finish parser field accumulators into the public ordered result.
 (define (args-parse-finish-fields
   [options : ArgsOptionList]
   [positionals : list.StringList]) : ArgsParsed
@@ -541,6 +542,7 @@
             (list.StringCons current (box positionals))
             stop-options)]))))
 
+;: Bridge an `ArgsParseState` into the field-based array parser loop.
 (define (args-parse-array-loop
   [specs : ArgsOptionSpecList]
   [argv : (Array String)]
@@ -711,6 +713,7 @@
             (list.StringCons current (box positionals))
             stop-options)]))))
 
+;: Bridge an `ArgsParseState` into the field-based process argv parser loop.
 (define (args-parse-argv-loop
   [specs : ArgsOptionSpecList]
   [index : i64]

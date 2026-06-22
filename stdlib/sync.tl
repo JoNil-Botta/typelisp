@@ -161,60 +161,79 @@
   (ChannelStringRecvOk String)
   (ChannelStringRecvErr i64))
 
+;: Construct a successful `channel-i64-send` result.
 (define (channel-i64-send-ok-result) : ChannelI64SendResult
   ChannelI64SendOk)
 
+;: Construct a failed `channel-i64-send` result.
 (define (channel-i64-send-err-result [_message : String]) : ChannelI64SendResult
   (ChannelI64SendErr 1))
 
+;: Construct a successful `channel-i64-pair-send` result.
 (define (channel-i64-pair-send-ok-result) : ChannelI64PairSendResult
   ChannelI64PairSendOk)
 
+;: Construct a failed `channel-i64-pair-send` result.
 (define (channel-i64-pair-send-err-result [_message : String]) : ChannelI64PairSendResult
   (ChannelI64PairSendErr 1))
 
+;: Construct a successful `channel-string-send` result.
 (define (channel-string-send-ok-result) : ChannelStringSendResult
   ChannelStringSendOk)
 
+;: Construct a failed `channel-string-send` result.
 (define (channel-string-send-err-result [_message : String]) : ChannelStringSendResult
   (ChannelStringSendErr 1))
 
+;: Construct a successful `channel-i64-recv` result.
 (define (channel-i64-recv-ok-result [value : i64]) : ChannelI64RecvResult
   (ChannelI64RecvOk value))
 
+;: Construct a failed `channel-i64-recv` result.
 (define (channel-i64-recv-err-result [_message : String]) : ChannelI64RecvResult
   (ChannelI64RecvErr 1))
 
+;: Construct a successful `channel-i64-pair-recv` result.
 (define (channel-i64-pair-recv-ok-result [value : ChannelI64Pair]) : ChannelI64PairRecvResult
   (ChannelI64PairRecvOk value))
 
+;: Construct a failed `channel-i64-pair-recv` result.
 (define (channel-i64-pair-recv-err-result [_message : String]) : ChannelI64PairRecvResult
   (ChannelI64PairRecvErr 1))
 
+;: Construct a failed `channel-string-recv` result.
 (define (channel-string-recv-err-result [_message : String]) : ChannelStringRecvResult
   (ChannelStringRecvErr 1))
 
+;: Construct a successful `channel-i64-create` result.
 (define (channel-i64-create-ok-result [value : ChannelI64]) : ChannelI64CreateResult
   (ChannelI64CreateOk value))
 
+;: Construct a failed `channel-i64-create` result.
 (define (channel-i64-create-err-result [_message : String]) : ChannelI64CreateResult
   (ChannelI64CreateErr 1))
 
+;: Construct a successful `channel-i64-pair-create` result.
 (define (channel-i64-pair-create-ok-result [value : ChannelI64PairChannel]) : ChannelI64PairCreateResult
   (ChannelI64PairCreateOk value))
 
+;: Construct a failed `channel-i64-pair-create` result.
 (define (channel-i64-pair-create-err-result [_message : String]) : ChannelI64PairCreateResult
   (ChannelI64PairCreateErr 1))
 
+;: Construct a successful `channel-string-create` result.
 (define (channel-string-create-ok-result [value : ChannelString]) : ChannelStringCreateResult
   (ChannelStringCreateOk value))
 
+;: Construct a failed `channel-string-create` result.
 (define (channel-string-create-err-result [_message : String]) : ChannelStringCreateResult
   (ChannelStringCreateErr 1))
 
+;: Construct a successful `mutex-i64-create` result.
 (define (mutex-i64-create-ok-result [value : MutexI64]) : MutexI64CreateResult
   (MutexI64CreateOk value))
 
+;: Construct a failed `mutex-i64-create` result.
 (define (mutex-i64-create-err-result [_message : String]) : MutexI64CreateResult
   (MutexI64CreateErr 1))
 

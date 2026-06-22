@@ -1629,6 +1629,7 @@
   (value sync-semaphore-wait)
   (value sync-semaphore-post)
   (value sync-semaphore-close)
+  (value mutex-i64-unlock)
   (value mutex-i64-unlock-handle)
   (value mutex-i64-untrack-user)
   (value mutex-i64-track-user)

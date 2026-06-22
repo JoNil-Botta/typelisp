@@ -559,6 +559,17 @@
     (string-append "file://" (lsp-percent-encode-path path))
     (string-append "file:///" (lsp-percent-encode-path path))))
 
+(define (lsp-resolved-path-to-file-uri [path : String]) : String
+  (let
+    [normalized : String (fs-path-normalize (& path))]
+    (lsp-path-to-file-uri
+      (if (fs-path-absolute? (& normalized))
+        normalized
+        (let
+          [cwd : String (fs-current-dir)]
+          [joined : String (fs-path-join (& cwd) (& normalized))]
+          (fs-path-normalize (& joined)))))))
+
 (define (lsp-zero-based [value : i64]) : i64
   (if (> value 0)
     (- value 1)
@@ -603,7 +614,7 @@
   [span : CompilerDiagnosticSpan]) : String
   (let
     [path : String (compiler-diagnostic-span-path span)]
-    (lsp-path-to-file-uri
+    (lsp-resolved-path-to-file-uri
       (if (string-eq path "")
         fallback-path
         path))))
@@ -729,7 +740,8 @@
       [rendered : String (json-stringify (lsp-compiler-diagnostic diag))]
       [related-key : String "\"relatedInformation\""]
       [related-message : String "\"message\":\"borrow remains live\""]
-      [related-uri : String "\"uri\":\"file:///primary.tl\""]
+      [related-uri-prefix : String "\"uri\":\"file:///"]
+      [related-uri-suffix : String "/primary.tl\""]
       [primary-line : String "\"line\":1"]
       [primary-end : String "\"character\":8"]
       [secondary-line : String "\"line\":3"]
@@ -737,7 +749,8 @@
       (and
         (string-contains (& rendered) (& related-key))
         (string-contains (& rendered) (& related-message))
-        (string-contains (& rendered) (& related-uri))
+        (string-contains (& rendered) (& related-uri-prefix))
+        (string-contains (& rendered) (& related-uri-suffix))
         (string-contains (& rendered) (& primary-line))
         (string-contains (& rendered) (& primary-end))
         (string-contains (& rendered) (& secondary-line))
@@ -805,7 +818,7 @@
     [diag-path : String (compiler-diagnostic-path diag)]
     (if (or (string-eq diag-path "") (string-eq diag-path root-path))
       root-uri
-      (lsp-path-to-file-uri diag-path))))
+      (lsp-resolved-path-to-file-uri diag-path))))
 
 (define (lsp-publish-diagnostics [uri : String] [diagnostics : JsonList]) : unit
   (lsp-write-json
@@ -1646,7 +1659,8 @@
       [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
       (if (>= off 0)
         (lsp-def-loc-from
-          (lsp-path-to-file-uri (string-vec-get (struct-get set paths) idx ""))
+          (lsp-resolved-path-to-file-uri
+            (string-vec-get (struct-get set paths) idx ""))
           src
           off
           needle)
@@ -1722,7 +1736,11 @@
           [(FoundLspImportTarget resolved _ _)
             (lsp-write-response
               id
-              (lsp-definition-location (lsp-path-to-file-uri resolved) 1 1 1))]
+              (lsp-definition-location
+                (lsp-resolved-path-to-file-uri resolved)
+                1
+                1
+                1))]
           [(MissingLspImportTarget)
             (if (string-eq sym "")
               (lsp-write-response id JsonNull)
@@ -1811,12 +1829,37 @@
     (string-eq (lsp-symbol-base "core/cond") "cond")
     (string-eq (lsp-symbol-base "core.cond") "cond")))
 
+(define (lsp-definition-smoke-stdlib-symbol?) : bool
+  (let
+    [src : String
+      "(import \"stdlib/io.tl\")\n(define (main) : i64 (panic \"boom\"))\n"]
+    [stdlib-suffix : String "/stdlib/io.tl"]
+    [off : i64 (lsp-offset-at-position src 1 23)]
+    [sym : String (lsp-symbol-at-offset src off)]
+    (if (not (string-eq sym "panic"))
+      false
+      (match (lsp-find-definition
+        (lsp-documents-new)
+        "file:///smoke.tl"
+        "smoke.tl"
+        src
+        (string-vec-new)
+        (lsp-symbol-base sym))
+        [(FoundDefLoc def-uri line _ len)
+          (and
+            (not (string-eq def-uri "file:///stdlib/io.tl"))
+            (string-contains (& def-uri) (& stdlib-suffix))
+            (> line 0)
+            (= len 5))]
+        [(MissingDefLoc) false]))))
+
 (define (lsp-definition-smoke-ok?) : bool
   (and
     (lsp-definition-smoke-basic?)
     (lsp-definition-smoke-skips-strings?)
     (lsp-definition-smoke-skips-char-literals?)
-    (lsp-definition-smoke-qualified-base?)))
+    (lsp-definition-smoke-qualified-base?)
+    (lsp-definition-smoke-stdlib-symbol?)))
 
 ;; --------------------------------------------------------------------------
 ;; Completion (textDocument/completion).
@@ -3189,7 +3232,7 @@
         "end"
         (lsp-position (struct-get end-lc line) (struct-get end-lc col)))
       "target"
-      (JsonString (lsp-path-to-file-uri resolved)))))
+      (JsonString (lsp-resolved-path-to-file-uri resolved)))))
 
 (define (lsp-document-links
   [text : String]

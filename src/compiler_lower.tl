@@ -36967,9 +36967,13 @@
         [(OkCompilerLower lowered _)
           (match lowered
             [(IrProgram _ functions _)
-              (lower-test-function-defined?
-                functions
-                "stdlib/string.tl::stdlib.string/string-length")])]
+              (or
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/string.tl::stdlib.string/string-length")
+                (lower-test-function-defined?
+                  functions
+                  "string.tl::stdlib.string/string-length"))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -41149,7 +41153,7 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string-eq [left : String] [right : String]) : bool (= (string-length left) (string-length right)))
+(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (export (value string-eq))
 (module pkg.args)
 (import pkg.string)

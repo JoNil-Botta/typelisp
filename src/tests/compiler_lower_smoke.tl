@@ -111,7 +111,7 @@
       (BackendTargetLinux)
       roots
       (BackendModeScalar)
-      (compiler-cfg-empty))
+      (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
       [(OkCompilerDriverLowered _ _ _ _) true]
       [(ErrCompilerDriverLowered _) false])))
 

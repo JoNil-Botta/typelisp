@@ -545,7 +545,7 @@
 ;; push/get paths are inlined everywhere, and a global-struct reassign in that
 ;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
 (define ast-node-pool-slots : (Array AstExpr)
-  (make-array AstExpr 2097152))
+  (make-array AstExpr 3145728))
 
 ;; #2357: the program (base) arena, captured at global-init while it is the
 ;; active arena (the pool make-array above proves an allocation has happened, so

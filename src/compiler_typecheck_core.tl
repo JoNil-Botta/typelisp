@@ -3906,6 +3906,42 @@
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-value?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-type?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-macro?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-value-type"
+          (tc-fn2 (AstTyString) (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-type"
+          (tc-fn2 (AstTyString) (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-macro-type"
+          (tc-fn2 (AstTyString) (AstTyString) expr)))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
@@ -9762,6 +9798,20 @@
             (ast-type-cons
               (tc-resolve-type ctx ty)
               (tc-param-type-list ctx rest))]))]))
+
+(define (tc-macro-param-type-list
+  [ctx : TcContext]
+  [params : AstMacroParamList]) : AstTypeList
+  (match params
+    [(AstMacroParamNil) AstTypeNil]
+    [(AstMacroParamCons param rest)
+      (let
+        [rest : AstMacroParamList (box-get rest)]
+        (match param
+          [(AstMacroParam _ ty _)
+            (ast-type-cons
+              (tc-resolve-type ctx (tc-macro-signature-type ty))
+              (tc-macro-param-type-list ctx rest))]))]))
 
 (define (tc-type-list-ref [types : AstTypeList] [index : i64]) : ResultTcType
   (if (< index 0)
@@ -21391,6 +21441,159 @@
                 (ctfe-layout-info-list-with-capacity
                   (ctfe-metadata-decl-capacity decls)))))])]))
 
+(define (tc-ctfe-module-export-item-capacity [item : AstExportItem]) : i64
+  (match item
+    [(AstExportValue _) 1]
+    [(AstExportType _) 1]
+    [(AstExportMacro _) 1]
+    [_ 0]))
+
+(define (tc-ctfe-module-export-items-capacity [items : AstExportItemList]) : i64
+  (match items
+    [(AstExportItemNil) 0]
+    [(AstExportItemCons item rest)
+      (+
+        (tc-ctfe-module-export-item-capacity item)
+        (tc-ctfe-module-export-items-capacity (box-get rest)))]))
+
+(define (tc-ctfe-module-export-decl-capacity [decl : AstDecl]) : i64
+  (match decl
+    [(AstDeclExport items) (tc-ctfe-module-export-items-capacity items)]
+    [(AstDeclUnsafe inner-box)
+      (tc-ctfe-module-export-decl-capacity (box-get inner-box))]
+    [_ 0]))
+
+(define (tc-ctfe-module-export-capacity [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (+
+        (tc-ctfe-module-export-decl-capacity decl)
+        (tc-ctfe-module-export-capacity (box-get rest)))]))
+
+(define (tc-ctfe-module-export-handle-type
+  [ctx : TcContext]
+  [kind : String]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultTcType
+  (if (string-eq kind (compiler-export-kind-type))
+    (OkTcType
+      (tc-resolved-nominal-type (compiler-symbol-module-key module name) handle))
+    (match (compiler-symbols-decl-at-index
+      (tc-context-symbols ctx)
+      (compiler-symbol-handle-index handle))
+      [(ErrAstDecl message) (ErrTcType message)]
+      [(OkAstDecl decl)
+        (if (string-eq kind (compiler-export-kind-macro))
+          (match decl
+            [(AstDeclDefMacro _ params ret _)
+              (OkTcType
+                (ast-ty-func
+                  (tc-macro-param-type-list ctx params)
+                  (tc-resolve-type ctx ret)))]
+            [_ (ErrTcType "typecheck: exported macro has no macro signature")])
+          (tc-top-decl-type ctx decl))])))
+
+(define (tc-ctfe-module-export-add
+  [ctx : TcContext]
+  [out : CtfeModuleExportInfoList]
+  [kind : String]
+  [module : String]
+  [name : String]) : CtfeModuleExportInfoList
+  (match (compiler-exports-lookup (tc-context-exports ctx) kind module name)
+    [(NoneI64) out]
+    [(SomeI64 handle)
+      (match (tc-ctfe-module-export-handle-type ctx kind module name handle)
+        [(OkTcType ty)
+          (ctfe-module-export-info-list-push
+            out
+            (CtfeModuleExportInfo module kind name ty))]
+        [(ErrTcType _) out])]))
+
+(define (tc-ctfe-module-export-items
+  [ctx : TcContext]
+  [items : AstExportItemList]
+  [module : String]
+  [out : CtfeModuleExportInfoList]) : CtfeModuleExportInfoList
+  (match items
+    [(AstExportItemNil) out]
+    [(AstExportItemCons item rest)
+      (let
+        [next : CtfeModuleExportInfoList
+          (match item
+            [(AstExportValue name)
+              (tc-ctfe-module-export-add
+                ctx
+                out
+                (compiler-export-kind-value)
+                module
+                name)]
+            [(AstExportType name)
+              (tc-ctfe-module-export-add
+                ctx
+                out
+                (compiler-export-kind-type)
+                module
+                name)]
+            [(AstExportMacro name)
+              (tc-ctfe-module-export-add
+                ctx
+                out
+                (compiler-export-kind-macro)
+                module
+                name)]
+            [_ out])]
+        (tc-ctfe-module-export-items ctx (box-get rest) module next))]))
+
+(define (tc-ctfe-module-exports-from-decls
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [out : CtfeModuleExportInfoList]) : CtfeModuleExportInfoList
+  (match decls
+    [(AstDeclNil) out]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (tc-ctfe-module-exports-from-decls
+              ctx
+              rest
+              (intern-str next-module)
+              out)]
+          [(AstDeclExport items)
+            (tc-ctfe-module-exports-from-decls
+              ctx
+              rest
+              module
+              (tc-ctfe-module-export-items ctx items module out))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclExport items)
+                  (tc-ctfe-module-exports-from-decls
+                    ctx
+                    rest
+                    module
+                    (tc-ctfe-module-export-items ctx items module out))]
+                [_ (tc-ctfe-module-exports-from-decls ctx rest module out)]))]
+          [_ (tc-ctfe-module-exports-from-decls ctx rest module out)]))]))
+
+(define (tc-ctfe-module-exports [ctx : TcContext]) : CtfeModuleExportInfoList
+  (match (tc-context-program ctx)
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (tc-ctfe-module-exports-from-decls
+          ctx
+          decls
+          ""
+          (ctfe-module-export-info-list-with-capacity
+            (tc-ctfe-module-export-capacity decls))))]))
+
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
 ;; times per compile -- once in macro expansion plus once per comptime evaluation
@@ -21405,7 +21608,8 @@
     (if ctfe-needs-metadata
       (ctfe-env-with-metadata
         (tc-ctfe-layouts ctx)
-        (ctfe-reflections-from-program (tc-context-program ctx)))
+        (ctfe-reflections-from-program (tc-context-program ctx))
+        (tc-ctfe-module-exports ctx))
       (ctfe-env-empty))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
@@ -26267,6 +26471,7 @@
       [(string-eq call-name "expr-splice") true]
       [(string-eq call-name "expr-if") true]
       [(string-eq call-name "expr-type") true]
+      [(ctfe-module-export-query-name? call-name) true]
       [(ctfe-expr-inspector-name? call-name) true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-inspector-name? call-name) true]
@@ -38497,6 +38702,15 @@
           [(AstLetBinding _ _ init-box) (ctfe-node-has-type-literal? init-box)])
         (ctfe-bindings-have-type-literal? (box-get rest)))]))
 
+(define (ctfe-expr-is-module-export-query? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (ctfe-expr-is-module-export-query? (ast-node-get inner-box))]
+    [(AstExprVar name)
+      (ctfe-module-export-query-name?
+        (ctfe-comptime-helper-call-name (intern-str name)))]
+    [_ false]))
+
 (define (ctfe-expr-has-type-literal? [expr : AstExpr]) : bool
   (match expr
     [(AstExprTypeLiteral _) true]
@@ -38511,6 +38725,7 @@
     [(AstExprSpanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
     [(AstExprCall func-box args)
       (or
+        (ctfe-expr-is-module-export-query? (ast-node-get func-box))
         (ctfe-node-has-type-literal? func-box)
         (ctfe-exprs-have-type-literal? args))]
     [(AstExprBracketClause items) (ctfe-exprs-have-type-literal? items)]

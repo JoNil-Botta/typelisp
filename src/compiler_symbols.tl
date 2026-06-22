@@ -64,6 +64,12 @@
 (define (compiler-symbol-kind-defdispatch) : i64
   9)
 
+(define (compiler-symbol-kind-struct-cleanup) : i64
+  10)
+
+(define (compiler-symbol-kind-enum-cleanup) : i64
+  11)
+
 (define (compiler-symbol-handle-stride) : i64
   1000000000)
 
@@ -801,7 +807,9 @@
       (= kind (compiler-symbol-kind-value-define))
       (= kind (compiler-symbol-kind-function-define))
       (= kind (compiler-symbol-kind-extern))
-      (= kind (compiler-symbol-kind-defdispatch)))))
+      (= kind (compiler-symbol-kind-defdispatch))
+      (= kind (compiler-symbol-kind-struct-cleanup))
+      (= kind (compiler-symbol-kind-enum-cleanup)))))
 
 (define (compiler-export-type-handle? [handle : i64]) : bool
   (let
@@ -1212,7 +1220,9 @@
         symbols
         module
         (intern-str cleanup-name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
+        (compiler-symbol-make-handle
+          (compiler-symbol-kind-struct-cleanup)
+          index))]))
 
 (define (compiler-symbols-add-enum-cleanup-in-module
   [symbols : CompilerSymbols]
@@ -1226,7 +1236,7 @@
         symbols
         module
         (intern-str cleanup-name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
+        (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-decl-in-module
   [symbols : CompilerSymbols]
@@ -1418,7 +1428,9 @@
         symbols
         module
         (intern-str cleanup-name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
+        (compiler-symbol-make-handle
+          (compiler-symbol-kind-struct-cleanup)
+          index))]))
 
 (define (compiler-symbols-add-local-enum-cleanup-in-module
   [symbols : CompilerSymbols]
@@ -1432,7 +1444,7 @@
         symbols
         module
         (intern-str cleanup-name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
+        (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-local-variant-value-in-module
   [symbols : CompilerSymbols]
@@ -1668,7 +1680,9 @@
       (compiler-symbols-add-value-alias
         symbols
         (compiler-symbol-module-key alias (intern-str cleanup-name))
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]))
+        (compiler-symbol-make-handle
+          (compiler-symbol-kind-struct-cleanup)
+          index))]))
 
 (define (compiler-symbols-add-enum-cleanup-alias
   [symbols : CompilerSymbols]
@@ -1681,7 +1695,7 @@
       (compiler-symbols-add-value-alias
         symbols
         (compiler-symbol-module-key alias (intern-str cleanup-name))
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]))
+        (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
@@ -3877,10 +3891,15 @@
 (defmacro (all [first : bool]) : bool first)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64) (y i64))
+(define (close-fd [fd : i64]) : unit unit)
+(defstruct Resource
+  (:cleanup cleanup-resource)
+  (fd i64 (:cleanup close-fd)))
 (export
   (value answer)
   (value get)
   (value raw)
+  (value cleanup-resource)
   (macro all)
   (type Maybe)
   (type Point)
@@ -3961,6 +3980,17 @@
                           "raw"
                           (compiler-symbol-kind-extern)
                           2)
+                        1)
+                        unit
+                        (set! ok false))
+                      (if (=
+                        (compiler-export-symbol-score
+                          exports
+                          (compiler-export-kind-value)
+                          "data"
+                          "cleanup-resource"
+                          (compiler-symbol-kind-struct-cleanup)
+                          7)
                         1)
                         unit
                         (set! ok false))

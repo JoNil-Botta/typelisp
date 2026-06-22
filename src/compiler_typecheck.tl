@@ -1371,6 +1371,23 @@
   (let ([x : d.Generated (d.Generated 7)])
     (struct-get x value)))")
 
+(define (compiler-typecheck-export-generated-cleanup-source) : String
+  "(module data)
+(define (close-fd [fd : i64]) : unit unit)
+(defstruct Guard
+  (:cleanup cleanup-guard)
+  (fd i64 (:cleanup close-fd)))
+(export
+  (type Guard)
+  (constructor Guard)
+  (field Guard fd)
+  (value cleanup-guard))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (with ([guard (d.Guard 42) d.cleanup-guard])
+    (struct-get guard fd)))")
+
 (define (compiler-typecheck-export-private-type-source) : String
   "(module data)
 (defstruct Hidden (value i64))
@@ -1439,6 +1456,10 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-export-generated-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-generated-cleanup-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

@@ -2825,6 +2825,35 @@
     [(OkTcType ty) (OkTlciString (tc-type-render (tc-type-without-regions ty)))]
     [(ErrTcType message) (ErrTlciString message)]))
 
+(define (build-package-tlci-cleanup-value-signature
+  [module : String]
+  [handle : i64]
+  [decl : AstDecl]) : ResultTlciString
+  (match (tc-cleanup-value-handle-type module handle decl)
+    [(OkTcType ty) (OkTlciString (tc-type-render (tc-type-without-regions ty)))]
+    [(ErrTcType message) (ErrTlciString message)]))
+
+(define (build-package-tlci-value-signature-for-export
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]
+  [decl : AstDecl]) : ResultTlciString
+  (match (compiler-symbols-lookup-value-in-module
+    (tc-context-symbols ctx)
+    module
+    name)
+    [(SomeI64 handle)
+      (if (tc-cleanup-value-handle? handle)
+        (build-package-tlci-cleanup-value-signature module handle decl)
+        (build-package-tlci-value-signature ctx env decl))]
+    [(NoneI64)
+      (ErrTlciString
+        (compiler-export-unknown-message
+          (compiler-export-kind-value)
+          module
+          name))]))
+
 (define (build-package-tlci-type-layout
   [ctx : TcContext]
   [module : String]
@@ -2918,9 +2947,11 @@
             (match (tc-module-local-env ctx top-env module)
               [(ErrTcEnv message) (ErrBuildPackageTlciExportState message)]
               [(OkTcEnv local-env)
-                (match (build-package-tlci-value-signature
+                (match (build-package-tlci-value-signature-for-export
                   (tc-context-with-module ctx module)
                   local-env
+                  module
+                  name
                   decl)
                   [(ErrTlciString message)
                     (ErrBuildPackageTlciExportState message)]
@@ -3332,12 +3363,17 @@
 (defenum ExportedTag
   (TagA))
 (defmacro (exported-macro [expr : Expr]) : Expr expr)
+(define (close-fd [fd : i64]) : unit unit)
+(defstruct Guard
+  (:cleanup cleanup-guard)
+  (fd i64 (:cleanup close-fd)))
 (export
   (macro exported-macro)
   (variant TagA)
   (field ExportedPoint x)
   (constructor ExportedPoint)
   (type ExportedPoint)
+  (value cleanup-guard)
   (value exported-value))")
 
 (define (build-package-tlci-export-test-paths-repeat
@@ -3356,7 +3392,7 @@
     3
     (build-package-tlci-export-test-paths-repeat
       "tlci_meta/src/lib.tl"
-      6
+      8
       AstDeclPathNil)))
 
 (define (build-package-tlci-export-metadata-smoke-ok?) : bool
@@ -3379,6 +3415,9 @@
                     (build-package-tlci-string-contains?
                       emitted
                       "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
+                    (build-package-tlci-string-contains?
+                      emitted
+                      "(value (name \"pkg.meta/cleanup-guard\") (signature \"(-> pkg.meta/Guard unit)\")")
                     (build-package-tlci-string-contains?
                       emitted
                       "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
@@ -3427,6 +3466,9 @@
                   (build-package-tlci-string-contains?
                     emitted
                     "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
+                  (build-package-tlci-string-contains?
+                    emitted
+                    "(value (name \"pkg.meta/cleanup-guard\") (signature \"(-> pkg.meta/Guard unit)\")")
                   (build-package-tlci-string-contains?
                     emitted
                     "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")

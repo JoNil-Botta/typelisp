@@ -34591,37 +34591,129 @@
               (macro-private-message lookup-name)))]
         [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])]))
 
+(define (macro-unqualified-imported-call-decl-from-list
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [decls : AstDeclList]
+  [current-module-id : i64]
+  [module-id : i64]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match decls
+    [(AstDeclNil) (OkMacroCallDecl (MacroNoDecl))]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (match decl
+          [(AstDeclModule next-module)
+            (macro-unqualified-imported-call-decl-from-list
+              ctx
+              exports
+              rest
+              current-module-id
+              next-module
+              lookup-name
+              call-expr)]
+          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
+            (match maybe-alias
+              [(AstSomeImportAlias alias)
+                (if (and (= module-id current-module-id) (string-eq alias ""))
+                  (match expected
+                    [(AstSomeModuleName target-module)
+                      (if (= (intern target-module) current-module-id)
+                        (macro-unqualified-imported-call-decl-from-list
+                          ctx
+                          exports
+                          rest
+                          current-module-id
+                          module-id
+                          lookup-name
+                          call-expr)
+                        (match (macro-unqualified-imported-call-decl-with-exports
+                          ctx
+                          exports
+                          target-module
+                          lookup-name
+                          call-expr)
+                          [(OkMacroCallDecl imported-decl)
+                            (match imported-decl
+                              [(MacroNoDecl)
+                                (macro-unqualified-imported-call-decl-from-list
+                                  ctx
+                                  exports
+                                  rest
+                                  current-module-id
+                                  module-id
+                                  lookup-name
+                                  call-expr)]
+                              [_ (OkMacroCallDecl imported-decl)])]
+                          [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))]
+                    [(AstNoModuleName)
+                      (macro-unqualified-imported-call-decl-from-list
+                        ctx
+                        exports
+                        rest
+                        current-module-id
+                        module-id
+                        lookup-name
+                        call-expr)])
+                  (macro-unqualified-imported-call-decl-from-list
+                    ctx
+                    exports
+                    rest
+                    current-module-id
+                    module-id
+                    lookup-name
+                    call-expr))]
+              [(AstNoImportAlias)
+                (macro-unqualified-imported-call-decl-from-list
+                  ctx
+                  exports
+                  rest
+                  current-module-id
+                  module-id
+                  lookup-name
+                  call-expr)])]
+          [_
+            (macro-unqualified-imported-call-decl-from-list
+              ctx
+              exports
+              rest
+              current-module-id
+              module-id
+              lookup-name
+              call-expr)]))]))
+
 (define (macro-unqualified-imported-call-decl
   [ctx : TcContext]
   [decls : AstDeclList]
   [module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (match (macro-import-alias-target-ids decls (intern module) "" (intern ""))
-    [(TcSomeString target-module)
-      (if (string-eq target-module module)
-        (OkMacroCallDecl (MacroNoDecl))
-        (if macro-expand-exports-ready
-          (macro-unqualified-imported-call-decl-with-exports
-            ctx
-            macro-expand-exports-value
-            target-module
-            lookup-name
-            call-expr)
-          (match (build-compiler-exports-with
-            (tc-context-program ctx)
-            (tc-context-symbols ctx)
-            (tc-context-registries ctx))
-            [(OkCompilerExports exports)
-              (macro-unqualified-imported-call-decl-with-exports
-                ctx
-                exports
-                target-module
-                lookup-name
-                call-expr)]
-            [(ErrCompilerExports message)
-              (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))]
-    [(TcNoString) (OkMacroCallDecl (MacroNoDecl))]))
+  (if macro-expand-exports-ready
+    (macro-unqualified-imported-call-decl-from-list
+      ctx
+      macro-expand-exports-value
+      decls
+      (intern module)
+      (intern "")
+      lookup-name
+      call-expr)
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (macro-unqualified-imported-call-decl-from-list
+          ctx
+          exports
+          decls
+          (intern module)
+          (intern "")
+          lookup-name
+          call-expr)]
+      [(ErrCompilerExports message)
+        (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]

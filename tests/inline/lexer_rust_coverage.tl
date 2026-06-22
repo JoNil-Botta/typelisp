@@ -5,6 +5,7 @@
 ;; mirrored by src/lex.tl self-tests, using the (test ...) inline harness
 ;; from #947 so the CI verification script picks them up automatically.
 (import "../../src/lex.tl")
+(import "../../stdlib/string.tl")
 
 (define (lexer-assert-true [condition : bool] [message : String]) : unit
   (if condition

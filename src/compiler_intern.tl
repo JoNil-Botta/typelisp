@@ -29,6 +29,105 @@
 (unsafe
   (extern (intern-arena-destroy [arg0 : i64]) : unit (:symbol "tl_arena_destroy")))
 
+(define (intern-private-string-length [text : String]) : i64
+  (cfg
+    feature-compiler-private-string-intrinsics
+    (__tl_string_length text)
+    (string-length text)))
+
+(define (intern-private-string-ref [text : String] [index : i64]) : char
+  (cfg
+    feature-compiler-private-string-intrinsics
+    (__tl_string_ref text index)
+    (string-ref text index)))
+
+(define (intern-private-string-eq [left : String] [right : String]) : bool
+  (let
+    [left-len : i64
+      (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_length left)
+        (intern-private-string-length left))]
+    [right-len : i64
+      (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_length right)
+        (intern-private-string-length right))]
+    (if (not (= left-len right-len))
+      false
+      (unsafe
+        (let
+          [lp : (Ptr u8) (string-data (& left))]
+          [rp : (Ptr u8) (string-data (& right))]
+          (if (= (ptr->int lp) (ptr->int rp))
+            true
+            (let
+              [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+              [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+              [words : i64 (shr left-len 3)]
+              [i : i64 0]
+              [same : bool true]
+              (begin
+                (while (and same (< i words))
+                  (if (=
+                    (ptr-read (ptr-offset lw i))
+                    (ptr-read (ptr-offset rw i)))
+                    (set! i (+ i 1))
+                    (set! same false)))
+                (if same
+                  (let
+                    [j : i64 (* words 8)]
+                    (begin
+                      (while (and same (< j left-len))
+                        (if (=
+                          (cast (ptr-read (ptr-offset lp j)) : i64)
+                          (cast (ptr-read (ptr-offset rp j)) : i64))
+                          (set! j (+ j 1))
+                          (set! same false)))
+                      same))
+                  false)))))))))
+
+(defmacro (intern-private-string-eq-places [left : Expr] [right : Expr]) : bool
+  (cfg
+    feature-compiler-private-string-intrinsics
+    `(let
+      [left-len : i64 (__tl_string_length ,left)]
+      [right-len : i64 (__tl_string_length ,right)]
+      (if (not (= left-len right-len))
+        false
+        (unsafe
+          (let
+            [lp : (Ptr u8) (string-data (& ,left))]
+            [rp : (Ptr u8) (string-data (& ,right))]
+            (if (= (ptr->int lp) (ptr->int rp))
+              true
+              (let
+                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+                [words : i64 (shr left-len 3)]
+                [i : i64 0]
+                [same : bool true]
+                (begin
+                  (while (and same (< i words))
+                    (if (=
+                      (ptr-read (ptr-offset lw i))
+                      (ptr-read (ptr-offset rw i)))
+                      (set! i (+ i 1))
+                      (set! same false)))
+                  (if same
+                    (let
+                      [j : i64 (* words 8)]
+                      (begin
+                        (while (and same (< j left-len))
+                          (if (=
+                            (cast (ptr-read (ptr-offset lp j)) : i64)
+                            (cast (ptr-read (ptr-offset rp j)) : i64))
+                            (set! j (+ j 1))
+                            (set! same false)))
+                        same))
+                    false))))))))
+    `(intern-private-string-eq ,left ,right)))
+
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 (define (intern-capacity) : i64
   262144)
@@ -158,7 +257,10 @@
     (unsafe
       (string-data (& s)))
     0
-    (string-length s)))
+    (cfg
+      feature-compiler-private-string-intrinsics
+      (__tl_string_length s)
+      (intern-private-string-length s))))
 
 ;: Hash over a source slice without first allocating a substring.
 (define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
@@ -214,7 +316,13 @@
 (define (intern-persistent-copy [text : String]) : String
   (if (= (intern-arena-current) intern-persistent-arena)
     text
-    (intern-persistent-substring text 0 (string-length text))))
+    (intern-persistent-substring
+      text
+      0
+      (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_length text)
+        (intern-private-string-length text)))))
 
 (define (intern-persist-range! [index : i64] [count : i64]) : unit
   (if (>= index count)
@@ -230,7 +338,12 @@
   [text : String]
   [start : i64]
   [len : i64]) : bool
-  (if (= (string-length name) len)
+  (if (=
+    (cfg
+      feature-compiler-private-string-intrinsics
+      (__tl_string_length name)
+      (intern-private-string-length name))
+    len)
     (let
       [name-ptr : (Ptr u8)
         (unsafe
@@ -257,13 +370,21 @@
 (define (intern-record-qualified-metadata [id : i64] [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64
+      (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_length name)
+        (intern-private-string-length name))]
     [slash : i64 -1]
     [dot : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref name i)]
+          [c : char
+            (cfg
+              feature-compiler-private-string-intrinsics
+              (__tl_string_ref name i)
+              (intern-private-string-ref name i))]
           (begin
             (if (= c '/')
               (set! slash i)
@@ -286,7 +407,12 @@
             (intern-substring
               name
               base-start
-              (- (string-length name) base-start))]
+              (-
+                (cfg
+                  feature-compiler-private-string-intrinsics
+                  (__tl_string_length name)
+                  (intern-private-string-length name))
+                base-start))]
           (begin
             (array-set! intern-pool-qualified-slots id true)
             (array-set! intern-pool-module-id-slots id (intern module-name))
@@ -447,7 +573,7 @@
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq-places slot-key name)
                 false)
                 (begin
                   (set! out slot-id)
@@ -533,7 +659,7 @@
                 (set! done true))]
             [(InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (string-eq slot-key name)
+                (intern-private-string-eq-places slot-key name)
                 false)
                 (begin
                   (set! out (InternLookupFound slot-id))
@@ -606,8 +732,8 @@
   (and
     (= (intern-qualified-last-slash id) last-slash)
     (= (intern-qualified? id) qualified)
-    (string-eq (intern-qualified-module id) module-name)
-    (string-eq (intern-qualified-base id) base-name)))
+    (intern-private-string-eq (intern-qualified-module id) module-name)
+    (intern-private-string-eq (intern-qualified-base id) base-name)))
 
 (define (intern-slice-tests-ok?) : bool
   (begin
@@ -626,8 +752,10 @@
           (= slice-alpha slice-alpha-again)
           (not (= slice-alpha slice-beta))
           (= long-full long-slice)
-          (string-eq (intern-str long-slice) "multiword-hash-name")
-          (string-eq (intern-str slice-alpha) "alpha")
+          (intern-private-string-eq
+            (intern-str long-slice)
+            "multiword-hash-name")
+          (intern-private-string-eq (intern-str slice-alpha) "alpha")
           (intern-qualified-metadata-case-ok?
             slice-qualified
             true
@@ -662,7 +790,7 @@
       [ok : bool
         (and
           (= id again)
-          (string-eq (intern-str id) "persist/entry")
+          (intern-private-string-eq (intern-str id) "persist/entry")
           (intern-qualified-metadata-case-ok? id true 7 "persist" "entry"))]
       (begin
         (intern-reset!)

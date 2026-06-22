@@ -25,6 +25,7 @@
 (module stdlib.random)
 
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.vector)
 
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
@@ -439,7 +440,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (random-test-assert-true (string-eq actual expected) message))
+  (random-test-assert-true (string.string-eq actual expected) message))
 
 ;: Assert that a system seed result succeeded and was normalized.
 (define (random-test-assert-system-seed-ok [result : ResultSystemSeed]) : unit

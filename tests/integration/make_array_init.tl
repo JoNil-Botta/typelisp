@@ -1,3 +1,5 @@
+(import "stdlib/string.tl")
+
 (defstruct Point
   (x i64)
   (flag bool))

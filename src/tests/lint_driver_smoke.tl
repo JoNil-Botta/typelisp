@@ -1,6 +1,7 @@
 ;; lint_driver_smoke.tl - Runnable smoke for lint_driver_core.tl (#1163): drives
 ;; the full load -> lint -> render path on an embedded source and returns 42.
 (import "../../stdlib/io.tl")
+(import "../../stdlib/string.tl")
 (import "../lint_driver_core.tl")
 
 (define (lint-driver-smoke-string-concat-source) : String

@@ -16,6 +16,8 @@
 ;# ```
 (module stdlib.time)
 
+(import stdlib.string)
+
 ;: Recoverable time source error.
 (defenum TimeError
   (TimeUnavailable String))
@@ -156,7 +158,7 @@
 
 ;: Inline test owned string assertion.
 (define (time-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (stdlib.time.time-test-assert (string-eq actual expected)))
+  (stdlib.time.time-test-assert (string.string-eq actual expected)))
 
 ;: Inline test assertion for error result shape.
 (define (time-test-assert-result-error-shape) : unit

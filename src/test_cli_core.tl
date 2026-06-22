@@ -782,7 +782,7 @@
 
 (define (tltest-text-length-expr) : i64
   (ast-expr-call
-    (ast-node-push (AstExprVar (intern "string-length")))
+    (ast-node-push (AstExprVar (intern "__tl_string_length")))
     (ast-expr-cons (ast-node-push (AstExprVar (intern "text"))) AstExprNil)))
 
 (define (tltest-print-runtime-write-call) : i64

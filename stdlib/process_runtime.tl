@@ -681,8 +681,12 @@
     [info : ProcessRuntimeMaybeStringInfo
       (stdlib.process_runtime.process-runtime-maybe-string-info value)]
     (if (stdlib.process_runtime.process-runtime-maybe-string-info-present? info)
-      (string-length
-        (stdlib.process_runtime.process-runtime-maybe-string-info-value info))
+      (cfg
+        feature-compiler-private-string-intrinsics
+        (__tl_string_length
+          (stdlib.process_runtime.process-runtime-maybe-string-info-value info))
+        (string-length
+          (stdlib.process_runtime.process-runtime-maybe-string-info-value info)))
       0)))
 
 ;; ---------------------------------------------------------------------------

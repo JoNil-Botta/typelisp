@@ -3208,33 +3208,22 @@
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
     [e1 : TcTypeEnv
-      (tc-bind e0 "string-length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e2 : TcTypeEnv (tc-bind e1 "length" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e3 : TcTypeEnv
-      (tc-bind e2 "string-eq" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e4 : TcTypeEnv
-      (tc-bind e3 "string=?" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))]
-    [e5 : TcTypeEnv
-      (tc-bind e4 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))]
-    [e6 : TcTypeEnv
       (tc-bind
-        (tc-bind
-          e5
-          "cpuid"
-          (tc-fn2
-            (AstTyI64)
-            (AstTyI64)
-            (ast-ty-tuple
+        e0
+        "cpuid"
+        (tc-fn2
+          (AstTyI64)
+          (AstTyI64)
+          (ast-ty-tuple
+            (ast-type-cons
+              (AstTyI32)
               (ast-type-cons
                 (AstTyI32)
                 (ast-type-cons
                   (AstTyI32)
-                  (ast-type-cons
-                    (AstTyI32)
-                    (ast-type-cons (AstTyI32) (AstTypeNil))))))))
-        "xgetbv"
-        (tc-fn1 (AstTyI64) (AstTyI64)))]
-    (tc-bind e6 (tc-default-boundary-name) (AstTyUnit))))
+                  (ast-type-cons (AstTyI32) (AstTypeNil))))))))]
+    [e2 : TcTypeEnv (tc-bind e1 "xgetbv" (tc-fn1 (AstTyI64) (AstTyI64)))]
+    (tc-bind e2 (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-macro-expr-clause-type) : AstType
   (AstTyVar (intern "ExprClause")))
@@ -3940,6 +3929,27 @@
           out
           "string-concat"
           (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
+      (set! out (tc-bind out "string-length" (tc-fn1 (AstTyString) (AstTyI64))))
+      (set! out (tc-bind out "length" (tc-fn1 (AstTyString) (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "string-ref" (tc-fn2 (AstTyString) (AstTyI64) (AstTyChar))))
+      (set!
+        out
+        (tc-bind out "char-at" (tc-fn2 (AstTyString) (AstTyI64) (AstTyChar))))
+      (set!
+        out
+        (tc-bind
+          out
+          "string-eq"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
+        (tc-bind
+          out
+          "string=?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set! out (tc-bind out "string->int" (tc-fn1 (AstTyString) (AstTyI64))))
       (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
@@ -5731,6 +5741,146 @@
         [_ (ErrTcExprId "typecheck: internal dotted field target mismatch")])]
     [(ErrTcExprId message) (ErrTcExprId message)]))
 
+(define tc-imported-module-identity-cache-capacity : i64
+  8192)
+(define tc-imported-module-identity-cache-module-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-imported-module-identity-cache-target-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-imported-module-identity-cache-values : (Array i64)
+  (make-array i64 8192))
+(define tc-imported-module-identity-cache-count : i64
+  0)
+(define tc-imported-module-identity-cache-generation : i64
+  -1)
+(define tc-imported-module-identity-cache-ready : bool
+  false)
+
+(define (tc-imported-module-identity-cache-reset!) : unit
+  (set! tc-imported-module-identity-cache-ready false))
+
+(define (tc-imported-module-identity-cache-ensure!) : unit
+  (if (if tc-imported-module-identity-cache-ready
+    (= tc-imported-module-identity-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-imported-module-identity-cache-capacity)
+          (begin
+            (array-set! tc-imported-module-identity-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! tc-imported-module-identity-cache-count 0)
+        (set! tc-imported-module-identity-cache-generation (intern-generation))
+        (set! tc-imported-module-identity-cache-ready true)))))
+
+(define (tc-imported-module-identity-cache-bucket
+  [current-module-id : i64]
+  [target-id : i64]) : i64
+  (bit-and
+    (+ (* current-module-id 2654435761) (* target-id 40503))
+    (- tc-imported-module-identity-cache-capacity 1)))
+
+;; Returns 1 for true, -1 for false, or -2 when absent.
+(define (tc-imported-module-identity-cache-get
+  [current-module-id : i64]
+  [target-id : i64]) : i64
+  (let
+    [cursor : i64
+      (tc-imported-module-identity-cache-bucket current-module-id target-id)]
+    [module-key : i64 (+ current-module-id 1)]
+    [target-key : i64 (+ target-id 1)]
+    [steps : i64 0]
+    [out : i64 -2]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps tc-imported-module-identity-cache-capacity))
+        (let
+          [slot : i64
+            (array-ref tc-imported-module-identity-cache-module-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (and
+              (= slot module-key)
+              (=
+                (array-ref tc-imported-module-identity-cache-target-keys cursor)
+                target-key))
+              (begin
+                (set!
+                  out
+                  (array-ref tc-imported-module-identity-cache-values cursor))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- tc-imported-module-identity-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (tc-imported-module-identity-cache-put!
+  [current-module-id : i64]
+  [target-id : i64]
+  [value : bool]) : unit
+  (if (>=
+    (* tc-imported-module-identity-cache-count 2)
+    tc-imported-module-identity-cache-capacity)
+    unit
+    (let
+      [cursor : i64
+        (tc-imported-module-identity-cache-bucket current-module-id target-id)]
+      [module-key : i64 (+ current-module-id 1)]
+      [target-key : i64 (+ target-id 1)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps tc-imported-module-identity-cache-capacity))
+          (let
+            [slot : i64
+              (array-ref tc-imported-module-identity-cache-module-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array-set!
+                  tc-imported-module-identity-cache-module-keys
+                  cursor
+                  module-key)
+                (array-set!
+                  tc-imported-module-identity-cache-target-keys
+                  cursor
+                  target-key)
+                (array-set!
+                  tc-imported-module-identity-cache-values
+                  cursor
+                  (if value
+                    1
+                    -1))
+                (set!
+                  tc-imported-module-identity-cache-count
+                  (+ tc-imported-module-identity-cache-count 1))
+                (set! done true))
+              (if (and
+                (= slot module-key)
+                (=
+                  (array-ref
+                    tc-imported-module-identity-cache-target-keys
+                    cursor)
+                  target-key))
+                (set! done true)
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- tc-imported-module-identity-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
+
 (define (tc-imported-module-identity-ids?
   [decls : AstDeclList]
   [current-module-id : i64]
@@ -5782,11 +5932,258 @@
     [(TcContext program _ _ _ current-module _)
       (match program
         [(AstProgram decls-box)
-          (tc-imported-module-identity-ids?
-            (box-get decls-box)
-            (intern current-module)
-            (intern module-name)
-            (intern ""))])]))
+          (begin
+            (tc-imported-module-identity-cache-ensure!)
+            (let
+              [current-module-id : i64 (intern current-module)]
+              [target-id : i64 (intern module-name)]
+              [cached : i64
+                (tc-imported-module-identity-cache-get
+                  current-module-id
+                  target-id)]
+              (if (= cached -2)
+                (let
+                  [found : bool
+                    (tc-imported-module-identity-ids?
+                      (box-get decls-box)
+                      current-module-id
+                      target-id
+                      (intern ""))]
+                  (begin
+                    (tc-imported-module-identity-cache-put!
+                      current-module-id
+                      target-id
+                      found)
+                    found))
+                (> cached 0))))])]))
+
+(define (tc-stdlib-string-module-name? [module-name : String]) : bool
+  (or
+    (string-eq module-name "string")
+    (string-eq module-name "string.tl")
+    (string-eq module-name "stdlib.string")
+    (string-eq module-name "stdlib/string")
+    (string-eq module-name "stdlib/string.tl")
+    (tc-string-has-suffix? module-name "/stdlib/string.tl")
+    (tc-string-has-suffix? module-name "\\stdlib\\string.tl")
+    (tc-string-has-suffix? module-name "\\stdlib/string.tl")
+    (tc-string-has-suffix? module-name "/stdlib\\string.tl")))
+
+(define (tc-context-is-stdlib-string? [ctx : TcContext]) : bool
+  (tc-stdlib-string-module-name? (tc-context-module ctx)))
+
+(define (tc-stdlib-string-length-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons text rest)
+          (let
+            [text : AstType (ty-node-get text)]
+            [rest : AstTypeList (box-get rest)]
+            (match rest
+              [(AstTypeNil)
+                (and
+                  (tc-str-ref-type? text)
+                  (tc-type-eq (ty-node-get ret) (AstTyI64)))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-string-ref-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons text rest1)
+          (let
+            [text : AstType (ty-node-get text)]
+            [rest1 : AstTypeList (box-get rest1)]
+            (match rest1
+              [(AstTypeCons index rest2)
+                (let
+                  [index : AstType (ty-node-get index)]
+                  [rest2 : AstTypeList (box-get rest2)]
+                  (match rest2
+                    [(AstTypeNil)
+                      (and
+                        (tc-str-ref-type? text)
+                        (tc-type-eq index (AstTyI64))
+                        (tc-type-eq (ty-node-get ret) (AstTyChar)))]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-string-eq-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons left rest1)
+          (let
+            [left : AstType (ty-node-get left)]
+            [rest1 : AstTypeList (box-get rest1)]
+            (match rest1
+              [(AstTypeCons right rest2)
+                (let
+                  [right : AstType (ty-node-get right)]
+                  [rest2 : AstTypeList (box-get rest2)]
+                  (match rest2
+                    [(AstTypeNil)
+                      (and
+                        (tc-string-handle-type? left)
+                        (tc-string-handle-type? right)
+                        (tc-type-eq (ty-node-get ret) (AstTyBool)))]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-string-to-int-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons text rest)
+          (let
+            [text : AstType (ty-node-get text)]
+            [rest : AstTypeList (box-get rest)]
+            (match rest
+              [(AstTypeNil)
+                (and
+                  (tc-string-handle-type? text)
+                  (tc-type-eq (ty-node-get ret) (AstTyI64)))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (tc-stdlib-string-helper-wrapper-type? [base : String] [ty : AstType]) : bool
+  (cond
+    [(string-eq base "string-length")
+      (tc-stdlib-string-length-wrapper-type? ty)]
+    [(string-eq base "string-ref") (tc-stdlib-string-ref-wrapper-type? ty)]
+    [(string-eq base "char-at") (tc-stdlib-string-ref-wrapper-type? ty)]
+    [(string-eq base "string-eq") (tc-stdlib-string-eq-wrapper-type? ty)]
+    [(string-eq base "string=?") (tc-stdlib-string-eq-wrapper-type? ty)]
+    [(string-eq base "string->int") (tc-stdlib-string-to-int-wrapper-type? ty)]
+    [else false]))
+
+(define (tc-stdlib-string-helper-bound-wrapper?
+  [env : TcTypeEnv]
+  [base : String]) : bool
+  (match (tc-lookup env base)
+    [(OkTcType ty) (tc-stdlib-string-helper-wrapper-type? base ty)]
+    [(ErrTcType _) false]))
+
+(define (tc-stdlib-string-length-wrapper-decl?
+  [ctx : TcContext]
+  [base : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefFn name params ret _ _)
+      (and
+        (string-eq (intern-str name) base)
+        (tc-type-eq (tc-resolve-type ctx ret) (AstTyI64))
+        (match params
+          [(AstParamCons param rest)
+            (let
+              [rest : AstParamList (box-get rest)]
+              (match param
+                [(AstParam _ text _)
+                  (and
+                    (tc-str-ref-type? (tc-resolve-type ctx text))
+                    (match rest
+                      [(AstParamNil) true]
+                      [_ false]))]))]
+          [_ false]))]
+    [_ false]))
+
+(define (tc-stdlib-string-ref-wrapper-decl?
+  [ctx : TcContext]
+  [base : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefFn name params ret _ _)
+      (and
+        (string-eq (intern-str name) base)
+        (tc-type-eq (tc-resolve-type ctx ret) (AstTyChar))
+        (match params
+          [(AstParamCons text-param rest1)
+            (let
+              [rest1 : AstParamList (box-get rest1)]
+              (match rest1
+                [(AstParamCons index-param rest2)
+                  (let
+                    [rest2 : AstParamList (box-get rest2)]
+                    (match text-param
+                      [(AstParam _ text _)
+                        (match index-param
+                          [(AstParam _ index _)
+                            (and
+                              (tc-str-ref-type? (tc-resolve-type ctx text))
+                              (tc-type-eq
+                                (tc-resolve-type ctx index)
+                                (AstTyI64))
+                              (match rest2
+                                [(AstParamNil) true]
+                                [_ false]))])]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
+(define (tc-stdlib-string-helper-symbol-wrapper?
+  [ctx : TcContext]
+  [base : String]) : bool
+  (match ctx
+    [(TcContext _ symbols _ _ _ _)
+      (match (compiler-symbols-lookup-value symbols base)
+        [(SomeI64 handle)
+          (let
+            [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+            [index : i64 (compiler-symbol-handle-index handle)]
+            (if (or (< index 0) (>= index (array-length decls)))
+              false
+              (let
+                [decl : AstDecl (array-ref decls index)]
+                (cond
+                  [(string-eq base "string-length")
+                    (tc-stdlib-string-length-wrapper-decl? ctx base decl)]
+                  [(string-eq base "string-ref")
+                    (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+                  [(string-eq base "char-at")
+                    (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+                  [else false]))))]
+        [(NoneI64) false])]))
+
+(define (tc-stdlib-string-qualified-helper-id?
+  [lookup-id : i64]
+  [base : String]) : bool
+  (and
+    (intern-qualified? lookup-id)
+    (= (intern-qualified-base-id lookup-id) (tc-name-id base))
+    (tc-stdlib-string-module-name? (intern-qualified-module lookup-id))))
+
+(define (tc-stdlib-string-helper-visible-or-wrapper-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-match : bool]
+  [lookup-id : i64]
+  [base : String]) : bool
+  (if source-match
+    (or
+      (tc-context-is-stdlib-string? ctx)
+      (tc-stdlib-string-helper-bound-wrapper? env base)
+      (tc-stdlib-string-helper-symbol-wrapper? ctx base))
+    (tc-stdlib-string-qualified-helper-id? lookup-id base)))
+
+(define (tc-call-builtin-lookup-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]) : String
+  (if (tc-name-qualified? source-name)
+    source-name
+    (if (>= (tc-name-first-dot source-name) 0)
+      (match (tc-source-name-lookup-key ctx env source-name)
+        [(OkTcString lookup-name) lookup-name]
+        [(ErrTcString _) source-name])
+      source-name)))
 
 (define (tc-source-dotted-alias-key
   [ctx : TcContext]
@@ -5804,11 +6201,10 @@
           [(TcContext program _ _ _ current-module _)
             (match program
               [(AstProgram decls-box)
-                (match (macro-import-alias-target-ids
+                (match (macro-import-alias-target-cached
                   (box-get decls-box)
                   (intern current-module)
-                  alias
-                  (intern ""))
+                  alias)
                   [(TcSomeString target-module)
                     (TcSomeString
                       (compiler-symbol-module-key target-module base))]
@@ -9211,12 +9607,12 @@
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
     [shadowed : TcTypeEnv
-      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+      (tc-bind base "__tl_string_length" (tc-fn1 (AstTyI64) (AstTyI64)))]
     [cached : TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
     (and
       (tc-type-env-cache-head? cached)
-      (not (tc-default-builtin-unshadowed? cached "string-length")))))
+      (not (tc-default-builtin-unshadowed? cached "__tl_string_length")))))
 
 (define (tc-type-env-local-cache-partial-layer-smoke?) : bool
   (let
@@ -9248,7 +9644,7 @@
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-default-env))]
     [shadowed : TcTypeEnv
-      (tc-bind base "string-length" (tc-fn1 (AstTyI64) (AstTyI64)))]
+      (tc-bind base "__tl_string_length" (tc-fn1 (AstTyI64) (AstTyI64)))]
     [shadow-layer : TcTypeEnv
       (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
     [miss-layer : TcTypeEnv
@@ -9259,9 +9655,9 @@
       (tc-type-env-cache-partial-head? shadow-layer)
       (tc-type-env-cache-partial-head? miss-layer)
       (tc-type-env-cache-partial-head? clear-layer)
-      (not (tc-default-builtin-unshadowed? shadow-layer "string-length"))
-      (not (tc-default-builtin-unshadowed? miss-layer "string-length"))
-      (tc-default-builtin-unshadowed? clear-layer "string-length"))))
+      (not (tc-default-builtin-unshadowed? shadow-layer "__tl_string_length"))
+      (not (tc-default-builtin-unshadowed? miss-layer "__tl_string_length"))
+      (tc-default-builtin-unshadowed? clear-layer "__tl_string_length"))))
 
 (define (tc-type-env-local-cache-depth-cap-smoke?) : bool
   (let
@@ -11370,7 +11766,11 @@
             [(OkTcType actual)
               (if (tc-type-compatible? expected actual)
                 (OkTcType (tc-contextual-result-type expected actual))
-                (OkTcType actual))]
+                (if (and
+                  allow-mut-by-value-borrow
+                  (tc-call-string-temporary-ref-compatible? ctx expected actual))
+                  (OkTcType expected)
+                  (OkTcType actual)))]
             [(ErrTcType message) (ErrTcType message)])))]))
 
 (define (tc-expr-with-expected-or-actual
@@ -11983,6 +12383,16 @@
         [_ false])]
     [_ false]))
 
+(define (tc-call-string-temporary-ref-compatible?
+  [ctx : TcContext]
+  [want : AstType]
+  [got : AstType]) : bool
+  (and
+    (tc-str-ref-type? (tc-resolve-type ctx want))
+    (match (tc-type-strip-region got)
+      [(AstTyString) true]
+      [_ false])))
+
 (define (tc-call-type-list-has-immutable-ref-formal?
   [ctx : TcContext]
   [types : AstTypeList]) : bool
@@ -12050,7 +12460,9 @@
           [(OkTcType got)
             (if (tc-call-actual-reference? ctx got)
               (OkTcType got)
-              (tc-call-auto-borrow-type ctx env arg))]
+              (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                (OkTcType want)
+                (tc-call-auto-borrow-type ctx env arg)))]
           [(ErrTcType message) (ErrTcType message)])])
     (tc-expr-with-expected-or-actual-call-arg ctx env arg want)))
 
@@ -12095,9 +12507,11 @@
             [(OkTcType got)
               (if (tc-call-actual-reference? ctx got)
                 (OkTcExpr arg)
-                (match (tc-call-auto-borrow-type ctx env arg)
-                  [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
-                  [(ErrTcType message) (ErrTcExpr message)]))]
+                (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                  (OkTcExpr arg)
+                  (match (tc-call-auto-borrow-type ctx env arg)
+                    [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+                    [(ErrTcType message) (ErrTcExpr message)])))]
             [(ErrTcType message) (ErrTcExpr message)])]))
     (OkTcExpr arg)))
 
@@ -13537,7 +13951,7 @@
                 [(ErrTcType message) (ErrTcUnit message)]))]
           [(AstTypeNil) (ErrTcUnit "typecheck: arity mismatch")]))]))
 
-(define (tc-call-expr
+(define (tc-call-expr-ordinary
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
@@ -13637,11 +14051,63 @@
             [_ (ErrTcType "typecheck: call target is not a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (tc-call-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcType
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
+        [name-id : i64 (tc-builtin-name-id name)]
+        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        (cond
+          [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+            (tc-layout-query-runtime-call name args)]
+          [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
+            (tc-one-length-handle-builtin-call ctx env args (AstTyI64))]
+          [(compiler-builtin-typecheck-length-call-id? name-id)
+            (tc-array-length-call ctx env name func args)]
+          [(and
+              (compiler-builtin-typecheck-string-ref-call-id? name-id)
+              (not (tc-name-bound? env name)))
+            (tc-string-ref-call ctx env args)]
+          [(tc-string-ref-helper-call-id?
+              ctx
+              env
+              name
+              name-id
+              lookup-name
+              lookup-id)
+            (tc-string-ref-call ctx env args)]
+          [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
+            (tc-atomic-pointer-call ctx env name args)]
+          [(and
+              (tc-borrowed-string-builtin-name? name)
+              (tc-default-builtin-unshadowed? env name))
+            (tc-borrowed-string-builtin-call ctx env name args)]
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+            (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
+          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+            (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
+          [(and
+              (ctfe-reflection-query-name? name)
+              (not (tc-name-bound? env name)))
+            (tc-reflection-query-runtime-call name)]
+          [(and
+              (compiler-builtin-typecheck-clone-id? name-id)
+              (not (tc-name-bound? env name)))
+            (tc-clone-call ctx env args)]
+          [else (tc-call-expr-ordinary ctx env func args)]))]
+    [_ (tc-call-expr-ordinary ctx env func args)]))
+
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
-;; user definition, or a local). Used to decide whether an unbound builtin
-;; name like `string-ref`/`char-at` should be treated as the String-index
-;; builtin (unbound) or as an ordinary direct call to a shadowing user
-;; definition (bound). Mirrors the host compiler's shadowing check (#677).
+;; user definition, or a local). Used to decide whether an unbound private
+;; compiler intrinsic should be recovered as a builtin or as an ordinary direct
+;; call to a shadowing user definition. Mirrors the host compiler's shadowing
+;; check (#677).
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-bound-id? env (tc-name-id name)))
 
@@ -13688,6 +14154,18 @@
         (ErrTcUnit (tc-locate-error-at-expr arg message)))]
     [(ErrTcType message) (ErrTcUnit message)]))
 
+(define (tc-check-length-handle-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [message : String]) : ResultTcUnit
+  (match (tc-expr ctx env arg)
+    [(OkTcType arg-ty)
+      (if (tc-length-handle-type? arg-ty)
+        OkTcUnit
+        (ErrTcUnit (tc-locate-error-at-expr arg message)))]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
 (define (tc-check-exact-arg
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13711,6 +14189,28 @@
         (match tail
           [(AstExprNil)
             (match (tc-check-string-handle-arg
+              ctx
+              env
+              arg
+              "typecheck: argument type mismatch")
+              [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [_ (ErrTcType "typecheck: arity mismatch")]))]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-one-length-handle-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons arg tail)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprNil)
+            (match (tc-check-length-handle-arg
               ctx
               env
               arg
@@ -13878,6 +14378,124 @@
           [_ (ErrTcType "typecheck: arity mismatch")]))]
     [_ (ErrTcType "typecheck: arity mismatch")]))
 
+(define (tc-string-length-helper-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]
+  [lookup-name : String]) : bool
+  (tc-string-length-helper-call-id?
+    ctx
+    env
+    (tc-builtin-name-id source-name)
+    (tc-builtin-name-id lookup-name)))
+
+(define (tc-string-length-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [lookup-id : i64]) : bool
+  (tc-stdlib-string-helper-visible-or-wrapper-id?
+    ctx
+    env
+    (compiler-builtin-typecheck-public-string-length-id? source-id)
+    lookup-id
+    "string-length"))
+
+(define (tc-string-ref-helper-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]
+  [lookup-name : String]) : bool
+  (tc-string-ref-helper-call-id?
+    ctx
+    env
+    source-name
+    (tc-builtin-name-id source-name)
+    lookup-name
+    (tc-builtin-name-id lookup-name)))
+
+(define (tc-string-ref-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [_source-name : String]
+  [source-id : i64]
+  [lookup-name : String]
+  [lookup-id : i64]) : bool
+  (or
+    (and
+      (compiler-builtin-typecheck-string-ref-call-id? lookup-id)
+      (not (tc-name-bound? env lookup-name)))
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (and
+        (compiler-builtin-typecheck-public-string-ref-id? source-id)
+        (not (compiler-builtin-typecheck-public-char-at-id? source-id)))
+      lookup-id
+      "string-ref")
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (compiler-builtin-typecheck-public-char-at-id? source-id)
+      lookup-id
+      "char-at")))
+
+(define (tc-string-eq-helper-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]
+  [lookup-name : String]) : bool
+  (tc-string-eq-helper-call-id?
+    ctx
+    env
+    (tc-builtin-name-id source-name)
+    lookup-name
+    (tc-builtin-name-id lookup-name)))
+
+(define (tc-string-eq-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [lookup-name : String]
+  [lookup-id : i64]) : bool
+  (or
+    (and
+      (compiler-builtin-typecheck-string-eq-id? lookup-id)
+      (tc-default-builtin-unshadowed? env lookup-name))
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (and
+        (compiler-builtin-typecheck-public-string-eq-id? source-id)
+        (not
+          (compiler-builtin-typecheck-public-string-eq-question-id? source-id)))
+      lookup-id
+      "string-eq")
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (compiler-builtin-typecheck-public-string-eq-question-id? source-id)
+      lookup-id
+      "string=?")))
+
+(define (tc-string-to-int-helper-call-name?
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [_source-name : String]
+  [lookup-name : String]) : bool
+  (tc-string-to-int-helper-call-id?
+    env
+    lookup-name
+    (tc-builtin-name-id lookup-name)))
+
+(define (tc-string-to-int-helper-call-id?
+  [env : TcTypeEnv]
+  [lookup-name : String]
+  [lookup-id : i64]) : bool
+  (and
+    (compiler-builtin-typecheck-string-to-int-id? lookup-id)
+    (tc-default-builtin-unshadowed? env lookup-name)))
+
 (define (tc-borrowed-string-builtin-name? [name : String]) : bool
   (compiler-builtin-typecheck-borrowed-string-id? (tc-builtin-name-id name)))
 
@@ -13894,11 +14512,9 @@
         (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
         (ErrTcType "typecheck: unknown borrowed string builtin")))))
 
-;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
-;; String plus any integer index, yielding `char`. The parser emits this as an
-;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
-;; or local, recover the builtin String-index behavior (and its exact
-;; diagnostics) here rather than via the generic call path (#677).
+;; Typecheck the private `(__tl_string_ref s i)` intrinsic: a String plus any
+;; integer index, yielding `char`. Public `string-ref` and `char-at` live in
+;; stdlib/string.tl and lower through this private operation.
 (define (tc-string-ref-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13938,15 +14554,25 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (and
-    (tc-default-builtin-unshadowed? env name)
-    (tc-length-handle-type? arg-ty))
-    (OkTcType (AstTyI64))
-    (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
-      (if (tc-default-builtin-unshadowed? env name)
-        (ErrTcType "typecheck: argument type mismatch")
-        (tc-call-expr ctx env func args))
-      (tc-call-expr ctx env func args))))
+  (let
+    [name-id : i64 (tc-builtin-name-id name)]
+    [public-helper : bool
+      (tc-string-length-helper-call-id? ctx env name-id name-id)]
+    (begin
+      (when
+        (and
+          (or public-helper (tc-default-builtin-unshadowed? env name))
+          (tc-length-handle-type? arg-ty))
+        (return (OkTcType (AstTyI64))))
+      (unless
+        (compiler-builtin-typecheck-string-length-id? name-id)
+        (return (tc-call-expr-ordinary ctx env func args)))
+      (unless
+        (or public-helper (tc-default-builtin-unshadowed? env name))
+        (return (tc-call-expr-ordinary ctx env func args)))
+      (if (tc-length-handle-type? arg-ty)
+        (OkTcType (AstTyI64))
+        (ErrTcType "typecheck: argument type mismatch")))))
 
 (define (tc-array-length-non-array-call
   [ctx : TcContext]
@@ -13968,7 +14594,7 @@
   (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
     (if (tc-default-builtin-unshadowed? env name)
       (ErrTcType "typecheck: argument type mismatch")
-      (tc-call-expr ctx env func args))
+      (tc-call-expr-ordinary ctx env func args))
     (OkTcType (AstTyI64))))
 
 (define (tc-array-length-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
@@ -13981,9 +14607,9 @@
       (tc-array-length-receiver ctx (ty-node-get referent-ty))]
     [_ (ErrTcArrayReceiver "typecheck: array-length requires dynamic array")]))
 
-;; `array-length` remains dynamic-array-only. `length` and `string-length` keep
-;; their legacy owned-String path while also accepting explicit borrowed `str`
-;; handles for the unshadowed default builtin.
+;; `array-length` remains dynamic-array-only. `length` remains a transitional
+;; array alias. String/bytes length is a stdlib wrapper over the private
+;; `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -14015,12 +14641,12 @@
             (if (compiler-builtin-typecheck-array-length-id?
               (tc-builtin-name-id name))
               (ErrTcType "typecheck: arity mismatch")
-              (tc-call-expr ctx env func args))]))]
+              (tc-call-expr-ordinary ctx env func args))]))]
     [_
       (if (compiler-builtin-typecheck-array-length-id?
         (tc-builtin-name-id name))
         (ErrTcType "typecheck: arity mismatch")
-        (tc-call-expr ctx env func args))]))
+        (tc-call-expr-ordinary ctx env func args))]))
 
 (define (tc-layout-query-name? [name : String]) : bool
   (if (string-eq name "size-of")
@@ -14172,22 +14798,34 @@
   (match (ast-expr-unspan func)
     [(AstExprVar raw-name)
       ;; A builtin called from a macro expansion arrives hygiene-renamed
-      ;; (`__tl_macro_global$string-length`), which would miss the literal-name
-      ;; checks below and fall through to the strict registered signature. Strip
-      ;; the hygiene-global prefix so macro-generated builtin calls dispatch
-      ;; exactly like hand-written ones; `func` keeps the original name for the
-      ;; ordinary call/resolution paths.
+      ;; (`__tl_macro_global$__tl_string_length`), which would miss the
+      ;; literal-name checks below and fall through to the strict registered
+      ;; signature. Strip the hygiene-global prefix so macro-generated builtin
+      ;; calls dispatch exactly like hand-written ones; `func` keeps the
+      ;; original name for the ordinary call/resolution paths.
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
+        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
+          [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
+            (tc-one-length-handle-builtin-call ctx env args (AstTyI64))]
           [(compiler-builtin-typecheck-length-call-id? name-id)
             (tc-array-length-call ctx env name func args)]
           [(and
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
+            (tc-string-ref-call ctx env args)]
+          [(tc-string-ref-helper-call-id?
+              ctx
+              env
+              name
+              name-id
+              lookup-name
+              lookup-id)
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
@@ -14195,6 +14833,10 @@
               (tc-borrowed-string-builtin-name? name)
               (tc-default-builtin-unshadowed? env name))
             (tc-borrowed-string-builtin-call ctx env name args)]
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+            (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
+          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+            (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
               (not (tc-name-bound? env name)))
@@ -14203,8 +14845,8 @@
               (compiler-builtin-typecheck-clone-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-clone-call ctx env args)]
-          [else (tc-call-expr ctx env func args)]))]
-    [_ (tc-call-expr ctx env func args)]))
+          [else (tc-call-expr-ordinary ctx env func args)]))]
+    [_ (tc-call-expr-ordinary ctx env func args)]))
 
 (define (tc-let-bindings
   [ctx : TcContext]
@@ -25862,18 +26504,19 @@
 
 (define (tc-comptime-purity-ctfe-builtin? [name : String]) : bool
   (let
-    [call-name : String (ctfe-comptime-helper-call-name name)]
+    [lookup-name : String (tc-hygiene-global-call-name name)]
+    [call-name : String (ctfe-comptime-helper-call-name lookup-name)]
     (cond
-      [(string-eq name "size-of") true]
-      [(string-eq name "align-of") true]
-      [(string-eq name "offset-of") true]
-      [(ctfe-reflection-query-name? name) true]
-      [(string-eq name "string-eq") true]
-      [(string-eq name "string=?") true]
+      [(string-eq lookup-name "size-of") true]
+      [(string-eq lookup-name "align-of") true]
+      [(string-eq lookup-name "offset-of") true]
+      [(ctfe-reflection-query-name? lookup-name) true]
+      [(ctfe-string-eq-helper-name? lookup-name) true]
       [(string-eq call-name "string-append") true]
       [(string-eq call-name "string-concat") true]
-      [(string-eq name "string-length") true]
-      [(string-eq name "length") true]
+      [(ctfe-string-length-helper-name? lookup-name) true]
+      [(ctfe-string-ref-helper-name? lookup-name) true]
+      [(ctfe-string-to-int-helper-name? lookup-name) true]
       [(string-eq call-name "int->string") true]
       [(string-eq call-name "expr-bool") true]
       [(string-eq call-name "expr-int") true]
@@ -29702,6 +30345,15 @@
     (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))
     lifetime))
 
+(define (tc-borrow-check-binding-stores-lifetime?
+  [ctx : TcContext]
+  [ty : AstType]
+  [lifetime : String]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyFunc _ ret)
+      (tc-borrow-check-type-contains-lifetime? ctx (ty-node-get ret) lifetime)]
+    [_ (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]))
+
 (define (tc-borrow-check-env-lifetime-used-in-exprs?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -29729,7 +30381,7 @@
             lifetime
             seen)
           (if (and
-            (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)
+            (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
             (tc-expr-list-uses-free-name? exprs name TcStringNil))
             true
             (tc-borrow-check-env-lifetime-used-in-exprs?
@@ -30617,6 +31269,28 @@
       [(TcNoString) (OkTcBorrowCheck borrowed)])
     (OkTcBorrowCheck borrowed)))
 
+(define (tc-borrow-check-string-helper-intrinsic-call?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : bool
+  (match (ast-expr-unspan func)
+    [(AstExprVar raw-name)
+      (let
+        [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
+        [name-id : i64 (tc-builtin-name-id name)]
+        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        (or
+          (tc-string-length-helper-call-id? ctx env name-id lookup-id)
+          (tc-string-ref-helper-call-id?
+            ctx
+            env
+            name
+            name-id
+            lookup-name
+            lookup-id)))]
+    [_ false]))
+
 (define (tc-borrow-check-call-args-with-types
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -30626,67 +31300,84 @@
   [func : AstExpr]
   [args : AstExprList]
   [types : AstTypeList]) : TcBorrowCheckResult
-  (let
-    [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
-    [validation-result : TcBorrowCheckResult
-      (tc-borrow-check-call-args-two-phase-with-types
-        ctx
-        env
-        locals
-        validation-borrowed
-        false
-        call-expr
-        args
-        types)]
-    (match validation-result
+  (if (tc-borrow-check-string-helper-intrinsic-call? ctx env func)
+    (match (tc-borrow-check-read-exprs
+      ctx
+      env
+      locals
+      (tc-moved-clone borrowed)
+      args)
       [(OkTcBorrowCheck _)
-        (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
-          (match (tc-borrow-check-auto-borrowed-call-args
-            ctx
-            env
-            locals
-            borrowed
-            args
-            types)
-            [(OkTcBorrowCheck borrowed2)
-              (match (tc-borrow-check-thread-channel-send-message
-                ctx
-                env
-                locals
-                borrowed2
-                func
-                args
-                types)
-                [(OkTcBorrowCheck borrowed3)
-                  (tc-borrow-check-after-call-effects
-                    ctx
-                    env
-                    locals
-                    borrowed3
-                    call-expr
-                    func
-                    args)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
-          (match (tc-borrow-check-thread-channel-send-message
-            ctx
-            env
-            locals
-            borrowed
-            func
-            args
-            types)
-            [(OkTcBorrowCheck borrowed2)
-              (tc-borrow-check-after-call-effects
-                ctx
-                env
-                locals
-                borrowed2
-                call-expr
-                func
-                args)]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))
+        (tc-borrow-check-after-call-effects
+          ctx
+          env
+          locals
+          borrowed
+          call-expr
+          func
+          args)]
+      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+    (let
+      [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
+      [validation-result : TcBorrowCheckResult
+        (tc-borrow-check-call-args-two-phase-with-types
+          ctx
+          env
+          locals
+          validation-borrowed
+          false
+          call-expr
+          args
+          types)]
+      (match validation-result
+        [(OkTcBorrowCheck _)
+          (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
+            (match (tc-borrow-check-auto-borrowed-call-args
+              ctx
+              env
+              locals
+              borrowed
+              args
+              types)
+              [(OkTcBorrowCheck borrowed2)
+                (match (tc-borrow-check-thread-channel-send-message
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  func
+                  args
+                  types)
+                  [(OkTcBorrowCheck borrowed3)
+                    (tc-borrow-check-after-call-effects
+                      ctx
+                      env
+                      locals
+                      borrowed3
+                      call-expr
+                      func
+                      args)]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+            (match (tc-borrow-check-thread-channel-send-message
+              ctx
+              env
+              locals
+              borrowed
+              func
+              args
+              types)
+              [(OkTcBorrowCheck borrowed2)
+                (tc-borrow-check-after-call-effects
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  call-expr
+                  func
+                  args)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
@@ -34798,7 +35489,8 @@
   (begin
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
-    (set! macro-flat-import-target-cache-ready false)))
+    (set! macro-flat-import-target-cache-ready false)
+    (tc-imported-module-identity-cache-reset!)))
 
 (define (macro-unqualified-import-cache-ensure!) : unit
   (if (if macro-unqualified-import-cache-ready
@@ -35213,14 +35905,13 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
-(define (macro-resolve-qualified-module
+(define (macro-import-alias-target-cached
   [decls : AstDeclList]
-  [current-module : String]
-  [qualifier : String]) : String
+  [current-module-id : i64]
+  [qualifier : String]) : TcMaybeString
   (begin
     (macro-alias-cache-ensure!)
     (let
-      [current-module-id : i64 (intern current-module)]
       [qualifier-id : i64 (intern qualifier)]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (if (= cached -2)
@@ -35230,19 +35921,32 @@
           qualifier
           (intern ""))
           [(TcSomeString target)
-            (begin
-              (macro-alias-cache-put!
-                current-module-id
-                qualifier-id
-                (intern target))
-              target)]
+            (let
+              [target-id : i64 (intern target)]
+              (begin
+                (macro-alias-cache-put!
+                  current-module-id
+                  qualifier-id
+                  target-id)
+                (TcSomeString target)))]
           [(TcNoString)
             (begin
               (macro-alias-cache-put! current-module-id qualifier-id -1)
-              qualifier)])
+              (TcNoString))])
         (if (< cached 0)
-          qualifier
-          (intern-str cached))))))
+          (TcNoString)
+          (TcSomeString (intern-str cached)))))))
+
+(define (macro-resolve-qualified-module
+  [decls : AstDeclList]
+  [current-module : String]
+  [qualifier : String]) : String
+  (match (macro-import-alias-target-cached
+    decls
+    (intern current-module)
+    qualifier)
+    [(TcSomeString target) target]
+    [(TcNoString) qualifier]))
 
 (define (macro-missing-export-message [name : String]) : String
   (string-append "typecheck: missing macro export " name))

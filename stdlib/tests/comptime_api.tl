@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.comptime as comptime)
 
 (defmacro (stdlib-comptime-id [x : comptime.Expr]) : i64
@@ -25,7 +26,7 @@
     [(ExprClause test result)
       (match test
         [(ExprVar name)
-          (if (string-eq name "else")
+          (if (string.string-eq name "else")
             result
             (comptime.expr-int 0))]
         [_ (comptime.expr-int 0)])]))
@@ -37,6 +38,27 @@
         (comptime.string-concat
           (comptime.string-append base (comptime.int->string 0))
           "-value"))]
+    [_ (comptime.expr-int 0)]))
+
+(defmacro (stdlib-comptime-string-helper-total [prefix : comptime.Expr]) : i64
+  (match prefix
+    [(ExprVar base)
+      (comptime.expr-int
+        (+
+          (string-length base)
+          (+
+            (length base)
+            (+
+              (string->int "7")
+              (if (string.string-eq base "stdlib-comptime-derived")
+                (if (string=? base "stdlib-comptime-derived")
+                  (if (=
+                    (cast (string-ref base 0) : i64)
+                    (cast (char-at base 0) : i64))
+                    1
+                    0)
+                  0)
+                0)))))]
     [_ (comptime.expr-int 0)]))
 
 (define (stdlib-comptime-qualified-import-shape) : i64
@@ -60,6 +82,9 @@
     (+
       stdlib-comptime-derived0-value
       (stdlib-comptime-derived-name stdlib-comptime-derived))))
+
+(define (stdlib-comptime-legacy-string-helper-shape) : i64
+  (stdlib-comptime-string-helper-total stdlib-comptime-derived))
 
 (test
   comptime-qualified-import-shape
@@ -88,6 +113,14 @@
 (test
   comptime-qualified-string-helper-shape
   (if (= (stdlib-comptime-qualified-string-helper-shape) 84)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-legacy-string-helper-shape
+  (if (= (stdlib-comptime-legacy-string-helper-shape) 54)
     unit
     (begin
       (/ 1 0)

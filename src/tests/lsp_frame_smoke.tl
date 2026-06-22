@@ -1,5 +1,6 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.json)
+(import stdlib.string)
 (import "../lsp_frame_core.tl")
 
 (define (lsp-smoke-string-vec-contains? [items : StringVec] [needle : String]) : bool
@@ -9,7 +10,7 @@
     (begin
       (while (< idx (string-vec-len items))
         (begin
-          (if (string-eq (string-vec-get items idx "") needle)
+          (if (string.string-eq (string-vec-get items idx "") needle)
             (begin
               (set! found true)
               (set! idx (string-vec-len items)))

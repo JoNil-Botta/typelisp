@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_fixture.tl - emit runtime-helper backend fixture assembly.
 (import "../../stdlib/io.tl")
+(import "../../stdlib/string.tl")
 (import "../compiler_backend.tl")
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend

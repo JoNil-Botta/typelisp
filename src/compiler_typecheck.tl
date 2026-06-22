@@ -35,14 +35,18 @@
                   expanded
                   expanded-paths)
                   [(OkCompilerSymbols _)
-                    (match (compiler-specialize-program expanded)
-                      [(OkSpecProgram specialized)
+                    (match (compiler-specialize-program-with-paths
+                      expanded
+                      expanded-paths
+                      (tc-decl-path-list-last expanded-paths ""))
+                      [(OkSpecProgramWithPaths specialized specialized-paths)
                         (typecheck-compiler-specialized-program-with-paths-cache
                           specialized
-                          AstDeclPathNil
+                          specialized-paths
                           stdlib-roots
                           cache-scope)]
-                      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])]
+                      [(ErrSpecProgramWithPaths diag)
+                        (ErrCompilerTypecheck diag)])]
                   [(ErrCompilerSymbols message)
                     (ErrCompilerTypecheck (tc-diag-at-start message))])
                 (typecheck-compiler-specialized-program-with-paths-cache
@@ -76,14 +80,18 @@
             (if (compiler-specialize-needed? expanded)
               (match (build-compiler-symbols-with-paths expanded expanded-paths)
                 [(OkCompilerSymbols _)
-                  (match (compiler-specialize-program expanded)
-                    [(OkSpecProgram specialized)
+                  (match (compiler-specialize-program-with-paths
+                    expanded
+                    expanded-paths
+                    (tc-decl-path-list-last expanded-paths ""))
+                    [(OkSpecProgramWithPaths specialized specialized-paths)
                       (typecheck-compiler-specialized-program-with-paths-checked-cache
                         specialized
-                        AstDeclPathNil
+                        specialized-paths
                         stdlib-roots
                         cache-scope)]
-                    [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])]
+                    [(ErrSpecProgramWithPaths diag)
+                      (ErrCompilerTypecheckChecked diag)])]
                 [(ErrCompilerSymbols message)
                   (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
               (typecheck-compiler-specialized-program-with-paths-checked-cache

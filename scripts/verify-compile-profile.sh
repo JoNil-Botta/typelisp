@@ -92,11 +92,17 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
 fi
 
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
-assert_contains "$CHECK_STDERR" "stdlib.str-cat/str-cat arity=2 calls=1"
-assert_contains "$CHECK_STDERR" "stdlib.str-cat/str-cat arity=6 calls=1"
-assert_contains "$CHECK_STDERR" "stdlib.str-cat/str-cat-pack arity=8 calls=1"
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
+assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat-pack arity=8 calls=1"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/and arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=3"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.binds|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.lookups|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_builds|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.marker_scans|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 
 echo "[compile-profile] ok"

@@ -193,6 +193,10 @@
   (OkCompilerBackendObject CompilerObjectImage)
   (ErrCompilerBackendObject CompilerDiagnostic))
 
+(defenum CompilerBackendSwitchValidation
+  (CompilerBackendSwitchValidationOk)
+  (CompilerBackendSwitchValidationErr String))
+
 (defstruct CompilerBackendPicOutput
   (asm String)
   (fixups String))
@@ -819,16 +823,6 @@
     (compiler-diagnostic-with-message
       instr-diag
       "backend: vector/mask IR emission is not implemented")))
-
-(define (compiler-backend-switch-before-lowering-message) : String
-  "backend: IrInstrSwitch reached before switch lowering")
-
-(define (compiler-backend-switch-before-lowering
-  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (ErrCompilerBackend
-    (compiler-diagnostic-with-message
-      instr-diag
-      (compiler-backend-switch-before-lowering-message))))
 
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
@@ -1628,6 +1622,9 @@
 
 (define (compiler-backend-avx512-mask-mov-imm-mnemonic [lanes : i64]) : String
   (string-append "mov" (compiler-backend-avx512-mask-int-suffix lanes)))
+
+(define (compiler-backend-avx512-mask-not-full-width? [lanes : i64]) : bool
+  (or (= lanes 16) (= lanes 32) (= lanes 64)))
 
 (define (compiler-backend-avx512-mask-shl-mnemonic [lanes : i64]) : String
   (string-append "shl" (compiler-backend-avx512-mask-int-suffix lanes)))
@@ -2514,7 +2511,7 @@
           (match (compiler-backend-mask-var-reg assignments dst "mask not dst")
             [(OkBackendReg dst-reg)
               (OkCompilerBackend
-                (string-append
+                (if (compiler-backend-avx512-mask-not-full-width? lanes)
                   (str-cat
                     "    "
                     (string-append "knot" mask-suffix)
@@ -2535,10 +2532,10 @@
                     " "
                     mask-gpr
                     ", %k7\n    "
-                    (string-append "kand" mask-suffix)
-                    " %k7, "
-                    dst-reg
-                    ", "
+                    (string-append "kandn" mask-suffix)
+                    " "
+                    src-reg
+                    ", %k7, "
                     dst-reg
                     "\n")))]
             [(ErrBackendReg message)
@@ -6510,8 +6507,18 @@
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
     [(IrBinBitAnd)
-      (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "and" ty imm))]
+      (let
+        [size : i64 (compiler-backend-type-size ty)]
+        (CompilerBackendSomeAsm
+          (if (string-eq imm "$255")
+            (if (= size 8)
+              "    movzbq %al, %rax\n"
+              "    movzbl %al, %eax\n")
+            (if (and (>= size 2) (string-eq imm "$65535"))
+              (if (= size 8)
+                "    movzwq %ax, %rax\n"
+                "    movzwl %ax, %eax\n")
+              (compiler-backend-binop-immediate-reg-asm "and" ty imm)))))]
     [(IrBinBitOr)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
@@ -6846,7 +6853,25 @@
             (OkCompilerBackend
               (string-append
                 lhs-asm
-                (str-cat "    " mnem " " imm ", " dst-home "\n")))]
+                (if (match op
+                  [(IrBinBitAnd) true]
+                  [_ false])
+                  (if (string-eq imm "$255")
+                    (str-cat
+                      "    movzbq "
+                      (compiler-backend-reg-part dst-home 1)
+                      ", "
+                      dst-home
+                      "\n")
+                    (if (string-eq imm "$65535")
+                      (str-cat
+                        "    movzwq "
+                        (compiler-backend-reg-part dst-home 2)
+                        ", "
+                        dst-home
+                        "\n")
+                      (str-cat "    " mnem " " imm ", " dst-home "\n")))
+                  (str-cat "    " mnem " " imm ", " dst-home "\n"))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop
@@ -14148,6 +14173,298 @@
                   (AstTyI64)))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
+(define (compiler-backend-switch-phi-target-message) : String
+  "backend: IrInstrSwitch target requires unsupported phi edge copies")
+
+(define (compiler-backend-switch-shape-message) : String
+  "backend: IrInstrSwitch requires non-empty contiguous ordered cases")
+
+(define (compiler-backend-switch-case-count [cases : CompilerIrSwitchCaseList]) : i64
+  (match cases
+    [(IrSwitchCaseNil) 0]
+    [(IrSwitchCaseCons _ rest)
+      (+ 1 (compiler-backend-switch-case-count (box-get rest)))]))
+
+(define (compiler-backend-switch-cases-contiguous-from?
+  [cases : CompilerIrSwitchCaseList]
+  [expected : i64]) : bool
+  (match cases
+    [(IrSwitchCaseNil) true]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase tag _)
+          (and
+            (= tag expected)
+            (compiler-backend-switch-cases-contiguous-from?
+              (box-get rest)
+              (+ expected 1)))])]))
+
+(define (compiler-backend-switch-cases-target-phi?
+  [cases : CompilerIrSwitchCaseList]) : bool
+  (match cases
+    [(IrSwitchCaseNil) false]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (or
+            (compiler-backend-string-list-contains?
+              compiler-backend-current-phi-targets
+              label)
+            (compiler-backend-switch-cases-target-phi? (box-get rest)))])]))
+
+(define (compiler-backend-switch-target-phi?
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]) : bool
+  (if (= compiler-backend-current-phi-target-count 0)
+    false
+    (or
+      (compiler-backend-string-list-contains?
+        compiler-backend-current-phi-targets
+        default-label)
+      (compiler-backend-switch-cases-target-phi? cases))))
+
+(define (compiler-backend-switch-table-label
+  [function : String]
+  [current-label : String]) : String
+  (compiler-backend-asm-label
+    function
+    (str-cat current-label "_switch_table" "")))
+
+(define (compiler-backend-emit-switch-table-cases-into
+  [function : String]
+  [cases : CompilerIrSwitchCaseList]
+  [buf : TextBuf]) : TextBuf
+  (match cases
+    [(IrSwitchCaseNil) buf]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (compiler-backend-emit-switch-table-cases-into
+            function
+            (box-get rest)
+            (text-buf-append
+              (text-buf-append
+                (text-buf-append buf "    .quad ")
+                (compiler-backend-asm-label function label))
+              "\n"))])]))
+
+(define (compiler-backend-emit-switch-table
+  [function : String]
+  [current-label : String]
+  [cases : CompilerIrSwitchCaseList]) : String
+  (text-buf-render
+    (compiler-backend-emit-switch-table-cases-into
+      function
+      cases
+      (text-buf-append
+        (text-buf-append
+          (text-buf-append
+            (text-buf-empty)
+            "    .section .rodata\n    .balign 8\n")
+          (compiler-backend-switch-table-label function current-label))
+        ":\n"))))
+
+(define (compiler-backend-emit-switch-tables-instr-seq-into
+  [function : String]
+  [current-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [buf : TextBuf]) : TextBuf
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    buf
+    (compiler-backend-emit-switch-tables-instr-seq-into
+      function
+      current-label
+      instrs
+      (+ index 1)
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(IrInstrSwitch _ _ cases _)
+          (text-buf-append
+            buf
+            (compiler-backend-emit-switch-table function current-label cases))]
+        [_ buf]))))
+
+(define (compiler-backend-emit-switch-tables-blocks-into
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [buf : TextBuf]) : TextBuf
+  (match blocks
+    [(IrBlockNil) buf]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (compiler-backend-emit-switch-tables-blocks-into
+            function
+            (box-get rest)
+            (compiler-backend-emit-switch-tables-instr-seq-into
+              function
+              label
+              instrs
+              0
+              buf))])]
+    [(IrBlockArray seq)
+      (compiler-backend-emit-switch-tables-blocks-into
+        function
+        (compiler-ir-block-seq-to-list seq)
+        buf)]))
+
+(define (compiler-backend-emit-switch-tables-functions-into
+  [functions : CompilerIrFunctionList]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : TextBuf]) : TextBuf
+  (match functions
+    [(IrFunctionNil) buf]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ blocks)
+          (compiler-backend-emit-switch-tables-functions-into
+            (box-get rest)
+            program-index
+            (compiler-backend-emit-switch-tables-blocks-into
+              (compiler-backend-function-label-scope program-index name)
+              (compiler-ir-block-list-force-cons blocks)
+              buf))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-emit-switch-tables-functions-into
+        (compiler-ir-function-seq-to-list seq)
+        program-index
+        buf)]))
+
+(define (compiler-backend-emit-switch-dispatch
+  [function : String]
+  [current-label : String]
+  [index : CompilerIrValue]
+  [base : i64]
+  [case-count : i64]
+  [default-label : String]
+  [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+    [(OkCompilerBackend load-index)
+      (OkCompilerBackend
+        (str-cat
+          load-index
+          (if (= base 0)
+            ""
+            (str-cat "    subq $" (int->string base) ", %rax\n" ""))
+          "    cmpq $"
+          (int->string (- case-count 1))
+          ", %rax\n    ja "
+          (compiler-backend-asm-label function default-label)
+          "\n    leaq "
+          (compiler-backend-switch-table-label function current-label)
+          "(%rip), %r11\n    jmp *(%r11,%rax,8)\n"))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-switch
+  [function : String]
+  [current-label : String]
+  [index : CompilerIrValue]
+  [base : i64]
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]
+  [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
+  (let
+    [case-count : i64 (compiler-backend-switch-case-count cases)]
+    (cond
+      [(= case-count 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            (compiler-backend-switch-shape-message)))]
+      [(not (compiler-backend-switch-cases-contiguous-from? cases base))
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            (compiler-backend-switch-shape-message)))]
+      [(compiler-backend-switch-target-phi? cases default-label)
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            (compiler-backend-switch-phi-target-message)))]
+      [else
+        (match (compiler-backend-emit-switch-dispatch
+          function
+          current-label
+          index
+          base
+          case-count
+          default-label
+          assignments)
+          [(OkCompilerBackend dispatch) (OkCompilerBackend dispatch)]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])])))
+
+(define (compiler-backend-switch-validate-one
+  [base : i64]
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]) : CompilerBackendSwitchValidation
+  (let
+    [case-count : i64 (compiler-backend-switch-case-count cases)]
+    (cond
+      [(= case-count 0)
+        (CompilerBackendSwitchValidationErr
+          (compiler-backend-switch-shape-message))]
+      [(not (compiler-backend-switch-cases-contiguous-from? cases base))
+        (CompilerBackendSwitchValidationErr
+          (compiler-backend-switch-shape-message))]
+      [(compiler-backend-switch-target-phi? cases default-label)
+        (CompilerBackendSwitchValidationErr
+          (compiler-backend-switch-phi-target-message))]
+      [else (CompilerBackendSwitchValidationOk)])))
+
+(define (compiler-backend-switch-validate-instr [instr : CompilerIrInstr]) : CompilerBackendSwitchValidation
+  (match instr
+    [(IrInstrSwitch _ base cases default-label)
+      (compiler-backend-switch-validate-one base cases default-label)]
+    [_ (CompilerBackendSwitchValidationOk)]))
+
+(define (compiler-backend-switch-validate-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerBackendSwitchValidation
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerBackendSwitchValidationOk)
+    (match (compiler-backend-switch-validate-instr
+      (compiler-ir-instr-seq-ref instrs index))
+      [(CompilerBackendSwitchValidationOk)
+        (compiler-backend-switch-validate-instr-seq instrs (+ index 1))]
+      [(CompilerBackendSwitchValidationErr message)
+        (CompilerBackendSwitchValidationErr message)])))
+
+(define (compiler-backend-switch-validate-blocks [blocks : CompilerIrBlockList]) : CompilerBackendSwitchValidation
+  (match blocks
+    [(IrBlockNil) (CompilerBackendSwitchValidationOk)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (compiler-backend-switch-validate-instr-seq instrs 0)
+            [(CompilerBackendSwitchValidationOk)
+              (compiler-backend-switch-validate-blocks (box-get rest))]
+            [(CompilerBackendSwitchValidationErr message)
+              (CompilerBackendSwitchValidationErr message)])])]
+    [(IrBlockArray seq)
+      (compiler-backend-switch-validate-blocks
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-backend-switch-validate-functions
+  [functions : CompilerIrFunctionList]) : CompilerBackendSwitchValidation
+  (match functions
+    [(IrFunctionNil) (CompilerBackendSwitchValidationOk)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (let
+            [_phi-targets : unit
+              (set!
+                compiler-backend-current-phi-targets
+                (compiler-backend-phi-target-labels-for-blocks blocks))]
+            (match (compiler-backend-switch-validate-blocks blocks)
+              [(CompilerBackendSwitchValidationOk)
+                (compiler-backend-switch-validate-functions (box-get rest))]
+              [(CompilerBackendSwitchValidationErr message)
+                (CompilerBackendSwitchValidationErr message)]))])]
+    [(IrFunctionArray seq)
+      (compiler-backend-switch-validate-functions
+        (compiler-ir-function-seq-to-list seq))]))
+
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
   [function : String]
@@ -14758,8 +15075,19 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-      [(IrInstrSwitch _ _ _ _)
-        (compiler-backend-switch-before-lowering instr-diag)])))
+      [(IrInstrSwitch index base cases default-label)
+        (match (compiler-backend-emit-switch
+          function
+          current-label
+          index
+          base
+          cases
+          default-label
+          assignments)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])])))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -25746,9 +26074,14 @@ tl_memcpy:
                       "compose.closure_descriptors"))
                   (cfg compile-profile (compiler-backend-profile-start))
                   (let
+                    [switch-buf : TextBuf
+                      (compiler-backend-emit-switch-tables-functions-into
+                        entry-functions
+                        program-index
+                        descriptor-buf)]
                     [runtime-data-buf : TextBuf
                       (text-buf-append
-                        descriptor-buf
+                        switch-buf
                         (if emit-entry
                           (compiler-backend-runtime-data-for-target target plan)
                           ""))]
@@ -26686,6 +27019,155 @@ tl_memcpy:
     dst
     "%rax"))
 
+(define (compiler-backend-object-sub-imm32-rax-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x2d)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x3d)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-switch-indirect-jump-bytes) : String
+  (compiler-backend-object-bytes-from-hex "49ff24c3"))
+
+(define (compiler-backend-object-switch-entry-label
+  [table-label : String]
+  [index : i64]) : String
+  (string-append (string-append table-label "_entry_") (int->string index)))
+
+(define (compiler-backend-object-switch-table-cases
+  [parts : CompilerBackendObjectParts]
+  [label-scope : String]
+  [table-label : String]
+  [cases : CompilerIrSwitchCaseList]
+  [index : i64]) : CompilerBackendObjectParts
+  (match cases
+    [(IrSwitchCaseNil) parts]
+    [(IrSwitchCaseCons case rest)
+      (match case
+        [(IrSwitchCase _ label)
+          (let
+            [entry-label : String
+              (compiler-backend-object-switch-entry-label table-label index)]
+            [target : String (compiler-backend-asm-label label-scope label)]
+            (compiler-backend-object-switch-table-cases
+              (compiler-backend-object-add-rodata
+                (compiler-backend-object-add-rodata-relocation
+                  (compiler-backend-object-add-rodata
+                    parts
+                    (ObjectDataLabel entry-label))
+                  entry-label
+                  (ObjectRelocAbs64)
+                  target)
+                (ObjectDataSymbolAddress target))
+              label-scope
+              table-label
+              (box-get rest)
+              (+ index 1)))])]))
+
+(define (compiler-backend-object-switch-table
+  [parts : CompilerBackendObjectParts]
+  [label-scope : String]
+  [current-label : String]
+  [cases : CompilerIrSwitchCaseList]) : CompilerBackendObjectParts
+  (let
+    [table-label : String
+      (compiler-backend-switch-table-label label-scope current-label)]
+    (compiler-backend-object-switch-table-cases
+      (compiler-backend-object-add-rodata
+        (compiler-backend-object-add-rodata
+          (compiler-backend-object-symbol-local-section
+            parts
+            table-label
+            (ObjectSectionRodata)
+            (ObjectSymbolData))
+          (ObjectDataAlign 8))
+        (ObjectDataLabel table-label))
+      label-scope
+      table-label
+      cases
+      0)))
+
+(define (compiler-backend-object-switch-dispatch
+  [parts : CompilerBackendObjectParts]
+  [function-symbol : String]
+  [label-scope : String]
+  [current-label : String]
+  [index : CompilerIrValue]
+  [base : i64]
+  [case-count : i64]
+  [default-label : String]) : CompilerBackendObjectParts
+  (let
+    [default-symbol : String
+      (compiler-backend-asm-label label-scope default-label)]
+    [table-label : String
+      (compiler-backend-switch-table-label label-scope current-label)]
+    [with-index : CompilerBackendObjectParts
+      (compiler-backend-object-load-value-to-reg
+        parts
+        function-symbol
+        index
+        "%rax")]
+    [with-base : CompilerBackendObjectParts
+      (if (= base 0)
+        with-index
+        (compiler-backend-object-add-text
+          with-index
+          (ObjectX64Bytes (compiler-backend-object-sub-imm32-rax-bytes base))))]
+    [with-cmp : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-base
+        (ObjectX64Bytes
+          (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1))))]
+    [with-ja : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-cmp
+          function-symbol
+          (ObjectRelocBranch)
+          default-symbol)
+        (ObjectX64Ja default-symbol))]
+    [with-table : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          with-ja
+          function-symbol
+          (ObjectRelocRipAddress)
+          table-label)
+        (ObjectX64LoadRipAddressR11 table-label))]
+    (compiler-backend-object-add-text
+      with-table
+      (ObjectX64Bytes (compiler-backend-object-switch-indirect-jump-bytes)))))
+
+(define (compiler-backend-object-switch
+  [parts : CompilerBackendObjectParts]
+  [function-symbol : String]
+  [label-scope : String]
+  [current-label : String]
+  [index : CompilerIrValue]
+  [base : i64]
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-switch-dispatch
+    (compiler-backend-object-switch-table parts label-scope current-label cases)
+    function-symbol
+    label-scope
+    current-label
+    index
+    base
+    (compiler-backend-switch-case-count cases)
+    default-label))
+
 (define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
   (match op
     [(IrBinAdd) (compiler-backend-object-bytes-from-hex "4c01c0")]
@@ -26786,6 +27268,7 @@ tl_memcpy:
   [parts : CompilerBackendObjectParts]
   [function : String]
   [label-scope : String]
+  [current-label : String]
   [instr : CompilerIrInstr]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
@@ -27077,15 +27560,22 @@ tl_memcpy:
     [(IrInstrEntryArgc _) parts]
     [(IrInstrEntryArgv _) parts]
     [(IrInstrEntryEnvp _) parts]
-    ;; Public object emission preflights switch and returns a diagnostic before
-    ;; this builder runs. Keep this arm explicit so direct helper use is visibly
-    ;; unsupported until #3549 lowers switch.
-    [(IrInstrSwitch _ _ _ _) parts]))
+    [(IrInstrSwitch index base cases default-label)
+      (compiler-backend-object-switch
+        parts
+        function
+        label-scope
+        current-label
+        index
+        base
+        cases
+        default-label)]))
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]
   [function : String]
   [label-scope : String]
+  [current-label : String]
   [instrs : CompilerIrInstrSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -27097,11 +27587,13 @@ tl_memcpy:
         parts
         function
         label-scope
+        current-label
         (compiler-ir-instr-seq-ref instrs index)
         plan
         program-index)
       function
       label-scope
+      current-label
       instrs
       plan
       program-index
@@ -27133,6 +27625,7 @@ tl_memcpy:
                   (ObjectX64Label block-label))
                 function-symbol
                 label-scope
+                label
                 instrs
                 plan
                 program-index
@@ -28134,47 +28627,6 @@ tl_memcpy:
       (compiler-backend-object-image-symbols parts emit-manifest-resource)
       (compiler-backend-object-image-relocations parts emit-manifest-resource))))
 
-(define (compiler-backend-instr-has-switch? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrSwitch _ _ _ _) true]
-    [_ false]))
-
-(define (compiler-backend-instr-seq-has-switch?
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    false
-    (if (compiler-backend-instr-has-switch?
-      (compiler-ir-instr-seq-ref instrs index))
-      true
-      (compiler-backend-instr-seq-has-switch? instrs (+ index 1)))))
-
-(define (compiler-backend-blocks-have-switch? [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (if (compiler-backend-instr-seq-has-switch? instrs 0)
-            true
-            (compiler-backend-blocks-have-switch? (box-get rest)))])]
-    [(IrBlockArray seq)
-      (compiler-backend-blocks-have-switch? (compiler-ir-block-seq-to-list seq))]))
-
-(define (compiler-backend-functions-have-switch?
-  [functions : CompilerIrFunctionList]) : bool
-  (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (if (compiler-backend-blocks-have-switch? blocks)
-            true
-            (compiler-backend-functions-have-switch? (box-get rest)))])]
-    [(IrFunctionArray seq)
-      (compiler-backend-functions-have-switch?
-        (compiler-ir-function-seq-to-list seq))]))
-
 (define (compiler-backend-object-image-after-index
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -28267,24 +28719,24 @@ tl_memcpy:
                   plan
                   program-index)
                   [(OkCompilerBackendSymbolValidation _)
-                    (if (compiler-backend-functions-have-switch?
+                    (match (compiler-backend-switch-validate-functions
                       entry-functions)
-                      (ErrCompilerBackendObject
-                        (compiler-diagnostic-at-start
-                          ""
-                          (compiler-backend-switch-before-lowering-message)))
-                      (OkCompilerBackendObject
-                        (compiler-backend-object-image-after-index
-                          program
-                          target
-                          mode
-                          entry-functions
-                          globals
-                          externs
-                          plan
-                          program-index
-                          emit-entry
-                          crt-entry)))]
+                      [(CompilerBackendSwitchValidationOk)
+                        (OkCompilerBackendObject
+                          (compiler-backend-object-image-after-index
+                            program
+                            target
+                            mode
+                            entry-functions
+                            globals
+                            externs
+                            plan
+                            program-index
+                            emit-entry
+                            crt-entry))]
+                      [(CompilerBackendSwitchValidationErr message)
+                        (ErrCompilerBackendObject
+                          (compiler-diagnostic-at-start "" message))])]
                   [(ErrCompilerBackendSymbolValidation message)
                     (ErrCompilerBackendObject message)]))])
           (ErrCompilerBackendObject

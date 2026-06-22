@@ -1255,30 +1255,40 @@
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-import-source) : String
-  "(defmacro (vector [T : type]) : Module
-  `(begin
-    (module generated.vector)
-    (defstruct Vec (len i64))
-    (define (new) : Vec
-      (Vec 1))
-    (define (len [v : (& v Vec)]) : i64
-      (struct-get v len))
-    (export (type Vec))
-    (export (value new))
-    (export (value len))))
-(defmacro (sliceish) : Module
-  `(begin
-    (module generated.sliceish)
-    (import (vector i64) as vec)
-    (define (len-of [v : vec.Vec]) : i64
-      (vec.len (& v)))
-    (export (value len-of))))
+  "(defstruct Pair (value i64))
+(defmacro (vector [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append \"generated.vector.\" (type-key T)))]
+    `(begin
+      (module ,module-name)
+      (defstruct Vec (len i64))
+      (define (new) : Vec
+        (Vec 1))
+      (define (len [v : (& v Vec)]) : i64
+        (struct-get v len))
+      (export (type Vec))
+      (export (value new))
+      (export (value len)))))
+(defmacro (sliceish [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append \"generated.sliceish.\" (type-key T)))]
+    `(begin
+      (module ,module-name)
+      (import (vector ,T) as vec)
+      (define (len-of [v : vec.Vec]) : i64
+        (vec.len (& v)))
+      (export (value len-of)))))
 (import (vector i64) as vec)
-(import (sliceish) as sliceish)
+(import (sliceish i64) as sliceish)
+(import (vector Pair) as pvec)
+(import (sliceish Pair) as psliceish)
 (define (main) : i64
   (let
     [v : vec.Vec (vec.new)]
-    (sliceish.len-of v)))")
+    [pv : pvec.Vec (pvec.new)]
+    (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
   "(defstruct Pair (value i64))

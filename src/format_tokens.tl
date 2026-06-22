@@ -328,11 +328,11 @@
 (define (fmt-starts-number [data : (Ptr u8)] [i : i64] [n : i64]) : bool
   (let
     [c : char (fmt-source-byte-bounds-proven data i)]
-    (if (fmt-is-digit c)
+    (if (fmt-char-class? c 2)
       true
       (if (= c '-')
         (if (< (+ i 1) n)
-          (fmt-is-digit (fmt-source-byte-bounds-proven data (+ i 1)))
+          (fmt-char-class? (fmt-source-byte-bounds-proven data (+ i 1)) 2)
           false)
         false))))
 
@@ -384,8 +384,8 @@
           (let
             [c : char (fmt-source-byte-bounds-proven data j)]
             (if (if (= base 16)
-              (fmt-is-hex-digit c)
-              (fmt-is-binary-digit c))
+              (fmt-char-class? c 8)
+              (or (= c '0') (= c '1')))
               (set! j (+ j 1))
               (set! keep false)))
           (set! keep false)))
@@ -408,7 +408,7 @@
           start
           "format lexer: malformed integer literal"))
       (if (if (< end n)
-        (fmt-is-symbol-char (fmt-source-byte-bounds-proven data end))
+        (fmt-char-class? (fmt-source-byte-bounds-proven data end) 4)
         false)
         (ErrFmtI64
           (fmt-source-error-at
@@ -447,7 +447,7 @@
               (begin
                 (set! seen-dot true)
                 (set! j (+ j 1)))
-              (if (or (fmt-is-digit c) (= c '_'))
+              (if (or (fmt-char-class? c 2) (= c '_'))
                 (set! j (+ j 1))
                 (set! keep false))))
           (set! keep false)))

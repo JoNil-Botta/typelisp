@@ -239,9 +239,11 @@
     [(ObjectX64Call _) 5]
     [(ObjectX64TailCall _) 5]
     [(ObjectX64Jump _) 5]
+    [(ObjectX64Ja _) 6]
     [(ObjectX64Branch _ _) 14]
     [(ObjectX64LoadRip _) 7]
     [(ObjectX64LoadRipAddress _) 7]
+    [(ObjectX64LoadRipAddressR11 _) 7]
     [(ObjectX64StoreRip _) 7]
     [(ObjectX64SubRspImm8 _) 4]
     [(ObjectX64MovRcxRip _) 7]
@@ -263,9 +265,11 @@
     [(ObjectX64Call _) 1]
     [(ObjectX64TailCall _) 1]
     [(ObjectX64Jump _) 1]
+    [(ObjectX64Ja _) 1]
     [(ObjectX64Branch _ _) 2]
     [(ObjectX64LoadRip _) 1]
     [(ObjectX64LoadRipAddress _) 1]
+    [(ObjectX64LoadRipAddressR11 _) 1]
     [(ObjectX64StoreRip _) 1]
     [(ObjectX64SubRspImm8 _) 0]
     [(ObjectX64MovRcxRip _) 1]
@@ -400,9 +404,11 @@
           [(ObjectX64Call _) (set! index (+ index 1))]
           [(ObjectX64TailCall _) (set! index (+ index 1))]
           [(ObjectX64Jump _) (set! index (+ index 1))]
+          [(ObjectX64Ja _) (set! index (+ index 1))]
           [(ObjectX64Branch _ _) (set! index (+ index 1))]
           [(ObjectX64LoadRip _) (set! index (+ index 1))]
           [(ObjectX64LoadRipAddress _) (set! index (+ index 1))]
+          [(ObjectX64LoadRipAddressR11 _) (set! index (+ index 1))]
           [(ObjectX64StoreRip _) (set! index (+ index 1))]
           [(ObjectX64SubRspImm8 _) (set! index (+ index 1))]
           [(ObjectX64MovRcxRip _) (set! index (+ index 1))]
@@ -585,6 +591,10 @@
             (if (>= (compiler-object-coff-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
+          [(ObjectX64Ja target)
+            (if (>= (compiler-object-coff-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
           [(ObjectX64Branch true-target false-target)
             (if (and
               (>= (compiler-object-coff-symbol-index image true-target) 0)
@@ -596,6 +606,10 @@
               (set! index (+ index 1))
               (set! ok false))]
           [(ObjectX64LoadRipAddress target)
+            (if (>= (compiler-object-coff-symbol-index image target) 0)
+              (set! index (+ index 1))
+              (set! ok false))]
+          [(ObjectX64LoadRipAddressR11 target)
             (if (>= (compiler-object-coff-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
@@ -1033,6 +1047,11 @@
       (begin
         (compiler-object-coff-push-u8! out 0xe9)
         (compiler-object-coff-push-rel32-placeholder! out))]
+    [(ObjectX64Ja _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x0f)
+        (compiler-object-coff-push-u8! out 0x87)
+        (compiler-object-coff-push-rel32-placeholder! out))]
     [(ObjectX64Branch _ _)
       (begin
         (compiler-object-coff-push-u8! out 0x48)
@@ -1054,6 +1073,12 @@
         (compiler-object-coff-push-u8! out 0x48)
         (compiler-object-coff-push-u8! out 0x8d)
         (compiler-object-coff-push-u8! out 0x05)
+        (compiler-object-coff-push-rel32-placeholder! out))]
+    [(ObjectX64LoadRipAddressR11 _)
+      (begin
+        (compiler-object-coff-push-u8! out 0x4c)
+        (compiler-object-coff-push-u8! out 0x8d)
+        (compiler-object-coff-push-u8! out 0x1d)
         (compiler-object-coff-push-rel32-placeholder! out))]
     [(ObjectX64StoreRip _)
       (begin
@@ -1236,6 +1261,13 @@
                   (+ cur-offset 1)
                   (ObjectRelocBranch)
                   target)]
+              [(ObjectX64Ja target)
+                (compiler-object-coff-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 2)
+                  (ObjectRelocBranch)
+                  target)]
               [(ObjectX64Branch true-target false-target)
                 (begin
                   (compiler-object-coff-render-relocation-record!
@@ -1258,6 +1290,13 @@
                   (ObjectRelocRipValue)
                   target)]
               [(ObjectX64LoadRipAddress target)
+                (compiler-object-coff-render-relocation-record!
+                  out
+                  image
+                  (+ cur-offset 3)
+                  (ObjectRelocRipAddress)
+                  target)]
+              [(ObjectX64LoadRipAddressR11 target)
                 (compiler-object-coff-render-relocation-record!
                   out
                   image

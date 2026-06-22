@@ -23862,14 +23862,16 @@
               (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
               (cfg compile-profile (compiler-opt-profile-start))
               (let
-                [summaries : OptLoopBceSummaries
-                  (opt-build-program-summaries
+                [pruned-functions : CompilerIrFunctionList
+                  (opt-prune-unreachable-functions
                     globals
                     reachable-functions
-                    level)]
+                    externs)]
+                [summaries : OptLoopBceSummaries
+                  (opt-build-program-summaries globals pruned-functions level)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
-                    reachable-functions
+                    pruned-functions
                     level
                     summaries)]
                 (begin
@@ -24150,14 +24152,16 @@
                 (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
                 (cfg compile-profile (compiler-opt-profile-start))
                 (let
-                  [summaries : OptLoopBceSummaries
-                    (opt-build-program-summaries
+                  [pruned-functions : CompilerIrFunctionList
+                    (opt-prune-unreachable-functions
                       globals
                       reachable-functions
-                      level)]
+                      externs)]
+                  [summaries : OptLoopBceSummaries
+                    (opt-build-program-summaries globals pruned-functions level)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
-                      reachable-functions
+                      pruned-functions
                       level
                       summaries)]
                   (begin

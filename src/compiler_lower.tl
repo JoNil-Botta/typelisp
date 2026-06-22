@@ -643,6 +643,50 @@
     [(StringI64MapFound index) (array-ref (struct-get cache values) index)]
     [(StringI64MapMissing) source-name]))
 
+(define (lower-name-cache-resolve-dotted
+  [cache : LowerNameCache]
+  [source-name : String]) : String
+  (let
+    [n : i64 (string-length source-name)]
+    [i : i64 0]
+    [out : String ""]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< i n))
+        (begin
+          (if (and
+            (> i 0)
+            (< i (- n 1))
+            (char-eq (string-ref source-name i) '.'))
+            (let
+              [module : String (substring source-name 0 i)]
+              [base-start : i64 (+ i 1)]
+              [base : String
+                (substring source-name base-start (- n base-start))]
+              [candidate : String (compiler-symbol-module-key module base)]
+              [resolved : String (lower-name-cache-resolve cache candidate)]
+              (if (string-eq resolved candidate)
+                unit
+                (begin
+                  (set! out resolved)
+                  (set! done true))))
+            unit)
+          (set! i (+ i 1))))
+      (if done
+        out
+        source-name))))
+
+(define (lower-name-cache-resolve-source
+  [cache : LowerNameCache]
+  [source-name : String]) : String
+  (let
+    [resolved : String (lower-name-cache-resolve cache source-name)]
+    (if (string-eq resolved source-name)
+      (lower-name-cache-resolve-dotted cache source-name)
+      resolved)))
+
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
@@ -755,10 +799,11 @@
   [source-name : String]) : String
   (let
     [primary : String (lower-hygiene-source-name source-name)]
-    [resolved : String (lower-name-cache-resolve cache primary)]
+    [resolved : String (lower-name-cache-resolve-source cache primary)]
     (if (string-eq resolved primary)
       (match (lower-hygiene-fallback-source-name source-name)
-        [(TcSomeString fallback) (lower-name-cache-resolve cache fallback)]
+        [(TcSomeString fallback)
+          (lower-name-cache-resolve-source cache fallback)]
         [(TcNoString) resolved])
       resolved)))
 
@@ -849,6 +894,15 @@
   (match (lower-name-env-lookup names source-name)
     [(TcSomeString _) names]
     [(TcNoString) (LowerNameBind source-name logical-name (box names))]))
+
+(define (lower-name-env-add-import-alias-binding
+  [names : LowerNameEnv]
+  [alias : String]
+  [source-name : String]
+  [logical-name : String]) : LowerNameEnv
+  (if (string-eq alias "")
+    (lower-name-env-add-alias-if-free names source-name logical-name)
+    (LowerNameBind source-name logical-name (box names))))
 
 (define (lower-name-env-add-module-binding
   [names : LowerNameEnv]
@@ -1452,76 +1506,82 @@
     [(AstDeclDef name _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
           (compiler-symbol-module-key alias name-str)
           (lower-alias-logical-name
             entry-path
             decl-path
             module
             name-str
-            path-aware)
-          (box names)))]
+            path-aware)))]
     [(AstDeclDefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
           (compiler-symbol-module-key alias name-str)
           (lower-alias-logical-name
             entry-path
             decl-path
             module
             name-str
-            path-aware)
-          (box names)))]
+            path-aware)))]
     [(AstDeclDefDispatch name _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
           (compiler-symbol-module-key alias name-str)
           (lower-alias-logical-name
             entry-path
             decl-path
             module
             name-str
-            path-aware)
-          (box names)))]
+            path-aware)))]
     [(AstDeclExtern name _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
           (compiler-symbol-module-key alias name-str)
-          name-str
-          (box names)))]
+          name-str))]
     [(AstDeclDefStruct _ _ cleanup _)
       (match cleanup
         [(AstStructNoCleanup) names]
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (LowerNameBind
+            (lower-name-env-add-import-alias-binding
+              names
+              alias
               (compiler-symbol-module-key alias cleanup-str)
               (lower-alias-logical-name
                 entry-path
                 decl-path
                 module
                 cleanup-str
-                path-aware)
-              (box names)))])]
+                path-aware)))])]
     [(AstDeclDefStructLifetimes _ _ _ cleanup _)
       (match cleanup
         [(AstStructNoCleanup) names]
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (LowerNameBind
+            (lower-name-env-add-import-alias-binding
+              names
+              alias
               (compiler-symbol-module-key alias cleanup-str)
               (lower-alias-logical-name
                 entry-path
                 decl-path
                 module
                 cleanup-str
-                path-aware)
-              (box names)))])]
+                path-aware)))])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -1544,6 +1604,93 @@
           module
           inner
           path-aware))]
+    [_ names]))
+
+(define (lower-name-env-add-decl-alias-in-module-cache
+  [names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [alias : String]
+  [module : String]
+  [decl : AstDecl]) : LowerNameEnv
+  (match decl
+    [(AstDeclDef name _ _)
+      (let
+        [name-str : String (intern-str name)]
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
+          (compiler-symbol-module-key alias name-str)
+          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+    [(AstDeclDefFn name _ _ _ _)
+      (let
+        [name-str : String (intern-str name)]
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
+          (compiler-symbol-module-key alias name-str)
+          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+    [(AstDeclDefDispatch name _)
+      (let
+        [name-str : String (intern-str name)]
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
+          (compiler-symbol-module-key alias name-str)
+          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+    [(AstDeclExtern name _ _ _)
+      (let
+        [name-str : String (intern-str name)]
+        (lower-name-env-add-import-alias-binding
+          names
+          alias
+          (compiler-symbol-module-key alias name-str)
+          name-str))]
+    [(AstDeclDefStruct _ _ cleanup _)
+      (match cleanup
+        [(AstStructNoCleanup) names]
+        [(AstStructCleanupFn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding
+              names
+              alias
+              (compiler-symbol-module-key alias cleanup-str)
+              (lower-current-decl-logical-name-cache
+                base-cache
+                module
+                cleanup-str)))])]
+    [(AstDeclDefStructLifetimes _ _ _ cleanup _)
+      (match cleanup
+        [(AstStructNoCleanup) names]
+        [(AstStructCleanupFn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding
+              names
+              alias
+              (compiler-symbol-module-key alias cleanup-str)
+              (lower-current-decl-logical-name-cache
+                base-cache
+                module
+                cleanup-str)))])]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (lower-name-env-add-decl-alias-in-module-cache
+          names
+          base-cache
+          alias
+          module
+          template))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lower-name-env-add-decl-alias-in-module-cache
+          names
+          base-cache
+          alias
+          module
+          inner))]
     [_ names]))
 
 (define (lower-name-env-add-module-aliases
@@ -1655,6 +1802,86 @@
                 module
                 path-aware))]))]))
 
+(define (lower-name-env-add-module-aliases-cache
+  [decls : AstDeclList]
+  [base-cache : LowerNameCache]
+  [names : LowerNameEnv]
+  [target-module : String]
+  [alias : String]
+  [module : String]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              (intern-str next-module))]
+          [(AstDeclImport _)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              module)]
+          [(AstDeclIncludeBin _ _)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              module)]
+          [(AstDeclExport _)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              module)]
+          [(AstDeclTest _ _ _)
+            (lower-name-env-add-module-aliases-cache
+              rest
+              base-cache
+              names
+              target-module
+              alias
+              module)]
+          [_
+            (let
+              [next-names : LowerNameEnv
+                (if (string-eq module target-module)
+                  (lower-name-env-add-decl-alias-in-module-cache
+                    names
+                    base-cache
+                    alias
+                    module
+                    decl)
+                  names)]
+              (lower-name-env-add-module-aliases-cache
+                rest
+                base-cache
+                next-names
+                target-module
+                alias
+                module))]))]))
+
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
@@ -1717,6 +1944,162 @@
     entry-path
     names
     path-aware))
+
+(define (lower-name-env-from-import-aliases-in-module
+  [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]
+  [target-current-module : String]
+  [current-module : String]
+  [path-aware : bool]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-name-env-from-import-aliases-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              entry-path
+              names
+              target-current-module
+              (intern-str next-module)
+              path-aware)]
+          [(AstDeclImport
+              (AstImportSpec
+                _
+                _
+                (AstSomeModuleName target-module)
+                (AstSomeImportAlias alias)
+                _))
+            (lower-name-env-from-import-aliases-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              entry-path
+              (if (string-eq current-module target-current-module)
+                (lower-name-env-add-module-aliases
+                  all-decls
+                  all-paths
+                  entry-path
+                  names
+                  target-module
+                  alias
+                  ""
+                  path-aware)
+                names)
+              target-current-module
+              current-module
+              path-aware)]
+          [_
+            (lower-name-env-from-import-aliases-in-module
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              entry-path
+              names
+              target-current-module
+              current-module
+              path-aware)]))]))
+
+(define (lower-name-env-with-import-aliases-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]
+  [module : String]
+  [path-aware : bool]) : LowerNameEnv
+  (lower-name-env-from-import-aliases-in-module
+    decls
+    paths
+    decls
+    paths
+    entry-path
+    names
+    module
+    ""
+    path-aware))
+
+(define (lower-name-env-from-import-aliases-in-module-cache
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [target-current-module : String]
+  [current-module : String]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-name-env-from-import-aliases-in-module-cache
+              all-decls
+              rest
+              names
+              base-cache
+              target-current-module
+              (intern-str next-module))]
+          [(AstDeclImport
+              (AstImportSpec
+                _
+                _
+                (AstSomeModuleName target-module)
+                (AstSomeImportAlias alias)
+                _))
+            (lower-name-env-from-import-aliases-in-module-cache
+              all-decls
+              rest
+              (if (string-eq current-module target-current-module)
+                (lower-name-env-add-module-aliases-cache
+                  all-decls
+                  base-cache
+                  names
+                  target-module
+                  alias
+                  "")
+                names)
+              base-cache
+              target-current-module
+              current-module)]
+          [_
+            (lower-name-env-from-import-aliases-in-module-cache
+              all-decls
+              rest
+              names
+              base-cache
+              target-current-module
+              current-module)]))]))
+
+(define (lower-name-env-with-import-aliases-in-module-cache
+  [decls : AstDeclList]
+  [names : LowerNameEnv]
+  [base-cache : LowerNameCache]
+  [module : String]) : LowerNameEnv
+  (lower-name-env-from-import-aliases-in-module-cache
+    decls
+    decls
+    names
+    base-cache
+    module
+    ""))
 
 (define (lower-name-env-add-local-decl
   [names : LowerNameEnv]
@@ -1987,6 +2370,7 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string-eq module "")
     (OkLowerModuleLocalEnv top-env names)
@@ -1994,12 +2378,18 @@
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
+          [module-names : LowerNameEnv
+            (lower-name-env-with-import-aliases-in-module-cache
+              decls
+              names
+              name-cache
+              module)]
           (lower-module-local-envs-list
             top-env
             decls
             top-env
-            names
-            (lower-name-cache-from-env names)
+            module-names
+            name-cache
             module
             ""))])))
 
@@ -2947,13 +3337,22 @@
     [helper : String (lower-runtime-prelude-string-helper-name source-name)]
     (if (string-eq helper "")
       state
-      (lower-reach-add-logical
-        all-functions
+      (let
+        [module-helper : String
+          (compiler-symbol-module-key "stdlib.runtime" helper)]
         (lower-reach-add-logical
           all-functions
-          state
-          (string-append "stdlib/runtime.tl::" helper))
-        (string-append "stdlib\\runtime.tl::" helper)))))
+          (lower-reach-add-logical
+            all-functions
+            (lower-reach-add-logical
+              all-functions
+              (lower-reach-add-logical
+                all-functions
+                state
+                (string-append "stdlib/runtime.tl::" helper))
+              (string-append "stdlib\\runtime.tl::" helper))
+            (string-append "stdlib/runtime.tl::" module-helper))
+          (string-append "stdlib\\runtime.tl::" module-helper))))))
 
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : StringI64Map]
@@ -2978,14 +3377,19 @@
     [helper : String (lower-runtime-prelude-string-helper-name source-name)]
     (if (string-eq helper "")
       state
-      (lower-reach-add-source
-        all-functions
-        names
-        (lower-reach-add-runtime-prelude-string-helper
+      (let
+        [seeded : LowerReachState
+          (lower-reach-add-runtime-prelude-string-helper
+            all-functions
+            state
+            source-name)]
+        [module-source : String
+          (compiler-symbol-module-key "stdlib.runtime" helper)]
+        (lower-reach-add-source
           all-functions
-          state
-          source-name)
-        helper))))
+          names
+          (lower-reach-add-source all-functions names seeded module-source)
+          helper)))))
 
 (define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
   (let
@@ -3886,7 +4290,12 @@
           [(AstDeclModule next-module)
             (let
               [next-module-str : String (intern-str next-module)]
-              (match (lower-module-local-envs ctx top-env names next-module-str)
+              (match (lower-module-local-envs
+                ctx
+                top-env
+                names
+                (lower-name-cache-from-env names)
+                next-module-str)
                 [(OkLowerModuleLocalEnv next-local-env _)
                   (lower-clone-roots-decls-in-module
                     ctx
@@ -4438,6 +4847,10 @@
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (lower-reach-expr all-functions names state expr))]
+    [(AstDeclDefMacro _ _ _ body-box)
+      (let
+        [expr : AstExpr (ast-node-get body-box)]
+        (lower-reach-expr all-functions names state expr))]
     [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4467,18 +4880,21 @@
                 names
                 (lower-reach-expr all-functions names state expr)
                 rest))]
+          [(AstDeclDefMacro _ _ _ body-box)
+            (let
+              [expr : AstExpr (ast-node-get body-box)]
+              (lower-reach-global-decls
+                all-functions
+                names
+                (lower-reach-expr all-functions names state expr)
+                rest))]
           [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (lower-reach-global-decls
                 all-functions
                 names
-                (match inner
-                  [(AstDeclDef _ _ expr-box)
-                    (let
-                      [expr : AstExpr (ast-node-get expr-box)]
-                      (lower-reach-expr all-functions names state expr))]
-                  [_ state])
+                (lower-reach-global-decl all-functions names state inner)
                 rest))]
           [_ (lower-reach-global-decls all-functions names state rest)]))]))
 
@@ -4656,18 +5072,27 @@
 
 (define (lower-function-body-name-cache-for-module
   [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [module : String]) : LowerNameCache
   (if (string-eq module "")
     base-cache
-    (lower-name-cache-from-env
-      (lower-function-body-local-names-in-module
-        decls
-        base-names
-        base-cache
-        module
-        ""))))
+    (let
+      [module-base-names : LowerNameEnv
+        (lower-name-env-with-import-aliases-in-module-cache
+          decls
+          base-names
+          base-cache
+          module)]
+      (lower-name-cache-from-env
+        (lower-function-body-local-names-in-module
+          decls
+          module-base-names
+          base-cache
+          module
+          "")))))
 
 (define (lower-function-decl-count-one [decl : AstDecl]) : i64
   (match decl
@@ -4718,6 +5143,7 @@
   [entry-path : String]
   [module : String]
   [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
   [base-names : LowerNameEnv]
   [base-name-cache : LowerNameCache]
   [module-name-cache : LowerNameCache]
@@ -4748,10 +5174,13 @@
                 entry-path
                 next-module-str
                 all-decls
+                all-paths
                 base-names
                 base-name-cache
                 (lower-function-body-name-cache-for-module
                   all-decls
+                  all-paths
+                  entry-path
                   base-names
                   base-name-cache
                   next-module-str)
@@ -4765,6 +5194,7 @@
                 entry-path
                 module
                 all-decls
+                all-paths
                 base-names
                 base-name-cache
                 module-name-cache
@@ -4786,6 +5216,7 @@
                 entry-path
                 module
                 all-decls
+                all-paths
                 base-names
                 base-name-cache
                 module-name-cache
@@ -4803,6 +5234,7 @@
                       entry-path
                       module
                       all-decls
+                      all-paths
                       base-names
                       base-name-cache
                       module-name-cache
@@ -4822,6 +5254,7 @@
                     entry-path
                     module
                     all-decls
+                    all-paths
                     base-names
                     base-name-cache
                     module-name-cache
@@ -4833,6 +5266,7 @@
                     entry-path
                     module
                     all-decls
+                    all-paths
                     base-names
                     base-name-cache
                     module-name-cache
@@ -4844,6 +5278,7 @@
               entry-path
               module
               all-decls
+              all-paths
               base-names
               base-name-cache
               module-name-cache
@@ -4863,6 +5298,7 @@
       entry-path
       ""
       decls
+      paths
       names
       name-cache
       name-cache
@@ -5097,6 +5533,82 @@
     (string-i64-map-contains? reachable logical-name)
     (string-i64-map-contains? dispatch-variants logical-name)))
 
+(define (lower-export-value-item-kept?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [all-functions : StringI64Map]
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [name : String]) : bool
+  (let
+    [logical-name : String
+      (lower-name-cache-resolve names (compiler-symbol-module-key module name))]
+    (if (string-i64-map-contains? all-functions logical-name)
+      (lower-function-kept-by-reach-or-dispatch?
+        reachable
+        dispatch-variants
+        logical-name)
+      true)))
+
+(define (lower-export-item-kept?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [all-functions : StringI64Map]
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [item : AstExportItem]) : bool
+  (match item
+    [(AstExportValue name)
+      (lower-export-value-item-kept?
+        entry-path
+        decl-path
+        module
+        names
+        all-functions
+        reachable
+        dispatch-variants
+        name)]
+    [_ true]))
+
+(define (lower-filter-reachable-export-items
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [all-functions : StringI64Map]
+  [reachable : StringI64Map]
+  [dispatch-variants : StringI64Map]
+  [items : AstExportItemList]) : AstExportItemList
+  (match items
+    [(AstExportItemNil) AstExportItemNil]
+    [(AstExportItemCons item rest)
+      (let
+        [filtered-rest : AstExportItemList
+          (lower-filter-reachable-export-items
+            entry-path
+            decl-path
+            module
+            names
+            all-functions
+            reachable
+            dispatch-variants
+            (box-get rest))]
+        (if (lower-export-item-kept?
+          entry-path
+          decl-path
+          module
+          names
+          all-functions
+          reachable
+          dispatch-variants
+          item)
+          (ast-export-item-cons item filtered-rest)
+          filtered-rest))]))
+
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -5121,6 +5633,8 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
+  [names : LowerNameCache]
+  [all-functions : StringI64Map]
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]) : AstDeclList
   (match decls
@@ -5148,6 +5662,29 @@
                 rest-paths
                 entry-path
                 (intern-str next-module)
+                names
+                all-functions
+                reachable
+                dispatch-variants))]
+          [(AstDeclExport items)
+            (ast-decl-cons
+              (AstDeclExport
+                (lower-filter-reachable-export-items
+                  entry-path
+                  decl-path
+                  module
+                  names
+                  all-functions
+                  reachable
+                  dispatch-variants
+                  items))
+              (lower-filter-reachable-decls-in-module
+                rest
+                rest-paths
+                entry-path
+                module
+                names
+                all-functions
                 reachable
                 dispatch-variants))]
           [_
@@ -5165,6 +5702,8 @@
                   rest-paths
                   entry-path
                   module
+                  names
+                  all-functions
                   reachable
                   dispatch-variants))
               (lower-filter-reachable-decls-in-module
@@ -5172,6 +5711,8 @@
                 rest-paths
                 entry-path
                 module
+                names
+                all-functions
                 reachable
                 dispatch-variants))]))]))
 
@@ -5422,13 +5963,7 @@
                 decl-path
                 module
                 all-functions
-                (lower-reach-add-module-export-root-decl
-                  entry-path
-                  decl-path
-                  module
-                  all-functions
-                  state
-                  decl)
+                state
                 decl))]))]))
 
 (define (lower-prune-unreachable-functions-with-clone-roots
@@ -5501,6 +6036,8 @@
                     paths
                     entry-path
                     ""
+                    name-cache
+                    all-functions
                     reachable
                     dispatch-variants))
                 (lower-filter-reachable-paths-in-module
@@ -34891,7 +35428,14 @@
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (let
-    [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    [decl-name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    [dispatch-name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    [dispatch-variants : StringI64Map
+      (lower-dispatch-variant-set-from-decls
+        decls
+        AstDeclPathNil
+        "<source>"
+        dispatch-name-cache)]
     (lower-decls-in-module
       ctx
       top-env
@@ -34902,13 +35446,9 @@
       externs
       spans
       names
-      name-cache
+      decl-name-cache
       (lower-type-cache-from-env top-env)
-      (lower-dispatch-variant-set-from-decls
-        decls
-        AstDeclPathNil
-        "<source>"
-        name-cache)
+      dispatch-variants
       mode
       "")))
 
@@ -35192,6 +35732,7 @@
                       ctx
                       top-env
                       names
+                      cur-name-cache
                       next-module-str)
                       [(OkLowerModuleLocalEnv next-local-top-env local-names)
                         (begin
@@ -45349,7 +45890,8 @@
                       [kept : AstDeclList (box-get kept-box)]
                       (and
                         (lower-test-decl-list-defines? kept "main")
-                        (lower-test-decl-list-defines? kept "public-helper")
+                        (not
+                          (lower-test-decl-list-defines? kept "public-helper"))
                         (not (lower-test-decl-list-defines? kept "dead-helper"))))])]))])]
     [(ErrAstProgram _) false]))
 

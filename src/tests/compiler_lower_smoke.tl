@@ -99,8 +99,9 @@
             (ast-program decls)
             paths)
             [(OkCompilerLower _ _) true]
-            [(ErrCompilerLower _) false])]
-        [(ErrCompilerLoadWithPaths _) false]))))
+            [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))])]
+        [(ErrCompilerLoadWithPaths diag)
+          (panic (compiler-diagnostic-message diag))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
@@ -115,10 +116,17 @@
       [(ErrCompilerDriverLowered _) false])))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool
-  (and
-    (compiler-lower-smoke-imported-local-enum-vector-ok?)
-    (compiler-lower-smoke-imported-nullary-file-ok?)
-    (compiler-lower-smoke-stdlib-args-ok?)))
+  (begin
+    (unless
+      (compiler-lower-smoke-imported-local-enum-vector-ok?)
+      (panic "lower: issue3494 imported local enum vector failed"))
+    (unless
+      (compiler-lower-smoke-imported-nullary-file-ok?)
+      (panic "lower: issue3494 imported nullary file failed"))
+    (unless
+      (compiler-lower-smoke-stdlib-args-ok?)
+      (panic "lower: issue3494 stdlib args failed"))
+    true))
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parse-ast-source (compiler-lower-module-entry-main-source))

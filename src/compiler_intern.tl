@@ -42,10 +42,42 @@
     (string-ref text index)))
 
 (define (intern-private-string-eq [left : String] [right : String]) : bool
-  (cfg
-    feature-private-string-intrinsics
-    (__tl_string_eq left right)
-    (string-eq left right)))
+  (let
+    [left-len : i64 (intern-private-string-length left)]
+    [right-len : i64 (intern-private-string-length right)]
+    (if (not (= left-len right-len))
+      false
+      (unsafe
+        (let
+          [lp : (Ptr u8) (string-data (& left))]
+          [rp : (Ptr u8) (string-data (& right))]
+          (if (= (ptr->int lp) (ptr->int rp))
+            true
+            (let
+              [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+              [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+              [words : i64 (shr left-len 3)]
+              [i : i64 0]
+              [same : bool true]
+              (begin
+                (while (and same (< i words))
+                  (if (=
+                    (ptr-read (ptr-offset lw i))
+                    (ptr-read (ptr-offset rw i)))
+                    (set! i (+ i 1))
+                    (set! same false)))
+                (if same
+                  (let
+                    [j : i64 (* words 8)]
+                    (begin
+                      (while (and same (< j left-len))
+                        (if (=
+                          (cast (ptr-read (ptr-offset lp j)) : i64)
+                          (cast (ptr-read (ptr-offset rp j)) : i64))
+                          (set! j (+ j 1))
+                          (set! same false)))
+                      same))
+                  false)))))))))
 
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 (define (intern-capacity) : i64
@@ -167,7 +199,10 @@
     (unsafe
       (string-data (& s)))
     0
-    (intern-private-string-length s)))
+    (cfg
+      feature-private-string-intrinsics
+      (__tl_string_length s)
+      (intern-private-string-length s))))
 
 ;: Hash over a source slice without first allocating a substring.
 (define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
@@ -223,14 +258,25 @@
 (define (intern-persistent-copy [text : String]) : String
   (if (= (intern-arena-current) intern-persistent-arena)
     text
-    (intern-persistent-substring text 0 (intern-private-string-length text))))
+    (intern-persistent-substring
+      text
+      0
+      (cfg
+        feature-private-string-intrinsics
+        (__tl_string_length text)
+        (intern-private-string-length text)))))
 
 (define (intern-string-slice-eq?
   [name : String]
   [text : String]
   [start : i64]
   [len : i64]) : bool
-  (if (= (intern-private-string-length name) len)
+  (if (=
+    (cfg
+      feature-private-string-intrinsics
+      (__tl_string_length name)
+      (intern-private-string-length name))
+    len)
     (let
       [name-ptr : (Ptr u8)
         (unsafe
@@ -257,13 +303,21 @@
 (define (intern-record-qualified-metadata [id : i64] [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (intern-private-string-length name)]
+    [n : i64
+      (cfg
+        feature-private-string-intrinsics
+        (__tl_string_length name)
+        (intern-private-string-length name))]
     [slash : i64 -1]
     [dot : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (intern-private-string-ref name i)]
+          [c : char
+            (cfg
+              feature-private-string-intrinsics
+              (__tl_string_ref name i)
+              (intern-private-string-ref name i))]
           (begin
             (if (= c '/')
               (set! slash i)
@@ -286,7 +340,12 @@
             (intern-substring
               name
               base-start
-              (- (intern-private-string-length name) base-start))]
+              (-
+                (cfg
+                  feature-private-string-intrinsics
+                  (__tl_string_length name)
+                  (intern-private-string-length name))
+                base-start))]
           (begin
             (array-set! intern-pool-qualified-slots id true)
             (array-set! intern-pool-module-id-slots id (intern module-name))

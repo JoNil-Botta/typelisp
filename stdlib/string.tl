@@ -70,20 +70,20 @@
 ;: Return the byte length of borrowed or owned text without allocating.
 (cfg
   feature-private-string-intrinsics
-  (defmacro (string-length [text : Expr]) : i64
-    `(__tl_string_length ,text)))
+  (define (string-length [text : (& text str)]) : i64
+    (__tl_string_length text)))
 
 ;: Read one byte from borrowed or owned text as a `char` with bounds checking.
 (cfg
   feature-private-string-intrinsics
-  (defmacro (string-ref [text : Expr] [index : Expr]) : char
-    `(__tl_string_ref ,text ,index)))
+  (define (string-ref [text : (& text str)] [index : i64]) : char
+    (__tl_string_ref text index)))
 
 ;: Alias for `string-ref`.
 (cfg
   feature-private-string-intrinsics
-  (defmacro (char-at [text : Expr] [index : Expr]) : char
-    `(__tl_string_ref ,text ,index)))
+  (define (char-at [text : (& text str)] [index : i64]) : char
+    (__tl_string_ref text index)))
 
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!
@@ -393,45 +393,42 @@
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
-  (cfg
-    feature-private-string-intrinsics
-    (__tl_string_eq left right)
-    (let
-      [left-len : i64 (__tl_string_length left)]
-      [right-len : i64 (__tl_string_length right)]
-      (if (not (= left-len right-len))
-        false
-        (unsafe
-          (let
-            [lp : (Ptr u8) (string-data left)]
-            [rp : (Ptr u8) (string-data right)]
-            (if (= (ptr->int lp) (ptr->int rp))
-              true
-              (let
-                [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
-                [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
-                [words : i64 (shr left-len 3)]
-                [i : i64 0]
-                [same : bool true]
-                (begin
-                  (while (and same (< i words))
-                    (if (=
-                      (ptr-read (ptr-offset lw i))
-                      (ptr-read (ptr-offset rw i)))
-                      (set! i (+ i 1))
-                      (set! same false)))
-                  (if same
-                    (let
-                      [j : i64 (* words 8)]
-                      (begin
-                        (while (and same (< j left-len))
-                          (if (=
-                            (cast (ptr-read (ptr-offset lp j)) : i64)
-                            (cast (ptr-read (ptr-offset rp j)) : i64))
-                            (set! j (+ j 1))
-                            (set! same false)))
-                        same))
-                    false))))))))))
+  (let
+    [left-len : i64 (__tl_string_length left)]
+    [right-len : i64 (__tl_string_length right)]
+    (if (not (= left-len right-len))
+      false
+      (unsafe
+        (let
+          [lp : (Ptr u8) (string-data left)]
+          [rp : (Ptr u8) (string-data right)]
+          (if (= (ptr->int lp) (ptr->int rp))
+            true
+            (let
+              [lw : (Ptr i64) (ptr-cast lp : (Ptr i64))]
+              [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
+              [words : i64 (shr left-len 3)]
+              [i : i64 0]
+              [same : bool true]
+              (begin
+                (while (and same (< i words))
+                  (if (=
+                    (ptr-read (ptr-offset lw i))
+                    (ptr-read (ptr-offset rw i)))
+                    (set! i (+ i 1))
+                    (set! same false)))
+                (if same
+                  (let
+                    [j : i64 (* words 8)]
+                    (begin
+                      (while (and same (< j left-len))
+                        (if (=
+                          (cast (ptr-read (ptr-offset lp j)) : i64)
+                          (cast (ptr-read (ptr-offset rp j)) : i64))
+                          (set! j (+ j 1))
+                          (set! same false)))
+                      same))
+                  false)))))))))
 
 ;: Compare two owned strings byte-for-byte without allocating.
 (define (string-eq [left : String] [right : String]) : bool

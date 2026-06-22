@@ -39,8 +39,10 @@
 
 (define (compiler-check-language-cfgs) : SymI64Env
   (compiler-cfg-enable
-    (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-    "feature-str-view"))
+    (compiler-cfg-enable
+      (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+      "feature-str-view")
+    "array-helper-intrinsics"))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
@@ -400,13 +402,19 @@
 (define (main) : i64 answer)")
 
 (define (compiler-check-implicit-core-prelude-source) : String
-  "(define (main) : i64
+  "(import \"stdlib/array.tl\" module stdlib.array as arr)
+(define (main) : i64
   (let
     [value : i64 0]
+    [items : (Array i64) (arr.make-array i64 1)]
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
-      value)))")
+      (arr.array-set! items 0 value)
+      (arr.array-push! items 2)
+      (+
+        (arr.array-length items)
+        (+ (arr.array-ref items 0) (arr.array-ref items 1))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
   "(import \"stdlib/io.tl\")

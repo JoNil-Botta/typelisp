@@ -6,6 +6,7 @@
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
 (include-str compiler-embedded-stdlib-atomic "stdlib/atomic.tl")
 (include-str compiler-embedded-stdlib-args "stdlib/args.tl")
+(include-str compiler-embedded-stdlib-array "stdlib/array.tl")
 (include-str compiler-embedded-stdlib-byte-buf "stdlib/byte_buf.tl")
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
@@ -74,6 +75,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-atomic)]
     [(string-eq suffix "args.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)]
+    [(string-eq suffix "array.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-array)]
     [(string-eq suffix "byte_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-byte-buf)]
     [(string-eq suffix "cpu.tl")

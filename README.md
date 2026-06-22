@@ -41,9 +41,10 @@ Language direction:
   Comptime-generated declarations, type reflection, and typed expression macros
   are implemented; see SPEC.md sections 3.7 and 5.17.
 - Move toward C3-style modules where module identity participates in name
-  resolution and prefixes TypeLisp linker symbols. Module identities and
-  exports are implemented; the repository-wide migration to dotted module
-  imports is tracked by #2452, #2453, #2454, and #2492.
+  resolution and prefixes TypeLisp linker symbols. Module identities are
+  implemented and every top-level item is exported by default; the
+  repository-wide migration to dotted module imports is tracked by #2452,
+  #2453, #2454, and #2492.
 - Use an arena-based memory model with a default program-lifetime arena and
   scoped `(with-arena ...)` allocation regions (implemented).
 - Land new language features in the self-hosted compiler ([`src/`](src)).
@@ -266,9 +267,11 @@ generic/type-constructor work in #483 is superseded by that chain.
 ### Top-level forms
 
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
-`extern`, and `import`. The selfhost module/macro path also supports `module`,
-`export`, and `defmacro` for typed expression macro workflows; the final
-stdlib-macro migration of parser-owned core forms remains separate.
+`extern`, and `import`. The selfhost module/macro path also supports `module`
+and `defmacro` for typed expression macro workflows; every top-level item is
+exported by default, so the legacy `export` form is deprecated (still parsed but
+inert). The final stdlib-macro migration of parser-owned core forms remains
+separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
@@ -310,7 +313,7 @@ module. Slash-qualified source names such as `string/length` are rejected.
 Legacy path imports such as `(import "lib/util.tl")` keep the transitional flat
 behavior while that spelling is removed; see `SPEC.md` section 4.4 for the
 migration contract. Macro
-exports/imports use the same module loader identities and path-resolution rules,
+imports use the same module loader identities and path-resolution rules,
 with macro expansion happening before ordinary runtime typechecking.
 
 Comptime layout queries such as `size-of`, `align-of`, and `offset-of` use
@@ -573,7 +576,7 @@ names** in separate namespaces:
   and the constructor live in different namespaces.
 
 The selfhost module model keeps the same value/type split inside each module,
-then qualifies exported names by module identity so two modules can define the
+then qualifies names by module identity so two modules can define the
 same local value or type name without colliding.
 
 ### Expression forms

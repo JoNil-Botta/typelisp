@@ -2,9 +2,8 @@
 ;#
 ;# `(slice T)` emits a module with `Slice`, `Source`, iterator state, and
 ;# helpers over the matching `(vector T)` module's `Vec`. A slice is a non-owning
-;# view over a vector live prefix or an explicit `(Array T)` live prefix. It keeps
-;# a borrowed source witness plus a borrowed backing-array reference, so the
-;# checker ties the view to the source owner lifetime.
+;# view over a vector live prefix or an explicit `(Array T)` live prefix. The
+;# borrowed backing-array reference carries the source owner lifetime.
 (module stdlib.vector_slice)
 
 (import stdlib.vector)
@@ -24,8 +23,12 @@
         (FromArray (& source (Array ,T))))
       (defstruct Slice
         (:lifetimes source)
-        (witness (Source source))
         (slots (& source (Array ,T)))
+        (start i64)
+        (len i64))
+      (defstruct MutSlice
+        (:lifetimes source)
+        (slots (&mut source (Array ,T)))
         (start i64)
         (len i64))
       (define (range-valid? [source-len : i64] [start : i64] [len : i64]) : bool
@@ -47,13 +50,19 @@
         (if (< count 0)
           false
           (<= count (array-length items))))
+      (define (live-count-valid-mut?
+        [items : (&mut source (Array ,T))]
+        [count : i64]) : bool
+        (if (< count 0)
+          false
+          (<= count (array-length items))))
       (define (all-vec [v : (& source vec.Vec)]) : (Slice source)
-        (Slice (Source.FromVec v) (vec.slots v) 0 (vec.len v)))
+        (Slice (vec.slots v) 0 (vec.len v)))
       (define (from-vec [v : (& source vec.Vec)] [start : i64] [len : i64]) : (Slice
           source)
         (if (range-valid? (vec.len v) start len)
-          (Slice (Source.FromVec v) (vec.slots v) start len)
-          (Slice (Source.FromVec v) (vec.slots v) 0 0)))
+          (Slice (vec.slots v) start len)
+          (Slice (vec.slots v) 0 0)))
       (define (from-array
         [items : (& source (Array ,T))]
         [count : i64]
@@ -61,13 +70,36 @@
         [len : i64]) : (Slice source)
         (if (live-count-valid? items count)
           (if (range-valid? count start len)
-            (Slice (Source.FromArray items) items start len)
-            (Slice (Source.FromArray items) items 0 0))
-          (Slice (Source.FromArray items) items 0 0)))
+            (Slice items start len)
+            (Slice items 0 0))
+          (Slice items 0 0)))
+      (define (all-vec-mut [v : (&mut source vec.Vec)]) : (MutSlice source)
+        (MutSlice (vec.slots-mut v) 0 (vec.len-mut v)))
+      (define (from-vec-mut
+        [v : (&mut source vec.Vec)]
+        [start : i64]
+        [len : i64]) : (MutSlice source)
+        (if (range-valid? (vec.len-mut v) start len)
+          (MutSlice (vec.slots-mut v) start len)
+          (MutSlice (vec.slots-mut v) 0 0)))
+      (define (from-array-mut
+        [items : (&mut source (Array ,T))]
+        [count : i64]
+        [start : i64]
+        [len : i64]) : (MutSlice source)
+        (if (live-count-valid-mut? items count)
+          (if (range-valid? count start len)
+            (MutSlice items start len)
+            (MutSlice items 0 0))
+          (MutSlice items 0 0)))
       (define (len [slice : (Slice source)]) : i64
+        (struct-get slice len))
+      (define (mut-len [slice : (MutSlice source)]) : i64
         (struct-get slice len))
       (define (is-empty? [slice : (Slice source)]) : bool
         (<= (len slice) 0))
+      (define (mut-is-empty? [slice : (MutSlice source)]) : bool
+        (<= (mut-len slice) 0))
       (define (get [slice : (Slice source)] [index : i64] [fallback : ,T]) : ,T
         (if (if (>= index 0)
           (< index (len slice))
@@ -76,6 +108,15 @@
             (struct-get slice slots)
             (+ (struct-get slice start) index))
           fallback))
+      (define (set [slice : (MutSlice source)] [index : i64] [value : ,T]) : unit
+        (if (if (>= index 0)
+          (< index (mut-len slice))
+          false)
+          (array-set!
+            (struct-get slice slots)
+            (+ (struct-get slice start) index)
+            value)
+          unit))
       (defstruct Iter
         (:lifetimes source)
         (slots (& source (Array ,T)))
@@ -125,15 +166,10 @@
           source)
         (if (range-valid? (len slice) start count)
           (Slice
-            (struct-get slice witness)
             (struct-get slice slots)
             (+ (struct-get slice start) start)
             count)
-          (Slice
-            (struct-get slice witness)
-            (struct-get slice slots)
-            (struct-get slice start)
-            0)))
+          (Slice (struct-get slice slots) (struct-get slice start) 0)))
       (define (to-array [slice : (Slice source)]) : (Array ,T)
         (let
           [n : i64 (len slice)]
@@ -160,19 +196,34 @@
         (variant FromArray)
         (type Slice)
         (constructor Slice)
+        (type MutSlice)
+        (constructor MutSlice)
         (type Iter)
         (constructor Iter)
         (type IterNext)
         (variant Done)
         (variant Item)
+        (field Slice slots)
+        (field Slice start)
+        (field Slice len)
+        (field MutSlice slots)
+        (field MutSlice start)
+        (field MutSlice len)
         (value range-valid?)
         (value live-count-valid?)
+        (value live-count-valid-mut?)
         (value all-vec)
         (value from-vec)
         (value from-array)
+        (value all-vec-mut)
+        (value from-vec-mut)
+        (value from-array-mut)
         (value len)
+        (value mut-len)
         (value is-empty?)
+        (value mut-is-empty?)
         (value get)
+        (value set)
         (value iterator)
         (value next)
         (value iter-done?)
@@ -307,7 +358,42 @@
               [empty-iter : (i64s.Iter fv) (i64s.iterator empty-slice)]
               (test.assert-true
                 (i64s.iter-done? (i64s.next empty-iter))
-                "empty slice iterator exhausted"))))))))
+                "empty slice iterator exhausted"))
+            (let
+              [dst : i64v.Vec (i64v.with-capacity 3)]
+              (begin
+                (i64v.push (&mut dst) 0)
+                (i64v.push (&mut dst) 0)
+                (i64v.push (&mut dst) 0)
+                (let
+                  [full-mut : (i64s.MutSlice dst) (i64s.all-vec-mut (&mut dst))]
+                  (begin
+                    (test.assert-i64-eq
+                      (i64s.mut-len full-mut)
+                      3
+                      "full mutable slice len")
+                    (test.assert-false
+                      (i64s.mut-is-empty? full-mut)
+                      "full mutable slice not empty")
+                    (i64s.set full-mut 1 44)
+                    (array-set!
+                      (struct-get full-mut slots)
+                      (struct-get full-mut start)
+                      33)))
+                (test.assert-i64-eq
+                  (i64v.get (& dst) 0 -1)
+                  33
+                  "mutable slice field write updates vector")
+                (test.assert-i64-eq
+                  (i64v.get (& dst) 1 -1)
+                  44
+                  "mutable slice set updates vector")
+                (let
+                  [bad-mut : (i64s.MutSlice dst)
+                    (i64s.from-vec-mut (&mut dst) 2 2)]
+                  (test.assert-true
+                    (i64s.mut-is-empty? bad-mut)
+                    "mutable slice overrun -> empty"))))))))))
 
 (cfg
   test

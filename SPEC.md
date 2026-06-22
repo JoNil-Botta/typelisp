@@ -772,8 +772,8 @@ V1 exclusions:
 - No source-level generic type constructors, generic functions, traits,
   `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
 - No runtime representation for `type`, `Expr`, `ExprList`, `ExprClause`,
-  `ExprClauseList`, declaration metadata, generated keys, or other
-  comptime-only values.
+  `ExprClauseList`, `ExprBindingClause`, `ExprBindingClauseList`, declaration
+  metadata, generated keys, or other comptime-only values.
 - No generated public Rust compiler product surface; this is a selfhost
   compiler feature.
 - No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
@@ -793,14 +793,15 @@ value and cannot be stored in variables, passed to functions, placed in fields,
 or called indirectly.
 
 Macro signatures use ordinary produced types, with `Expr` as an explicit
-wildcard capture and `ExprClause` as a bracket-clause capture. An ordinary
-operand slot states the type that the operand expression must produce at the
-call site. For example, a macro with type `(macro (bool bool) bool)` takes two
-operand expressions that must each typecheck as `bool` and produces an
-expression that must typecheck as `bool`. A fixed slot declared `Expr` accepts
-any ordinary operand expression without checking its produced type before
-expansion; the macro receives the syntax as an `Expr`, and ordinary
-typechecking validates the expanded expression afterward.
+wildcard capture, `ExprClause` as a general bracket-clause capture, and
+`ExprBindingClause` as a let-like binding-clause capture. An ordinary operand
+slot states the type that the operand expression must produce at the call site.
+For example, a macro with type `(macro (bool bool) bool)` takes two operand
+expressions that must each typecheck as `bool` and produces an expression that
+must typecheck as `bool`. A fixed slot declared `Expr` accepts any ordinary
+operand expression without checking its produced type before expansion; the
+macro receives the syntax as an `Expr`, and ordinary typechecking validates the
+expanded expression afterward.
 The macro may call `(expr-type expr)` to query the captured expression's
 produced type when ordinary typechecking can determine it; the query does not
 evaluate the runtime expression and reports a macro-time diagnostic for syntax
@@ -809,15 +810,25 @@ that cannot be typed in the caller context.
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions preserved
 as syntax. The bracket form is valid only in macro call operands; it is not a
-general expression, and ordinary calls or non-`ExprClause` macro slots reject it
-with a source-located diagnostic. Empty clauses, one-element clauses, and
-clauses with more than two elements are rejected.
+general expression, and ordinary calls or non-bracket macro slots reject it with
+a source-located diagnostic. Empty clauses, one-element clauses, and clauses
+with more than two elements are rejected.
+
+A fixed slot declared `ExprBindingClause` accepts exactly one binding-clause
+operand, either `[name init]` or `[name : Type init]`. The `name` must be a
+source identifier and is preserved as the user-facing binding name. The optional
+type annotation and initializer are preserved as syntax; the type annotation is
+not resolved before macro expansion. These operands are distinct from
+`ExprClause`: `[x : i64 1]` is accepted only for `ExprBindingClause`, while
+`ExprClause` remains exactly `[expr expr]`.
 
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro body
 receives the remaining operands as an `ExprList`; for `Expr ...`, they are
 captured without per-operand produced-type checks. For `ExprClause ...`, every
 remaining operand must be a two-expression bracket clause and the macro body
-receives an `ExprClauseList`.
+receives an `ExprClauseList`. For `ExprBindingClause ...`, every remaining
+operand must be a binding clause and the macro body receives an
+`ExprBindingClauseList`.
 
 Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
 `expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
@@ -827,12 +838,20 @@ They can inspect clause captures with `expr-clause-first`,
 `expr-clause-list-tail`, and `expr-clause-list-nth`.
 `expr-clause-list->expr-list` converts a clause list back into a list of
 bracket-clause operand syntax for explicit splicing into recursive macro calls.
+They can inspect binding-clause captures with `expr-binding-clause-name`,
+`expr-binding-clause-has-type?`, `expr-binding-clause-type`,
+`expr-binding-clause-init`, `expr-binding-clause-list-empty?`,
+`expr-binding-clause-list-length`, `expr-binding-clause-list-head`,
+`expr-binding-clause-list-tail`, and `expr-binding-clause-list-nth`.
+`expr-binding-clause-list->expr-list` converts a binding-clause list back into
+bracket-clause operand syntax for explicit splicing into macro calls.
 
-`Expr`, `ExprList`, `ExprClause`, and `ExprClauseList` are compile-time-only
-types. They are valid in macro bodies and explicit `(comptime ...)` helper
-code, but they have no runtime representation. The compiler tracks the checked
-produced type of each `Expr` internally; there is no source-level `Expr<T>` and
-no generic macro type parameter.
+`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`, and
+`ExprBindingClauseList` are compile-time-only types. They are valid in macro
+bodies and explicit `(comptime ...)` helper code, but they have no runtime
+representation. The compiler tracks the checked produced type of each `Expr`
+internally; there is no source-level `Expr<T>` and no generic macro type
+parameter.
 
 Macro bodies build expression values with quote forms. The reader accepts both
 prefix shorthand and the equivalent list-headed forms:
@@ -848,8 +867,9 @@ prefix shorthand and the equivalent list-headed forms:
 `quasiquote` produces an `Expr` while evaluating `unquote` operands as
 compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
 evaluates to an `ExprList` and splices that list into the surrounding template
-list. Clause lists do not splice implicitly; use `expr-clause-list->expr-list`
-when a macro needs to splice generated bracket operands. `unquote` and
+list. Clause lists and binding-clause lists do not splice implicitly; use
+`expr-clause-list->expr-list` or `expr-binding-clause-list->expr-list` when a
+macro needs to splice generated bracket operands. `unquote` and
 `unquote-splicing` outside quasiquote are rejected.
 
 The source surface is:
@@ -876,17 +896,19 @@ bool)`, `(macro (bool bool ...) bool)`, and
 `(macro (ExprClause ...) i64)`. The `defmacro` operand list names the macro
 body's compile-time parameters and their call-site produced types. Fixed
 ordinary operands bind as `Expr`, fixed `ExprClause` operands bind as
-`ExprClause`, variadic ordinary operands bind as `ExprList`, and variadic
-`ExprClause` operands bind as `ExprClauseList`. The macro body must typecheck
-as `Expr`, and the produced fragment must post-expand typecheck as the declared
-result type.
+`ExprClause`, fixed `ExprBindingClause` operands bind as `ExprBindingClause`,
+variadic ordinary operands bind as `ExprList`, variadic `ExprClause` operands
+bind as `ExprClauseList`, and variadic `ExprBindingClause` operands bind as
+`ExprBindingClauseList`. The macro body must typecheck as `Expr`, and the
+produced fragment must post-expand typecheck as the declared result type.
 
 Typed expansion has three checks:
 
 1. The macro call site is checked from the macro signature before expansion.
    Ordinary operand type errors are reported at the operand source span; `Expr`
    operands are wildcard syntax captures and skip the produced-type check;
-   `ExprClause` operands must use `[expr expr]` syntax.
+   `ExprClause` operands must use `[expr expr]` syntax; `ExprBindingClause`
+   operands must use `[name expr]` or `[name : Type expr]` syntax.
 2. The macro body is checked as compile-time TypeLisp over the macro-only
    syntax types.
 3. The expanded expression is checked again by the ordinary typechecker as a
@@ -1033,7 +1055,8 @@ loaded.
 
 The well-known set for the first stdlib-owned surface is:
 
-- Syntax values: `Expr`, `ExprList`, `ExprClause`, and `ExprClauseList`.
+- Syntax values: `Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
+  `ExprBindingClause`, and `ExprBindingClauseList`.
 - Reflection values: `TypeInfo` plus the associated field, variant, payload,
   parameter, and sequence types needed to represent the section 5.17 reflection
   data as ordinary TypeLisp values.
@@ -1057,11 +1080,12 @@ surface, or compiler symbol-table handles.
 
 The stdlib declarations choose the end-state collection shape rather than
 freezing the compiler's historical cons-list helpers. `ExprList`,
-`ExprClauseList`, and reflection sequences are dense, length-indexed sequence
-wrappers over arrays (or an equivalent compiler-verified dense representation).
-Their public API is length/index/iteration-oriented. Recursive cons cells are
-not part of the public contract, even if temporary compatibility helpers keep
-names such as `expr-list-head` during migration.
+`ExprClauseList`, `ExprBindingClauseList`, and reflection sequences are dense,
+length-indexed sequence wrappers over arrays (or an equivalent
+compiler-verified dense representation). Their public API is
+length/index/iteration-oriented. Recursive cons cells are not part of the
+public contract, even if temporary compatibility helpers keep names such as
+`expr-list-head` during migration.
 
 The public enum variant policy follows the dotted qualified variant direction:
 stdlib declarations should use short variant names such as `Var`, `Call`,
@@ -2009,7 +2033,7 @@ surface until those helpers land.
 `TextBuf` is intentionally separate. It is an append-oriented text builder over
 owned or borrowed string chunks whose render operation materializes an immutable
 `String`; it is not a random-access mutable byte buffer and must not become the
-binary slice contract by accident. Generated slices such as `I64Slice` in
+binary slice contract by accident. Generated modules such as `(slice i64)` in
 `stdlib/vector_slice.tl` remain typed collection views. `bytes` is the
 language-wide raw byte-slice referent for binary data and FFI/IO boundaries.
 
@@ -6429,6 +6453,8 @@ macro-call    ::= "(" qualified-name call-operand* ")"
 
 call-operand  ::= expr
                 | "[" expr expr "]"            ; macro-only ExprClause operand
+                | "[" ident expr "]"           ; macro-only ExprBindingClause operand
+                | "[" ident ":" type expr "]"  ; macro-only ExprBindingClause operand
 
 cond-clause   ::= "[" expr expr "]"
 cond-else-clause ::= "[" "else" expr "]"
@@ -6467,6 +6493,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "str"                               ; borrowed referent only
                 | "Expr" | "ExprList"               ; compile-time-only macro body values
                 | "ExprClause" | "ExprClauseList"   ; macro-only bracket operand values
+                | "ExprBindingClause" | "ExprBindingClauseList"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type

@@ -46,6 +46,22 @@
     (items (Array ExprClause))
     (len i64)))
 
+;: Let-like binding clause used by binding-introducing macro forms.
+(comptime-decl
+  (:generated stdlib/comptime-well-known ExprBindingClause "v0")
+  (defstruct ExprBindingClause
+    (name String)
+    (has-type bool)
+    (ty Expr)
+    (init Expr)))
+
+;: Dense ordered sequence of binding clauses.
+(comptime-decl
+  (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
+  (defstruct ExprBindingClauseList
+    (items (Array ExprBindingClause))
+    (len i64)))
+
 ;: Dense ordered sequence of reflected type descriptors.
 (comptime-decl
   (:generated stdlib/comptime-well-known TypeInfoList "v0")
@@ -233,6 +249,48 @@
 (define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
   (expr-clause-list->expr-list items))
 
+;: Return the user-facing binding name from a binding clause.
+(define (expr-binding-clause-name [clause : ExprBindingClause]) : String
+  (expr-binding-clause-name clause))
+
+;: Return true when a binding clause includes an explicit type annotation.
+(define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
+  (expr-binding-clause-has-type? clause))
+
+;: Return the explicit type annotation syntax from a typed binding clause.
+(define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
+  (expr-binding-clause-type clause))
+
+;: Return the initializer expression from a binding clause.
+(define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
+  (expr-binding-clause-init clause))
+
+;: Return true when a binding-clause list has no items.
+(define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
+  (expr-binding-clause-list-empty? items))
+
+;: Return the number of binding clauses in a binding-clause list.
+(define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
+  (expr-binding-clause-list-length items))
+
+;: Return the first item in a non-empty binding-clause list.
+(define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
+  (expr-binding-clause-list-head items))
+
+;: Return all but the first item from a non-empty binding-clause list.
+(define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
+  (expr-binding-clause-list-tail items))
+
+;: Return a binding-clause list item by index.
+(define (expr-binding-clause-list-nth
+  [items : ExprBindingClauseList]
+  [index : i64]) : ExprBindingClause
+  (expr-binding-clause-list-nth items index))
+
+;: Convert binding clauses back into bracket-clause operand syntax.
+(define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList
+  (expr-binding-clause-list->expr-list items))
+
 (export
   (type Expr)
   (variant ExprBool)
@@ -258,6 +316,16 @@
   (constructor ExprClauseList)
   (field ExprClauseList items)
   (field ExprClauseList len)
+  (type ExprBindingClause)
+  (constructor ExprBindingClause)
+  (field ExprBindingClause name)
+  (field ExprBindingClause has-type)
+  (field ExprBindingClause ty)
+  (field ExprBindingClause init)
+  (type ExprBindingClauseList)
+  (constructor ExprBindingClauseList)
+  (field ExprBindingClauseList items)
+  (field ExprBindingClauseList len)
   (type TypeInfoList)
   (constructor TypeInfoList)
   (field TypeInfoList items)
@@ -329,4 +397,14 @@
   (value expr-clause-list-head)
   (value expr-clause-list-tail)
   (value expr-clause-list-nth)
-  (value expr-clause-list->expr-list))
+  (value expr-clause-list->expr-list)
+  (value expr-binding-clause-name)
+  (value expr-binding-clause-has-type?)
+  (value expr-binding-clause-type)
+  (value expr-binding-clause-init)
+  (value expr-binding-clause-list-empty?)
+  (value expr-binding-clause-list-length)
+  (value expr-binding-clause-list-head)
+  (value expr-binding-clause-list-tail)
+  (value expr-binding-clause-list-nth)
+  (value expr-binding-clause-list->expr-list))

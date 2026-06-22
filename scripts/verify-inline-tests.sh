@@ -7,8 +7,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Retry transient Windows segfaults (#1204) around each `typelisp` invocation.
-. "$ROOT/scripts/lib-retry.sh"
+# Each `typelisp` invocation runs exactly once: a crash is a real compiler bug,
+# not a flake — do not retry it (see the no-retry policy in scripts/ci-verify.sh).
 
 HOST_OS=linux
 HOST_TARGET=linux-x86_64
@@ -108,9 +108,8 @@ echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
 # #2609: `test --check --batch` scopes each entry in its own compiler arena and
 # resets per-file compiler state between entries, matching compile --batch. Keep
 # the verifier batched so CI exercises that bounded-memory path.
-if run_with_retry "$batch_check_stdout" "$batch_check_stderr" \
-    "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
+if "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
+    > "$batch_check_stdout" 2> "$batch_check_stderr"; then
     batch_check_status=0
 else
     batch_check_status=$?
@@ -157,9 +156,8 @@ while IFS= read -r source; do
     fi
 
     echo "[inline-tests] run $source ($case_tests test(s))"
-    if run_with_retry "$run_stdout" "$run_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
+    if "$COMPILER" test "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
+        > "$run_stdout" 2> "$run_stderr"; then
         run_status=0
     else
         run_status=$?

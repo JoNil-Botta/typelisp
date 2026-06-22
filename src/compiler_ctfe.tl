@@ -31,7 +31,9 @@
   (CtfeExpr i64 AstType)
   (CtfeExprList AstExprList)
   (CtfeExprClause AstExprClause)
-  (CtfeExprClauseList AstExprClauseList))
+  (CtfeExprClauseList AstExprClauseList)
+  (CtfeExprBindingClause AstExprBindingClause)
+  (CtfeExprBindingClauseList AstExprBindingClauseList))
 
 (define (ctfe-untyped-expr-type-name) : String
   "__typelisp_untyped_expr")
@@ -864,7 +866,9 @@
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "ExprClause"]
-    [(CtfeExprClauseList _) "ExprClauseList"]))
+    [(CtfeExprClauseList _) "ExprClauseList"]
+    [(CtfeExprBindingClause _) "ExprBindingClause"]
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1234,6 +1238,44 @@
                 (ctfe-diagnostic-at-expr
                   expr
                   "this operation is not supported on expr-clause-list in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeExprBindingClause a)
+      (match rv
+        [(CtfeExprBindingClause b)
+          (match op
+            [(AstBinEq)
+              (OkCtfe (CtfeBool (ctfe-expr-binding-clause-eq a b)) fuel)]
+            [(AstBinNe)
+              (OkCtfe (CtfeBool (not (ctfe-expr-binding-clause-eq a b))) fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on expr-binding-clause in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeExprBindingClauseList a)
+      (match rv
+        [(CtfeExprBindingClauseList b)
+          (match op
+            [(AstBinEq)
+              (OkCtfe (CtfeBool (ctfe-expr-binding-clause-list-eq a b)) fuel)]
+            [(AstBinNe)
+              (OkCtfe
+                (CtfeBool (not (ctfe-expr-binding-clause-list-eq a b)))
+                fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on expr-binding-clause-list in compile-time evaluation"))])]
         [_
           (ErrCtfe
             (ctfe-diagnostic-at-expr
@@ -3013,6 +3055,28 @@
       "expr-clause-list-nth"]
     [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list->expr-list")
       "expr-clause-list->expr-list"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-name")
+      "expr-binding-clause-name"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-has-type?")
+      "expr-binding-clause-has-type?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-type")
+      "expr-binding-clause-type"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-init")
+      "expr-binding-clause-init"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-empty?")
+      "expr-binding-clause-list-empty?"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-length")
+      "expr-binding-clause-list-length"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-head")
+      "expr-binding-clause-list-head"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-tail")
+      "expr-binding-clause-list-tail"]
+    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-nth")
+      "expr-binding-clause-list-nth"]
+    [(ctfe-stdlib-comptime-helper-name?
+        name
+        "expr-binding-clause-list->expr-list")
+      "expr-binding-clause-list->expr-list"]
     [(ctfe-stdlib-comptime-helper-name? name "string-append") "string-append"]
     [(ctfe-stdlib-comptime-helper-name? name "string-concat") "string-concat"]
     [(ctfe-stdlib-comptime-helper-name? name "int->string") "int->string"]
@@ -3215,6 +3279,22 @@
     (string-eq name "expr-clause-list-tail")
     (string-eq name "expr-clause-list-nth")
     (string-eq name "expr-clause-list->expr-list")))
+
+(define (ctfe-expr-binding-clause-inspector-name? [name : String]) : bool
+  (or
+    (string-eq name "expr-binding-clause-name")
+    (string-eq name "expr-binding-clause-has-type?")
+    (string-eq name "expr-binding-clause-type")
+    (string-eq name "expr-binding-clause-init")))
+
+(define (ctfe-expr-binding-clause-list-inspector-name? [name : String]) : bool
+  (or
+    (string-eq name "expr-binding-clause-list-empty?")
+    (string-eq name "expr-binding-clause-list-length")
+    (string-eq name "expr-binding-clause-list-head")
+    (string-eq name "expr-binding-clause-list-tail")
+    (string-eq name "expr-binding-clause-list-nth")
+    (string-eq name "expr-binding-clause-list->expr-list")))
 
 (define (ctfe-eval-expr-list-nth-call
   [list-arg : AstExpr]
@@ -3568,6 +3648,194 @@
           expr
           (string-append name " expects exactly one arg")))]))
 
+(define (ctfe-eval-expr-binding-clause-inspector-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeExprBindingClause clause)
+                    (cond
+                      [(string-eq name "expr-binding-clause-name")
+                        (OkCtfe
+                          (CtfeString (ctfe-expr-binding-clause-name clause))
+                          arg-fuel)]
+                      [(string-eq name "expr-binding-clause-has-type?")
+                        (OkCtfe
+                          (CtfeBool (ctfe-expr-binding-clause-has-type? clause))
+                          arg-fuel)]
+                      [(string-eq name "expr-binding-clause-type")
+                        (if (ctfe-expr-binding-clause-has-type? clause)
+                          (OkCtfe
+                            (CtfeExpr
+                              (ctfe-expr-binding-clause-type clause)
+                              (ctfe-untyped-expr-type))
+                            arg-fuel)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-binding-clause-type expects typed ExprBindingClause")))]
+                      [(string-eq name "expr-binding-clause-init")
+                        (OkCtfe
+                          (CtfeExpr
+                            (ctfe-expr-binding-clause-init clause)
+                            (ctfe-untyped-expr-type))
+                          arg-fuel)]
+                      [else (ctfe-unsupported-form expr)])]
+                  [_
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        (string-append name " expects ExprBindingClause")))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                (string-append name " expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          (string-append name " expects exactly one arg")))]))
+
+(define (ctfe-eval-expr-binding-clause-list-nth-call
+  [list-arg : AstExpr]
+  [index-arg : AstExpr]
+  [rest : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match rest
+    [(AstExprNil)
+      (match (compiler-ctfe-eval list-arg env fuel)
+        [(OkCtfe value list-fuel)
+          (match value
+            [(CtfeExprBindingClauseList clauses)
+              (match (ctfe-eval-i64-arg
+                index-arg
+                expr
+                env
+                list-fuel
+                "expr-binding-clause-list-nth")
+                [(ErrCtfeI64Arg d) (ErrCtfe d)]
+                [(OkCtfeI64Arg index index-fuel)
+                  (if (or
+                    (< index 0)
+                    (>= index (ctfe-expr-binding-clause-list-length clauses)))
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-binding-clause-list-nth index out of range"))
+                    (OkCtfe
+                      (CtfeExprBindingClause
+                        (ctfe-expr-binding-clause-list-nth clauses index))
+                      index-fuel))])]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-binding-clause-list-nth expects ExprBindingClauseList"))])]
+        [(ErrCtfe diag) (ErrCtfe diag)])]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-binding-clause-list-nth expects exactly two args"))]))
+
+(define (ctfe-eval-expr-binding-clause-list-inspector-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (if (string-eq name "expr-binding-clause-list-nth")
+          (match rest
+            [(AstExprCons index-arg nth-rest)
+              (ctfe-eval-expr-binding-clause-list-nth-call
+                arg
+                (ast-node-get index-arg)
+                (box-get nth-rest)
+                expr
+                env
+                fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-binding-clause-list-nth expects exactly two args"))])
+          (match rest
+            [(AstExprNil)
+              (match (compiler-ctfe-eval arg env fuel)
+                [(OkCtfe value arg-fuel)
+                  (match value
+                    [(CtfeExprBindingClauseList clauses)
+                      (cond
+                        [(string-eq name "expr-binding-clause-list-empty?")
+                          (OkCtfe
+                            (CtfeBool
+                              (ctfe-expr-binding-clause-list-empty? clauses))
+                            arg-fuel)]
+                        [(string-eq name "expr-binding-clause-list-length")
+                          (OkCtfe
+                            (CtfeI64
+                              (ctfe-expr-binding-clause-list-length clauses))
+                            arg-fuel)]
+                        [(string-eq name "expr-binding-clause-list->expr-list")
+                          (OkCtfe
+                            (CtfeExprList
+                              (ctfe-expr-binding-clause-list->expr-list clauses))
+                            arg-fuel)]
+                        [(ctfe-expr-binding-clause-list-empty? clauses)
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string-append
+                                name
+                                " expects non-empty ExprBindingClauseList")))]
+                        [(string-eq name "expr-binding-clause-list-head")
+                          (OkCtfe
+                            (CtfeExprBindingClause
+                              (ctfe-expr-binding-clause-list-head clauses))
+                            arg-fuel)]
+                        [(string-eq name "expr-binding-clause-list-tail")
+                          (OkCtfe
+                            (CtfeExprBindingClauseList
+                              (ctfe-expr-binding-clause-list-tail clauses))
+                            arg-fuel)]
+                        [else (ctfe-unsupported-form expr)])]
+                    [_
+                      (ErrCtfe
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (string-append name " expects ExprBindingClauseList")))])]
+                [(ErrCtfe diag) (ErrCtfe diag)])]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string-append name " expects exactly one arg")))])))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          (string-append name " expects exactly one arg")))]))
+
 (define (ctfe-eval-expr-if-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -3690,17 +3958,28 @@
             (ctfe-eval-offset-query args expr env fuel)]
           [(ctfe-reflection-query-name? raw-name)
             (ctfe-eval-reflection-query raw-name args expr env fuel)]
-          [(string-eq raw-name "__tl_string_eq")
+          [(or
+              (string-eq raw-name "__tl_string_eq")
+              (string-eq raw-name "string-eq")
+              (string-eq raw-name "string=?"))
             (ctfe-eval-string-eq-call raw-name args expr env fuel)]
           [(or
               (string-eq call-name "string-append")
               (string-eq call-name "string-concat"))
             (ctfe-eval-string-append-call call-name args expr env fuel)]
-          [(string-eq raw-name "__tl_string_length")
+          [(or
+              (string-eq raw-name "__tl_string_length")
+              (string-eq raw-name "string-length")
+              (string-eq raw-name "length"))
             (ctfe-eval-string-length-call raw-name args expr env fuel)]
-          [(string-eq raw-name "__tl_string_ref")
+          [(or
+              (string-eq raw-name "__tl_string_ref")
+              (string-eq raw-name "string-ref")
+              (string-eq raw-name "char-at"))
             (ctfe-eval-string-ref-call raw-name args expr env fuel)]
-          [(string-eq raw-name "__tl_string_to_int")
+          [(or
+              (string-eq raw-name "__tl_string_to_int")
+              (string-eq raw-name "string->int"))
             (ctfe-eval-string-to-int-call raw-name args expr env fuel)]
           [(string-eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
@@ -3724,6 +4003,20 @@
             (ctfe-eval-expr-clause-inspector-call call-name args expr env fuel)]
           [(ctfe-expr-clause-list-inspector-name? call-name)
             (ctfe-eval-expr-clause-list-inspector-call
+              call-name
+              args
+              expr
+              env
+              fuel)]
+          [(ctfe-expr-binding-clause-inspector-name? call-name)
+            (ctfe-eval-expr-binding-clause-inspector-call
+              call-name
+              args
+              expr
+              env
+              fuel)]
+          [(ctfe-expr-binding-clause-list-inspector-name? call-name)
+            (ctfe-eval-expr-binding-clause-list-inspector-call
               call-name
               args
               expr
@@ -4054,6 +4347,19 @@
         (match value
           [(CtfeExpr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
+          [(CtfeExprClause clause)
+            (if (ctfe-pattern-variant-name? variant "ExprClause")
+              (ctfe-match-pattern-list
+                args
+                (ctfe-value-list2
+                  (CtfeExpr
+                    (ctfe-expr-clause-first clause)
+                    (ctfe-untyped-expr-type))
+                  (CtfeExpr
+                    (ctfe-expr-clause-second clause)
+                    (ctfe-untyped-expr-type)))
+                env)
+              (CtfeNoPatternMatch))]
           [_ (CtfeNoPatternMatch)]))]
     [(AstPatTuple _) (CtfeNoPatternMatch)]))
 
@@ -6737,6 +7043,39 @@
                 (ctfe-expr-clause-list-eq a-tail b-tail)))]
           [_ false]))]))
 
+(define (ctfe-expr-binding-clause-eq
+  [a : AstExprBindingClause]
+  [b : AstExprBindingClause]) : bool
+  (and
+    (= (struct-get a name) (struct-get b name))
+    (= (struct-get a has-type) (struct-get b has-type))
+    (ctfe-expr-eq
+      (ast-node-get (struct-get a ty))
+      (ast-node-get (struct-get b ty)))
+    (ctfe-expr-eq
+      (ast-node-get (struct-get a init))
+      (ast-node-get (struct-get b init)))))
+
+(define (ctfe-expr-binding-clause-list-eq
+  [a : AstExprBindingClauseList]
+  [b : AstExprBindingClauseList]) : bool
+  (match a
+    [(AstExprBindingClauseNil)
+      (match b
+        [(AstExprBindingClauseNil) true]
+        [_ false])]
+    [(AstExprBindingClauseCons a-head a-tail)
+      (let
+        [a-tail : AstExprBindingClauseList (box-get a-tail)]
+        (match b
+          [(AstExprBindingClauseCons b-head b-tail)
+            (let
+              [b-tail : AstExprBindingClauseList (box-get b-tail)]
+              (and
+                (ctfe-expr-binding-clause-eq a-head b-head)
+                (ctfe-expr-binding-clause-list-eq a-tail b-tail)))]
+          [_ false]))]))
+
 (define (ctfe-binop-eq [a : AstBinOp] [b : AstBinOp]) : bool
   (match a
     [(AstBinAdd)
@@ -6929,6 +7268,93 @@
         (ctfe-expr-clause-as-bracket-expr head)
         (ctfe-expr-clause-list->expr-list (box-get rest)))]))
 
+(define (ctfe-expr-binding-clause-name [clause : AstExprBindingClause]) : String
+  (intern-str (struct-get clause name)))
+
+(define (ctfe-expr-binding-clause-has-type? [clause : AstExprBindingClause]) : bool
+  (struct-get clause has-type))
+
+(define (ctfe-expr-binding-clause-type [clause : AstExprBindingClause]) : i64
+  (struct-get clause ty))
+
+(define (ctfe-expr-binding-clause-init [clause : AstExprBindingClause]) : i64
+  (struct-get clause init))
+
+(define (ctfe-expr-binding-clause-list-length [lst : AstExprBindingClauseList]) : i64
+  (match lst
+    [(AstExprBindingClauseNil) 0]
+    [(AstExprBindingClauseCons _ rest)
+      (let
+        [rest : AstExprBindingClauseList (box-get rest)]
+        (+ 1 (ctfe-expr-binding-clause-list-length rest)))]))
+
+(define (ctfe-expr-binding-clause-list-empty? [lst : AstExprBindingClauseList]) : bool
+  (match lst
+    [(AstExprBindingClauseNil) true]
+    [_ false]))
+
+(define (ctfe-expr-binding-clause-empty-default) : AstExprBindingClause
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    (ast-expr-binding-clause-id
+      0
+      false
+      unit-expr
+      unit-expr
+      (AstSourceSpan 0 0 0 0))))
+
+(define (ctfe-expr-binding-clause-list-head [lst : AstExprBindingClauseList]) : AstExprBindingClause
+  (match lst
+    [(AstExprBindingClauseCons head _) head]
+    [_ (ctfe-expr-binding-clause-empty-default)]))
+
+(define (ctfe-expr-binding-clause-list-tail [lst : AstExprBindingClauseList]) : AstExprBindingClauseList
+  (match lst
+    [(AstExprBindingClauseCons _ tail)
+      (let
+        [tail : AstExprBindingClauseList (box-get tail)]
+        tail)]
+    [_ AstExprBindingClauseNil]))
+
+(define (ctfe-expr-binding-clause-list-nth
+  [lst : AstExprBindingClauseList]
+  [index : i64]) : AstExprBindingClause
+  (match lst
+    [(AstExprBindingClauseCons head tail)
+      (if (= index 0)
+        head
+        (ctfe-expr-binding-clause-list-nth (box-get tail) (- index 1)))]
+    [_ (ctfe-expr-binding-clause-empty-default)]))
+
+(define (ctfe-expr-binding-clause-as-bracket-expr
+  [clause : AstExprBindingClause]) : i64
+  (let
+    [name-expr : i64 (ast-node-push (AstExprVar (struct-get clause name)))]
+    [bracket : i64
+      (if (struct-get clause has-type)
+        (ast-expr-bracket-clause
+          (ast-expr-cons
+            name-expr
+            (ast-expr-cons
+              (ast-node-push (AstExprVar (intern ":")))
+              (ast-expr-cons
+                (struct-get clause ty)
+                (ast-expr-cons (struct-get clause init) AstExprNil)))))
+        (ast-expr-bracket-clause
+          (ast-expr-cons
+            name-expr
+            (ast-expr-cons (struct-get clause init) AstExprNil))))]
+    (ast-expr-spanned bracket (struct-get clause span))))
+
+(define (ctfe-expr-binding-clause-list->expr-list
+  [lst : AstExprBindingClauseList]) : AstExprList
+  (match lst
+    [(AstExprBindingClauseNil) AstExprNil]
+    [(AstExprBindingClauseCons head rest)
+      (ast-expr-cons
+        (ctfe-expr-binding-clause-as-bracket-expr head)
+        (ctfe-expr-binding-clause-list->expr-list (box-get rest)))]))
+
 ;; INSPECTORS (predicates) -----------------------------------------------------
 (define (ctfe-expr-literal? [e : i64]) : bool
   (match (ast-node-get e)
@@ -7043,7 +7469,9 @@
     [(CtfeExpr _ _) (AstLitUnit)]
     [(CtfeExprList _) (AstLitUnit)]
     [(CtfeExprClause _) (AstLitUnit)]
-    [(CtfeExprClauseList _) (AstLitUnit)]))
+    [(CtfeExprClauseList _) (AstLitUnit)]
+    [(CtfeExprBindingClause _) (AstLitUnit)]
+    [(CtfeExprBindingClauseList _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]

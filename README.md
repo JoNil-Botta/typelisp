@@ -70,7 +70,7 @@ of imitating transitional patterns still present in the tree:
   end-state is qualified short names such as `str.append` (#2582, #2583).
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
   `cond`) are canonical; qualified `core.` calls are transitional (#2581).
-  Macros support bracket operands for clause-shaped surfaces (#2578), and
+  Macros support bracket operands for clause- and binding-shaped surfaces, and
   core `cond` uses bracket arms `(cond [test expr] ... [else fallback])`;
   the flat call shape is rejected (#2579).
   Macros become order-independent within a module (#2584).

@@ -14790,6 +14790,49 @@
           [_ (ErrTcType "typecheck: clone expects exactly one argument")]))]
     [_ (ErrTcType "typecheck: clone expects exactly one argument")]))
 
+(define (tc-tls-current-arena-read-call [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprNil) (OkTcType (AstTyI64))]
+    [_ (ErrTcType "typecheck: tls-current-arena expects no arguments")]))
+
+(define (tc-tls-current-arena-set-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match (tc-require-unsafe env "tls-current-arena-set!")
+    [(OkTcUnit)
+      (match args
+        [(AstExprCons value-node rest-box)
+          (let
+            [value : AstExpr (ast-node-get value-node)]
+            [rest : AstExprList (box-get rest-box)]
+            (match rest
+              [(AstExprNil)
+                (match (tc-check-exact-arg
+                  ctx
+                  env
+                  value
+                  (AstTyI64)
+                  "typecheck: tls-current-arena-set! value type mismatch")
+                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                  [(ErrTcUnit message) (ErrTcType message)])]
+              [_
+                (ErrTcType
+                  "typecheck: tls-current-arena-set! expects exactly one argument")]))]
+        [_
+          (ErrTcType
+            "typecheck: tls-current-arena-set! expects exactly one argument")])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-tls-current-arena-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [args : AstExprList]) : ResultTcType
+  (if (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)
+    (tc-tls-current-arena-read-call args)
+    (tc-tls-current-arena-set-call ctx env args)))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -14829,6 +14872,10 @@
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
+          [(and
+              (compiler-builtin-typecheck-tls-current-arena-id? name-id)
+              (not (tc-name-bound? env name)))
+            (tc-tls-current-arena-call ctx env name-id args)]
           [(and
               (tc-borrowed-string-builtin-name? name)
               (tc-default-builtin-unshadowed? env name))

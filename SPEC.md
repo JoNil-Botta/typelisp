@@ -4995,7 +4995,7 @@ codegen:
 
 | Symbol(s) | Disposition |
 |-----------|-------------|
-| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Revisit after #3290 provides a suitable TLS access design. |
+| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
 | `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
@@ -5020,6 +5020,16 @@ initializers run; Windows x64 stores the current arena in the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
 current-arena slot before calling user code, so the worker's first allocation
 creates an independent default arena chain.
+
+The compiler provides two allocation-free current-arena TLS intrinsics for
+runtime-prelude code: `(tls-current-arena)` returns the current arena handle as
+`i64`, and `(tls-current-arena-set! arena)` writes that handle and requires an
+`unsafe` context. They lower directly to the platform TLS access used by the
+backend helpers (`%fs:tl_current_arena@tpoff` on Linux and `GS:0x28` on
+Windows), emit no calls, and require no imports, so they are valid in
+`stdlib/runtime.tl` before ordinary allocation is available. They intentionally
+name only the current-arena slot; arbitrary TLS slots remain out of scope until a
+separate source-level design exists.
 
 `tl_arena_make` creates an ordinary first-class arena whose bump cursor is
 single-threaded. `tl_arena_make_atomic` creates an arena handle with the same

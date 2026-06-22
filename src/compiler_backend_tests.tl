@@ -667,6 +667,78 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-runtime-tls-wrapper-source) : String
+  "(define (runtime-tls-current-arena) : i64
+  (tls-current-arena))
+
+(unsafe
+  (define (runtime-tls-current-arena-set! [arena : i64]) : unit
+    (unsafe
+      (tls-current-arena-set! arena))))
+
+(define (main) : i64
+  (let
+    [home : i64 (runtime-tls-current-arena)]
+    (begin
+      (unsafe (runtime-tls-current-arena-set! home))
+      home)))")
+
+(define (compiler-backend-emit-runtime-tls-wrapper-source
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-path-mode
+    "stdlib/runtime.tl"
+    (compiler-backend-runtime-tls-wrapper-source)
+    (compiler-backend-lower-mode-for-target target (BackendModeScalar)))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target-and-entry
+        program
+        spans
+        target
+        false)]
+    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
+
+(define (compiler-backend-runtime-tls-linux-wrapper-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-string-contains?
+      asm
+      "    movq %fs:tl_current_arena@tpoff, %rax\n")
+    (compiler-backend-string-contains?
+      asm
+      "    movq %rdi, %fs:tl_current_arena@tpoff\n")
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_tls_current_arena_load\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_tls_current_arena_store\n"))))
+
+(define (compiler-backend-runtime-tls-windows-wrapper-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-string-contains? asm "    movq %gs:0x28, %rax\n")
+    (compiler-backend-string-contains? asm "    movq %rcx, %gs:0x28\n")
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_tls_current_arena_load\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_tls_current_arena_store\n"))))
+
+(define (compiler-backend-runtime-tls-wrapper-asm-ok?) : bool
+  (match (compiler-backend-emit-runtime-tls-wrapper-source (BackendTargetLinux))
+    [(OkCompilerBackend linux-asm)
+      (match (compiler-backend-emit-runtime-tls-wrapper-source
+        (BackendTargetWindows))
+        [(OkCompilerBackend windows-asm)
+          (and
+            (compiler-backend-runtime-tls-linux-wrapper-asm-ok? linux-asm)
+            (compiler-backend-runtime-tls-windows-wrapper-asm-ok? windows-asm))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-string-source) : String
   "(define greeting : String \"hi\")
 (define (main) : String \"hi\")")
@@ -11020,6 +11092,7 @@
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-atomic-functions-removed-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)
+        (compiler-backend-runtime-tls-wrapper-asm-ok?)
         (compiler-backend-runtime-global-inventory-ok?)
         (compiler-backend-runtime-page-call-inventory-ok?)
         (compiler-backend-profile-runtime-split-ok?))

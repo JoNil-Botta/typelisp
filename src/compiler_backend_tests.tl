@@ -3614,6 +3614,7 @@
         (compiler-backend-object-parts-empty)
         "main"
         "main"
+        "entry"
         (IrInstrPack 0 values ty)
         plan
         index)]
@@ -3622,6 +3623,7 @@
         packed
         "main"
         "main"
+        "entry"
         (IrInstrWord 1 (IrValueFunction "word_target") 0 ty)
         plan
         index)]
@@ -5265,7 +5267,13 @@
   (IrInstrSwitch
     (IrValueVar 0)
     0
-    (compiler-ir-switch-case-cons 0 "zero" IrSwitchCaseNil)
+    (compiler-ir-switch-case-cons
+      0
+      "zero"
+      (compiler-ir-switch-case-cons
+        1
+        "one"
+        (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil)))
     "other"))
 
 (define (compiler-backend-switch-test-program) : CompilerIrProgram
@@ -5283,18 +5291,291 @@
             (compiler-ir-instr-cons
               (compiler-backend-switch-test-instr)
               IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "zero"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "one"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+                  IrInstrNil))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "two"
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+                    IrInstrNil))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    "other"
+                    (compiler-ir-instr-cons
+                      (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                      IrInstrNil))
+                  IrBlockNil))))))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-switch-asm-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-switch-test-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    cmpq $2, %rax\n")
+        (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        (compiler-backend-string-contains?
+          asm
+          "    leaq .Lf0_entry_switch_table(%rip), %r11\n")
+        (compiler-backend-string-contains? asm "    jmp *(%r11,%rax,8)\n")
+        (compiler-backend-string-contains?
+          asm
+          "    .section .rodata\n    .balign 8\n")
+        (compiler-backend-string-contains? asm ".Lf0_entry_switch_table:\n")
+        (compiler-backend-string-contains? asm "    .quad .Lf0_zero\n")
+        (compiler-backend-string-contains? asm "    .quad .Lf0_one\n")
+        (compiler-backend-string-contains? asm "    .quad .Lf0_two\n")
+        (compiler-backend-string-contains? asm ".text\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-switch-base-test-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        1
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrSwitch
+                (IrValueVar 0)
+                4
+                (compiler-ir-switch-case-cons
+                  4
+                  "four"
+                  (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))
+                "other")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "four"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 4)))
+                IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "five"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 5)))
+                  IrInstrNil))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "other"
+                  (compiler-ir-instr-cons
+                    (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                    IrInstrNil))
+                IrBlockNil)))))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-switch-base-asm-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-switch-base-test-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    subq $4, %rax\n")
+        (compiler-backend-string-contains? asm "    cmpq $1, %rax\n")
+        (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        (compiler-backend-string-contains?
+          asm
+          "    leaq .Lf0_entry_switch_table(%rip), %r11\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-switch-bad-shape-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        1
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrSwitch
+                (IrValueVar 0)
+                0
+                (compiler-ir-switch-case-cons
+                  0
+                  "zero"
+                  (compiler-ir-switch-case-cons 2 "two" IrSwitchCaseNil))
+                "other")
+              IrInstrNil))
           IrBlockNil))
       IrFunctionNil)
     IrExternNil))
 
-(define (compiler-backend-switch-object-diagnostic-ok?) : bool
+(define (compiler-backend-switch-shape-diagnostic-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-switch-bad-shape-program))
+    [(ErrCompilerBackend diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        (compiler-backend-switch-shape-message))]
+    [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-switch-phi-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        2
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrSwitch
+                (IrValueVar 0)
+                0
+                (compiler-ir-switch-case-cons 0 "join" IrSwitchCaseNil)
+                "other")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "join"
+              (compiler-ir-instr-cons
+                (IrInstrPhi
+                  1
+                  (compiler-ir-phi-input-cons
+                    (IrValueI64 1)
+                    "entry"
+                    IrPhiInputNil)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+                  IrInstrNil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "other"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  IrInstrNil))
+              IrBlockNil))))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-switch-phi-diagnostic-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-switch-phi-program))
+    [(ErrCompilerBackend diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        (compiler-backend-switch-phi-target-message))]
+    [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-switch-object-image-ok?) : bool
   (match (compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-test-program)
+    (compiler-source-spans-empty))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [table-label : String ".Lf0_entry_switch_table"]
+        (and
+          (compiler-object-elf-image-supported? image)
+          (compiler-object-coff-image-supported? image)
+          (compiler-object-symbol-list-contains?
+            symbols
+            table-label
+            (ObjectSymbolLocal)
+            (ObjectSymbolData))
+          (compiler-object-section-contains-label?
+            sections
+            (ObjectSectionRodata)
+            table-label)
+          (compiler-object-section-contains-align?
+            sections
+            (ObjectSectionRodata)
+            8)
+          (compiler-object-section-contains-label?
+            sections
+            (ObjectSectionRodata)
+            ".Lf0_entry_switch_table_entry_0")
+          (compiler-object-relocation-list-contains?
+            relocs
+            (ObjectRelocRipAddress)
+            table-label)
+          (compiler-object-relocation-list-contains?
+            relocs
+            (ObjectRelocBranch)
+            ".Lf0_other")
+          (compiler-object-relocation-list-contains?
+            relocs
+            (ObjectRelocAbs64)
+            ".Lf0_zero")
+          (compiler-object-relocation-list-contains?
+            relocs
+            (ObjectRelocAbs64)
+            ".Lf0_one")
+          (compiler-object-relocation-list-contains?
+            relocs
+            (ObjectRelocAbs64)
+            ".Lf0_two")
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-cmp-imm32-rax-bytes 2))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-switch-indirect-jump-bytes))))]
+    [(ErrCompilerBackendObject diag) false]))
+
+(define (compiler-backend-switch-base-object-image-ok?) : bool
+  (match (compiler-backend-emit-program-object-image-linux
+    (compiler-backend-switch-base-test-program)
+    (compiler-source-spans-empty))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (and
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-sub-imm32-rax-bytes 4))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-cmp-imm32-rax-bytes 1))))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-switch-object-shape-diagnostic-ok?) : bool
+  (match (compiler-backend-emit-program-object-image-linux
+    (compiler-backend-switch-bad-shape-program)
     (compiler-source-spans-empty))
     [(ErrCompilerBackendObject diag)
       (string-eq
         (compiler-diagnostic-message diag)
-        (compiler-backend-switch-before-lowering-message))]
+        (compiler-backend-switch-shape-message))]
+    [(OkCompilerBackendObject _) false]))
+
+(define (compiler-backend-switch-object-phi-diagnostic-ok?) : bool
+  (match (compiler-backend-emit-program-object-image-linux
+    (compiler-backend-switch-phi-program)
+    (compiler-source-spans-empty))
+    [(ErrCompilerBackendObject diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        (compiler-backend-switch-phi-target-message))]
     [(OkCompilerBackendObject _) false]))
 
 (define (compiler-backend-instr-diagnostics-ok?) : bool
@@ -5328,12 +5609,14 @@
       "backend: unsupported f64 unary op"
       40
       11)
-    (compiler-backend-instr-diagnostic-case-ok?
-      (compiler-backend-switch-test-instr)
-      (compiler-backend-switch-before-lowering-message)
-      10
-      2)
-    (compiler-backend-switch-object-diagnostic-ok?)
+    (compiler-backend-switch-asm-ok?)
+    (compiler-backend-switch-base-asm-ok?)
+    (compiler-backend-switch-shape-diagnostic-ok?)
+    (compiler-backend-switch-phi-diagnostic-ok?)
+    (compiler-backend-switch-object-image-ok?)
+    (compiler-backend-switch-base-object-image-ok?)
+    (compiler-backend-switch-object-shape-diagnostic-ok?)
+    (compiler-backend-switch-object-phi-diagnostic-ok?)
     (compiler-backend-instr-diagnostic-case-ok?
       (ir-instr-vector-bin-op
         3

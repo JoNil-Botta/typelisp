@@ -4088,7 +4088,7 @@
             (if unsafe
               (match (tc-require-unsafe
                 env
-                (tc-source-unsafe-display-name ctx name lookup-name))
+                (tc-source-lookup-display-name ctx name lookup-name))
                 [(OkTcUnit)
                   (match (tc-source-value-visible-ok ctx name lookup-name)
                     [(OkTcUnit) (OkTcType ty)]
@@ -5613,14 +5613,15 @@
           [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
-                (match (macro-import-alias-target-ids
-                  (box-get decls-box)
-                  (intern current-module)
-                  alias
-                  (intern ""))
-                  [(TcSomeString _)
-                    (TcSomeString (compiler-symbol-module-key alias base))]
-                  [(TcNoString) (TcNoString)])])])))))
+                (let
+                  [target : String
+                    (macro-resolve-qualified-module
+                      (box-get decls-box)
+                      current-module
+                      alias)]
+                  (if (string-eq target alias)
+                    (TcNoString)
+                    (TcSomeString (compiler-symbol-module-key alias base))))])])))))
 
 (define (tc-source-lookup-display-name
   [ctx : TcContext]
@@ -5629,12 +5630,6 @@
   (match (tc-source-alias-display-key ctx source-name)
     [(TcSomeString display-name) display-name]
     [(TcNoString) lookup-name]))
-
-(define (tc-source-unsafe-display-name
-  [ctx : TcContext]
-  [source-name : String]
-  [lookup-name : String]) : String
-  (tc-source-lookup-display-name ctx source-name lookup-name))
 
 (define (tc-source-unbound-display-message
   [ctx : TcContext]
@@ -5863,6 +5858,34 @@
                 target-module))])]
       [(ErrCompilerExports message) (ErrTcUnit message)])))
 
+(define (tc-qualified-export-visible-ok-with-source
+  [ctx : TcContext]
+  [kind-name : String]
+  [source-name : String]
+  [lookup-name : String]
+  [target-module : String]
+  [export-name : String]) : ResultTcUnit
+  (if (string-eq target-module (tc-context-module ctx))
+    OkTcUnit
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (match (compiler-exports-lookup-id
+          exports
+          (intern kind-name)
+          (intern target-module)
+          (intern export-name))
+          [(SomeI64 _) OkTcUnit]
+          [(NoneI64)
+            (ErrTcUnit
+              (tc-qualified-access-private-message
+                kind-name
+                (tc-source-lookup-display-name ctx source-name lookup-name)
+                target-module))])]
+      [(ErrCompilerExports message) (ErrTcUnit message)])))
+
 (define (tc-qualified-name-export-visible-ok-with-display
   [ctx : TcContext]
   [kind-name : String]
@@ -5936,10 +5959,21 @@
   [ctx : TcContext]
   [source-name : String]
   [lookup-name : String]) : ResultTcUnit
-  (tc-qualified-value-visible-ok-with-display
-    ctx
-    lookup-name
-    (tc-source-lookup-display-name ctx source-name lookup-name)))
+  (if (tc-name-qualified? lookup-name)
+    (let
+      [qualifier : String (tc-qualified-name-module lookup-name)]
+      [base : String (tc-qualified-name-base lookup-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [kind-name : String
+        (tc-qualified-value-export-kind ctx target-module base)]
+      (tc-qualified-export-visible-ok-with-source
+        ctx
+        kind-name
+        source-name
+        lookup-name
+        target-module
+        base))
+    OkTcUnit))
 
 (define (tc-qualified-field-visible-ok
   [ctx : TcContext]
@@ -5982,10 +6016,19 @@
   [ctx : TcContext]
   [source-name : String]
   [lookup-name : String]) : ResultTcUnit
-  (tc-qualified-variant-visible-ok-with-display
-    ctx
-    lookup-name
-    (tc-source-lookup-display-name ctx source-name lookup-name)))
+  (if (tc-name-qualified? lookup-name)
+    (let
+      [qualifier : String (tc-qualified-name-module lookup-name)]
+      [base : String (tc-qualified-name-base lookup-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (tc-qualified-export-visible-ok-with-source
+        ctx
+        (compiler-export-kind-variant)
+        source-name
+        lookup-name
+        target-module
+        base))
+    OkTcUnit))
 
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
@@ -24325,7 +24368,7 @@
                       (if unsafe
                         (match (tc-require-unsafe
                           env
-                          (tc-source-unsafe-display-name
+                          (tc-source-lookup-display-name
                             ctx
                             name-text
                             lookup-name))

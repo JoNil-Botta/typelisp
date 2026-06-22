@@ -7609,8 +7609,7 @@
       (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-macro-qualified-private-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-qualified-private-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))

@@ -2413,6 +2413,57 @@
 (define (tc-enum-cleanup-function-type [enum-ty : AstType]) : AstType
   (tc-fn1 enum-ty (AstTyUnit)))
 
+(define (tc-cleanup-value-handle? [handle : i64]) : bool
+  (let
+    [kind : i64 (compiler-symbol-handle-kind handle)]
+    (or
+      (= kind (compiler-symbol-kind-struct-cleanup))
+      (= kind (compiler-symbol-kind-enum-cleanup)))))
+
+(define (tc-struct-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
+  (match decl
+    [(AstDeclDefStruct name _ _ _)
+      (OkTcType
+        (tc-struct-cleanup-function-type
+          (AstTyStruct
+            (intern (compiler-symbol-module-key module (intern-str name))))))]
+    [(AstDeclDefStructLifetimes name lifetimes _ _ _)
+      (OkTcType
+        (tc-struct-cleanup-function-type
+          (ast-ty-struct-args
+            (intern (compiler-symbol-module-key module (intern-str name)))
+            lifetimes)))]
+    [_
+      (ErrTcType "typecheck: exported struct cleanup has no struct declaration")]))
+
+(define (tc-enum-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
+  (match decl
+    [(AstDeclDefEnum name _ _)
+      (OkTcType
+        (tc-enum-cleanup-function-type
+          (AstTyEnum
+            (intern (compiler-symbol-module-key module (intern-str name))))))]
+    [(AstDeclDefEnumLifetimes name lifetimes _ _)
+      (OkTcType
+        (tc-enum-cleanup-function-type
+          (ast-ty-enum-args
+            (intern (compiler-symbol-module-key module (intern-str name)))
+            lifetimes)))]
+    [_ (ErrTcType "typecheck: exported enum cleanup has no enum declaration")]))
+
+(define (tc-cleanup-value-handle-type
+  [module : String]
+  [handle : i64]
+  [decl : AstDecl]) : ResultTcType
+  (let
+    [kind : i64 (compiler-symbol-handle-kind handle)]
+    (cond
+      [(= kind (compiler-symbol-kind-struct-cleanup))
+        (tc-struct-cleanup-decl-type module decl)]
+      [(= kind (compiler-symbol-kind-enum-cleanup))
+        (tc-enum-cleanup-decl-type module decl)]
+      [else (ErrTcType "typecheck: value is not a generated cleanup")])))
+
 (define (tc-bind-struct-cleanup-module-name
   [env : TcTypeEnv]
   [module : String]
@@ -20851,7 +20902,9 @@
                   (tc-macro-param-type-list ctx params)
                   (tc-resolve-type ctx ret)))]
             [_ (ErrTcType "typecheck: exported macro has no macro signature")])
-          (tc-top-decl-type ctx decl))])))
+          (if (tc-cleanup-value-handle? handle)
+            (tc-cleanup-value-handle-type module handle decl)
+            (tc-top-decl-type ctx decl)))])))
 
 (define (tc-ctfe-module-export-add
   [ctx : TcContext]

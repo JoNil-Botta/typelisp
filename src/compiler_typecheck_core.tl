@@ -13633,13 +13633,16 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
-    (if (tc-default-builtin-unshadowed? env name)
-      (if (tc-length-handle-type? arg-ty)
-        (OkTcType (AstTyI64))
-        (ErrTcType "typecheck: argument type mismatch"))
-      (tc-call-expr ctx env func args))
-    (tc-call-expr ctx env func args)))
+  (begin
+    (unless
+      (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
+      (return (tc-call-expr ctx env func args)))
+    (unless
+      (tc-default-builtin-unshadowed? env name)
+      (return (tc-call-expr ctx env func args)))
+    (if (tc-length-handle-type? arg-ty)
+      (OkTcType (AstTyI64))
+      (ErrTcType "typecheck: argument type mismatch"))))
 
 (define (tc-array-length-non-array-call
   [ctx : TcContext]

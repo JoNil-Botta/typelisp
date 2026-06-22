@@ -76,6 +76,24 @@
           unit
           (panic message)))]))
 
+(define (fmt-malformed-int-error? [source : String]) : bool
+  (match (format-rules-render-source-width-result source 80)
+    [(OkFormatString _) false]
+    [(ErrFormatString err)
+      (string-eq
+        (format-source-error-message err)
+        "format lexer: malformed integer literal")]))
+
+(test
+  fmt-number-literal-diagnostics-preserved
+  (if (and
+    (fmt-malformed-int-error? "(define x 0x)")
+    (fmt-malformed-int-error? "(define x 0xg)")
+    (fmt-malformed-int-error? "(define x 0b)")
+    (fmt-malformed-int-error? "(define x 0b2)"))
+    unit
+    (panic "fmt number literal diagnostics changed")))
+
 (define (fmt-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) '-')))
 

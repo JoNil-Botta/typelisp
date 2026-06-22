@@ -34240,7 +34240,20 @@
               alias
               module-id)]))]))
 
-;; --- qualified-alias resolution cache -----------------------------------------
+;; --- import-aware macro resolution caches -------------------------------------
+;;
+;; Qualified-alias lookup and unqualified flat-import lookup both derive from the
+;; program's AstDeclModule/AstDeclImport declarations. Cache them at the same
+;; per-program boundary so generated macro bodies do not repeatedly rescan the
+;; whole declaration list.
+(defenum MacroFlatImportTargetList
+  (MacroFlatImportTargetNil)
+  (MacroFlatImportTargetCons i64 (Box MacroFlatImportTargetList)))
+
+(defenum MacroFlatImportTargetCacheLookup
+  (MacroFlatImportTargetCacheMissing)
+  (MacroFlatImportTargetCacheHit MacroFlatImportTargetList))
+
 ;; Even with id compares, each resolution walks the ENTIRE declaration list
 ;; (most declarations are neither modules nor imports), and the same
 ;; (current-module, qualifier) pair resolves identically for the whole
@@ -34267,6 +34280,33 @@
   -1)
 (define macro-alias-cache-ready : bool
   false)
+(define macro-unqualified-import-cache-capacity : i64
+  65536)
+(define macro-unqualified-import-cache-module-keys : (Array i64)
+  (make-array i64 65536))
+(define macro-unqualified-import-cache-name-keys : (Array i64)
+  (make-array i64 65536))
+(define macro-unqualified-import-cache-values : (Array i64)
+  (make-array i64 65536))
+(define macro-unqualified-import-cache-count : i64
+  0)
+(define macro-unqualified-import-cache-generation : i64
+  -1)
+(define macro-unqualified-import-cache-ready : bool
+  false)
+(define macro-flat-import-target-cache-capacity : i64
+  1024)
+(define macro-flat-import-target-cache-module-keys : (Array i64)
+  (make-array i64 1024))
+(define macro-flat-import-target-cache-values : (Array
+    MacroFlatImportTargetList)
+  (make-array MacroFlatImportTargetList 1024))
+(define macro-flat-import-target-cache-count : i64
+  0)
+(define macro-flat-import-target-cache-generation : i64
+  -1)
+(define macro-flat-import-target-cache-ready : bool
+  false)
 
 ;; The mapping is program-derived, so the cache must not survive into the next
 ;; program of a multi-program process (smoke batteries, REPL, LSP, package
@@ -34274,7 +34314,329 @@
 ;; same per-program boundary that resets the CTFE-env and clone-able caches;
 ;; the intern generation gate additionally covers intern-reset! boundaries.
 (define (macro-alias-cache-reset!) : unit
-  (set! macro-alias-cache-ready false))
+  (begin
+    (set! macro-alias-cache-ready false)
+    (set! macro-unqualified-import-cache-ready false)
+    (set! macro-flat-import-target-cache-ready false)))
+
+(define (macro-unqualified-import-cache-ensure!) : unit
+  (if (if macro-unqualified-import-cache-ready
+    (= macro-unqualified-import-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-unqualified-import-cache-capacity)
+          (begin
+            (array-set! macro-unqualified-import-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! macro-unqualified-import-cache-count 0)
+        (set! macro-unqualified-import-cache-generation (intern-generation))
+        (set! macro-unqualified-import-cache-ready true)))))
+
+(define (macro-unqualified-import-cache-bucket
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) (* name-id 40503))
+    (- macro-unqualified-import-cache-capacity 1)))
+
+;; Returns the cached target module id, -1 for "no imported macro", -3 for
+;; "private imported macro", or -2 when absent.
+(define (macro-unqualified-import-cache-get [module-id : i64] [name-id : i64]) : i64
+  (let
+    [cursor : i64 (macro-unqualified-import-cache-bucket module-id name-id)]
+    [module-key : i64 (+ module-id 1)]
+    [name-key : i64 (+ name-id 1)]
+    [steps : i64 0]
+    [out : i64 -2]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-unqualified-import-cache-capacity))
+        (let
+          [slot : i64
+            (array-ref macro-unqualified-import-cache-module-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (and
+              (= slot module-key)
+              (=
+                (array-ref macro-unqualified-import-cache-name-keys cursor)
+                name-key))
+              (begin
+                (set!
+                  out
+                  (array-ref macro-unqualified-import-cache-values cursor))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-unqualified-import-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-unqualified-import-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (if (>=
+    (* macro-unqualified-import-cache-count 2)
+    macro-unqualified-import-cache-capacity)
+    unit
+    (let
+      [cursor : i64 (macro-unqualified-import-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps macro-unqualified-import-cache-capacity))
+          (let
+            [slot : i64
+              (array-ref macro-unqualified-import-cache-module-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array-set!
+                  macro-unqualified-import-cache-module-keys
+                  cursor
+                  module-key)
+                (array-set!
+                  macro-unqualified-import-cache-name-keys
+                  cursor
+                  name-key)
+                (array-set! macro-unqualified-import-cache-values cursor value)
+                (set!
+                  macro-unqualified-import-cache-count
+                  (+ macro-unqualified-import-cache-count 1))
+                (set! done true))
+              (if (and
+                (= slot module-key)
+                (=
+                  (array-ref macro-unqualified-import-cache-name-keys cursor)
+                  name-key))
+                (set! done true)
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- macro-unqualified-import-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
+
+(define (macro-flat-import-target-cache-ensure!) : unit
+  (if (if macro-flat-import-target-cache-ready
+    (= macro-flat-import-target-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-flat-import-target-cache-capacity)
+          (begin
+            (array-set! macro-flat-import-target-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! macro-flat-import-target-cache-count 0)
+        (set! macro-flat-import-target-cache-generation (intern-generation))
+        (set! macro-flat-import-target-cache-ready true)))))
+
+(define (macro-flat-import-target-cache-bucket [module-id : i64]) : i64
+  (bit-and
+    (* module-id 2654435761)
+    (- macro-flat-import-target-cache-capacity 1)))
+
+(define (macro-flat-import-target-cache-get [module-id : i64]) : MacroFlatImportTargetCacheLookup
+  (let
+    [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
+    [module-key : i64 (+ module-id 1)]
+    [steps : i64 0]
+    [out : MacroFlatImportTargetCacheLookup (MacroFlatImportTargetCacheMissing)]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-flat-import-target-cache-capacity))
+        (let
+          [slot : i64
+            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (= slot module-key)
+              (begin
+                (set!
+                  out
+                  (MacroFlatImportTargetCacheHit
+                    (array-ref macro-flat-import-target-cache-values cursor)))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-flat-import-target-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-flat-import-target-cache-put!
+  [module-id : i64]
+  [targets : MacroFlatImportTargetList]) : unit
+  (if (>=
+    (* macro-flat-import-target-cache-count 2)
+    macro-flat-import-target-cache-capacity)
+    unit
+    (let
+      [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
+      [module-key : i64 (+ module-id 1)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps macro-flat-import-target-cache-capacity))
+          (let
+            [slot : i64
+              (array-ref macro-flat-import-target-cache-module-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array-set!
+                  macro-flat-import-target-cache-module-keys
+                  cursor
+                  module-key)
+                (array-set!
+                  macro-flat-import-target-cache-values
+                  cursor
+                  targets)
+                (set!
+                  macro-flat-import-target-cache-count
+                  (+ macro-flat-import-target-cache-count 1))
+                (set! done true))
+              (if (= slot module-key)
+                (set! done true)
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- macro-flat-import-target-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
+
+(define (macro-flat-import-target-list-contains?
+  [targets : MacroFlatImportTargetList]
+  [target-id : i64]) : bool
+  (match targets
+    [(MacroFlatImportTargetNil) false]
+    [(MacroFlatImportTargetCons target rest)
+      (if (= target target-id)
+        true
+        (macro-flat-import-target-list-contains? (box-get rest) target-id))]))
+
+(define (macro-flat-import-target-list-add
+  [targets : MacroFlatImportTargetList]
+  [target-id : i64]) : MacroFlatImportTargetList
+  (if (macro-flat-import-target-list-contains? targets target-id)
+    targets
+    (MacroFlatImportTargetCons target-id (box targets))))
+
+(define (macro-flat-import-target-list-reverse-into
+  [targets : MacroFlatImportTargetList]
+  [out : MacroFlatImportTargetList]) : MacroFlatImportTargetList
+  (match targets
+    [(MacroFlatImportTargetNil) out]
+    [(MacroFlatImportTargetCons target rest)
+      (macro-flat-import-target-list-reverse-into
+        (box-get rest)
+        (MacroFlatImportTargetCons target (box out)))]))
+
+(define (macro-flat-import-target-list-reverse
+  [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
+  (macro-flat-import-target-list-reverse-into
+    targets
+    (MacroFlatImportTargetNil)))
+
+(define (macro-flat-import-targets-from-list
+  [decls : AstDeclList]
+  [current-module-id : i64]
+  [module-id : i64]
+  [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
+  (match decls
+    [(AstDeclNil) (macro-flat-import-target-list-reverse targets)]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (match decl
+          [(AstDeclModule next-module)
+            (macro-flat-import-targets-from-list
+              rest
+              current-module-id
+              next-module
+              targets)]
+          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
+            (match maybe-alias
+              [(AstSomeImportAlias alias)
+                (if (and (= module-id current-module-id) (string-eq alias ""))
+                  (match expected
+                    [(AstSomeModuleName target-module)
+                      (let
+                        [target-id : i64 (intern target-module)]
+                        (macro-flat-import-targets-from-list
+                          rest
+                          current-module-id
+                          module-id
+                          (if (= target-id current-module-id)
+                            targets
+                            (macro-flat-import-target-list-add
+                              targets
+                              target-id))))]
+                    [(AstNoModuleName)
+                      (macro-flat-import-targets-from-list
+                        rest
+                        current-module-id
+                        module-id
+                        targets)])
+                  (macro-flat-import-targets-from-list
+                    rest
+                    current-module-id
+                    module-id
+                    targets))]
+              [(AstNoImportAlias)
+                (macro-flat-import-targets-from-list
+                  rest
+                  current-module-id
+                  module-id
+                  targets)])]
+          [_
+            (macro-flat-import-targets-from-list
+              rest
+              current-module-id
+              module-id
+              targets)]))]))
+
+(define (macro-flat-import-targets
+  [decls : AstDeclList]
+  [current-module-id : i64]) : MacroFlatImportTargetList
+  (begin
+    (macro-flat-import-target-cache-ensure!)
+    (match (macro-flat-import-target-cache-get current-module-id)
+      [(MacroFlatImportTargetCacheHit targets) targets]
+      [(MacroFlatImportTargetCacheMissing)
+        (let
+          [targets : MacroFlatImportTargetList
+            (macro-flat-import-targets-from-list
+              decls
+              current-module-id
+              (intern "")
+              (MacroFlatImportTargetNil))]
+          (begin
+            (macro-flat-import-target-cache-put! current-module-id targets)
+            targets))])))
 
 (define (macro-alias-cache-ensure!) : unit
   (if (if macro-alias-cache-ready
@@ -34559,7 +34921,7 @@
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
-(define (macro-unqualified-imported-call-decl-with-exports
+(define (macro-unqualified-imported-target-call-decl-with-exports
   [ctx : TcContext]
   [exports : CompilerExports]
   [target-module : String]
@@ -34591,98 +34953,103 @@
               (macro-private-message lookup-name)))]
         [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])]))
 
-(define (macro-unqualified-imported-call-decl-from-list
+(define (macro-unqualified-imported-call-target-with-exports
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [target-module-id : i64]
+  [lookup-name-id : i64]) : i64
+  (match (compiler-exports-lookup-id
+    exports
+    (intern (compiler-export-kind-macro))
+    target-module-id
+    lookup-name-id)
+    [(SomeI64 _) target-module-id]
+    [(NoneI64)
+      (match (compiler-symbols-lookup-macro-in-module-id
+        (tc-context-symbols ctx)
+        target-module-id
+        lookup-name-id)
+        [(SomeI64 _) -3]
+        [(NoneI64) -1])]))
+
+(define (macro-unqualified-imported-call-target-from-imports
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [targets : MacroFlatImportTargetList]
+  [lookup-name-id : i64]) : i64
+  (match targets
+    [(MacroFlatImportTargetNil) -1]
+    [(MacroFlatImportTargetCons target-module-id rest-box)
+      (let
+        [target : i64
+          (macro-unqualified-imported-call-target-with-exports
+            ctx
+            exports
+            target-module-id
+            lookup-name-id)]
+        (if (= target -1)
+          (macro-unqualified-imported-call-target-from-imports
+            ctx
+            exports
+            (box-get rest-box)
+            lookup-name-id)
+          target))]))
+
+(define (macro-unqualified-imported-call-decl-from-target
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [target : i64]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (if (>= target 0)
+    (macro-unqualified-imported-target-call-decl-with-exports
+      ctx
+      exports
+      (intern-str target)
+      lookup-name
+      call-expr)
+    (if (= target -3)
+      (ErrMacroCallDecl
+        (ctfe-diagnostic-at-expr call-expr (macro-private-message lookup-name)))
+      (OkMacroCallDecl (MacroNoDecl)))))
+
+(define (macro-unqualified-imported-call-decl-with-exports
   [ctx : TcContext]
   [exports : CompilerExports]
   [decls : AstDeclList]
-  [current-module-id : i64]
-  [module-id : i64]
+  [module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (match decls
-    [(AstDeclNil) (OkMacroCallDecl (MacroNoDecl))]
-    [(AstDeclCons decl rest-box)
+  (let
+    [module-id : i64 (intern module)]
+    [lookup-name-id : i64 (intern lookup-name)]
+    (begin
+      (macro-unqualified-import-cache-ensure!)
       (let
-        [rest : AstDeclList (box-get rest-box)]
-        (match decl
-          [(AstDeclModule next-module)
-            (macro-unqualified-imported-call-decl-from-list
-              ctx
-              exports
-              rest
-              current-module-id
-              next-module
-              lookup-name
-              call-expr)]
-          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
-            (match maybe-alias
-              [(AstSomeImportAlias alias)
-                (if (and (= module-id current-module-id) (string-eq alias ""))
-                  (match expected
-                    [(AstSomeModuleName target-module)
-                      (if (= (intern target-module) current-module-id)
-                        (macro-unqualified-imported-call-decl-from-list
-                          ctx
-                          exports
-                          rest
-                          current-module-id
-                          module-id
-                          lookup-name
-                          call-expr)
-                        (match (macro-unqualified-imported-call-decl-with-exports
-                          ctx
-                          exports
-                          target-module
-                          lookup-name
-                          call-expr)
-                          [(OkMacroCallDecl imported-decl)
-                            (match imported-decl
-                              [(MacroNoDecl)
-                                (macro-unqualified-imported-call-decl-from-list
-                                  ctx
-                                  exports
-                                  rest
-                                  current-module-id
-                                  module-id
-                                  lookup-name
-                                  call-expr)]
-                              [_ (OkMacroCallDecl imported-decl)])]
-                          [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))]
-                    [(AstNoModuleName)
-                      (macro-unqualified-imported-call-decl-from-list
-                        ctx
-                        exports
-                        rest
-                        current-module-id
-                        module-id
-                        lookup-name
-                        call-expr)])
-                  (macro-unqualified-imported-call-decl-from-list
-                    ctx
-                    exports
-                    rest
-                    current-module-id
-                    module-id
-                    lookup-name
-                    call-expr))]
-              [(AstNoImportAlias)
-                (macro-unqualified-imported-call-decl-from-list
+        [cached : i64
+          (macro-unqualified-import-cache-get module-id lookup-name-id)]
+        [target : i64
+          (if (= cached -2)
+            (let
+              [resolved : i64
+                (macro-unqualified-imported-call-target-from-imports
                   ctx
                   exports
-                  rest
-                  current-module-id
+                  (macro-flat-import-targets decls module-id)
+                  lookup-name-id)]
+              (begin
+                (macro-unqualified-import-cache-put!
                   module-id
-                  lookup-name
-                  call-expr)])]
-          [_
-            (macro-unqualified-imported-call-decl-from-list
-              ctx
-              exports
-              rest
-              current-module-id
-              module-id
-              lookup-name
-              call-expr)]))]))
+                  lookup-name-id
+                  resolved)
+                resolved))
+            cached)]
+        (macro-unqualified-imported-call-decl-from-target
+          ctx
+          exports
+          target
+          lookup-name
+          call-expr)))))
 
 (define (macro-unqualified-imported-call-decl
   [ctx : TcContext]
@@ -34691,12 +35058,11 @@
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (if macro-expand-exports-ready
-    (macro-unqualified-imported-call-decl-from-list
+    (macro-unqualified-imported-call-decl-with-exports
       ctx
       macro-expand-exports-value
       decls
-      (intern module)
-      (intern "")
+      module
       lookup-name
       call-expr)
     (match (build-compiler-exports-with
@@ -34704,12 +35070,11 @@
       (tc-context-symbols ctx)
       (tc-context-registries ctx))
       [(OkCompilerExports exports)
-        (macro-unqualified-imported-call-decl-from-list
+        (macro-unqualified-imported-call-decl-with-exports
           ctx
           exports
           decls
-          (intern module)
-          (intern "")
+          module
           lookup-name
           call-expr)]
       [(ErrCompilerExports message)

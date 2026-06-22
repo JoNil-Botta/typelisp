@@ -4682,42 +4682,6 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
-          (if (and (not handled) (string-eq method "tl/replaceBody"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
-                  [(json.JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
-                        [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-replace-body id params docs))]
-                        [(json.JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(json.JsonMissing) unit])))
-            unit)
-          (if (and (not handled) (string-eq method "tl/replacePattern"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
-                  [(json.JsonFound id)
-                    (let
-                      [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
-                        [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-replace-pattern-at id params docs))]
-                        [(json.JsonMissing)
-                          (lsp-write-error id -32600 "Missing params")]))]
-                  [(json.JsonMissing) unit])))
-            unit)
           (if (and (not handled) (string-eq method "tl/read"))
             (begin
               (set! handled true)
@@ -5285,58 +5249,6 @@
         (if found
           (OkLspEdit result)
           (ErrLspEdit "Declaration not found"))))))
-
-(define (lsp-batch-edit-step
-  [text : String]
-  [edit-kind : String]
-  [edit-params : json.Json]) : LspEditResult
-  (cond
-    [(string-eq edit-kind "replace-body")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "newBody")
-            [(OkLspJsonText new-body)
-              (lsp-replace-body-text text name new-body)]
-            [(MissingLspJsonText) (ErrLspEdit "replace-body: missing newBody")])]
-        [(MissingLspJsonText) (ErrLspEdit "replace-body: missing name")])]
-    [(string-eq edit-kind "replace-pattern")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "oldPattern")
-            [(OkLspJsonText old-pattern)
-              (match (lsp-json-string-field edit-params "newPattern")
-                [(OkLspJsonText new-pattern)
-                  (lsp-replace-pattern-text text name old-pattern new-pattern)]
-                [(MissingLspJsonText)
-                  (ErrLspEdit "replace-pattern: missing newPattern")])]
-            [(MissingLspJsonText)
-              (ErrLspEdit "replace-pattern: missing oldPattern")])]
-        [(MissingLspJsonText) (ErrLspEdit "replace-pattern: missing name")])]
-    [(string-eq edit-kind "structural-replace")
-      (match (lsp-json-string-field edit-params "name")
-        [(OkLspJsonText name)
-          (match (lsp-json-string-field edit-params "newText")
-            [(OkLspJsonText new-text)
-              (lsp-structural-replace-text text name new-text)]
-            [(MissingLspJsonText)
-              (ErrLspEdit "structural-replace: missing newText")])]
-        [(MissingLspJsonText) (ErrLspEdit "structural-replace: missing name")])]
-    [else (ErrLspEdit (str-cat "Unknown edit kind: " edit-kind))]))
-
-(define (lsp-batch-edit-apply [text : String] [edits : json.JsonList]) : LspEditResult
-  (match edits
-    [(json.JsonListNil) (OkLspEdit text)]
-    [(json.JsonListCons first rest)
-      (match first
-        [(json.JsonObject _)
-          (match (lsp-json-string-field first "kind")
-            [(OkLspJsonText kind)
-              (match (lsp-batch-edit-step text kind first)
-                [(OkLspEdit new-text)
-                  (lsp-batch-edit-apply new-text (box-get rest))]
-                [(ErrLspEdit err) (ErrLspEdit err)])]
-            [(MissingLspJsonText) (ErrLspEdit "Edit missing 'kind' field")])]
-        [_ (ErrLspEdit "Edit is not a json.Json object")])]))
 
 (test
   lsp-validate-forms-smoke

@@ -597,7 +597,7 @@
       [value : String (strset.entry-key-or entry "")]
       (if (string-eq value "")
         fallback
-        (string-length (& value))))))
+        (__tl_string_length (& value))))))
 
 (cfg
   test

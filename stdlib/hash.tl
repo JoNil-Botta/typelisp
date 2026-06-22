@@ -80,16 +80,19 @@
 ;: with the matching equality predicate because different keys can collide.
 (define (hash-string [key : (& key str)]) : i64
   (let
-    [n : i64 (string-length key)]
+    [n : i64 (__tl_string_length key)]
     [i : i64 0]
     [hash : i64 0]
     (begin
       (while (>= (- n i) 4)
         (let
-          [h1 : i64 (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
-          [h2 : i64 (+ (+ (* h1 131) (cast (string-ref key (+ i 1)) : i64)) 1)]
-          [h3 : i64 (+ (+ (* h2 131) (cast (string-ref key (+ i 2)) : i64)) 1)]
-          [h4 : i64 (+ (+ (* h3 131) (cast (string-ref key (+ i 3)) : i64)) 1)]
+          [h1 : i64 (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)]
+          [h2 : i64
+            (+ (+ (* h1 131) (cast (__tl_string_ref key (+ i 1)) : i64)) 1)]
+          [h3 : i64
+            (+ (+ (* h2 131) (cast (__tl_string_ref key (+ i 2)) : i64)) 1)]
+          [h4 : i64
+            (+ (+ (* h3 131) (cast (__tl_string_ref key (+ i 3)) : i64)) 1)]
           [reduced : i64 (+ (bit-and h4 0x7fffffff) (shr h4 31))]
           (begin
             (set!
@@ -100,7 +103,8 @@
             (set! i (+ i 4)))))
       (while (< i n)
         (let
-          [next : i64 (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+          [next : i64
+            (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)]
           [reduced : i64 (+ (bit-and next 0x7fffffff) (shr next 31))]
           (begin
             (set!

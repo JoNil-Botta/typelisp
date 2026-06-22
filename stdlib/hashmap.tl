@@ -1346,7 +1346,7 @@
     [l : (StringStringMapBorrowedValueLookup map)]
     [fallback : i64]) : i64
     (match l
-      [(StringStringMapBorrowedValueFound v) (string-length v)]
+      [(StringStringMapBorrowedValueFound v) (__tl_string_length v)]
       [(StringStringMapBorrowedValueMissing) fallback])))
 
 (cfg
@@ -1415,7 +1415,7 @@
     [e : StringStringMapEntry]
     [fallback : i64]) : i64
     (match e
-      [(StringStringMapEntrySome _ v) (string-length v)]
+      [(StringStringMapEntrySome _ v) (__tl_string_length v)]
       [(StringStringMapEntryNone) fallback])))
 
 ;; Generated `i64 -> i64` map helpers.
@@ -1440,7 +1440,7 @@
     [l : (I64StringMapBorrowedValueLookup map)]
     [fallback : i64]) : i64
     (match l
-      [(I64StringMapBorrowedValueFound v) (string-length v)]
+      [(I64StringMapBorrowedValueFound v) (__tl_string_length v)]
       [(I64StringMapBorrowedValueMissing) fallback])))
 
 (cfg

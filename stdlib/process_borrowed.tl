@@ -71,7 +71,7 @@
 
 ;: Copy a borrowed string into active-arena owned storage.
 (define (process-borrowed-string-owned [value : (& value str)]) : String
-  (substring-borrowed value 0 (string-length value)))
+  (substring-borrowed value 0 (__tl_string_length value)))
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (process-borrowed-args-owned [args : (ProcessBorrowedStringList text)]) : ProcessStringList
@@ -304,7 +304,7 @@
   (match env
     [(ProcessBorrowedEnvNil) (ProcessNoString)]
     [(ProcessBorrowedEnvCons name _ rest)
-      (if (= (string-length name) 0)
+      (if (= (__tl_string_length name) 0)
         (ProcessSomeString "process: environment variable name is empty")
         (if (process-string-contains-char? name '=')
           (ProcessSomeString "process: environment variable name contains '='")
@@ -313,11 +313,11 @@
 ;: Return the first borrowed command validation error, or `ProcessNoString`.
 (define (process-borrowed-command-validation-error
   [command : (ProcessBorrowedCommand executable argv cwd env stdin)]) : ProcessMaybeString
-  (if (= (string-length (process-borrowed-command-executable command)) 0)
+  (if (= (__tl_string_length (process-borrowed-command-executable command)) 0)
     (ProcessSomeString "process: executable path is empty")
     (match (process-borrowed-command-cwd command)
       [(ProcessBorrowedSomeString cwd)
-        (if (= (string-length cwd) 0)
+        (if (= (__tl_string_length cwd) 0)
           (ProcessSomeString "process: cwd path is empty")
           (process-borrowed-env-validation-error
             (process-borrowed-command-env command)))]

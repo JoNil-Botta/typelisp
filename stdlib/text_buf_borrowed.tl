@@ -39,7 +39,7 @@
 (define (text-buf-borrowed-single [text : (& text str)]) : (TextBufBorrowed
     text)
   (let
-    [chunk-len : i64 (string-length text)]
+    [chunk-len : i64 (__tl_string_length text)]
     (TextBufBorrowed
       (TextBufBorrowedChunkCons
         (TextBufBorrowedChunkBorrowed text)
@@ -61,7 +61,7 @@
   [buf : (TextBufBorrowed text)]
   [text : (& text str)]) : (TextBufBorrowed text)
   (let
-    [chunk-len : i64 (string-length text)]
+    [chunk-len : i64 (__tl_string_length text)]
     (match buf
       [(TextBufBorrowed chunks len)
         (TextBufBorrowed
@@ -90,7 +90,7 @@
   [chunk : (& chunk str)]) : (TextBufBorrowed text)
   (text-buf-borrowed-append-owned
     buf
-    (substring-borrowed chunk 0 (string-length chunk))))
+    (substring-borrowed chunk 0 (__tl_string_length chunk))))
 
 ;: Append rendered `right` after `left`. This is an explicit owned-copy
 ;: boundary, so `right` may be assembled independently before being appended.
@@ -103,7 +103,7 @@
 (define (text-buf-borrowed-chunk-string [chunk : (TextBufBorrowedChunk text)]) : String
   (match chunk
     [(TextBufBorrowedChunkBorrowed text)
-      (substring-borrowed text 0 (string-length text))]
+      (substring-borrowed text 0 (__tl_string_length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
 ;: Convert borrowed chunks to the owned chunk-list shape without changing the

@@ -324,11 +324,11 @@
 
 ;: Return the numeric scalar code at `idx` in borrowed `text`.
 (define (json-char-code-at [text : (& text str)] [idx : i64]) : i64
-  (json-char-code (string-ref text idx)))
+  (json-char-code (__tl_string_ref text idx)))
 
 ;: Return true when `text[idx]` exists and has the supplied code.
 (define (json-char-code-eq-at [text : (& text str)] [idx : i64] [code : i64]) : bool
-  (if (< idx (string-length text))
+  (if (< idx (__tl_string_length text))
     (= (json-char-code-at text idx) code)
     false))
 
@@ -342,7 +342,7 @@
 
 ;: Return true when `text[idx]` exists and is an ASCII decimal digit.
 (define (json-digit-at? [text : (& text str)] [idx : i64]) : bool
-  (if (< idx (string-length text))
+  (if (< idx (__tl_string_length text))
     (json-digit-code? (json-char-code-at text idx))
     false))
 
@@ -354,7 +354,7 @@
 (define (json-skip-ws [text : (& text str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [done : bool false]
     (begin
       (while (not done)
@@ -376,7 +376,7 @@
   [close-code : i64]) : i64
   (let
     [first : i64 (json-skip-ws text (+ pos 1))]
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     (if (or (>= first n) (json-char-code-eq-at text first close-code))
       0
       (let
@@ -411,8 +411,8 @@
   [prefix : (& prefix str)]
   [start : i64]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)]
+    [text-len : i64 (__tl_string_length text)]
+    [prefix-len : i64 (__tl_string_length prefix)]
     (if (> (+ start prefix-len) text-len)
       false
       (let
@@ -422,7 +422,7 @@
           (while (and ok (< i prefix-len))
             (if (=
               (json-char-code-at text (+ start i))
-              (json-char-code (string-ref prefix i)))
+              (json-char-code (__tl_string_ref prefix i)))
               (set! i (+ i 1))
               (set! ok false)))
           ok)))))
@@ -478,8 +478,8 @@
 ;: Compare two owned strings with only safe character indexing.
 (define (json-string-eq-safe? [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (__tl_string_length left)]
+    [right-len : i64 (__tl_string_length right)]
     (if (!= left-len right-len)
       false
       (let
@@ -488,8 +488,8 @@
         (begin
           (while (and same (< i left-len))
             (if (=
-              (json-char-code (string-ref left i))
-              (json-char-code (string-ref right i)))
+              (json-char-code (__tl_string_ref left i))
+              (json-char-code (__tl_string_ref right i)))
               (set! i (+ i 1))
               (set! same false)))
           same)))))
@@ -592,7 +592,7 @@
 ;: The returned escaped string is allocated in the active arena.
 (define (json-escape-string [text : (& text str)]) : String
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [i : i64 0]
     [segment-start : i64 0]
     [out : TextBuf (text-buf-empty)]
@@ -708,7 +708,7 @@
 ;: Parse four hex digits after a `\u` escape and return the decoded string.
 (define (json-parse-unicode-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     (if (> (+ pos 4) n)
       (ErrJsonParseEscape "json: unterminated unicode escape")
       (let
@@ -719,7 +719,7 @@
         (begin
           (while (and ok (< j 4))
             (let
-              [digit : i64 (json-hex-value (string-ref text (+ pos j)))]
+              [digit : i64 (json-hex-value (__tl_string_ref text (+ pos j)))]
               (if (< digit 0)
                 (begin
                   (set! ok false)
@@ -738,7 +738,7 @@
 ;:
 ;: Successful decoded strings allocate in the active arena.
 (define (json-parse-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
-  (if (>= pos (string-length text))
+  (if (>= pos (__tl_string_length text))
     (ErrJsonParseEscape "json: unterminated JSON escape")
     (let
       [code : i64 (json-char-code-at text pos)]
@@ -759,7 +759,7 @@
   (if (not (json-char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
     (let
-      [n : i64 (string-length text)]
+      [n : i64 (__tl_string_length text)]
       [i : i64 (+ pos 1)]
       [segment-start : i64 (+ pos 1)]
       [out : TextBuf (text-buf-empty)]
@@ -832,7 +832,7 @@
 ;: The numeric spelling is kept as a String allocated in the active arena.
 (define (json-parse-number [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [i : i64 pos]
     [ok : bool true]
     [message : String ""]
@@ -906,7 +906,7 @@
 ;: Scan grammar-checked JSON number text for significant digits and exponent.
 (define (json-number-shape [text : String]) : JsonNumberShapeResult
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [index : i64 0]
     [seen-significant : bool false]
     [significant-digits : i64 0]
@@ -919,14 +919,14 @@
     (if (= n 0)
       (ErrJsonNumberShape "json: expected digit in number")
       (begin
-        (if (= (string-ref text 0) '-')
+        (if (= (__tl_string_ref text 0) '-')
           (set! index 1)
           unit)
         (while (and
           (< index n)
-          (json-digit-code? (json-char-code (string-ref text index))))
+          (json-digit-code? (json-char-code (__tl_string_ref text index))))
           (let
-            [digit : i64 (json-number-digit-value (string-ref text index))]
+            [digit : i64 (json-number-digit-value (__tl_string_ref text index))]
             (begin
               (when
                 (or seen-significant (!= digit 0))
@@ -935,14 +935,15 @@
                   (set! significant-digits (+ significant-digits 1))))
               (set! digit-count (+ digit-count 1))
               (set! index (+ index 1)))))
-        (if (and (< index n) (= (string-ref text index) '.'))
+        (if (and (< index n) (= (__tl_string_ref text index) '.'))
           (begin
             (set! index (+ index 1))
             (while (and
               (< index n)
-              (json-digit-code? (json-char-code (string-ref text index))))
+              (json-digit-code? (json-char-code (__tl_string_ref text index))))
               (let
-                [digit : i64 (json-number-digit-value (string-ref text index))]
+                [digit : i64
+                  (json-number-digit-value (__tl_string_ref text index))]
                 (begin
                   (when
                     (or seen-significant (!= digit 0))
@@ -955,22 +956,24 @@
           unit)
         (if (and
           (< index n)
-          (json-number-exponent-code? (json-char-code (string-ref text index))))
+          (json-number-exponent-code?
+            (json-char-code (__tl_string_ref text index))))
           (begin
             (set! saw-exp true)
             (set! index (+ index 1))
-            (if (and (< index n) (= (string-ref text index) '-'))
+            (if (and (< index n) (= (__tl_string_ref text index) '-'))
               (begin
                 (set! exp-negative true)
                 (set! index (+ index 1)))
-              (if (and (< index n) (= (string-ref text index) '+'))
+              (if (and (< index n) (= (__tl_string_ref text index) '+'))
                 (set! index (+ index 1))
                 unit))
             (while (and
               (< index n)
-              (json-digit-code? (json-char-code (string-ref text index))))
+              (json-digit-code? (json-char-code (__tl_string_ref text index))))
               (let
-                [digit : i64 (json-number-digit-value (string-ref text index))]
+                [digit : i64
+                  (json-number-digit-value (__tl_string_ref text index))]
                 (begin
                   (when
                     (< exp-value 4000)
@@ -991,7 +994,7 @@
 ;: Validate that borrowed text is exactly one JSON number and return an owned copy.
 (define (json-number-validated-text [text : (& text str)]) : JsonNumberTextResult
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     (match (json-parse-number text 0)
       [(OkJsonParseValue _ next)
         (if (= next n)
@@ -1002,14 +1005,14 @@
 ;: Return true when validated JSON number text is an integer spelling.
 (define (json-number-integer-text? [text : String]) : bool
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [i : i64 0]
     (begin
-      (when (and (> n 0) (= (string-ref text 0) '-')) (set! i 1))
+      (when (and (> n 0) (= (__tl_string_ref text 0) '-')) (set! i 1))
       (if (>= i n)
         false
         (let
-          [first : i64 (json-char-code (string-ref text i))]
+          [first : i64 (json-char-code (__tl_string_ref text i))]
           [ok : bool true]
           (if (= first 48)
             (= (+ i 1) n)
@@ -1018,7 +1021,7 @@
                 (set! i (+ i 1))
                 (while (and ok (< i n))
                   (let
-                    [code : i64 (json-char-code (string-ref text i))]
+                    [code : i64 (json-char-code (__tl_string_ref text i))]
                     (if (json-digit-code? code)
                       (set! i (+ i 1))
                       (set! ok false))))
@@ -1031,8 +1034,8 @@
   [start : i64]
   [limit : String]) : bool
   (let
-    [digits-len : i64 (- (string-length text) start)]
-    [limit-len : i64 (string-length limit)]
+    [digits-len : i64 (- (__tl_string_length text) start)]
+    [limit-len : i64 (__tl_string_length limit)]
     [i : i64 0]
     [greater : bool false]
     [done : bool false]
@@ -1043,8 +1046,8 @@
         (begin
           (while (and (not done) (< i limit-len))
             (let
-              [actual : i64 (json-char-code (string-ref text (+ start i)))]
-              [expected : i64 (json-char-code (string-ref limit i))]
+              [actual : i64 (json-char-code (__tl_string_ref text (+ start i)))]
+              [expected : i64 (json-char-code (__tl_string_ref limit i))]
               (if (> actual expected)
                 (begin
                   (set! greater true)
@@ -1058,7 +1061,7 @@
 (define (json-number-i64-range? [text : String]) : bool
   (let
     [negative : bool
-      (and (> (string-length text) 0) (= (string-ref text 0) '-'))]
+      (and (> (__tl_string_length text) 0) (= (__tl_string_ref text 0) '-'))]
     [start : i64
       (if negative
         1
@@ -1167,7 +1170,7 @@
   (let
     [prefix : String keyword]
     (if (json-string-prefix-at? text (& prefix) pos)
-      (OkJsonParseValue value (+ pos (string-length prefix)))
+      (OkJsonParseValue value (+ pos (__tl_string_length prefix)))
       (ErrJsonParseValue "json: expected keyword"))))
 
 ;: Parse a JSON array starting at `pos`, including the opening bracket.
@@ -1274,7 +1277,7 @@
 (define (json-parse-value [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text pos)]
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     (if (>= i n)
       (ErrJsonParseValue "json: expected JSON value")
       (let
@@ -1310,7 +1313,7 @@
     [(OkJsonParseValue value pos)
       (let
         [end : i64 (json-skip-ws text pos)]
-        (if (= end (string-length text))
+        (if (= end (__tl_string_length text))
           (OkJson value)
           (ErrJson "json: trailing characters after JSON value")))]
     [(ErrJsonParseValue message) (ErrJson message)]))

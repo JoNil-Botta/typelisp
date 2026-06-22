@@ -1,3 +1,4 @@
+(import "stdlib/string.tl")
 (import "stdlib/comptime.tl" module stdlib.comptime as comptime)
 
 (defmacro (stdlib-comptime-id [x : comptime.Expr]) : i64

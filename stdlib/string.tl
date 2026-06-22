@@ -44,6 +44,29 @@
     [src : (Ptr u8)]
     [n : i64]) : unit (:symbol "tl_memcpy")))
 
+;: Bootstrap compatibility aliases for compiler sources that call private
+;: intrinsics directly. Published stage0 compilers only have the legacy public
+;: primitive names, so map the private spellings back when the feature is absent.
+(cfg
+  (not feature-private-string-intrinsics)
+  (defmacro (__tl_string_length [text : Expr]) : i64
+    `(string-length ,text)))
+
+(cfg
+  (not feature-private-string-intrinsics)
+  (defmacro (__tl_string_ref [text : Expr] [index : Expr]) : char
+    `(string-ref ,text ,index)))
+
+(cfg
+  (not feature-private-string-intrinsics)
+  (defmacro (__tl_string_eq [left : Expr] [right : Expr]) : bool
+    `(string-eq ,left ,right)))
+
+(cfg
+  (not feature-private-string-intrinsics)
+  (defmacro (__tl_string_to_int [text : Expr]) : i64
+    `(string->int ,text)))
+
 ;: Return the byte length of borrowed or owned text without allocating.
 (cfg
   feature-private-string-intrinsics
@@ -130,7 +153,7 @@
 ;: Trap when the requested substring range is outside `text`.
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     (cond
       [(< start 0) (tl_oob_abort)]
       [(< len 0) (tl_oob_abort)]
@@ -177,8 +200,8 @@
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
 (define (string-append-borrowed [left : (& left str)] [right : (& right str)]) : String
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (__tl_string_length left)]
+    [right-len : i64 (__tl_string_length right)]
     [total-len : i64 (+ left-len right-len)]
     [buf : (Array u8) (make-array u8 total-len)]
     [left-src : (Ptr u8)
@@ -198,7 +221,7 @@
 
 ;: Return a fresh active-arena copy of borrowed text.
 (define (string-copy-borrowed [text : (& text str)]) : String
-  (substring-borrowed text 0 (string-length text)))
+  (substring-borrowed text 0 (__tl_string_length text)))
 
 ;: Borrowed alias for `string-append-borrowed`.
 (define (string-concat-borrowed [left : (& left str)] [right : (& right str)]) : String
@@ -223,7 +246,7 @@
         (let
           [part : String (array-ref parts len-index)]
           (begin
-            (set! total-len (+ total-len (string-length part)))
+            (set! total-len (+ total-len (__tl_string_length part)))
             (set! len-index (+ len-index 1)))))
       (let
         [buf : (Array u8) (make-array u8 total-len)]
@@ -236,7 +259,7 @@
           (while (< copy-index count)
             (let
               [part : String (array-ref parts copy-index)]
-              [len : i64 (string-length part)]
+              [len : i64 (__tl_string_length part)]
               (begin
                 (str-copy-bytes-into
                   (unsafe
@@ -274,11 +297,11 @@
   [d : String]
   [e : String]) : String
   (let
-    [a-len : i64 (string-length a)]
-    [b-len : i64 (string-length b)]
-    [c-len : i64 (string-length c)]
-    [d-len : i64 (string-length d)]
-    [e-len : i64 (string-length e)]
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [d-len : i64 (__tl_string_length d)]
+    [e-len : i64 (__tl_string_length e)]
     [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
     [buf : (Array u8) (make-array u8 total-len)]
     [dst : (MutPtr u8)
@@ -374,8 +397,8 @@
     feature-private-string-intrinsics
     (__tl_string_eq left right)
     (let
-      [left-len : i64 (string-length left)]
-      [right-len : i64 (string-length right)]
+      [left-len : i64 (__tl_string_length left)]
+      [right-len : i64 (__tl_string_length right)]
       (if (not (= left-len right-len))
         false
         (unsafe
@@ -424,12 +447,12 @@
     feature-private-string-intrinsics
     (__tl_string_to_int text)
     (let
-      [n : i64 (string-length text)]
+      [n : i64 (__tl_string_length text)]
       [i : i64 0]
       [negative : bool false]
       [value : i64 0]
       (begin
-        (if (and (> n 0) (char-eq (string-ref text 0) '-'))
+        (if (and (> n 0) (char-eq (__tl_string_ref text 0) '-'))
           (begin
             (set! negative true)
             (set! i 1))
@@ -438,7 +461,7 @@
           (begin
             (set!
               value
-              (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
+              (+ (* value 10) (- (cast (__tl_string_ref text i) : i64) 48)))
             (set! i (+ i 1))))
         (if negative
           (- 0 value)
@@ -453,12 +476,12 @@
   feature-str-view
   (define (string-trim-left-view [s : (& s str)]) : (& s str)
     (let
-      [n : i64 (string-length s)]
+      [n : i64 (__tl_string_length s)]
       [i : i64 0]
       [done : bool false]
       (begin
         (while (and (not done) (< i n))
-          (if (is-char-whitespace (string-ref s i))
+          (if (is-char-whitespace (__tl_string_ref s i))
             (set! i (+ i 1))
             (set! done true)))
         (substring-view s i (- n i))))))
@@ -466,12 +489,12 @@
 ;: Trim leading whitespace from borrowed text.
 (define (string-trim-left [s : (& s str)]) : String
   (let
-    [n : i64 (string-length s)]
+    [n : i64 (__tl_string_length s)]
     [i : i64 0]
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (is-char-whitespace (string-ref s i))
+        (if (is-char-whitespace (__tl_string_ref s i))
           (set! i (+ i 1))
           (set! done true)))
       (substring-borrowed s i (- n i)))))
@@ -481,12 +504,12 @@
   feature-str-view
   (define (string-trim-right-view [s : (& s str)]) : (& s str)
     (let
-      [n : i64 (string-length s)]
+      [n : i64 (__tl_string_length s)]
       [i : i64 (- n 1)]
       [done : bool false]
       (begin
         (while (and (not done) (>= i 0))
-          (if (is-char-whitespace (string-ref s i))
+          (if (is-char-whitespace (__tl_string_ref s i))
             (set! i (- i 1))
             (set! done true)))
         (substring-view s 0 (+ i 1))))))
@@ -494,12 +517,12 @@
 ;: Trim trailing whitespace from borrowed text.
 (define (string-trim-right [s : (& s str)]) : String
   (let
-    [n : i64 (string-length s)]
+    [n : i64 (__tl_string_length s)]
     [i : i64 (- n 1)]
     [done : bool false]
     (begin
       (while (and (not done) (>= i 0))
-        (if (is-char-whitespace (string-ref s i))
+        (if (is-char-whitespace (__tl_string_ref s i))
           (set! i (- i 1))
           (set! done true)))
       (substring-borrowed s 0 (+ i 1)))))
@@ -509,18 +532,18 @@
   feature-str-view
   (define (string-trim-view [s : (& s str)]) : (& s str)
     (let
-      [n : i64 (string-length s)]
+      [n : i64 (__tl_string_length s)]
       [start : i64 0]
       [end : i64 (- n 1)]
       [done-left : bool false]
       [done-right : bool false]
       (begin
         (while (and (not done-left) (< start n))
-          (if (is-char-whitespace (string-ref s start))
+          (if (is-char-whitespace (__tl_string_ref s start))
             (set! start (+ start 1))
             (set! done-left true)))
         (while (and (not done-right) (>= end start))
-          (if (is-char-whitespace (string-ref s end))
+          (if (is-char-whitespace (__tl_string_ref s end))
             (set! end (- end 1))
             (set! done-right true)))
         (substring-view s start (- (+ end 1) start))))))
@@ -528,18 +551,18 @@
 ;: Trim whitespace from both ends of borrowed text.
 (define (string-trim [s : (& s str)]) : String
   (let
-    [n : i64 (string-length s)]
+    [n : i64 (__tl_string_length s)]
     [start : i64 0]
     [end : i64 (- n 1)]
     [done-left : bool false]
     [done-right : bool false]
     (begin
       (while (and (not done-left) (< start n))
-        (if (is-char-whitespace (string-ref s start))
+        (if (is-char-whitespace (__tl_string_ref s start))
           (set! start (+ start 1))
           (set! done-left true)))
       (while (and (not done-right) (>= end start))
-        (if (is-char-whitespace (string-ref s end))
+        (if (is-char-whitespace (__tl_string_ref s end))
           (set! end (- end 1))
           (set! done-right true)))
       (substring-borrowed s start (- (+ end 1) start)))))
@@ -549,8 +572,8 @@
   [haystack : (& haystack str)]
   [needle : (& needle str)]) : bool
   (let
-    [hlen : i64 (string-length haystack)]
-    [nlen : i64 (string-length needle)]
+    [hlen : i64 (__tl_string_length haystack)]
+    [nlen : i64 (__tl_string_length needle)]
     (if (= nlen 0)
       true
       (if (> nlen hlen)
@@ -568,12 +591,12 @@
 ;: Return true if borrowed haystack contains the character c.
 (define (string-contains-char [haystack : (& haystack str)] [c : char]) : bool
   (let
-    [n : i64 (string-length haystack)]
+    [n : i64 (__tl_string_length haystack)]
     [found : bool false]
     [i : i64 0]
     (begin
       (while (and (not found) (< i n))
-        (if (char-eq (string-ref haystack i) c)
+        (if (char-eq (__tl_string_ref haystack i) c)
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -584,8 +607,8 @@
 ;: builder.
 (define (string-replace [s : String] [old : String] [new : String]) : String
   (let
-    [hlen : i64 (string-length s)]
-    [olen : i64 (string-length old)]
+    [hlen : i64 (__tl_string_length s)]
+    [olen : i64 (__tl_string_length old)]
     [i : i64 0]
     [found : bool false]
     (begin
@@ -595,7 +618,7 @@
           [ok : bool true]
           (begin
             (while (and ok (< j olen))
-              (if (char-eq (string-ref s (+ i j)) (string-ref old j))
+              (if (char-eq (__tl_string_ref s (+ i j)) (__tl_string_ref old j))
                 (set! j (+ j 1))
                 (set! ok false)))
             (if ok
@@ -614,8 +637,8 @@
   [needle : (& needle str)]
   [start : i64]) : bool
   (let
-    [hlen : i64 (string-length haystack)]
-    [nlen : i64 (string-length needle)]
+    [hlen : i64 (__tl_string_length haystack)]
+    [nlen : i64 (__tl_string_length needle)]
     (if (< start 0)
       false
       (if (> (+ start nlen) hlen)
@@ -626,8 +649,8 @@
           (begin
             (while (and ok (< j nlen))
               (if (char-eq
-                (string-ref haystack (+ start j))
-                (string-ref needle j))
+                (__tl_string_ref haystack (+ start j))
+                (__tl_string_ref needle j))
                 (set! j (+ j 1))
                 (set! ok false)))
             ok))))))
@@ -642,7 +665,7 @@
           unit))]
     [input : String "borrowed"]
     [view : (& input str) (& input)]
-    (if (= (string-length view) (string-length input))
+    (if (= (__tl_string_length view) (__tl_string_length input))
       unit
       (fail))))
 
@@ -729,13 +752,13 @@
                   (& inner-borrowed-expected))
                   unit
                   (fail))
-                (if (= (string-length outer-trimmed) 5)
+                (if (= (__tl_string_length outer-trimmed) 5)
                   unit
                   (fail))
-                (if (= (string-length outer-appended) 12)
+                (if (= (__tl_string_length outer-appended) 12)
                   unit
                   (fail))
-                (if (= (string-length outer-number) 5)
+                (if (= (__tl_string_length outer-number) 5)
                   unit
                   (fail))))))))))
 
@@ -851,7 +874,7 @@
       [text : String]
       [start : i64]
       [len : i64]) : i64
-      (string-length (substring-view (& text) start len)))))
+      (__tl_string_length (substring-view (& text) start len)))))
 
 (cfg
   test

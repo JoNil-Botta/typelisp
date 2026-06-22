@@ -155,13 +155,13 @@
 ;: Return true when `text` contains `needle`.
 (define (process-string-contains-char? [text : (& text str)] [needle : char]) : bool
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (__tl_string_length text)]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (begin
-          (if (= (string-ref text i) needle)
+          (if (= (__tl_string_ref text i) needle)
             (set! found true)
             unit)
           (set! i (+ i 1))))

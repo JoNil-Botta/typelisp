@@ -57,7 +57,7 @@
 (defmacro (text-buf-append! [buf : Expr] [chunk : String]) : unit
   `(let
     [text-buf-append-chunk : String ,chunk]
-    [text-buf-append-chunk-len : i64 (string-length text-buf-append-chunk)]
+    [text-buf-append-chunk-len : i64 (__tl_string_length text-buf-append-chunk)]
     (if (= text-buf-append-chunk-len 0)
       unit
       (begin
@@ -73,7 +73,7 @@
 ;: Append `chunk` to `buf` without rendering the existing prefix.
 (define (text-buf-append [buf : TextBuf] [chunk : String]) : TextBuf
   (let
-    [chunk-len : i64 (string-length chunk)]
+    [chunk-len : i64 (__tl_string_length chunk)]
     (if (= chunk-len 0)
       buf
       (TextBuf
@@ -192,7 +192,7 @@
   [dst : (MutPtr u8)]
   [start : i64]) : unit
   (let
-    [clen : i64 (string-length chunk)]
+    [clen : i64 (__tl_string_length chunk)]
     [src : (Ptr u8)
       (unsafe
         (string-data chunk))]
@@ -245,7 +245,7 @@
           [(TextBufChunkNil) (set! done true)]
           [(TextBufChunkCons chunk rest)
             (let
-              [clen : i64 (string-length (& chunk))]
+              [clen : i64 (__tl_string_length (& chunk))]
               (if (<= clen small-limit)
                 (let
                   [small-run : bool true]
@@ -258,7 +258,8 @@
                             (set! small-run false))]
                         [(TextBufChunkCons small-chunk small-rest)
                           (let
-                            [small-len : i64 (string-length (& small-chunk))]
+                            [small-len : i64
+                              (__tl_string_length (& small-chunk))]
                             (if (<= small-len small-limit)
                               (let
                                 [small-start : i64 (- out-pos small-len)]
@@ -343,7 +344,7 @@
             (while (and (not done) (< index count))
               (let
                 [chunk : String (array-ref items index)]
-                [chunk-len : i64 (string-length chunk)]
+                [chunk-len : i64 (__tl_string_length chunk)]
                 (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
                   (set! done true)
                   (begin
@@ -452,7 +453,10 @@
         (text-buf-render buf)
         expected
         message)
-      (assert-i64-eq (text-buf-length buf) (string-length expected) message))))
+      (assert-i64-eq
+        (text-buf-length buf)
+        (__tl_string_length expected)
+        message))))
 
 (cfg
   test

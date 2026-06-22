@@ -6816,7 +6816,7 @@
 
 (define (compiler-typecheck-macro-binding-clause-fixed-source) : String
   "(defmacro (binding-init [binding : ExprBindingClause]) : Expr
-  (if (string-eq (expr-binding-clause-name binding) \"answer\")
+  (if (__tl_string_eq (expr-binding-clause-name binding) \"answer\")
     (if (expr-binding-clause-has-type? binding)
       (expr-binding-clause-init binding)
       (expr-binding-clause-init binding))
@@ -6834,8 +6834,8 @@
         [first : ExprBindingClause (expr-binding-clause-list-head bindings)]
         [rest : ExprBindingClauseList (expr-binding-clause-list-tail bindings)]
         [second : ExprBindingClause (expr-binding-clause-list-nth bindings 1)]
-        (if (string-eq (expr-binding-clause-name first) \"a\")
-          (if (string-eq (expr-binding-clause-name second) \"b\")
+        (if (__tl_string_eq (expr-binding-clause-name first) \"a\")
+          (if (__tl_string_eq (expr-binding-clause-name second) \"b\")
             (if (expr-binding-clause-has-type? first)
               (if (expr-binding-clause-has-type? second)
                 (expr-int 0)

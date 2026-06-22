@@ -32,14 +32,14 @@
 
 ;: Return the character code at `idx` in borrowed text.
 (define (sort-char-code-at [text : (& text str)] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
+  (cast (__tl_string_ref text idx) : i64))
 
 ;: Return true when `left` is lexicographically before `right` by character
 ;: code. Prefixes sort before longer strings with the same prefix.
 (define (string-less-borrowed? [left : (& left str)] [right : (& right str)]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (__tl_string_length left)]
+    [right-len : i64 (__tl_string_length right)]
     [limit : i64
       (if (< left-len right-len)
         left-len

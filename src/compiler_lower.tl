@@ -19454,9 +19454,9 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (string-eq name "__tl_string_eq")
+  (if (tc-string-eq-helper-call-name? ctx type-env name name)
     (lower-string-eq-call ctx state env type-env args result-ty origin)
-    (if (string-eq name "__tl_string_to_int")
+    (if (tc-string-to-int-helper-call-name? ctx type-env name name)
       (lower-string-to-int-call ctx state env type-env args result-ty origin)
       (lower-direct-call ctx state env type-env name args result-ty origin))))
 
@@ -20013,6 +20013,10 @@
                   ;; calling runtime symbols. Other `length` argument types keep
                   ;; the ordinary direct-call path.
                   (let
+                    [source-name : String
+                      (if (tc-hygiene-global-name? raw-text)
+                        (tc-hygiene-global-call-name raw-text)
+                        raw-text)]
                     [name-id : i64 (intern name)]
                     [builtin-available : bool
                       (not (lower-top-level-value-defined? ctx name))]
@@ -20048,6 +20052,60 @@
                               (string-append
                                 name
                                 " is compile-time only; wrap it in (comptime ...)"))))]
+                      [(tc-string-ref-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-string-ref-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
+                      [(tc-string-length-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-array-length
+                          ctx
+                          state
+                          env
+                          type-env
+                          "__tl_string_length"
+                          args
+                          result-ty
+                          origin)]
+                      [(tc-string-eq-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-string-eq-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)]
+                      [(tc-string-to-int-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-string-to-int-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)]
                       [(and
                           builtin-available
                           (compiler-builtin-lower-string-ref-call-id? name-id))

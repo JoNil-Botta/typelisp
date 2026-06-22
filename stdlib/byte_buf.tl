@@ -105,11 +105,11 @@
 
 ;: Number of bytes in an immutable borrowed byte view.
 (define (bytes-length [view : (& source bytes)]) : i64
-  (string-length view))
+  (__tl_string_length view))
 
 ;: Number of bytes in a mutable borrowed byte view.
 (define (bytes-mut-length [view : (&mut source bytes)]) : i64
-  (string-length view))
+  (__tl_string_length view))
 
 ;: Raw immutable data pointer for low-level stdlib internals.
 (define (bytes-data [view : (& source bytes)]) : (Ptr u8)
@@ -166,7 +166,10 @@
 ;: Convert a borrowed `str` view into an immutable borrowed byte view.
 (define (str-as-bytes [text : (& source str)]) : (& source bytes)
   (unsafe
-    (tl_bytes_view_from_str_parts (string-data text) (string-length text) text)))
+    (tl_bytes_view_from_str_parts
+      (string-data text)
+      (__tl_string_length text)
+      text)))
 
 ;: Borrow a checked immutable sub-slice without copying.
 (define (bytes-slice-view [view : (& source bytes)] [start : i64] [count : i64]) : (&

@@ -385,6 +385,9 @@
 (define (ctfe-hygiene-template-prefix) : String
   "__tl_macro_template$")
 
+(define (ctfe-hygiene-global-prefix) : String
+  "__tl_macro_global$")
+
 (define (ctfe-hygiene-enabled? [env : CtfeEnv]) : bool
   (match (ctfe-env-lookup env (ctfe-hygiene-enabled-name))
     [(CtfeSomeValue value)
@@ -405,6 +408,41 @@
 
 (define (ctfe-quote-name-id [env : CtfeEnv] [name : i64]) : i64
   (intern (ctfe-quote-name env (intern-str name))))
+
+(define (ctfe-hygiene-global-name? [name : String]) : bool
+  (ctfe-string-prefix? name (ctfe-hygiene-global-prefix)))
+
+(define (ctfe-hygiene-global-base [name : String]) : String
+  (substring
+    name
+    (__tl_string_length (ctfe-hygiene-global-prefix))
+    (-
+      (__tl_string_length name)
+      (__tl_string_length (ctfe-hygiene-global-prefix)))))
+
+(define (ctfe-hygiene-context-separator-index [payload : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (__tl_string_length payload)]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (if (= (cast (__tl_string_ref payload i) : i64) 124)
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+(define (ctfe-hygiene-global-call-name [name : String]) : String
+  (if (ctfe-hygiene-global-name? name)
+    (let
+      [payload : String (ctfe-hygiene-global-base name)]
+      [sep : i64 (ctfe-hygiene-context-separator-index payload)]
+      (if (< sep 0)
+        payload
+        (let
+          [start : i64 (+ sep 1)]
+          (substring payload start (- (__tl_string_length payload) start)))))
+    name))
 
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
@@ -3017,6 +3055,47 @@
     (string-eq name (string-append "stdlib/comptime." base))
     (string-eq name (string-append "stdlib/comptime/" base))))
 
+(define (ctfe-stdlib-string-helper-name? [name : String] [base : String]) : bool
+  (or
+    (string-eq name base)
+    (string-eq name (string-append "string." base))
+    (string-eq name (string-append "string/" base))
+    (string-eq name (string-append "stdlib.string." base))
+    (string-eq name (string-append "stdlib.string/" base))
+    (string-eq name (string-append "stdlib/string." base))
+    (string-eq name (string-append "stdlib/string/" base))
+    (string-eq name (string-append "stdlib/string.tl." base))
+    (string-eq name (string-append "stdlib/string.tl/" base))
+    (ctfe-string-suffix? name (string-append "/stdlib/string.tl." base))
+    (ctfe-string-suffix? name (string-append "/stdlib/string.tl/" base))))
+
+(define (ctfe-string-eq-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_eq")
+    (string-eq name "string-eq")
+    (ctfe-stdlib-string-helper-name? name "string-eq")
+    (ctfe-stdlib-string-helper-name? name "string=?")))
+
+(define (ctfe-string-length-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_length")
+    (string-eq name "string-length")
+    (ctfe-stdlib-string-helper-name? name "string-length")
+    (string-eq name "length")))
+
+(define (ctfe-string-ref-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_ref")
+    (string-eq name "string-ref")
+    (ctfe-stdlib-string-helper-name? name "string-ref")
+    (ctfe-stdlib-string-helper-name? name "char-at")))
+
+(define (ctfe-string-to-int-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_to_int")
+    (string-eq name "string->int")
+    (ctfe-stdlib-string-helper-name? name "string->int")))
+
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (cond
     [(ctfe-stdlib-comptime-helper-name? name "expr-bool") "expr-bool"]
@@ -3950,37 +4029,29 @@
     [(AstExprVar name)
       (let
         [raw-name : String (intern-str name)]
-        [call-name : String (ctfe-comptime-helper-call-name raw-name)]
+        [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
+        [call-name : String (ctfe-comptime-helper-call-name lookup-name)]
         (cond
-          [(or (string-eq raw-name "size-of") (string-eq raw-name "align-of"))
-            (ctfe-eval-size-align-query raw-name args expr env fuel)]
-          [(string-eq raw-name "offset-of")
-            (ctfe-eval-offset-query args expr env fuel)]
-          [(ctfe-reflection-query-name? raw-name)
-            (ctfe-eval-reflection-query raw-name args expr env fuel)]
           [(or
-              (string-eq raw-name "__tl_string_eq")
-              (string-eq raw-name "string-eq")
-              (string-eq raw-name "string=?"))
-            (ctfe-eval-string-eq-call raw-name args expr env fuel)]
+              (string-eq lookup-name "size-of")
+              (string-eq lookup-name "align-of"))
+            (ctfe-eval-size-align-query lookup-name args expr env fuel)]
+          [(string-eq lookup-name "offset-of")
+            (ctfe-eval-offset-query args expr env fuel)]
+          [(ctfe-reflection-query-name? lookup-name)
+            (ctfe-eval-reflection-query lookup-name args expr env fuel)]
+          [(ctfe-string-eq-helper-name? lookup-name)
+            (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
           [(or
               (string-eq call-name "string-append")
               (string-eq call-name "string-concat"))
             (ctfe-eval-string-append-call call-name args expr env fuel)]
-          [(or
-              (string-eq raw-name "__tl_string_length")
-              (string-eq raw-name "string-length")
-              (string-eq raw-name "length"))
-            (ctfe-eval-string-length-call raw-name args expr env fuel)]
-          [(or
-              (string-eq raw-name "__tl_string_ref")
-              (string-eq raw-name "string-ref")
-              (string-eq raw-name "char-at"))
-            (ctfe-eval-string-ref-call raw-name args expr env fuel)]
-          [(or
-              (string-eq raw-name "__tl_string_to_int")
-              (string-eq raw-name "string->int"))
-            (ctfe-eval-string-to-int-call raw-name args expr env fuel)]
+          [(ctfe-string-length-helper-name? lookup-name)
+            (ctfe-eval-string-length-call lookup-name args expr env fuel)]
+          [(ctfe-string-ref-helper-name? lookup-name)
+            (ctfe-eval-string-ref-call lookup-name args expr env fuel)]
+          [(ctfe-string-to-int-helper-name? lookup-name)
+            (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
           [(string-eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
           [(string-eq call-name "expr-bool")

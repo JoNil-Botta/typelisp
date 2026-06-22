@@ -5,7 +5,6 @@
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).
 (import "stdlib/string.tl")
-
 (import "stdlib/io.tl")
 
 (define io-smoke-path : String

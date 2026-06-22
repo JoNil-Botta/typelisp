@@ -38188,7 +38188,7 @@
         (tc-check-cleanup-enum-decl
           ctx
           top-env
-          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          (tc-check-decl-scoped-name ctx name)
           AstLifetimeNil
           cleanup
           variants)]
@@ -38196,7 +38196,7 @@
         (tc-check-cleanup-enum-decl
           ctx
           top-env
-          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          (tc-check-decl-scoped-name ctx name)
           lifetimes
           cleanup
           variants)]
@@ -38204,7 +38204,7 @@
         (tc-check-cleanup-struct-decl
           ctx
           top-env
-          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          (tc-check-decl-scoped-name ctx name)
           repr
           cleanup
           fields)]
@@ -38212,7 +38212,7 @@
         (tc-check-cleanup-struct-decl
           ctx
           top-env
-          (compiler-symbol-module-key (tc-context-module ctx) (intern-str name))
+          (tc-check-decl-scoped-name ctx name)
           repr
           cleanup
           fields)]
@@ -38235,6 +38235,14 @@
     top-env
     (tc-hygiene-global-env top-env)
     decl))
+
+(define (tc-check-decl-scoped-name [ctx : TcContext] [name : i64]) : String
+  (let
+    [text : String (intern-str name)]
+    [module : String (tc-context-module ctx)]
+    (if (and (> (string-length module) 0) (not (tc-name-qualified? text)))
+      (compiler-symbol-module-key module text)
+      text)))
 
 (define (tc-check-decls
   [ctx : TcContext]

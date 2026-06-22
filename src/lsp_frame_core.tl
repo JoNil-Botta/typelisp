@@ -280,6 +280,19 @@
   (lsp-json-object
     (lsp-json-member k1 v1 (lsp-json-member k2 v2 json.JsonMemberListNil))))
 
+(define (lsp-json-object3
+  [k1 : String]
+  [v1 : json.Json]
+  [k2 : String]
+  [v2 : json.Json]
+  [k3 : String]
+  [v3 : json.Json]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      k1
+      v1
+      (lsp-json-member k2 v2 (lsp-json-member k3 v3 json.JsonMemberListNil)))))
+
 (define (lsp-json-object4
   [k1 : String]
   [v1 : json.Json]
@@ -2159,6 +2172,11 @@
     [(MissingLspDocument)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
+(define (lsp-format-edit-text [text : String]) : String
+  (match (format-rules-render-source-width-result text 80)
+    [(OkFormatString formatted) formatted]
+    [(ErrFormatString _) text]))
+
 (define (lsp-handle-formatting
   [id : json.Json]
   [params : json.Json]
@@ -3588,6 +3606,35 @@
     (- (struct-get entry form-start-line) 1)
     (- (struct-get entry form-start-col) 1)))
 
+;; Helper: move a form after another form
+(define (lsp-move-form-after
+  [text : String]
+  [source : LspDeclEntry]
+  [dest : LspDeclEntry]) : String
+  (let
+    [source-start : i64 (lsp-offset-from-entry-start text source)]
+    [source-end : i64 (lsp-offset-from-entry-end text source)]
+    [dest-start : i64 (lsp-offset-from-entry-start text dest)]
+    [dest-end : i64 (lsp-offset-from-entry-end text dest)]
+    [source-text : String
+      (substring text source-start (- source-end source-start))]
+    [text-without-source : String
+      (string-append
+        (substring text 0 source-start)
+        (substring text source-end (- (string-length text) source-end)))]
+    [dest-end-new : i64
+      (if (< source-start dest-start)
+        (- dest-end (- source-end source-start))
+        dest-end)]
+    [before : String (substring text-without-source 0 dest-end-new)]
+    [after : String
+      (substring
+        text-without-source
+        dest-end-new
+        (- (string-length text-without-source) dest-end-new))]
+    (str-cat before "
+" source-text after)))
+
 ;; Helper: get offset from LspDeclEntry end position
 (define (lsp-offset-from-entry-end [text : String] [entry : LspDeclEntry]) : i64
   (lsp-offset-at-position
@@ -3595,7 +3642,142 @@
     (- (struct-get entry form-end-line) 1)
     (- (struct-get entry form-end-col) 1)))
 
-;; tl/structuralMove - Move a form up/down in the file
+;; Helper: resolve a structural edit target from either a position or a name param.
+(define (lsp-structural-move-name [params : json.Json] [text : String]) : String
+  (let
+    [pos-key : String "position"]
+    (match (json.json-object-get params (& pos-key))
+      [(json.JsonFound position)
+        (let
+          [line : i64 (lsp-json-int-field-default position "line" 0)]
+          [col : i64 (lsp-json-int-field-default position "character" 0)]
+          (lsp-find-and-extract-name text line col))]
+      [(json.JsonMissing)
+        (match (lsp-json-string-field params "name")
+          [(OkLspJsonText name) name]
+          [(MissingLspJsonText) ""])])))
+
+(define (lsp-decl-list-find-name [decls : LspDeclList] [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (lsp-decl-list-len decls)]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (= found -1))
+        (let
+          [entry : LspDeclEntry
+            (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+          (if (string-eq (struct-get entry name) name)
+            (set! found i)
+            (set! i (+ i 1)))))
+      found)))
+
+(define (lsp-write-structural-edit-success
+  [id : json.Json]
+  [docs : LspDocuments]
+  [result : String]) : LspHandleResult
+  (let
+    [formatted : String (lsp-format-edit-text result)]
+    (begin
+      (lsp-write-response
+        id
+        (lsp-json-object2
+          "success"
+          (json.JsonBool true)
+          "text"
+          (json.JsonString formatted)))
+      (LspContinue docs))))
+
+(define (lsp-structural-move-after-destination
+  [id : json.Json]
+  [docs : LspDocuments]
+  [text : String]
+  [decls : LspDeclList]
+  [name : String]
+  [destination : String]) : LspHandleResult
+  (let
+    [found-idx : i64 (lsp-decl-list-find-name decls name)]
+    [dest-idx : i64 (lsp-decl-list-find-name decls destination)]
+    (cond
+      [(= found-idx -1)
+        (begin
+          (lsp-write-error id -32600 "Declaration not found")
+          (LspContinue docs))]
+      [(= dest-idx -1)
+        (begin
+          (lsp-write-error id -32600 "Destination declaration not found")
+          (LspContinue docs))]
+      [(= found-idx dest-idx)
+        (begin
+          (lsp-write-error id -32600 "Cannot move declaration to itself")
+          (LspContinue docs))]
+      [else
+        (let
+          [found-entry : LspDeclEntry
+            (lsp-decl-list-get decls found-idx (lsp-decl-entry-fallback))]
+          [dest-entry : LspDeclEntry
+            (lsp-decl-list-get decls dest-idx (lsp-decl-entry-fallback))]
+          [result : String (lsp-move-form-after text found-entry dest-entry)]
+          (lsp-write-structural-edit-success id docs result))])))
+
+(define (lsp-structural-move-direction
+  [id : json.Json]
+  [docs : LspDocuments]
+  [text : String]
+  [decls : LspDeclList]
+  [name : String]
+  [direction : String]) : LspHandleResult
+  (let
+    [found-idx : i64 (lsp-decl-list-find-name decls name)]
+    [n : i64 (lsp-decl-list-len decls)]
+    [target-idx : i64
+      (if (string-eq direction "up")
+        (- found-idx 1)
+        (if (string-eq direction "down")
+          (+ found-idx 1)
+          -1))]
+    (cond
+      [(= found-idx -1)
+        (begin
+          (lsp-write-error id -32600 "Declaration not found")
+          (LspContinue docs))]
+      [(or (< target-idx 0) (>= target-idx n) (= target-idx -1))
+        (begin
+          (lsp-write-error id -32600 "Invalid direction or cannot move further")
+          (LspContinue docs))]
+      [else
+        (let
+          [found-entry : LspDeclEntry
+            (lsp-decl-list-get decls found-idx (lsp-decl-entry-fallback))]
+          [target-entry : LspDeclEntry
+            (lsp-decl-list-get decls target-idx (lsp-decl-entry-fallback))]
+          [found-first : bool (< found-idx target-idx)]
+          [first-entry : LspDeclEntry
+            (if found-first
+              found-entry
+              target-entry)]
+          [second-entry : LspDeclEntry
+            (if found-first
+              target-entry
+              found-entry)]
+          [first-start : i64 (lsp-offset-from-entry-start text first-entry)]
+          [first-end : i64 (lsp-offset-from-entry-end text first-entry)]
+          [second-start : i64 (lsp-offset-from-entry-start text second-entry)]
+          [second-end : i64 (lsp-offset-from-entry-end text second-entry)]
+          [text-before : String (substring text 0 first-start)]
+          [second-text : String
+            (substring text second-start (- second-end second-start))]
+          [middle : String
+            (substring text first-end (- second-start first-end))]
+          [first-text : String
+            (substring text first-start (- first-end first-start))]
+          [text-after : String
+            (substring text second-end (- (string-length text) second-end))]
+          [result : String
+            (str-cat text-before second-text middle first-text text-after)]
+          (lsp-write-structural-edit-success id docs result))])))
+
+;; tl/structuralMove - Move a form by name or position.
 (define (lsp-handle-tl-structural-move
   [id : json.Json]
   [params : json.Json]
@@ -3603,133 +3785,40 @@
   (match (lsp-get-document params docs)
     [(FoundLspDocument path text _)
       (let
-        [name : String
-          (let
-            [pos-key : String "position"]
-            (match (json.json-object-get params (& pos-key))
-              [(json.JsonFound position)
-                (let
-                  [line : i64 (lsp-json-int-field-default position "line" 0)]
-                  [col : i64
-                    (lsp-json-int-field-default position "character" 0)]
-                  (lsp-find-and-extract-name text line col))]
-              [(json.JsonMissing)
-                (match (lsp-json-string-field params "name")
-                  [(OkLspJsonText n) n]
-                  [(MissingLspJsonText) ""])]))]
+        [name : String (lsp-structural-move-name params text)]
         (if (= (string-length name) 0)
           (begin
             (lsp-write-error id -32600 "Missing name or position parameter")
             (LspContinue docs))
-          (match (lsp-json-string-field params "direction")
-            [(OkLspJsonText direction)
-              (let
-                [text-copy : String (string-copy-borrowed (& text))]
-                [decls : LspDeclList (lsp-scan-decls text-copy)]
-                [i : i64 0]
-                [n : i64 (lsp-decl-list-len decls)]
-                [found-idx : i64 -1]
-                (begin
-                  (while (and (< i n) (= found-idx -1))
-                    (let
-                      [entry : LspDeclEntry
-                        (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
-                      (if (string-eq (struct-get entry name) name)
-                        (set! found-idx i)
-                        (set! i (+ i 1)))))
-                  (if (= found-idx -1)
+          (let
+            [text-copy : String (string-copy-borrowed (& text))]
+            [decls : LspDeclList (lsp-scan-decls text-copy)]
+            (match (lsp-json-string-field params "destination")
+              [(OkLspJsonText destination)
+                (lsp-structural-move-after-destination
+                  id
+                  docs
+                  text
+                  decls
+                  name
+                  destination)]
+              [(MissingLspJsonText)
+                (match (lsp-json-string-field params "direction")
+                  [(OkLspJsonText direction)
+                    (lsp-structural-move-direction
+                      id
+                      docs
+                      text
+                      decls
+                      name
+                      direction)]
+                  [(MissingLspJsonText)
                     (begin
-                      (lsp-write-error id -32600 "Declaration not found")
-                      (LspContinue docs))
-                    (let
-                      [target-idx : i64
-                        (if (string-eq direction "up")
-                          (- found-idx 1)
-                          (if (string-eq direction "down")
-                            (+ found-idx 1)
-                            -1))]
-                      (if (or
-                        (< target-idx 0)
-                        (>= target-idx n)
-                        (= target-idx -1))
-                        (begin
-                          (lsp-write-error
-                            id
-                            -32600
-                            "Invalid direction or cannot move further")
-                          (LspContinue docs))
-                        (let
-                          [found-entry : LspDeclEntry
-                            (lsp-decl-list-get
-                              decls
-                              found-idx
-                              (lsp-decl-entry-fallback))]
-                          [target-entry : LspDeclEntry
-                            (lsp-decl-list-get
-                              decls
-                              target-idx
-                              (lsp-decl-entry-fallback))]
-                          [found-first : bool (< found-idx target-idx)]
-                          [first-entry : LspDeclEntry
-                            (if found-first
-                              found-entry
-                              target-entry)]
-                          [second-entry : LspDeclEntry
-                            (if found-first
-                              target-entry
-                              found-entry)]
-                          [first-start : i64
-                            (lsp-offset-from-entry-start text first-entry)]
-                          [first-end : i64
-                            (lsp-offset-from-entry-end text first-entry)]
-                          [second-start : i64
-                            (lsp-offset-from-entry-start text second-entry)]
-                          [second-end : i64
-                            (lsp-offset-from-entry-end text second-entry)]
-                          [text-before : String (substring text 0 first-start)]
-                          [second-text : String
-                            (substring
-                              text
-                              second-start
-                              (- second-end second-start))]
-                          [middle : String
-                            (substring
-                              text
-                              first-end
-                              (- second-start first-end))]
-                          [first-text : String
-                            (substring
-                              text
-                              first-start
-                              (- first-end first-start))]
-                          [text-after : String
-                            (substring
-                              text
-                              second-end
-                              (- (string-length text) second-end))]
-                          [result : String ""]
-                          (begin
-                            (set! result text-before)
-                            (set! result (string-append result second-text))
-                            (set! result (string-append result middle))
-                            (set! result (string-append result first-text))
-                            (set! result (string-append result text-after))
-                            (let
-                              [formatted : String
-                                (format-rules-render-source-width result 80)]
-                              (begin
-                                (lsp-write-response
-                                  id
-                                  (lsp-json-object2
-                                    "success"
-                                    (json.JsonBool true)
-                                    "text"
-                                    (json.JsonString formatted)))
-                                (LspContinue docs))))))))))]
-            [(MissingLspJsonText)
-              (begin
-                (lsp-write-error id -32600 "Missing direction parameter")
-                (LspContinue docs))])))]
+                      (lsp-write-error
+                        id
+                        -32600
+                        "Missing direction or destination parameter")
+                      (LspContinue docs))])]))))]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")
@@ -4081,8 +4170,7 @@
                         (struct-get last-entry form-end-col)
                         (string-append "\n\n" new-text)))))
                 (let
-                  [formatted : String
-                    (format-rules-render-source-width result 80)]
+                  [formatted : String (lsp-format-edit-text result)]
                   (begin
                     (lsp-write-response
                       id
@@ -4485,7 +4573,7 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-replace-body-at id params docs))]
+                            (lsp-handle-tl-replace-body id params docs))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4625,7 +4713,7 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-replace-body-at id params docs))]
+                            (lsp-handle-tl-replace-body id params docs))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4803,8 +4891,7 @@
                   (let
                     [result : String
                       (lsp-replace-all-words text old-name new-name)]
-                    [formatted : String
-                      (format-rules-render-source-width result 80)]
+                    [formatted : String (lsp-format-edit-text result)]
                     (begin
                       (lsp-write-response
                         id
@@ -4965,8 +5052,7 @@
                           (if (string-eq result "")
                             (LspContinue docs)
                             (let
-                              [formatted : String
-                                (format-rules-render-source-width result 80)]
+                              [formatted : String (lsp-format-edit-text result)]
                               (begin
                                 (lsp-write-response
                                   id
@@ -5286,8 +5372,7 @@
                 (match (lsp-batch-edit-apply text (box-get edits-list))
                   [(OkLspEdit result-text)
                     (let
-                      [formatted : String
-                        (format-rules-render-source-width result-text 80)]
+                      [formatted : String (lsp-format-edit-text result-text)]
                       (begin
                         (lsp-write-response
                           id
@@ -5386,26 +5471,26 @@
   [text : String]
   [line : i64]
   [col : i64]
-  [new-text : String]) : String
+  [new-text : String]) : LspEditResult
   (if (or (< line 0) (< col 0))
-    text
+    (OkLspEdit text)
     (let
       [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string-length text))
-        text
+        (OkLspEdit text)
         (let
           [form-start : i64 (lsp-find-form-at-offset text offset)]
           (if (= form-start -1)
-            text
+            (OkLspEdit text)
             (let
               [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
               (if (or (= form-end -1) (<= form-end offset))
-                text
+                (OkLspEdit text)
                 (let
                   [before : String (substring text 0 form-start)]
                   [after : String
                     (substring text form-end (- (string-length text) form-end))]
-                  (str-cat before new-text after))))))))))
+                  (OkLspEdit (str-cat before new-text after)))))))))))
 
 ;; tl/structuralReplaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at
@@ -5424,19 +5509,23 @@
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
                   [col : i64
                     (lsp-json-int-field-default position "character" 0)]
-                  [replaced : String
-                    (lsp-replace-form-at-position text line col new-text)]
-                  [formatted : String
-                    (format-rules-render-source-width replaced 80)]
-                  (begin
-                    (lsp-write-response
-                      id
-                      (lsp-json-object2
-                        "success"
-                        (json.JsonBool true)
-                        "text"
-                        (json.JsonString formatted)))
-                    (LspContinue docs)))]
+                  (match (lsp-replace-form-at-position text line col new-text)
+                    [(OkLspEdit replaced)
+                      (let
+                        [formatted : String (lsp-format-edit-text replaced)]
+                        (begin
+                          (lsp-write-response
+                            id
+                            (lsp-json-object2
+                              "success"
+                              (json.JsonBool true)
+                              "text"
+                              (json.JsonString formatted)))
+                          (LspContinue docs)))]
+                    [(ErrLspEdit message)
+                      (begin
+                        (lsp-write-error id -32600 message)
+                        (LspContinue docs))]))]
               [(MissingLspJsonText)
                 (begin
                   (lsp-write-error id -32600 "Missing newText parameter")
@@ -5543,7 +5632,7 @@
                                   (- (string-length text) form-end))]
                               [deleted : String (str-cat before after)]
                               [formatted : String
-                                (format-rules-render-source-width deleted 80)]
+                                (lsp-format-edit-text deleted)]
                               (begin
                                 (lsp-write-response
                                   id
@@ -5622,9 +5711,7 @@
                                   [new-doc-text : String
                                     (str-cat before "\n" new-text after)]
                                   [formatted : String
-                                    (format-rules-render-source-width
-                                      new-doc-text
-                                      80)]
+                                    (lsp-format-edit-text new-doc-text)]
                                   (begin
                                     (lsp-write-response
                                       id
@@ -5716,8 +5803,8 @@
         ""
         (lsp-find-define-name-outward text offset)))))
 
-;; tl/replaceBodyAt - Replace body of function at a given position
-(define (lsp-handle-tl-replace-body-at
+;; tl/replaceBody - Replace body of a function by name or position
+(define (lsp-handle-tl-replace-body
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
@@ -5743,8 +5830,7 @@
                     (match (lsp-replace-body-text text name new-body)
                       [(OkLspEdit replaced)
                         (let
-                          [formatted : String
-                            (format-rules-render-source-width replaced 80)]
+                          [formatted : String (lsp-format-edit-text replaced)]
                           (begin
                             (lsp-write-response
                               id
@@ -5763,9 +5849,45 @@
                       (lsp-write-error id -32600 "Missing newBody parameter")
                       (LspContinue docs))])))]
           [(json.JsonMissing)
-            (begin
-              (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
+            (match (lsp-json-string-field params "name")
+              [(OkLspJsonText name)
+                (if (= (string-length name) 0)
+                  (begin
+                    (lsp-write-error
+                      id
+                      -32600
+                      "Missing name or position parameter")
+                    (LspContinue docs))
+                  (match (lsp-json-string-field params "newBody")
+                    [(OkLspJsonText new-body)
+                      (match (lsp-replace-body-text text name new-body)
+                        [(OkLspEdit replaced)
+                          (let
+                            [formatted : String (lsp-format-edit-text replaced)]
+                            (begin
+                              (lsp-write-response
+                                id
+                                (lsp-json-object2
+                                  "success"
+                                  (json.JsonBool true)
+                                  "text"
+                                  (json.JsonString formatted)))
+                              (LspContinue docs)))]
+                        [(ErrLspEdit message)
+                          (begin
+                            (lsp-write-error id -32600 message)
+                            (LspContinue docs))])]
+                    [(MissingLspJsonText)
+                      (begin
+                        (lsp-write-error id -32600 "Missing newBody parameter")
+                        (LspContinue docs))]))]
+              [(MissingLspJsonText)
+                (begin
+                  (lsp-write-error
+                    id
+                    -32600
+                    "Missing name or position parameter")
+                  (LspContinue docs))])]))]
     [(MissingLspDocument)
       (begin
         (lsp-write-error id -32600 "Document not found")
@@ -5805,7 +5927,7 @@
                           [(OkLspEdit replaced)
                             (let
                               [formatted : String
-                                (format-rules-render-source-width replaced 80)]
+                                (lsp-format-edit-text replaced)]
                               (begin
                                 (lsp-write-response
                                   id
@@ -5877,3 +5999,30 @@
       (begin
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
+
+(define (lsp-replace-form-at-position-smoke-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
+    (match (lsp-replace-form-at-position text 1 5 "(define (baz) : i64 3)")
+      [(OkLspEdit replaced)
+        (string-eq replaced "(define (foo) : i64 1)\n(define (baz) : i64 3)")]
+      [(ErrLspEdit _) false])))
+
+(define (lsp-replace-form-at-position-noop-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)"]
+    (match (lsp-replace-form-at-position text 0 22 "(define (bad) : i64 0)")
+      [(OkLspEdit replaced) (string-eq replaced text)]
+      [(ErrLspEdit _) false])))
+
+(test
+  lsp-replace-form-at-position-smoke
+  (unless
+    (lsp-replace-form-at-position-smoke-ok?)
+    (panic "lsp-replace-form-at-position-smoke failed")))
+
+(test
+  lsp-replace-form-at-position-noop
+  (unless
+    (lsp-replace-form-at-position-noop-ok?)
+    (panic "lsp-replace-form-at-position-noop failed")))

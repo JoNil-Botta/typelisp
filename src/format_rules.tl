@@ -573,33 +573,33 @@
 (define (format-rules-special-list-doc
   [head : FormatCst]
   [rest : FormatCstList]) : Doc
-  (cond
-    [(format-rules-node-symbol? head "import")
-      (format-rules-inline-form-doc "import" rest)]
-    [(format-rules-node-symbol? head "include-str")
-      (format-rules-inline-form-doc "include-str" rest)]
-    [(format-rules-node-symbol? head "extern")
-      (format-rules-inline-form-doc "extern" rest)]
-    [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]
-    [(format-rules-node-symbol? head "defmacro")
-      (format-rules-defmacro-doc rest)]
-    [(format-rules-node-symbol? head "defenum")
-      (format-rules-first-or-line-form-doc "defenum" rest)]
-    [(format-rules-node-symbol? head "defstruct")
-      (format-rules-first-or-line-form-doc "defstruct" rest)]
-    [(format-rules-node-symbol? head "lambda") (format-rules-lambda-doc rest)]
-    [(format-rules-node-symbol? head "let") (format-rules-let-doc rest)]
-    [(format-rules-node-symbol? head "if")
-      (format-rules-first-or-line-form-doc "if" rest)]
-    [(format-rules-node-symbol? head "while")
-      (format-rules-first-or-line-form-doc "while" rest)]
-    [(format-rules-node-symbol? head "begin")
-      (format-rules-line-form-doc "begin" rest)]
-    [(format-rules-node-symbol? head "unsafe")
-      (format-rules-line-form-doc "unsafe" rest)]
-    [(format-rules-node-symbol? head "match")
-      (format-rules-first-or-line-form-doc "match" rest)]
-    [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")]))
+  (let
+    [head-name : String (format-rules-node-symbol-name head)]
+    (cond
+      [(string-eq head-name "import")
+        (format-rules-inline-form-doc "import" rest)]
+      [(string-eq head-name "include-str")
+        (format-rules-inline-form-doc "include-str" rest)]
+      [(string-eq head-name "extern")
+        (format-rules-inline-form-doc "extern" rest)]
+      [(string-eq head-name "define") (format-rules-define-doc rest)]
+      [(string-eq head-name "defmacro") (format-rules-defmacro-doc rest)]
+      [(string-eq head-name "defenum")
+        (format-rules-first-or-line-form-doc "defenum" rest)]
+      [(string-eq head-name "defstruct")
+        (format-rules-first-or-line-form-doc "defstruct" rest)]
+      [(string-eq head-name "lambda") (format-rules-lambda-doc rest)]
+      [(string-eq head-name "let") (format-rules-let-doc rest)]
+      [(string-eq head-name "if")
+        (format-rules-first-or-line-form-doc "if" rest)]
+      [(string-eq head-name "while")
+        (format-rules-first-or-line-form-doc "while" rest)]
+      [(string-eq head-name "begin") (format-rules-line-form-doc "begin" rest)]
+      [(string-eq head-name "unsafe")
+        (format-rules-line-form-doc "unsafe" rest)]
+      [(string-eq head-name "match")
+        (format-rules-first-or-line-form-doc "match" rest)]
+      [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")])))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
   (match rest
@@ -2485,137 +2485,139 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (cond
-    [(format-rules-node-symbol? head "import")
-      (format-rules-layout-inline-form
-        "import"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "include-str")
-      (format-rules-layout-inline-form
-        "include-str"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "extern")
-      (format-rules-layout-inline-form
-        "extern"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "define")
-      (format-rules-layout-define rest emit width indent col flat limit buf)]
-    [(format-rules-node-symbol? head "defmacro")
-      (format-rules-layout-defmacro rest emit width indent col flat limit buf)]
-    [(format-rules-node-symbol? head "defenum")
-      (format-rules-layout-first-or-line-form
-        "defenum"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "defstruct")
-      (format-rules-layout-first-or-line-form
-        "defstruct"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "lambda")
-      (format-rules-layout-lambda rest emit width indent col flat limit buf)]
-    [(format-rules-node-symbol? head "let")
-      (format-rules-layout-let rest emit width indent col flat limit buf)]
-    [(format-rules-node-symbol? head "if")
-      (format-rules-layout-first-or-line-form
-        "if"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "while")
-      (format-rules-layout-first-or-line-form
-        "while"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "begin")
-      (format-rules-layout-line-form
-        "begin"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "unsafe")
-      (format-rules-layout-line-form
-        "unsafe"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [(format-rules-node-symbol? head "match")
-      (format-rules-layout-first-or-line-form
-        "match"
-        rest
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]
-    [else
-      (format-rules-layout-delimited
-        "("
-        (FmtCstCons head (box rest))
-        ")"
-        emit
-        width
-        indent
-        col
-        flat
-        limit
-        buf)]))
+  (let
+    [head-name : String (format-rules-node-symbol-name head)]
+    (cond
+      [(string-eq head-name "import")
+        (format-rules-layout-inline-form
+          "import"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "include-str")
+        (format-rules-layout-inline-form
+          "include-str"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "extern")
+        (format-rules-layout-inline-form
+          "extern"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "define")
+        (format-rules-layout-define rest emit width indent col flat limit buf)]
+      [(string-eq head-name "defmacro")
+        (format-rules-layout-defmacro rest emit width indent col flat limit buf)]
+      [(string-eq head-name "defenum")
+        (format-rules-layout-first-or-line-form
+          "defenum"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "defstruct")
+        (format-rules-layout-first-or-line-form
+          "defstruct"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "lambda")
+        (format-rules-layout-lambda rest emit width indent col flat limit buf)]
+      [(string-eq head-name "let")
+        (format-rules-layout-let rest emit width indent col flat limit buf)]
+      [(string-eq head-name "if")
+        (format-rules-layout-first-or-line-form
+          "if"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "while")
+        (format-rules-layout-first-or-line-form
+          "while"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "begin")
+        (format-rules-layout-line-form
+          "begin"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "unsafe")
+        (format-rules-layout-line-form
+          "unsafe"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [(string-eq head-name "match")
+        (format-rules-layout-first-or-line-form
+          "match"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
+      [else
+        (format-rules-layout-delimited
+          "("
+          (FmtCstCons head (box rest))
+          ")"
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)])))
 
 (define (format-rules-layout-colon-list
   [rest : FormatCstList]

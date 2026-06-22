@@ -78,8 +78,13 @@
 ;# (vf.vector-family Token TokenVec token-vec)
 ;#
 ;# (define (main) : i64
-;#   (+ (point-vec-len (point-vec-push (point-vec-new) (Point 1)))
-;#      (token-vec-len (token-vec-push (token-vec-new) (Token 2)))))
+;#   (let
+;#     [points : PointVec (point-vec-new)]
+;#     [tokens : TokenVec (token-vec-new)]
+;#     (begin
+;#       (point-vec-push (&mut points) (Point 1))
+;#       (token-vec-push (&mut tokens) (Token 2))
+;#       (+ (point-vec-len (& points)) (token-vec-len (& tokens))))))
 ;# ```
 (module stdlib.vector)
 

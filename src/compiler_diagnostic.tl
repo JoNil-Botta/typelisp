@@ -373,8 +373,7 @@
     (- col 1)
     0))
 
-(define (compiler-diagnostic-span-width
-  [span : (& span CompilerDiagnosticSpan)]) : i64
+(define (compiler-diagnostic-span-width [span : CompilerDiagnosticSpan]) : i64
   (if (=
     (compiler-diagnostic-span-start-line span)
     (compiler-diagnostic-span-end-line span))
@@ -465,7 +464,7 @@
 
 (define (compiler-diagnostic-render-span-location-with-fallback
   [fallback-path : String]
-  [span : (& span CompilerDiagnosticSpan)]) : String
+  [span : CompilerDiagnosticSpan]) : String
   (let
     [path : String (compiler-diagnostic-span-path span)]
     [display-path : String
@@ -482,13 +481,13 @@
       "\n")))
 
 (define (compiler-diagnostic-render-span-location
-  [span : (& span CompilerDiagnosticSpan)]) : String
+  [span : CompilerDiagnosticSpan]) : String
   (compiler-diagnostic-render-span-location-with-fallback "" span))
 
 (define (compiler-diagnostic-render-location [diag : CompilerDiagnostic]) : String
   (let
     [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
-    (compiler-diagnostic-render-span-location (& span))))
+    (compiler-diagnostic-render-span-location span)))
 
 (define (compiler-diagnostic-render-label-suffix
   [label : (& label CompilerDiagnosticMaybeString)]) : String
@@ -497,7 +496,7 @@
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
-  [span : (& span CompilerDiagnosticSpan)]
+  [span : CompilerDiagnosticSpan]
   [source : (& source str)]
   [label-suffix : (& label-suffix str)]) : String
   (match (compiler-diagnostic-source-line
@@ -550,13 +549,13 @@
       (compiler-diagnostic-render-secondary-label-only (& label))]
     [snippet : String
       (compiler-diagnostic-render-source-snippet
-        (& span)
+        span
         (& source)
         (& label-suffix))]
     (string-concat3
       (compiler-diagnostic-render-span-location-with-fallback
         (string-copy primary-path)
-        (& span))
+        span)
       (string-concat3
         "   |\n"
         (if same-path
@@ -616,7 +615,7 @@
           "   |\n"
           (string-append
             (compiler-diagnostic-render-source-snippet
-              (& primary-span)
+              primary-span
               (& source)
               (& empty-label))
             (string-append

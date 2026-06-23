@@ -534,7 +534,7 @@
               (set! scan-pos body-next)
               (set! done true))
             (begin
-              (set! body (string-append body (string-append body-line "\n")))
+              (set! body (string-concat3 body body-line "\n"))
               (set! scan-pos body-next)))))
       (MdScanBlock
         scan-pos
@@ -643,7 +643,7 @@
                 text
                 (if (= (string-length text) 0)
                   (md-trim line)
-                  (string-append text (string-append " " (md-trim line)))))
+                  (str-cat text " " (md-trim line))))
               (set! scan-pos next)))))
       (MdScanBlock scan-pos (MdParagraph text)))))
 
@@ -735,12 +735,13 @@
                     (set!
                       out
                       (str-cat
-                        (string-append out "<code>")
+                        out
+                        "<code>"
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</code>"))
                     (set! i (+ j 1)))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [(or (= c '*') (= c '_'))
               (let
@@ -750,12 +751,13 @@
                     (set!
                       out
                       (str-cat
-                        (string-append out "<em>")
+                        out
+                        "<em>"
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</em>"))
                     (set! i (+ j 1)))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [(= c '[')
               (let
@@ -769,27 +771,30 @@
                           (begin
                             (set!
                               out
-                              (string-append
+                              (string-concat3
                                 out
-                                (md-render-link text i jclose kclose)))
+                                (md-render-link text i jclose kclose)
+                                ""))
                             (set! i (+ kclose 1)))
                           (begin
                             (set!
                               out
-                              (string-append out (md-escape-char text i)))
+                              (string-concat3 out (md-escape-char text i) ""))
                             (set! i (+ i 1)))))
                       (begin
-                        (set! out (string-append out (md-escape-char text i)))
+                        (set!
+                          out
+                          (string-concat3 out (md-escape-char text i) ""))
                         (set! i (+ i 1))))
                     (begin
-                      (set! out (string-append out (md-escape-char text i)))
+                      (set! out (string-concat3 out (md-escape-char text i) ""))
                       (set! i (+ i 1))))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [else
               (begin
-                (set! out (string-append out (md-escape-char text i)))
+                (set! out (string-concat3 out (md-escape-char text i) ""))
                 (set! i (+ i 1)))])))
       out)))
 

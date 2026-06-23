@@ -490,7 +490,7 @@
     (compiler-diagnostic-render-span-location span)))
 
 (define (compiler-diagnostic-render-label-suffix
-  [label : (& label CompilerDiagnosticMaybeString)]) : String
+  [label : CompilerDiagnosticMaybeString]) : String
   (match label
     [(CompilerDiagnosticSomeString text) (string-append " " text)]
     [CompilerDiagnosticNoString ""]))
@@ -526,7 +526,7 @@
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-label-only
-  [label : (& label CompilerDiagnosticMaybeString)]) : String
+  [label : CompilerDiagnosticMaybeString]) : String
   (match label
     [(CompilerDiagnosticSomeString text)
       (string-append "   = label: " (string-append text "\n"))]
@@ -544,9 +544,9 @@
       (if (string-eq path "")
         true
         (string-eq path primary-path))]
-    [label-suffix : String (compiler-diagnostic-render-label-suffix (& label))]
+    [label-suffix : String (compiler-diagnostic-render-label-suffix label)]
     [label-only : String
-      (compiler-diagnostic-render-secondary-label-only (& label))]
+      (compiler-diagnostic-render-secondary-label-only label)]
     [snippet : String
       (compiler-diagnostic-render-source-snippet
         span

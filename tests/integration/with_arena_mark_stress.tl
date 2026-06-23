@@ -8,9 +8,9 @@
     (let
       [prefix : String "arena:"]
       [suffix : String (int->string n)]
-      [left : String (string-append-borrowed (& prefix) (& suffix))]
+      [left : String (string-append (& prefix) (& suffix))]
       [tail : String ":tail"]
-      [right : String (string-append-borrowed (& left) (& tail))]
+      [right : String (string-append (& left) (& tail))]
       (string-length right))))
 
 (define (scoped-loop [n : i64] [acc : i64]) : i64

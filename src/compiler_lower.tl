@@ -670,7 +670,7 @@
               (if (string-eq resolved candidate)
                 unit
                 (begin
-                  (set! out resolved)
+                  (set! out (string-copy resolved))
                   (set! done true))))
             unit)
           (set! i (+ i 1))))
@@ -685,7 +685,7 @@
     [resolved : String (lower-name-cache-resolve cache source-name)]
     (if (string-eq resolved source-name)
       (lower-name-cache-resolve-dotted cache source-name)
-      resolved)))
+      (string-copy resolved))))
 
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
@@ -3480,9 +3480,7 @@
     (string-eq base "char-at")
     (string-eq base "string-eq")
     (string-eq base "string=?")
-    (string-eq base "string->int")
-    (string-eq base "string-eq-borrowed")
-    (string-eq base "string->int-borrowed")))
+    (string-eq base "string->int")))
 
 (define (lower-reach-add-stdlib-string-public-helper
   [all-functions : StringI64Map]

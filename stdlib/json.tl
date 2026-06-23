@@ -483,7 +483,7 @@
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
-      (if (string.string-eq-borrowed (& item-key) key)
+      (if (string.string-eq (& item-key) key)
         (JsonFound value)
         (stdlib.json.json-member-list-get (box-get rest) key))]))
 
@@ -620,10 +620,7 @@
                 out
                 (text_buf.text-buf-append
                   out
-                  (string.substring-borrowed
-                    text
-                    segment-start
-                    (- i segment-start))))
+                  (string.substring text segment-start (- i segment-start))))
               (set!
                 out
                 (text_buf.text-buf-append
@@ -636,7 +633,7 @@
         out
         (text_buf.text-buf-append
           out
-          (string.substring-borrowed text segment-start (- n segment-start))))
+          (string.substring text segment-start (- n segment-start))))
       (text_buf.text-buf-render out))))
 
 ;: Append serialized array elements to `buf`.
@@ -743,7 +740,7 @@
     [(= code 13) (OkJsonCodepointString "\r")]
     [(and (>= code 32) (<= code 126))
       (OkJsonCodepointString
-        (string.substring stdlib.json.json-ascii-printable-table (- code 32) 1))]
+        (string.substring json-ascii-printable-table (- code 32) 1))]
     [else
       (ErrJsonCodepointString
         "json: unicode escape outside supported string range")]))
@@ -826,7 +823,7 @@
                       out
                       (text_buf.text-buf-append
                         out
-                        (string.substring-borrowed
+                        (string.substring
                           text
                           segment-start
                           (- i segment-start))))
@@ -838,7 +835,7 @@
                       out
                       (text_buf.text-buf-append
                         out
-                        (string.substring-borrowed
+                        (string.substring
                           text
                           segment-start
                           (- i segment-start))))
@@ -938,9 +935,7 @@
           unit)
         unit)
       (if ok
-        (OkJsonParseValue
-          (JsonNumber (string.substring-borrowed text pos (- i pos)))
-          i)
+        (OkJsonParseValue (JsonNumber (string.substring text pos (- i pos))) i)
         (ErrJsonParseValue message)))))
 
 ;: Return the integer value of an ASCII decimal digit.
@@ -1050,7 +1045,7 @@
     (match (stdlib.json.json-parse-number text 0)
       [(OkJsonParseValue _ next)
         (if (= next n)
-          (OkJsonNumberText (string.substring-borrowed text 0 n))
+          (OkJsonNumberText (string.substring text 0 n))
           (ErrJsonNumberText "json: trailing characters after number"))]
       [(ErrJsonParseValue message) (ErrJsonNumberText message)])))
 

@@ -58,7 +58,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out " "))
+          (set! out (string-concat3 out " " ""))
           (set! i (+ i 1))))
       out)))
 
@@ -338,7 +338,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out " x"))
+          (set! out (string-concat3 out " x" ""))
           (set! i (+ i 1))))
       out)))
 
@@ -349,7 +349,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out "\n  x"))
+          (set! out (string-concat3 out "\n  x" ""))
           (set! i (+ i 1))))
       out)))
 

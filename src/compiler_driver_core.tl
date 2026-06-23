@@ -926,7 +926,7 @@
         (unsafe
           (tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string-copy-borrowed (& key))]
+          [persistent-key : String (string-copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
@@ -1092,7 +1092,7 @@
         (unsafe
           (tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
-          [persistent-key : String (string-copy-borrowed (& key))]
+          [persistent-key : String (string-copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold-with-pools
               stdlib-roots
@@ -1907,86 +1907,98 @@
     (begin
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "globals"
-            (compiler-ir-summary-globals summary))))
+            (compiler-ir-summary-globals summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "functions"
-            (compiler-ir-summary-functions summary))))
+            (compiler-ir-summary-functions summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "externs"
-            (compiler-ir-summary-externs summary))))
+            (compiler-ir-summary-externs summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "blocks"
-            (compiler-ir-summary-blocks summary))))
+            (compiler-ir-summary-blocks summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "instructions"
-            (compiler-ir-summary-instructions summary))))
+            (compiler-ir-summary-instructions summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "vars"
-            (compiler-ir-summary-vars summary))))
+            (compiler-ir-summary-vars summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
-            (compiler-ir-summary-empty-blocks summary))))
+            (compiler-ir-summary-empty-blocks summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
-            (compiler-ir-summary-max-instructions-function summary))))
+            (compiler-ir-summary-max-instructions-function summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
-            (compiler-ir-summary-max-instructions-block summary))))
+            (compiler-ir-summary-max-instructions-block summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
-            (compiler-ir-summary-call-arg-entries summary))))
+            (compiler-ir-summary-call-arg-entries summary))
+          ""))
       (set!
         out
-        (string-append
+        (string-concat3
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
-            (compiler-ir-summary-phi-input-entries summary))))
-      (string-append
+            (compiler-ir-summary-phi-input-entries summary))
+          ""))
+      (string-concat3
         out
         (compiler-driver-ir-summary-line
           "score"
-          (compiler-ir-summary-score summary))))))
+          (compiler-ir-summary-score summary))
+        ""))))
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
   [program : CompilerIrProgram]

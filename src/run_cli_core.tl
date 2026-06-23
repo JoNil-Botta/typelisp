@@ -173,23 +173,18 @@
 (define (run-plan-render [config : RunPlanConfig]) : String
   (match config
     [(RunPlanConfig source target mode opt-level stdlib-lines runtime-lines)
-      (string-append
+      (str-cat
         (host-plan-header)
-        (string-append
-          (host-plan-word-line "action" "run-source")
-          (string-append
-            (host-plan-netline "source" source)
-            (string-append
-              (host-plan-word-line "target" target)
-              (string-append
-                (host-plan-word-line "backend-mode" mode)
-                (string-append
-                  (if (string-eq opt-level "")
-                    ""
-                    (host-plan-word-line "opt-level" opt-level))
-                  (string-append
-                    stdlib-lines
-                    (string-append runtime-lines "end\n"))))))))]))
+        (host-plan-word-line "action" "run-source")
+        (host-plan-netline "source" source)
+        (host-plan-word-line "target" target)
+        (host-plan-word-line "backend-mode" mode)
+        (if (string-eq opt-level "")
+          ""
+          (host-plan-word-line "opt-level" opt-level))
+        stdlib-lines
+        runtime-lines
+        "end\n")]))
 
 (define (run-host-plan-main [idx : i64]) : i64
   (match (run-plan-config-from idx (arg-count))

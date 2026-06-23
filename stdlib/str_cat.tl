@@ -25,7 +25,7 @@
 ;: Local aliases for the flat helper names emitted by `str-cat` today. External
 ;: callers still provide these through legacy flat imports; these definitions
 ;: keep this module's own inline tests independent of a legacy stdlib import.
-(define (string-append [left : String] [right : String]) : String
+(define (string-append [left : (& left str)] [right : (& right str)]) : String
   (string.string-append left right))
 
 ;: Local alias for three-part string concatenation.
@@ -87,7 +87,7 @@
           [b : Expr (expr-list-head rest1)]
           [rest2 : ExprList (expr-list-tail rest1)]
           (if (expr-list-empty? rest2)
-            `(string-append ,a ,b)
+            `(string-concat3 ,a ,b "")
             (let
               [c : Expr (expr-list-head rest2)]
               [rest3 : ExprList (expr-list-tail rest2)]

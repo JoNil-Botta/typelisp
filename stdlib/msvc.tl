@@ -131,7 +131,7 @@
 (define (msvc-supported-target? [target : (& target str)]) : bool
   (let
     [supported : String "x86_64-pc-windows-msvc"]
-    (string.string-eq-borrowed target (& supported))))
+    (string.string-eq target (& supported))))
 
 ;: Return true when `c` is an ASCII decimal digit.
 (define (msvc-digit? [c : char]) : bool
@@ -213,8 +213,8 @@
 ;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : (& left str)] [right : (& right str)]) : bool
   (let
-    [left-text : String (string.string-copy-borrowed left)]
-    [right-text : String (string.string-copy-borrowed right)]
+    [left-text : String (string.string-copy left)]
+    [right-text : String (string.string-copy right)]
     (msvc-version-greater-owned? left-text right-text)))
 
 ;: Return true when `path` exists, mapping probe errors to false.
@@ -287,13 +287,13 @@
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-vec [dirs : vector.StringVec] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string.string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy tool)]
     (msvc-search-dirs-vec-owned dirs tool-text)))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : env.EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string.string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy tool)]
     (msvc-search-dirs-owned dirs tool-text)))
 
 ;: Locate `tool` on the PATH environment variable.
@@ -333,8 +333,8 @@
 ;: Join `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
   (let
-    [head-text : String (string.string-copy-borrowed head)]
-    [tail-text : String (string.string-copy-borrowed tail)]
+    [head-text : String (string.string-copy head)]
+    [tail-text : String (string.string-copy tail)]
     (msvc-path-list-prepend-owned head-text tail-text)))
 
 ;: Join two owned required PATH-style entries.
@@ -346,8 +346,8 @@
 ;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : (& a str)] [b : (& b str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
     (msvc-path-list-join2-owned a-text b-text)))
 
 ;: Join three owned required PATH-style entries.
@@ -357,9 +357,9 @@
 ;: Join three required PATH-style entries.
 (define (msvc-path-list-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
-    [c-text : String (string.string-copy-borrowed c)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
+    [c-text : String (string.string-copy c)]
     (msvc-path-list-join3-owned a-text b-text c-text)))
 
 ;: Join four owned required PATH-style entries.
@@ -377,10 +377,10 @@
   [c : (& c str)]
   [d : (& d str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
-    [c-text : String (string.string-copy-borrowed c)]
-    [d-text : String (string.string-copy-borrowed d)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
+    [c-text : String (string.string-copy c)]
+    [d-text : String (string.string-copy d)]
     (msvc-path-list-join4-owned a-text b-text c-text d-text)))
 
 ;: Join an optional inherited path list after required entries.
@@ -398,10 +398,10 @@
   [c : (& c str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
-    [c-text : String (string.string-copy-borrowed c)]
-    [tail-text : String (string.string-copy-borrowed tail)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
+    [c-text : String (string.string-copy c)]
+    [tail-text : String (string.string-copy tail)]
     (msvc-path-list-join3-with-tail-owned a-text b-text c-text tail-text)))
 
 ;: Join an optional inherited path list after two required entries.
@@ -417,9 +417,9 @@
   [b : (& b str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
-    [tail-text : String (string.string-copy-borrowed tail)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
+    [tail-text : String (string.string-copy tail)]
     (msvc-path-list-join2-with-tail-owned a-text b-text tail-text)))
 
 ;: Join an optional inherited path list after four required entries.
@@ -439,11 +439,11 @@
   [d : (& d str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy-borrowed a)]
-    [b-text : String (string.string-copy-borrowed b)]
-    [c-text : String (string.string-copy-borrowed c)]
-    [d-text : String (string.string-copy-borrowed d)]
-    [tail-text : String (string.string-copy-borrowed tail)]
+    [a-text : String (string.string-copy a)]
+    [b-text : String (string.string-copy b)]
+    [c-text : String (string.string-copy c)]
+    [d-text : String (string.string-copy d)]
+    [tail-text : String (string.string-copy tail)]
     (msvc-path-list-join4-with-tail-owned a-text b-text c-text d-text tail-text)))
 
 ;: Build a configured tool result once the executable path is known.
@@ -477,7 +477,7 @@
     [(MsvcSomeString executable) (msvc-configured-result executable)]
     [(MsvcNoString)
       (let
-        [tool-text : String (string.string-copy-borrowed tool)]
+        [tool-text : String (string.string-copy tool)]
         (ErrMsvcTool
           (MsvcToolNotFound
             (string.string-append
@@ -855,7 +855,7 @@
 ;: Discover a Visual Studio toolset and Windows SDK from standard locations.
 (define (msvc-find-tool-auto [tool : (& tool str)]) : ResultMsvcTool
   (let
-    [tool-text : String (string.string-copy-borrowed tool)]
+    [tool-text : String (string.string-copy tool)]
     (match (msvc-find-toolset tool-text)
       [(MsvcNoToolset)
         (ErrMsvcTool
@@ -884,7 +884,7 @@
     (if (not (msvc-supported-target? target))
       (ErrMsvcTool
         (let
-          [target-text : String (string.string-copy-borrowed target)]
+          [target-text : String (string.string-copy target)]
           (MsvcUnsupported
             (string.string-append "msvc: unsupported target " target-text))))
       (match (msvc-find-tool-configured tool)

@@ -6,6 +6,7 @@
 (import "compiler_float.tl")
 (import "compiler_parse_core.tl")
 (import "../stdlib/string.tl")
+(import "../stdlib/str_cat.tl")
 (import "../stdlib/hashmap.tl")
 
 (defstruct GenRegistry
@@ -1382,7 +1383,7 @@
     [c : char (string-ref name index)]
     [code : i64 (cast c : i64)]
     (if (and (>= code 65) (<= code 90))
-      (string-append
+      (str-cat
         (if (> index 0)
           "-"
           "")

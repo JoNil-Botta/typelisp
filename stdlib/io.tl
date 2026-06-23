@@ -1335,11 +1335,12 @@
       (if (< k 0)
         "-"
         "+")]
-    (string.string-append
+    (string.string-concat3
       sign
       (if (< (string-length digits) 2)
-        (string.string-append "0" digits)
-        digits))))
+        (string.string-concat3 "0" digits "")
+        digits)
+      "")))
 
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
@@ -1349,7 +1350,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! s (string.string-append s "0"))
+          (set! s (string.string-concat3 s "0" ""))
           (set! i (+ i 1))))
       s)))
 
@@ -1364,33 +1365,30 @@
         [(or (< k -4) (>= k 17))
           (set!
             body
-            (string.string-append
+            (string.string-concat4
               (string.substring s 0 1)
-              (string.string-append
-                (if (> ndig 1)
-                  (string.string-append "." (string.substring s 1 (- ndig 1)))
-                  "")
-                (string.string-append "e" (stdlib.io.ftoa-pad-exp k)))))]
+              (if (> ndig 1)
+                (string.string-concat3 "." (string.substring s 1 (- ndig 1)) "")
+                "")
+              "e"
+              (stdlib.io.ftoa-pad-exp k)))]
         [(< k 0)
           (set!
             body
-            (string.string-append
-              "0."
-              (string.string-append (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s)))]
+            (string.string-concat3 "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
         [(>= (+ k 1) ndig)
           (set!
             body
-            (string.string-append s (stdlib.io.ftoa-zeros (- (+ k 1) ndig))))]
+            (string.string-concat3 s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
         [else
           (set!
             body
-            (string.string-append
+            (string.string-concat3
               (string.substring s 0 (+ k 1))
-              (string.string-append
-                "."
-                (string.substring s (+ k 1) (- ndig (+ k 1))))))])
+              "."
+              (string.substring s (+ k 1) (- ndig (+ k 1)))))])
       (if neg
-        (string.string-append "-" body)
+        (string.string-concat3 "-" body "")
         body))))
 
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
@@ -1485,7 +1483,7 @@
 
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (io-format-float [value : f64]) : String
-  (string.string-append (stdlib.io.io-format-float-core value) "\n"))
+  (string.string-concat3 (stdlib.io.io-format-float-core value) "\n" ""))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit
@@ -1624,12 +1622,11 @@
 
 ;: Render the raw `write-file` panic payload with path and host status.
 (define (write-file-failure-message [path : String] [status : i64]) : String
-  (string.string-append
+  (string.string-concat3
     "tl: write-file failed: "
-    (string.string-append
-      (stdlib.io.io-error-message
-        (stdlib.io.io-error-from-owned-status path status))
-      "\n")))
+    (stdlib.io.io-error-message
+      (stdlib.io.io-error-from-owned-status path status))
+    "\n"))
 
 ;: Write a whole file, aborting on host write failure.
 (define (write-file [path : String] [contents : String]) : unit
@@ -2068,7 +2065,7 @@
 
 ;: Copy a borrowed path into an owned String for public diagnostics.
 (define (io-copy-path [path : (& path str)]) : String
-  (string.string-copy-borrowed path))
+  (string.string-copy path))
 
 ;: Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : (& path str)]) : bool
@@ -2084,9 +2081,11 @@
     [(IoUnsupported message) (string.string-append "io: unsupported: " message)]
     [(IoInterrupted path) (string.string-append "io: interrupted: " path)]
     [(IoSystemCode code path)
-      (string.string-append
-        (string.string-append "io: system error " (string.int->string code))
-        (string.string-append ": " path))]
+      (string.string-concat4
+        "io: system error "
+        (string.int->string code)
+        ": "
+        path)]
     [(IoUnknown path) (string.string-append "io: unknown failure: " path)]))
 
 ;: Return true when `error` is a not-found diagnostic.
@@ -2186,7 +2185,7 @@
 ;: structured `IoError` values.
 (define (file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
   (let
-    [path-text : String (string.string-copy-borrowed path)]
+    [path-text : String (string.string-copy path)]
     (if (io-empty-path? path)
       (ErrIoFile (io-invalid-path-error path))
       (let
@@ -2241,7 +2240,7 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [contents-text : String (string.string-copy-borrowed contents)]
+    [contents-text : String (string.string-copy contents)]
     [status : i64 (file-write-status (struct-get handle id) contents-text)]
     (if (= status io-status-ok)
       OkIoUnit
@@ -2267,7 +2266,7 @@
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
 (define (try-read-file [path : (& path str)]) : ResultIoString
   (let
-    [path-text : String (string.string-copy-borrowed path)]
+    [path-text : String (string.string-copy path)]
     (if (io-empty-path? path)
       (ErrIoString (io-invalid-path-error path))
       (let
@@ -2281,8 +2280,8 @@
 ;: Empty paths return `IoInvalidPath`.
 (define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string.string-copy-borrowed path)]
-    [contents-text : String (string.string-copy-borrowed contents)]
+    [path-text : String (string.string-copy path)]
+    [contents-text : String (string.string-copy contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -2297,7 +2296,7 @@
 ;: expected result of an existence probe. Empty paths return `IoInvalidPath`.
 (define (try-file-exists? [path : (& path str)]) : ResultIoBool
   (let
-    [path-text : String (string.string-copy-borrowed path)]
+    [path-text : String (string.string-copy path)]
     (if (io-empty-path? path)
       (ErrIoBool (io-invalid-path-error path))
       (let
@@ -2315,8 +2314,8 @@
 ;: `IoInvalidPath`.
 (define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string.string-copy-borrowed path)]
-    [contents-text : String (string.string-copy-borrowed contents)]
+    [path-text : String (string.string-copy path)]
+    [contents-text : String (string.string-copy contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -2388,7 +2387,7 @@
 
 ;: Write `text` to stdout without adding a newline.
 (define (stdout-write [text : (& text str)]) : unit
-  (print-string (string.string-copy-borrowed text)))
+  (print-string (string.string-copy text)))
 
 ;: Write `text` and a trailing newline to stdout.
 ;:
@@ -2396,7 +2395,7 @@
 (define (stdout-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (string.string-append-borrowed text (& newline)))))
+    (print-string (string.string-append text (& newline)))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
@@ -2404,7 +2403,7 @@
 
 ;: Write `text` to stderr without adding a newline.
 (define (stderr-write [text : (& text str)]) : unit
-  (print-error (string.string-copy-borrowed text)))
+  (print-error (string.string-copy text)))
 
 ;: Write `text` and a trailing newline to stderr.
 ;:
@@ -2412,7 +2411,7 @@
 (define (stderr-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (string.string-append-borrowed text (& newline)))))
+    (print-error (string.string-append text (& newline)))))
 
 (test
   io-core-macros-prelude
@@ -2465,9 +2464,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (io-edges-test-assert-true
-      (string.string-eq-borrowed actual expected)
-      message)))
+    (io-edges-test-assert-true (string.string-eq actual expected) message)))
 
 (cfg
   test
@@ -2572,14 +2569,13 @@
   (define (io-edges-test-missing-path [prefix : String]) : String
     (let
       [index : i64 0]
-      [candidate : String (string.string-copy-borrowed (& prefix))]
+      [candidate : String (string.string-copy (& prefix))]
       [done : bool false]
       (begin
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String
-              (string.string-append-borrowed (& prefix) (& suffix))]
+            [path : String (string.string-append (& prefix) (& suffix))]
             (match (io-edges-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists
@@ -2731,9 +2727,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (io-handle-test-assert-true
-      (string.string-eq-borrowed actual expected)
-      message)))
+    (io-handle-test-assert-true (string.string-eq actual expected) message)))
 
 (cfg
   test
@@ -2901,14 +2895,13 @@
   (define (io-handle-test-missing-path [prefix : String]) : String
     (let
       [index : i64 0]
-      [candidate : String (string.string-copy-borrowed (& prefix))]
+      [candidate : String (string.string-copy (& prefix))]
       [done : bool false]
       (begin
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String
-              (string.string-append-borrowed (& prefix) (& suffix))]
+            [path : String (string.string-append (& prefix) (& suffix))]
             (match (io-handle-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists

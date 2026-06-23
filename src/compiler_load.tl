@@ -416,7 +416,7 @@
           (unsafe
             (tl_arena_set node-pool-base-arena))
           (let
-            [persistent-key : String (string-copy-borrowed (& key))]
+            [persistent-key : String (string-copy (& key))]
             (begin
               (unsafe
                 (tl_arena_set prev-arena))
@@ -1031,10 +1031,10 @@
       (while (< i n)
         (begin
           (if (char-eq (string-ref module-name i) '.')
-            (set! out (string-append out "/"))
-            (set! out (string-append out (substring module-name i 1))))
+            (set! out (string-concat3 out "/" ""))
+            (set! out (string-concat3 out (substring module-name i 1) "")))
           (set! i (+ i 1))))
-      (string-append out ".tl"))))
+      (string-concat3 out ".tl" ""))))
 
 (define (compiler-load-dotted-module-first-len [module-name : String]) : i64
   (let
@@ -2455,7 +2455,7 @@
           (unsafe
             (tl_arena_set node-pool-base-arena))
           (let
-            [persistent-key : String (string-copy-borrowed (& key))]
+            [persistent-key : String (string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping path cfgs)]
             (begin
@@ -2478,7 +2478,7 @@
           (unsafe
             (tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
-            [persistent-key : String (string-copy-borrowed (& key))]
+            [persistent-key : String (string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping-with-pools
                 path
@@ -2662,7 +2662,7 @@
           (unsafe
             (tl_arena_set node-pool-base-arena))
           (let
-            [persistent-key : String (string-copy-borrowed (& key))]
+            [persistent-key : String (string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
             (begin
@@ -2686,7 +2686,7 @@
           (unsafe
             (tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
-            [persistent-key : String (string-copy-borrowed (& key))]
+            [persistent-key : String (string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping-with-pools
                 path
@@ -3188,14 +3188,15 @@
               (begin
                 (if pending-separator
                   (begin
-                    (set! out (string-append out "_"))
+                    (set! out (string-concat3 out "_" ""))
                     (set! pending-separator false))
                   unit)
                 (set!
                   out
-                  (string-append
+                  (string-concat3
                     out
-                    (compiler-load-package-symbol-char name i c)))
+                    (compiler-load-package-symbol-char name i c)
+                    ""))
                 (set! emitted true)
                 (set! i (+ i 1)))))))
       out)))

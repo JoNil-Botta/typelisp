@@ -96,10 +96,7 @@
       [(= code 10) "\n"]
       [(= code 13) "\r"]
       [(and (>= code 32) (<= code 126))
-        (string.substring
-          stdlib.text_buf.text-buf-ascii-printable-table
-          (- code 32)
-          1)]
+        (string.substring text-buf-ascii-printable-table (- code 32) 1)]
       [else (io.panic "text-buf: unsupported non-printable char")])))
 
 ;: Append one char byte to `buf`.
@@ -464,7 +461,7 @@
         (let
           [rendered : String (stdlib.text_buf.text-buf-render program-buf)]
           [expected : String "scoped"]
-          (if (string.string-eq-borrowed (& rendered) (& expected))
+          (if (string.string-eq (& rendered) (& expected))
             unit
             (fail)))))))
 

@@ -25,7 +25,7 @@
         (let
           [prefix : String "visible:"]
           [index-text : String (int->string frame-index)]
-          [label : String (string-append-borrowed (& prefix) (& index-text))]
+          [label : String (string-append (& prefix) (& index-text))]
           (string-length (& label))))]
     [after : i64 (profile-alloc-live)]
     (begin

@@ -45,12 +45,10 @@
           [c : char (string-ref name i)]
           (begin
             (if (doc-render-anchor-char? c)
-              (set! out (string-append out (substring name i 1)))
+              (set! out (string-concat3 out (substring name i 1) ""))
               (set!
                 out
-                (string-append
-                  out
-                  (string-append "-" (int->string (doc-render-code c))))))
+                (string-concat3 out "-" (int->string (doc-render-code c)))))
             (set! i (+ i 1)))))
       out)))
 
@@ -79,7 +77,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string-append out (doc-render-escape-one text i)))
+          (set! out (string-concat3 out (doc-render-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 

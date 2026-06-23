@@ -206,7 +206,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
 
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
-(define (string-append-borrowed [left : (& left str)] [right : (& right str)]) : String
+(define (string-append [left : (& left str)] [right : (& right str)]) : String
   (let
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
@@ -228,19 +228,11 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
 
 ;: Return a fresh active-arena copy of borrowed text.
-(define (string-copy-borrowed [text : (& text str)]) : String
-  (substring-borrowed text 0 (__tl_string_length text)))
-
-;: Borrowed alias for `string-append-borrowed`.
-(define (string-concat-borrowed [left : (& left str)] [right : (& right str)]) : String
-  (string-append-borrowed left right))
-
-;: Return a fresh active-arena String by concatenating two owned strings.
-(define (string-append [left : String] [right : String]) : String
-  (string-append-borrowed (& left) (& right)))
+(define (string-copy [text : (& text str)]) : String
+  (substring text 0 (__tl_string_length text)))
 
 ;: Alias for `string-append`.
-(define (string-concat [left : String] [right : String]) : String
+(define (string-concat [left : (& left str)] [right : (& right str)]) : String
   (string-append left right))
 
 ;: Return a fresh active-arena String by concatenating all owned strings in order.
@@ -355,7 +347,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
 
 ;: Return a fresh active-arena owned substring copied from borrowed text.
-(define (substring-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
+(define (substring [text : (& text str)] [start : i64] [len : i64]) : String
   (begin
     (substring-bounds-check text start len)
     (substring-copy-checked text start len)))
@@ -371,14 +363,6 @@
       (unsafe
         (tl_str_view text start len)))))
 
-;: Return a fresh active-arena owned substring copied from owned text.
-(define (substring [text : String] [start : i64] [len : i64]) : String
-  (substring-borrowed (& text) start len))
-
-;: Borrowed alias for `substring-borrowed`.
-(define (string-slice-borrowed [text : (& text str)] [start : i64] [len : i64]) : String
-  (substring-borrowed text start len))
-
 ;: Borrowed alias for `substring-view`.
 (cfg
   feature-str-view
@@ -388,7 +372,7 @@
     (substring-view text start len)))
 
 ;: Alias for `substring`.
-(define (string-slice [text : String] [start : i64] [len : i64]) : String
+(define (string-slice [text : (& text str)] [start : i64] [len : i64]) : String
   (substring text start len))
 
 ;: Compare two chars for equality.
@@ -404,7 +388,7 @@
     [else (char-eq c '\r')]))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
-(define (string-eq-borrowed [left : (& left str)] [right : (& right str)]) : bool
+(define (string-eq [left : (& left str)] [right : (& right str)]) : bool
   (let
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
@@ -442,16 +426,12 @@
                       same))
                   false)))))))))
 
-;: Compare two owned strings byte-for-byte without allocating.
-(define (string-eq [left : String] [right : String]) : bool
-  (string-eq-borrowed (& left) (& right)))
-
 ;: Alias for `string-eq`.
-(define (string=? [left : String] [right : String]) : bool
+(define (string=? [left : (& left str)] [right : (& right str)]) : bool
   (string-eq left right))
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
-(define (string->int-borrowed [text : (& text str)]) : i64
+(define (string->int [text : (& text str)]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_to_int text)
@@ -475,10 +455,6 @@
         (if negative
           (- 0 value)
           value)))))
-
-;: Parse a decimal integer using the legacy `string->int` compatibility rules.
-(define (string->int [text : String]) : i64
-  (string->int-borrowed (& text)))
 
 ;: Return a borrowed view of text with leading whitespace removed.
 (cfg
@@ -506,7 +482,7 @@
         (if (is-char-whitespace (__tl_string_ref s i))
           (set! i (+ i 1))
           (set! done true)))
-      (substring-borrowed s i (- n i)))))
+      (substring s i (- n i)))))
 
 ;: Return a borrowed view of text with trailing whitespace removed.
 (cfg
@@ -534,7 +510,7 @@
         (if (is-char-whitespace (__tl_string_ref s i))
           (set! i (- i 1))
           (set! done true)))
-      (substring-borrowed s 0 (+ i 1)))))
+      (substring s 0 (+ i 1)))))
 
 ;: Return a borrowed view of text with leading and trailing whitespace removed.
 (cfg
@@ -574,7 +550,7 @@
         (if (is-char-whitespace (__tl_string_ref s end))
           (set! end (- end 1))
           (set! done-right true)))
-      (substring-borrowed s start (- (+ end 1) start)))))
+      (substring s start (- (+ end 1) start)))))
 
 ;: Return true if haystack contains needle at any position.
 (define (string-contains
@@ -635,8 +611,9 @@
               (set! i (+ i 1))))))
       (if found
         (begin
-          (string-append
-            (string-append (substring s 0 i) new)
+          (string-concat3
+            (substring s 0 i)
+            new
             (substring s (+ i olen) (- (- hlen i) olen))))
         s))))
 
@@ -691,33 +668,27 @@
       (let
         [s : String "  outer  "]
         [outer-trimmed : String (stdlib.string.string-trim (& s))]
-        [outer-slice : String (stdlib.string.substring-borrowed (& s) 2 5)]
+        [outer-slice : String (stdlib.string.substring (& s) 2 5)]
         [outer-suffix : String "-append"]
         [outer-appended : String
-          (stdlib.string.string-append-borrowed
-            (& outer-trimmed)
-            (& outer-suffix))]
+          (stdlib.string.string-append (& outer-trimmed) (& outer-suffix))]
         [outer-number : String (stdlib.string.int->string 12345)]
         [outer-expected : String "outer"]
         [outer-appended-expected : String "outer-append"]
         [outer-number-expected : String "12345"]
         (begin
-          (if (stdlib.string.string-eq-borrowed
-            (& outer-trimmed)
-            (& outer-expected))
+          (if (stdlib.string.string-eq (& outer-trimmed) (& outer-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq-borrowed
-            (& outer-slice)
-            (& outer-expected))
+          (if (stdlib.string.string-eq (& outer-slice) (& outer-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq-borrowed
+          (if (stdlib.string.string-eq
             (& outer-appended)
             (& outer-appended-expected))
             unit
             (fail))
-          (if (stdlib.string.string-eq-borrowed
+          (if (stdlib.string.string-eq
             (& outer-number)
             (& outer-number-expected))
             unit
@@ -734,9 +705,7 @@
                 (stdlib.string.string-concat "inner" "-concat")]
               [inner-number : String (stdlib.string.int->string -6789)]
               [inner-borrowed : String
-                (stdlib.string.string-append-borrowed
-                  (& inner-slice)
-                  (& inner-replaced))]
+                (stdlib.string.string-append (& inner-slice) (& inner-replaced))]
               [inner-replaced-expected : String "alrena"]
               [inner-slice-expected : String "pha"]
               [inner-appended-expected : String "inner-append"]
@@ -744,32 +713,32 @@
               [inner-number-expected : String "-6789"]
               [inner-borrowed-expected : String "phaalrena"]
               (begin
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-replaced)
                   (& inner-replaced-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-slice)
                   (& inner-slice-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-appended)
                   (& inner-appended-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-concat)
                   (& inner-concat-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-number)
                   (& inner-number-expected))
                   unit
                   (fail))
-                (if (stdlib.string.string-eq-borrowed
+                (if (stdlib.string.string-eq
                   (& inner-borrowed)
                   (& inner-borrowed-expected))
                   unit
@@ -822,28 +791,39 @@
 
 (cfg
   test
-  (define (string-test-eq-borrowed [left : String] [right : String]) : bool
-    (string-eq-borrowed (& left) (& right))))
+  (define (string-test-eq-explicit-borrow [left : String] [right : String]) : bool
+    (string-eq (& left) (& right))))
 
 (cfg
   test
-  (define (string-test-to-int-borrowed [text : String]) : i64
-    (string->int-borrowed (& text))))
+  (define (string-test-to-int-explicit-borrow [text : String]) : i64
+    (string->int (& text))))
 
 (cfg
   test
-  (define (string-test-copy-borrowed [text : String]) : String
-    (string-copy-borrowed (& text))))
+  (define (string-test-copy-explicit-borrow [text : String]) : String
+    (string-copy (& text))))
 
 (cfg
   test
-  (define (string-test-append-borrowed [left : String] [right : String]) : String
-    (string-append-borrowed (& left) (& right))))
+  (define (string-test-append-explicit-borrow [left : String] [right : String]) : String
+    (string-append (& left) (& right))))
 
 (cfg
   test
-  (define (string-test-concat-borrowed [left : String] [right : String]) : String
-    (string-concat-borrowed (& left) (& right))))
+  (define (string-test-concat-explicit-borrow [left : String] [right : String]) : String
+    (string-concat (& left) (& right))))
+
+(cfg
+  test
+  (define (string-test-append-auto-borrow-param
+    [left : String]
+    [right : String]) : bool
+    (let
+      [joined : String (string-append left right)]
+      (and
+        (string=? joined "owned-param")
+        (and (string=? left "owned") (string=? right "-param"))))))
 
 (cfg
   test
@@ -866,16 +846,16 @@
 
 (cfg
   test
-  (define (string-test-substring-borrowed
-    [text : String]
-    [start : i64]
-    [len : i64]) : String
-    (substring-borrowed (& text) start len)))
+  (define (string-test-substring [text : String] [start : i64] [len : i64]) : String
+    (substring (& text) start len)))
 
 (cfg
   test
-  (define (string-test-slice-borrowed [text : String] [start : i64] [len : i64]) : String
-    (string-slice-borrowed (& text) start len)))
+  (define (string-test-slice-explicit-borrow
+    [text : String]
+    [start : i64]
+    [len : i64]) : String
+    (string-slice (& text) start len)))
 
 (cfg
   test
@@ -886,7 +866,7 @@
       [start : i64]
       [len : i64]
       [expected : String]) : bool
-      (string-eq-borrowed (substring-view (& text) start len) (& expected)))))
+      (string-eq (substring-view (& text) start len) (& expected)))))
 
 (cfg
   test
@@ -907,28 +887,28 @@
       [start : i64]
       [len : i64]
       [expected : String]) : bool
-      (string-eq-borrowed (string-slice-view (& text) start len) (& expected)))))
+      (string-eq (string-slice-view (& text) start len) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
-      (string-eq-borrowed (string-trim-left-view (& s)) (& expected)))))
+      (string-eq (string-trim-left-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
-      (string-eq-borrowed (string-trim-right-view (& s)) (& expected)))))
+      (string-eq (string-trim-right-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
     feature-str-view
     (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
-      (string-eq-borrowed (string-trim-view (& s)) (& expected)))))
+      (string-eq (string-trim-view (& s)) (& expected)))))
 
 (cfg
   test
@@ -1005,25 +985,47 @@
         "abcde"
         "string-concat5 concatenates five strings")
       (string-test-assert-owned-string-eq
-        (string-test-copy-borrowed "borrow-copy")
+        (string-test-copy-explicit-borrow "borrow-copy")
         "borrow-copy"
-        "string-copy-borrowed copies borrowed text")
+        "string-copy copies explicitly borrowed text")
       (string-test-assert-owned-string-eq
-        (string-test-append-borrowed "bor" "row")
+        (string-test-append-explicit-borrow "bor" "row")
         "borrow"
-        "string-append-borrowed concatenates borrowed inputs")
+        "string-append concatenates explicitly borrowed inputs")
       (string-test-assert-owned-string-eq
-        (string-test-concat-borrowed "" "borrowed")
+        (string-test-concat-explicit-borrow "" "borrowed")
         "borrowed"
-        "string-concat-borrowed handles empty borrowed input")
+        "string-concat handles empty explicitly borrowed input")
+      (let
+        [left : String "owned"]
+        [right : String "-place"]
+        [joined : String (string-append left right)]
+        (begin
+          (string-test-assert-owned-string-eq
+            joined
+            "owned-place"
+            "string-append auto-borrows owned places")
+          (string-test-assert-owned-string-eq
+            left
+            "owned"
+            "string-append leaves the left owned place usable")
+          (string-test-assert-owned-string-eq
+            right
+            "-place"
+            "string-append leaves the right owned place usable")))
+      (test.assert-true
+        (string-test-append-auto-borrow-param "owned" "-param")
+        "string-append auto-borrows owned parameters")
       (test.assert-false (string-eq "hello" "world") "different strings differ")
       (test.assert-false (string-eq "hi" "high") "length mismatch differs")
       (test.assert-true
-        (string-test-eq-borrowed "borrow" (string-append "bor" "row"))
-        "borrowed string equality compares contents")
+        (string-test-eq-explicit-borrow
+          "borrow"
+          (string-concat3 "bor" "row" ""))
+        "explicitly borrowed string equality compares contents")
       (test.assert-false
-        (string-test-eq-borrowed "borrow" "borrows")
-        "borrowed string equality rejects length mismatch")
+        (string-test-eq-explicit-borrow "borrow" "borrows")
+        "explicitly borrowed string equality rejects length mismatch")
       (test.assert-i64-eq (string->int "") 0 "empty string parses as zero")
       (test.assert-i64-eq
         (string->int "-")
@@ -1032,9 +1034,9 @@
       (test.assert-i64-eq (string->int "123") 123 "positive integer parses")
       (test.assert-i64-eq (string->int "-42") -42 "negative integer parses")
       (test.assert-i64-eq
-        (string-test-to-int-borrowed "12a")
+        (string-test-to-int-explicit-borrow "12a")
         169
-        "borrowed parser keeps legacy non-digit arithmetic")
+        "explicitly borrowed parser keeps legacy non-digit arithmetic")
       (string-test-assert-owned-string-eq
         (int->string 0)
         "0"
@@ -1064,15 +1066,15 @@
         ""
         "public string-slice copies empty boundary slice")
       (string-test-assert-owned-string-eq
-        (string-test-substring-borrowed "abcdef" 0 6)
+        (string-test-substring "abcdef" 0 6)
         "abcdef"
         "borrowed substring copies full slice")
       (string-test-assert-owned-string-eq
-        (string-test-slice-borrowed "abcdef" 5 1)
+        (string-test-slice-explicit-borrow "abcdef" 5 1)
         "f"
-        "borrowed string-slice copies final byte")
+        "explicitly borrowed string-slice copies final byte")
       (string-test-assert-owned-string-eq
-        (string-test-substring-borrowed
+        (string-test-substring
           "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
           10
           40)
@@ -1209,26 +1211,20 @@
   (value substring-bounds-check)
   (value str-copy-bytes-into)
   (value substring-copy-checked)
-  (value string-append-borrowed)
-  (value string-copy-borrowed)
-  (value string-concat-borrowed)
   (value string-append)
+  (value string-copy)
   (value string-concat)
   (value string-concat-all)
   (value string-concat-all-pack-part)
   (value string-concat3)
   (value string-concat4)
   (value string-concat5)
-  (value substring-borrowed)
   (value substring)
-  (value string-slice-borrowed)
   (value string-slice)
   (value is-char-whitespace)
   (value char-eq)
-  (value string-eq-borrowed)
   (value string-eq)
   (value string=?)
-  (value string->int-borrowed)
   (value string->int)
   (value string-trim-left)
   (value string-trim-right)

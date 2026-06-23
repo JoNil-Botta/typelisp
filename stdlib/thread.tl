@@ -526,8 +526,7 @@
       (lambda ([_ignored : i64]) : i64
         (let
           [value : String (in-arena owner (task))]
-          [copied : String
-            (in-arena owner (string.string-copy-borrowed (& value)))]
+          [copied : String (in-arena owner (string.string-copy (& value)))]
           (begin
             (thread-write-string! result-addr copied)
             0)))

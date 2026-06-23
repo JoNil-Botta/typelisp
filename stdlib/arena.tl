@@ -18,7 +18,7 @@
 ;#     (let
 ;#       [prefix : String "phase:"]
 ;#       [suffix : String (string.int->string n)]
-;#       [text : String (string.string-append-borrowed (& prefix) (& suffix))]
+;#       [text : String (string.string-append (& prefix) (& suffix))]
 ;#       (string-length (& text)))))
 ;# ```
 ;#
@@ -36,7 +36,7 @@
 ;#     (let
 ;#       [prefix : String "kept:"]
 ;#       [suffix : String (string.int->string n)]
-;#       (string.string-append-borrowed (& prefix) (& suffix)))))
+;#       (string.string-append (& prefix) (& suffix)))))
 ;# ```
 ;#
 ;# For one-shot scratch work, `with-scratch` creates and destroys the scratch

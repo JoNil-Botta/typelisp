@@ -377,19 +377,19 @@
                 (cond
                   [(= esc 'n')
                     (begin
-                      (set! out (string-append out "\n"))
+                      (set! out (string-concat3 out "\n" ""))
                       (set! i (+ i 2)))]
                   [(= esc 't')
                     (begin
-                      (set! out (string-append out "\t"))
+                      (set! out (string-concat3 out "\t" ""))
                       (set! i (+ i 2)))]
                   [(= esc 'r')
                     (begin
-                      (set! out (string-append out "\r"))
+                      (set! out (string-concat3 out "\r" ""))
                       (set! i (+ i 2)))]
                   [(= esc '\\')
                     (begin
-                      (set! out (string-append out "\\"))
+                      (set! out (string-concat3 out "\\" ""))
                       (set! i (+ i 2)))]
                   [else
                     (set!
@@ -399,7 +399,7 @@
                         (substring text (+ i 1) 1)
                         "`"))])))
             (begin
-              (set! out (string-append out (substring text i 1)))
+              (set! out (string-concat3 out (substring text i 1) ""))
               (set! i (+ i 1))))))
       (if (= (string-length message) 0)
         (DocTestSomeOutput out)
@@ -1202,10 +1202,10 @@
           (< (+ i 1) n)
           (= (string-ref text (+ i 1)) '\n'))
           (begin
-            (set! out (string-append out "\n"))
+            (set! out (string-concat3 out "\n" ""))
             (set! i (+ i 2)))
           (begin
-            (set! out (string-append out (substring text i 1)))
+            (set! out (string-concat3 out (substring text i 1) ""))
             (set! i (+ i 1)))))
       out)))
 

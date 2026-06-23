@@ -90,6 +90,107 @@
 (define (source-tool-args-append [args : ProcessStringList] [value : String]) : ProcessStringList
   (process-args-append args (process-args-single value)))
 
+(define (source-tool-command5
+  [executable : String]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : ProcessCommand
+  (process-command
+    executable
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append (process-args-empty) a)
+            b)
+          c)
+        d)
+      e)))
+
+(define (source-tool-command6
+  [executable : String]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]) : ProcessCommand
+  (process-command
+    executable
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append
+              (source-tool-args-append (process-args-empty) a)
+              b)
+            c)
+          d)
+        e)
+      f)))
+
+(define (source-tool-command7
+  [executable : String]
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]
+  [g : String]) : ProcessCommand
+  (process-command
+    executable
+    (source-tool-args-append
+      (source-tool-args-append
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append
+              (source-tool-args-append
+                (source-tool-args-append (process-args-empty) a)
+                b)
+              c)
+            d)
+          e)
+        f)
+      g)))
+
+(define (source-tool-git-executable) : String
+  (source-tool-resolve-command "git"))
+
+(define (source-tool-git-clone-command [remote : String] [root : String]) : ProcessCommand
+  (source-tool-command5
+    (source-tool-git-executable)
+    "-c"
+    "core.longpaths=true"
+    "clone"
+    remote
+    root))
+
+(define (source-tool-git-checkout-command
+  [root : String]
+  [checkout-ref : String]) : ProcessCommand
+  (source-tool-command7
+    (source-tool-git-executable)
+    "-c"
+    "core.longpaths=true"
+    "-C"
+    root
+    "checkout"
+    "--detach"
+    checkout-ref))
+
+(define (source-tool-git-rev-parse-command [root : String]) : ProcessCommand
+  (source-tool-command6
+    (source-tool-git-executable)
+    "-c"
+    "core.longpaths=true"
+    "-C"
+    root
+    "rev-parse"
+    "HEAD"))
+
 (define (source-tool-args-from-argv
   [idx : i64]
   [count : i64]
@@ -486,8 +587,8 @@
               (set! last-sep last-sep))
             (set! i (+ i 1)))))
       (if (> last-dot last-sep)
-        (string-append (substring input-path 0 last-dot) extension)
-        (string-append input-path extension)))))
+        (str-cat (substring input-path 0 last-dot) extension)
+        (str-cat input-path extension)))))
 
 (define (source-tool-default-output
   [source : String]
@@ -516,11 +617,9 @@
   [target : CompilerBackendTarget]) : String
   (match target
     [(BackendTargetLinux)
-      (string-append
-        "lib"
-        (string-append name (source-tool-static-library-extension target)))]
+      (str-cat "lib" name (source-tool-static-library-extension target))]
     [(BackendTargetWindows)
-      (string-append name (source-tool-static-library-extension target))]))
+      (str-cat name (source-tool-static-library-extension target))]))
 
 (define (source-tool-artifact-stem [source : String]) : String
   (source-tool-replace-extension (source-tool-fs-basename source) ""))
@@ -528,7 +627,7 @@
 (define (source-tool-asm-path [temp-dir : String] [source : String]) : String
   (source-tool-fs-path-join
     temp-dir
-    (string-append (source-tool-artifact-stem source) ".s")))
+    (str-cat (source-tool-artifact-stem source) ".s")))
 
 (define (source-tool-obj-path
   [temp-dir : String]
@@ -536,9 +635,10 @@
   [target : CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
-    (string-append
+    (str-cat
       (source-tool-artifact-stem source)
-      (string-append "." (source-tool-object-extension target)))))
+      "."
+      (source-tool-object-extension target))))
 
 (define (source-tool-temp-bin-path
   [temp-dir : String]
@@ -546,7 +646,7 @@
   [target : CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
-    (string-append
+    (str-cat
       (source-tool-artifact-stem source)
       (source-tool-executable-extension target))))
 
@@ -558,9 +658,7 @@
 (define (source-tool-cannot-read-module-message
   [source : String]
   [error : IoError]) : String
-  (string-append
-    (string-append "Error: cannot read module '" source)
-    (string-append "': " (io-error-message error))))
+  (str-cat "Error: cannot read module '" source "': " (io-error-message error)))
 
 (define (source-tool-emit-assembly
   [source : String]
@@ -929,26 +1027,26 @@
           (if (process-success? output)
             SourceToolCommandOk
             (SourceToolCommandErr
-              (string-append
-                (string-append
-                  (string-append "Error: " role)
-                  (string-append " '" tool))
-                (string-append
-                  (string-append
-                    "' failed for target "
-                    (source-tool-target-name target))
-                  (string-append
-                    " with status "
-                    (int->string (process-output-status output))))))))]
+              (str-cat
+                "Error: "
+                role
+                " '"
+                tool
+                "' failed for target "
+                (source-tool-target-name target)
+                " with status "
+                (int->string (process-output-status output))))))]
       [(ErrProcessOutput error)
         (SourceToolCommandErr
-          (string-append
-            (string-append
-              (string-append "Error: failed to run " role)
-              (string-append " '" tool))
-            (string-append
-              (string-append "' for target " (source-tool-target-name target))
-              (string-append ": " (process-error-message error)))))])))
+          (str-cat
+            "Error: failed to run "
+            role
+            " '"
+            tool
+            "' for target "
+            (source-tool-target-name target)
+            ": "
+            (process-error-message error)))])))
 
 (define (source-tool-command-for-target
   [_target : CompilerBackendTarget]
@@ -973,23 +1071,21 @@
       (source-tool-windows-args-contain-space? (process-command-argv command)))))
 
 (define (source-tool-windows-cmd-quote [value : String]) : String
-  (string-append "\"" (string-append value "\"")))
+  (str-cat "\"" value "\""))
 
 (define (source-tool-windows-cmd-args [args : ProcessStringList]) : String
   (match args
     [(ProcessStringNil) ""]
     [(ProcessStringCons head rest)
-      (string-append
+      (str-cat
         " "
-        (string-append
-          (source-tool-windows-cmd-quote head)
-          (source-tool-windows-cmd-args (box-get rest))))]))
+        (source-tool-windows-cmd-quote head)
+        (source-tool-windows-cmd-args (box-get rest)))]))
 
 (define (source-tool-windows-cmd-line [command : ProcessCommand]) : String
-  (string-append
-    (string-append
-      "call "
-      (source-tool-windows-cmd-quote (process-command-executable command)))
+  (str-cat
+    "call "
+    (source-tool-windows-cmd-quote (process-command-executable command))
     (source-tool-windows-cmd-args (process-command-argv command))))
 
 (define (source-tool-windows-command-shell) : String
@@ -1862,15 +1958,13 @@
                 [(ErrProcessOutput error)
                   (begin
                     (print-error
-                      (string-append
-                        (string-append
-                          "Error: failed to run executable '"
-                          bin-path)
-                        (string-append
-                          (string-append
-                            "' for target "
-                            (source-tool-target-name target))
-                          (string-append ": " (process-error-message error)))))
+                      (str-cat
+                        "Error: failed to run executable '"
+                        bin-path
+                        "' for target "
+                        (source-tool-target-name target)
+                        ": "
+                        (process-error-message error)))
                     (source-tool-clean-temp
                       temp-dir
                       asm-path

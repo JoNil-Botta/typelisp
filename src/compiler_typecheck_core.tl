@@ -508,8 +508,8 @@
         (unsafe
           (tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string-copy-borrowed (& key))]
-          [persistent-module : String (string-copy-borrowed (& module))]
+          [persistent-key : String (string-copy (& key))]
+          [persistent-module : String (string-copy (& module))]
           (begin
             (unsafe
               (tl_arena_set prev-arena))
@@ -3101,11 +3101,11 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (str-cat
           (tc-type-render head)
           (match rest
             [(AstTypeNil) ""]
-            [_ (string-append " " (tc-type-list-render rest))])))]))
+            [_ (str-cat " " (tc-type-list-render rest))])))]))
 
 (define (tc-lifetime-list-render [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -3113,19 +3113,16 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append
+        (str-cat
           head
           (match rest
             [(AstLifetimeNil) ""]
-            [_ (string-append " " (tc-lifetime-list-render rest))])))]))
+            [_ (str-cat " " (tc-lifetime-list-render rest))])))]))
 
 (define (tc-render-nominal-lifetime-type
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (str-cat
-    "("
-    name
-    (string-append " " (string-append (tc-lifetime-list-render lifetimes) ")"))))
+  (str-cat "(" name " " (tc-lifetime-list-render lifetimes) ")"))
 
 (define (tc-type-render [ty : AstType]) : String
   (match ty
@@ -3152,9 +3149,9 @@
       (str-cat
         "(-> "
         (tc-type-list-render (box-get args))
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get ret)) ")")))]
+        " "
+        (tc-type-render (ty-node-get ret))
+        ")")]
     [(AstTyTuple elems)
       (str-cat "(Tuple " (tc-type-list-render (box-get elems)) ")")]
     [(AstTyArray elem count)
@@ -3171,26 +3168,11 @@
     [(AstTyMutPtr elem)
       (str-cat "(MutPtr " (tc-type-render (ty-node-get elem)) ")")]
     [(AstTyRef region inner)
-      (str-cat
-        "(& "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(& " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyMutRef region inner)
-      (str-cat
-        "(&mut "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(&mut " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyRegion region inner)
-      (str-cat
-        "(Region "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(Region " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
       (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
@@ -5570,7 +5552,7 @@
               "."
               (substring name i 1))]
           (begin
-            (set! out (string-append out chunk))
+            (set! out (string-concat3 out chunk ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -8788,7 +8770,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out piece))
+          (set! out (string-concat3 out piece ""))
           (set! i (+ i 1))))
       out)))
 

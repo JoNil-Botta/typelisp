@@ -677,12 +677,9 @@
     [(ProcessEnvCons name _ rest)
       (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (let
-          [text : String name]
-          (if (process-string-contains-char? (& text) '=')
-            (ProcessSomeString
-              "process: environment variable name contains '='")
-            (process-env-validation-error (box-get rest)))))]))
+        (if (process-string-contains-char? (& name) '=')
+          (ProcessSomeString "process: environment variable name contains '='")
+          (process-env-validation-error (box-get rest))))]))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString

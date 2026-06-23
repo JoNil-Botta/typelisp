@@ -219,6 +219,18 @@
               (if (clone-struct-fields-able? pools fields names)
                 (clone-name-set-insert acc (intern-str name))
                 acc))]
+          [(AstDeclComptimeDecl _ template-box)
+            (clone-fixpoint-step
+              pools
+              (ast-decl-cons (box-get template-box) rest)
+              names
+              acc)]
+          [(AstDeclUnsafe inner-box)
+            (clone-fixpoint-step
+              pools
+              (ast-decl-cons (box-get inner-box) rest)
+              names
+              acc)]
           [_ (clone-fixpoint-step pools rest names acc)]))]))
 
 ;; Initial over-approximation: every enum/struct name is assumed clone-able.
@@ -237,6 +249,12 @@
             (clone-all-type-names
               rest
               (clone-name-set-insert acc (intern-str name)))]
+          [(AstDeclComptimeDecl _ template-box)
+            (clone-all-type-names
+              (ast-decl-cons (box-get template-box) rest)
+              acc)]
+          [(AstDeclUnsafe inner-box)
+            (clone-all-type-names (ast-decl-cons (box-get inner-box) rest) acc)]
           [_ (clone-all-type-names rest acc)]))]))
 
 (define (clone-fixpoint
@@ -710,6 +728,18 @@
                         (clone-struct-ctor-args pools fields)))
                     acc)
                   acc)))]
+          [(AstDeclComptimeDecl _ template-box)
+            (clone-generate-decls
+              pools
+              (ast-decl-cons (box-get template-box) rest)
+              able
+              acc)]
+          [(AstDeclUnsafe inner-box)
+            (clone-generate-decls
+              pools
+              (ast-decl-cons (box-get inner-box) rest)
+              able
+              acc)]
           [_ (clone-generate-decls pools rest able acc)]))]))
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
@@ -800,6 +830,22 @@
             (if (string-eq (intern-str decl-name) name)
               (clone-root-add-fields pools decls able roots fields)
               (clone-root-add-name-deps pools decls rest able roots name))]
+          [(AstDeclComptimeDecl _ template-box)
+            (clone-root-add-name-deps
+              pools
+              decls
+              (ast-decl-cons (box-get template-box) rest)
+              able
+              roots
+              name)]
+          [(AstDeclUnsafe inner-box)
+            (clone-root-add-name-deps
+              pools
+              decls
+              (ast-decl-cons (box-get inner-box) rest)
+              able
+              roots
+              name)]
           [_ (clone-root-add-name-deps pools decls rest able roots name)]))]))
 
 (define (clone-root-add-name

@@ -33994,6 +33994,14 @@
     [(AstImportMacroDecls _ _) true]
     [_ false]))
 
+(define (macro-decl-import-placeholder? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (macro-import-placeholder-kind? kind)]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-import-placeholder? (box-get template-box))]
+    [_ false]))
+
 (define (macro-wrap-generated-decl
   [decl : AstDecl]
   [generator : String]
@@ -34087,6 +34095,24 @@
       (macro-decl-generated-key? (box-get inner-box) key)]
     [_ false]))
 
+(define (macro-decl-generated-import-placeholder?
+  [decl : AstDecl]
+  [key : String]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstSomeGeneratedDeclMeta _ _ _ meta-key)
+            (if (string-eq meta-key key)
+              (macro-decl-import-placeholder? template)
+              (macro-decl-generated-import-placeholder? template key))]
+          [(AstNoGeneratedDeclMeta)
+            (macro-decl-generated-import-placeholder? template key)]))]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-generated-import-placeholder? (box-get inner-box) key)]
+    [_ false]))
+
 (define (macro-decls-contain-generated-key?
   [decls : AstDeclList]
   [key : String]) : bool
@@ -34104,7 +34130,9 @@
       (let
         [filtered-rest : AstDeclList
           (macro-decls-filter-generated-key (box-get rest) key)]
-        (if (macro-decl-generated-key? decl key)
+        (if (and
+          (macro-decl-generated-key? decl key)
+          (not (macro-decl-generated-import-placeholder? decl key)))
           (ast-decl-cons decl filtered-rest)
           filtered-rest))]))
 
@@ -39485,100 +39513,47 @@
                   (ast-decl-path-cons decl-path nrest-paths))]
               [(ErrMacroDeclsWithPaths diag) (ErrMacroDeclsWithPaths diag)])]
           [_
-            (match decl
-              [(AstDeclImport (AstImportSpec kind _ _ _ _))
-                (match kind
-                  [(AstImportMacro _ _)
-                    (match (macro-expand-decl-with-path
+            (if (macro-decl-import-placeholder? decl)
+              (match (macro-expand-decl-with-path
+                ctx
+                top-env
+                orig-decls
+                module
+                decl
+                decl-path)
+                [(OkMacroDeclExpansion expanded expanded-paths)
+                  (OkMacroDeclsWithPaths
+                    (macro-decl-list-append expanded rest)
+                    (macro-decl-path-list-append expanded-paths rest-paths))]
+                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)])
+              (match (macro-expand-decl-with-path
+                ctx
+                top-env
+                orig-decls
+                module
+                decl
+                decl-path)
+                [(OkMacroDeclExpansion expanded expanded-paths)
+                  (let
+                    [next-module : String
+                      (macro-decls-final-module expanded module)]
+                    (match (macro-expand-decls
                       ctx
                       top-env
                       orig-decls
-                      module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
+                      rest
+                      rest-paths
+                      next-module
+                      compat-only)
+                      [(OkMacroDeclsWithPaths nrest nrest-paths)
                         (OkMacroDeclsWithPaths
-                          (macro-decl-list-append expanded rest)
+                          (macro-decl-list-append expanded nrest)
                           (macro-decl-path-list-append
                             expanded-paths
-                            rest-paths))]
-                      [(ErrMacroDeclExpansion diag)
-                        (ErrMacroDeclsWithPaths diag)])]
-                  [(AstImportMacroDecls _ _)
-                    (match (macro-expand-decl-with-path
-                      ctx
-                      top-env
-                      orig-decls
-                      module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
-                        (OkMacroDeclsWithPaths
-                          (macro-decl-list-append expanded rest)
-                          (macro-decl-path-list-append
-                            expanded-paths
-                            rest-paths))]
-                      [(ErrMacroDeclExpansion diag)
-                        (ErrMacroDeclsWithPaths diag)])]
-                  [_
-                    (match (macro-expand-decl-with-path
-                      ctx
-                      top-env
-                      orig-decls
-                      module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
-                        (let
-                          [next-module : String
-                            (macro-decls-final-module expanded module)]
-                          (match (macro-expand-decls
-                            ctx
-                            top-env
-                            orig-decls
-                            rest
-                            rest-paths
-                            next-module
-                            compat-only)
-                            [(OkMacroDeclsWithPaths nrest nrest-paths)
-                              (OkMacroDeclsWithPaths
-                                (macro-decl-list-append expanded nrest)
-                                (macro-decl-path-list-append
-                                  expanded-paths
-                                  nrest-paths))]
-                            [(ErrMacroDeclsWithPaths diag)
-                              (ErrMacroDeclsWithPaths diag)]))]
-                      [(ErrMacroDeclExpansion diag)
-                        (ErrMacroDeclsWithPaths diag)])])]
-              [_
-                (match (macro-expand-decl-with-path
-                  ctx
-                  top-env
-                  orig-decls
-                  module
-                  decl
-                  decl-path)
-                  [(OkMacroDeclExpansion expanded expanded-paths)
-                    (let
-                      [next-module : String
-                        (macro-decls-final-module expanded module)]
-                      (match (macro-expand-decls
-                        ctx
-                        top-env
-                        orig-decls
-                        rest
-                        rest-paths
-                        next-module
-                        compat-only)
-                        [(OkMacroDeclsWithPaths nrest nrest-paths)
-                          (OkMacroDeclsWithPaths
-                            (macro-decl-list-append expanded nrest)
-                            (macro-decl-path-list-append
-                              expanded-paths
-                              nrest-paths))]
-                        [(ErrMacroDeclsWithPaths diag)
-                          (ErrMacroDeclsWithPaths diag)]))]
-                  [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)])])]))]))
+                            nrest-paths))]
+                      [(ErrMacroDeclsWithPaths diag)
+                        (ErrMacroDeclsWithPaths diag)]))]
+                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)]))]))]))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or

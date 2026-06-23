@@ -2235,7 +2235,8 @@
   (FmtCstForms (Box FormatCstList)))
 (defenum FormatCstList
   (FmtCstNil)
-  (FmtCstCons FormatCst (Box FormatCstList)))
+  (FmtCstCons FormatCst (Box FormatCstList))
+  (FmtCstDense (Array FormatCst) i64 i64))
 (defenum Doc
   (DEmpty)
   (DText String)

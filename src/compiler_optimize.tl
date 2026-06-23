@@ -20543,6 +20543,10 @@
     i64
     CompilerSourceSpans))
 
+(defenum OptInlineBoundsLabelScan
+  (OptInlineBoundsLabelDuplicate)
+  (OptInlineBoundsLabelOk StringI64Map))
+
 (define (opt-inline-max-body) : i64
   8)
 
@@ -22872,14 +22876,52 @@
         source-spans
         out-spans)]))
 
+(define (opt-inline-bounds-labels-unique-instrs-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [seen : StringI64Map]) : OptInlineBoundsLabelScan
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptInlineBoundsLabelOk seen)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(IrInstrBoundsCheck _ _ ok-label)
+        (if (string-i64-map-contains? seen ok-label)
+          (OptInlineBoundsLabelDuplicate)
+          (opt-inline-bounds-labels-unique-instrs-from
+            instrs
+            (+ index 1)
+            (string-i64-map-put seen ok-label 1)))]
+      [_ (opt-inline-bounds-labels-unique-instrs-from instrs (+ index 1) seen)])))
+
+(define (opt-inline-bounds-labels-unique-blocks?
+  [blocks : CompilerIrBlockList]
+  [seen : StringI64Map]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (opt-inline-bounds-labels-unique-instrs-from instrs 0 seen)
+            [(OptInlineBoundsLabelDuplicate) false]
+            [(OptInlineBoundsLabelOk next-seen)
+              (opt-inline-bounds-labels-unique-blocks? (box-get rest) next-seen)])])]
+    [(IrBlockArray seq)
+      (opt-inline-bounds-labels-unique-blocks?
+        (compiler-ir-block-seq-to-list seq)
+        seen)]))
+
+(define (opt-inline-bounds-labels-unique? [blocks : CompilerIrBlockList]) : bool
+  (opt-inline-bounds-labels-unique-blocks?
+    blocks
+    (string-i64-map-with-capacity 64)))
+
 (define (opt-inline-structure-ok? [blocks : CompilerIrBlockList]) : bool
-  (if (opt-cfg-block-labels-unique? blocks)
-    (if (opt-cfg-successor-targets-known? blocks)
-      (let
-        [pred-map : OptPredMap (OptPredMap (opt-cfg-index-build blocks))]
-        (opt-verify-ok? (opt-verify-phi-predecessors-blocks pred-map blocks)))
-      false)
-    false))
+  (begin
+    (unless (opt-cfg-block-labels-unique? blocks) (return false))
+    (unless (opt-inline-bounds-labels-unique? blocks) (return false))
+    (unless (opt-cfg-successor-targets-known? blocks) (return false))
+    (let
+      [pred-map : OptPredMap (OptPredMap (opt-cfg-index-build blocks))]
+      (opt-verify-ok? (opt-verify-phi-predecessors-blocks pred-map blocks)))))
 
 (define (opt-inline-revert-or-keep
   [fallback : CompilerIrFunction]
@@ -29619,6 +29661,24 @@
               IrInstrNil))))
       IrBlockNil)))
 
+(define (opt-inline-duplicate-bounds-label-function) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    0
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBoundsCheck (IrValueI64 0) (IrValueI64 4) "dup.ok")
+          (compiler-ir-instr-cons
+            (IrInstrBoundsCheck (IrValueI64 1) (IrValueI64 4) "dup.ok")
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              IrInstrNil))))
+      IrBlockNil)))
+
 (define (opt-inline-large-functions) : CompilerIrFunctionList
   (compiler-ir-function-cons
     (opt-inline-call-large)
@@ -30030,6 +30090,23 @@
                 [_ false])]
             [_ false])]
         [_ false]))))
+
+(define (compiler-optimize-inline-bounds-label-guard-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-bounds-twice-functions) 2)]
+    [duplicate : CompilerIrFunction
+      (opt-inline-duplicate-bounds-label-function)]
+    [fallback : CompilerIrFunction (opt-inline-frame-caller)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (and
+          (opt-inline-structure-ok? (opt-function-blocks main))
+          (not (opt-inline-structure-ok? (opt-function-blocks duplicate)))
+          (opt-function-eq
+            (opt-inline-revert-or-keep fallback duplicate)
+            fallback))]
+      [(OptNoFunction) false])))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -30695,6 +30772,9 @@
                     (unless
                       (compiler-optimize-inline-bounds-labels-distinct-ok?)
                       (return 46))
+                    (unless
+                      (compiler-optimize-inline-bounds-label-guard-ok?)
+                      (return 47))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))

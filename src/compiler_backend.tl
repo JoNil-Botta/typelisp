@@ -2566,8 +2566,8 @@
         src
         "reduce source")
         [(OkBackendReg src-reg)
-          (OkCompilerBackend
-            (str-cat
+          (let
+            [reduce-asm : String
               (match op
                 [(IrMaskReduceAny)
                   (str-cat
@@ -2601,13 +2601,15 @@
                       (int->string full-mask)
                       ", "
                       mask-gpr
-                      "\n    sete %al\n"))])
+                      "\n    sete %al\n"))])]
+            [store-asm : String
               (str-cat
                 "    movzbl %al, %eax\n"
                 (compiler-backend-emit-store-var-with-plan
                   assignments
                   dst
-                  "%rax"))))]
+                  "%rax"))]
+            (OkCompilerBackend (str-cat reduce-asm store-asm)))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))]))))

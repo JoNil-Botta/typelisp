@@ -57,6 +57,14 @@
   -1)
 (define compiler-builtin-id-tl-str-view : i64
   -1)
+(define compiler-builtin-id-tl-private-string-length : i64
+  -1)
+(define compiler-builtin-id-tl-private-string-ref : i64
+  -1)
+(define compiler-builtin-id-tl-private-string-eq : i64
+  -1)
+(define compiler-builtin-id-tl-private-string-to-int : i64
+  -1)
 (define compiler-builtin-id-tl-string-concat : i64
   -1)
 (define compiler-builtin-id-tl-string-concat3 : i64
@@ -133,6 +141,14 @@
   -1)
 (define compiler-builtin-id-arena-rewind : i64
   -1)
+(define compiler-builtin-id-tls-current-arena : i64
+  -1)
+(define compiler-builtin-id-tls-current-arena-set-bang : i64
+  -1)
+(define compiler-builtin-id-tl-tls-current-arena-load : i64
+  -1)
+(define compiler-builtin-id-tl-tls-current-arena-store : i64
+  -1)
 
 (defstruct CompilerBuiltinIdsState
   (generation (Array i64))
@@ -141,11 +157,11 @@
 (define (compiler-builtin-ids-state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 65)]
+    [ids : (Array i64) (make-array i64 73)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 65)
+      (while (< i 73)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -358,7 +374,39 @@
     (compiler-builtin-ids-state-set!
       state
       64
-      compiler-builtin-id-private-array-length)))
+      compiler-builtin-id-private-array-length)
+    (compiler-builtin-ids-state-set!
+      state
+      65
+      compiler-builtin-id-tl-private-string-length)
+    (compiler-builtin-ids-state-set!
+      state
+      66
+      compiler-builtin-id-tl-private-string-ref)
+    (compiler-builtin-ids-state-set!
+      state
+      67
+      compiler-builtin-id-tl-private-string-eq)
+    (compiler-builtin-ids-state-set!
+      state
+      68
+      compiler-builtin-id-tl-private-string-to-int)
+    (compiler-builtin-ids-state-set!
+      state
+      69
+      compiler-builtin-id-tls-current-arena)
+    (compiler-builtin-ids-state-set!
+      state
+      70
+      compiler-builtin-id-tls-current-arena-set-bang)
+    (compiler-builtin-ids-state-set!
+      state
+      71
+      compiler-builtin-id-tl-tls-current-arena-load)
+    (compiler-builtin-ids-state-set!
+      state
+      72
+      compiler-builtin-id-tl-tls-current-arena-store)))
 
 (define (compiler-builtin-ids-state-capture) : CompilerBuiltinIdsState
   (let
@@ -554,7 +602,31 @@
       (compiler-builtin-ids-state-ref state 63))
     (set!
       compiler-builtin-id-private-array-length
-      (compiler-builtin-ids-state-ref state 64))))
+      (compiler-builtin-ids-state-ref state 64))
+    (set!
+      compiler-builtin-id-tl-private-string-length
+      (compiler-builtin-ids-state-ref state 65))
+    (set!
+      compiler-builtin-id-tl-private-string-ref
+      (compiler-builtin-ids-state-ref state 66))
+    (set!
+      compiler-builtin-id-tl-private-string-eq
+      (compiler-builtin-ids-state-ref state 67))
+    (set!
+      compiler-builtin-id-tl-private-string-to-int
+      (compiler-builtin-ids-state-ref state 68))
+    (set!
+      compiler-builtin-id-tls-current-arena
+      (compiler-builtin-ids-state-ref state 69))
+    (set!
+      compiler-builtin-id-tls-current-arena-set-bang
+      (compiler-builtin-ids-state-ref state 70))
+    (set!
+      compiler-builtin-id-tl-tls-current-arena-load
+      (compiler-builtin-ids-state-ref state 71))
+    (set!
+      compiler-builtin-id-tl-tls-current-arena-store
+      (compiler-builtin-ids-state-ref state 72))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -624,6 +696,16 @@
         (intern "tl_profile_alloc_reset_peak"))
       (set! compiler-builtin-id-tl-substring (intern "tl_substring"))
       (set! compiler-builtin-id-tl-str-view (intern "tl_str_view"))
+      (set!
+        compiler-builtin-id-tl-private-string-length
+        (intern "__tl_string_length"))
+      (set!
+        compiler-builtin-id-tl-private-string-ref
+        (intern "__tl_string_ref"))
+      (set! compiler-builtin-id-tl-private-string-eq (intern "__tl_string_eq"))
+      (set!
+        compiler-builtin-id-tl-private-string-to-int
+        (intern "__tl_string_to_int"))
       (set! compiler-builtin-id-tl-string-concat (intern "tl_string_concat"))
       (set! compiler-builtin-id-tl-string-concat3 (intern "tl_string_concat3"))
       (set! compiler-builtin-id-tl-string-concat4 (intern "tl_string_concat4"))
@@ -666,6 +748,16 @@
       (set! compiler-builtin-id-arena-set-bang (intern "arena-set!"))
       (set! compiler-builtin-id-arena-destroy (intern "arena-destroy"))
       (set! compiler-builtin-id-arena-rewind (intern "arena-rewind"))
+      (set! compiler-builtin-id-tls-current-arena (intern "tls-current-arena"))
+      (set!
+        compiler-builtin-id-tls-current-arena-set-bang
+        (intern "tls-current-arena-set!"))
+      (set!
+        compiler-builtin-id-tl-tls-current-arena-load
+        (intern "tl_tls_current_arena_load"))
+      (set!
+        compiler-builtin-id-tl-tls-current-arena-store
+        (intern "tl_tls_current_arena_store"))
       (set! compiler-builtin-generation (intern-generation)))))
 
 (define (compiler-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool
@@ -924,14 +1016,31 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-env-path-separator)))
 
+(define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tl-tls-current-arena-load
+      compiler-builtin-id-tl-tls-current-arena-store)))
+
+(define (compiler-builtin-backend-tls-current-arena-load-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-tls-current-arena-load)))
+
+(define (compiler-builtin-backend-tls-current-arena-store-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-tls-current-arena-store)))
+
 (define (compiler-builtin-lower-bootstrap-runtime-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any3?
+    (compiler-builtin-id-any2?
       name-id
-      compiler-builtin-id-string-eq
-      compiler-builtin-id-string-eq-question
-      compiler-builtin-id-string-to-int)))
+      compiler-builtin-id-tl-private-string-eq
+      compiler-builtin-id-tl-private-string-to-int)))
 
 (define (compiler-builtin-lower-arena-id? [name-id : i64]) : bool
   (begin
@@ -989,23 +1098,35 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-arena-destroy)))
 
-(define (compiler-builtin-lower-string-ref-call-id? [name-id : i64]) : bool
+(define (compiler-builtin-lower-tls-current-arena-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
     (compiler-builtin-id-any2?
       name-id
-      compiler-builtin-id-string-ref
-      compiler-builtin-id-char-at)))
+      compiler-builtin-id-tls-current-arena
+      compiler-builtin-id-tls-current-arena-set-bang)))
+
+(define (compiler-builtin-lower-tls-current-arena-read-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tls-current-arena)))
+
+(define (compiler-builtin-lower-string-ref-call-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-string-ref)))
 
 (define (compiler-builtin-lower-length-call-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any4?
-      name-id
-      compiler-builtin-id-array-length
-      compiler-builtin-id-length
-      compiler-builtin-id-string-length
-      compiler-builtin-id-private-array-length)))
+    (or
+      (compiler-builtin-id-any4?
+        name-id
+        compiler-builtin-id-array-length
+        compiler-builtin-id-length
+        compiler-builtin-id-string-length
+        compiler-builtin-id-private-array-length)
+      (= name-id compiler-builtin-id-tl-private-string-length))))
 
 (define (compiler-builtin-lower-array-length-id? [name-id : i64]) : bool
   (begin
@@ -1033,6 +1154,11 @@
 (define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-string-length)))
+
+(define (compiler-builtin-typecheck-public-string-length-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-string-length)))
 
 (define (compiler-builtin-typecheck-array-length-id? [name-id : i64]) : bool
@@ -1044,8 +1170,27 @@
 (define (compiler-builtin-typecheck-string-ref-call-id? [name-id : i64]) : bool
   (compiler-builtin-lower-string-ref-call-id? name-id))
 
+(define (compiler-builtin-typecheck-public-string-ref-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-string-ref
+      compiler-builtin-id-char-at)))
+
+(define (compiler-builtin-typecheck-public-char-at-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-char-at)))
+
 (define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
   (compiler-builtin-lower-clone-id? name-id))
+
+(define (compiler-builtin-typecheck-tls-current-arena-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-tls-current-arena-id? name-id))
+
+(define (compiler-builtin-typecheck-tls-current-arena-read-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-tls-current-arena-read-id? name-id))
 
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
   (begin
@@ -1053,13 +1198,18 @@
     (or
       (compiler-builtin-id-any4?
         name-id
-        compiler-builtin-id-string-length
+        compiler-builtin-id-tl-private-string-length
         compiler-builtin-id-length
-        compiler-builtin-id-string-eq
-        compiler-builtin-id-string-eq-question)
-      (= name-id compiler-builtin-id-string-to-int))))
+        compiler-builtin-id-array-length
+        compiler-builtin-id-tl-private-string-eq)
+      (= name-id compiler-builtin-id-tl-private-string-to-int))))
 
 (define (compiler-builtin-typecheck-string-eq-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-string-eq)))
+
+(define (compiler-builtin-typecheck-public-string-eq-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
     (compiler-builtin-id-any2?
@@ -1067,10 +1217,16 @@
       compiler-builtin-id-string-eq
       compiler-builtin-id-string-eq-question)))
 
+(define (compiler-builtin-typecheck-public-string-eq-question-id?
+  [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-string-eq-question)))
+
 (define (compiler-builtin-typecheck-string-to-int-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-string-to-int)))
+    (= name-id compiler-builtin-id-tl-private-string-to-int)))
 
 (define (compiler-builtin-typecheck-borrowed-string-id? [name-id : i64]) : bool
   (begin

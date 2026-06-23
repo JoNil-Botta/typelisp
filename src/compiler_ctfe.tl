@@ -15,6 +15,18 @@
 (import "compiler_float.tl")
 (import "../stdlib/string.tl")
 
+(defmacro (ctfe-private-string-length [text : Expr]) : i64
+  (cfg
+    feature-compiler-private-string-intrinsics
+    `(__tl_string_length ,text)
+    `(string-length ,text)))
+
+(defmacro (ctfe-private-string-ref [text : Expr] [index : Expr]) : char
+  (cfg
+    feature-compiler-private-string-intrinsics
+    `(__tl_string_ref ,text ,index)
+    `(string-ref ,text ,index)))
+
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
 ;; from #1137 for macro transformers.
 (defenum CompilerCtfeValue
@@ -459,17 +471,68 @@
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)]
+    [text-len : i64 (ctfe-private-string-length text)]
+    [prefix-len : i64 (ctfe-private-string-length prefix)]
     (if (< text-len prefix-len)
       false
-      (string-eq (substring text 0 prefix-len) prefix))))
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i prefix-len))
+            (if (=
+              (cast (ctfe-private-string-ref text i) : i64)
+              (cast (ctfe-private-string-ref prefix i) : i64))
+              (set! i (+ i 1))
+              (set! same false)))
+          same)))))
+
+(define (ctfe-string-has-module-separator? [name : String]) : bool
+  (let
+    [i : i64 0]
+    [n : i64 (ctfe-private-string-length name)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (let
+          [c : i64 (cast (ctfe-private-string-ref name i) : i64)]
+          (if (or (= c 46) (= c 47))
+            (set! found true)
+            (set! i (+ i 1)))))
+      found)))
+
+(define (ctfe-string-contains-string-token? [name : String]) : bool
+  (let
+    [i : i64 0]
+    [n : i64 (ctfe-private-string-length name)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= (+ i 6) n))
+        (if (and
+          (= (cast (ctfe-private-string-ref name i) : i64) 115)
+          (= (cast (ctfe-private-string-ref name (+ i 1)) : i64) 116)
+          (= (cast (ctfe-private-string-ref name (+ i 2)) : i64) 114)
+          (= (cast (ctfe-private-string-ref name (+ i 3)) : i64) 105)
+          (= (cast (ctfe-private-string-ref name (+ i 4)) : i64) 110)
+          (= (cast (ctfe-private-string-ref name (+ i 5)) : i64) 103))
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+(define (ctfe-string-helper-candidate-name? [name : String]) : bool
+  (or
+    (ctfe-string-contains-string-token? name)
+    (string-eq name "char-at")
+    (string-eq name "length")))
 
 (define (ctfe-hygiene-enabled-name) : String
   "__tl_macro_hygiene_enabled")
 
 (define (ctfe-hygiene-template-prefix) : String
   "__tl_macro_template$")
+
+(define (ctfe-hygiene-global-prefix) : String
+  "__tl_macro_global$")
 
 (define (ctfe-hygiene-enabled? [env : CtfeEnv]) : bool
   (match (ctfe-env-lookup env (ctfe-hygiene-enabled-name))
@@ -491,6 +554,44 @@
 
 (define (ctfe-quote-name-id [env : CtfeEnv] [name : i64]) : i64
   (intern (ctfe-quote-name env (intern-str name))))
+
+(define (ctfe-hygiene-global-name? [name : String]) : bool
+  (ctfe-string-prefix? name (ctfe-hygiene-global-prefix)))
+
+(define (ctfe-hygiene-global-base [name : String]) : String
+  (substring
+    name
+    (ctfe-private-string-length (ctfe-hygiene-global-prefix))
+    (-
+      (ctfe-private-string-length name)
+      (ctfe-private-string-length (ctfe-hygiene-global-prefix)))))
+
+(define (ctfe-hygiene-context-separator-index [payload : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (ctfe-private-string-length payload)]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (if (= (cast (ctfe-private-string-ref payload i) : i64) 124)
+          (set! found i)
+          (set! i (+ i 1))))
+      found)))
+
+(define (ctfe-hygiene-global-call-name [name : String]) : String
+  (if (ctfe-hygiene-global-name? name)
+    (let
+      [payload : String (ctfe-hygiene-global-base name)]
+      [sep : i64 (ctfe-hygiene-context-separator-index payload)]
+      (if (< sep 0)
+        payload
+        (let
+          [start : i64 (+ sep 1)]
+          (substring
+            payload
+            start
+            (- (ctfe-private-string-length payload) start)))))
+    name))
 
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
@@ -3128,6 +3229,86 @@
       (ErrCtfe
         (ctfe-diagnostic-at-expr expr "string-length expects one string"))]))
 
+(define (ctfe-eval-string-ref-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons text tail)
+      (let
+        [text : AstExpr (ast-node-get text)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons index rest)
+            (let
+              [index : AstExpr (ast-node-get index)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg text expr env fuel name)
+                    [(ErrCtfeStringArg d) (ErrCtfe d)]
+                    [(OkCtfeStringArg s text-fuel)
+                      (ctfe-eval-string-ref-index
+                        s
+                        index
+                        expr
+                        env
+                        text-fuel
+                        name)])]
+                [_
+                  (ErrCtfe
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "string-ref expects a string and index"))]))]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                "string-ref expects a string and index"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "string-ref expects a string and index"))]))
+
+(define (ctfe-eval-string-ref-index
+  [text : String]
+  [index-expr : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [name : String]) : ResultCtfe
+  (match (ctfe-eval-i64-arg index-expr origin env fuel name)
+    [(ErrCtfeI64Arg d) (ErrCtfe d)]
+    [(OkCtfeI64Arg index index-fuel)
+      (if (or (< index 0) (>= index (string-length text)))
+        (ErrCtfe
+          (ctfe-diagnostic-at-expr origin "string-ref index out of bounds"))
+        (OkCtfe (CtfeChar (string-ref text index)) index-fuel))]))
+
+(define (ctfe-eval-string-to-int-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ast-node-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (ctfe-eval-string-arg arg expr env fuel name)
+              [(ErrCtfeStringArg d) (ErrCtfe d)]
+              [(OkCtfeStringArg text arg-fuel)
+                (OkCtfe (CtfeI64 (string->int text)) arg-fuel)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr expr "string->int expects one string"))]))]
+    [_
+      (ErrCtfe (ctfe-diagnostic-at-expr expr "string->int expects one string"))]))
+
 (define (ctfe-eval-int-to-string-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -3152,92 +3333,206 @@
 ;; User-facing Expr constructors (#1135). They are CTFE-only builtins for macro
 ;; bodies: they build checked code fragments while carrying each fragment's
 ;; produced type internally.
-(define (ctfe-stdlib-comptime-helper-name? [name : String] [base : String]) : bool
+(define (ctfe-stdlib-comptime-helper-name?
+  [name : String]
+  [qualified : bool]
+  [base : String]) : bool
   (or
     (string-eq name base)
-    (string-eq name (string-append "comptime." base))
-    (string-eq name (string-append "comptime/" base))
-    (string-eq name (string-append "stdlib.comptime." base))
-    (string-eq name (string-append "stdlib.comptime/" base))
-    (string-eq name (string-append "stdlib/comptime." base))
-    (string-eq name (string-append "stdlib/comptime/" base))))
+    (and
+      qualified
+      (or
+        (string-eq name (string-append "comptime." base))
+        (string-eq name (string-append "comptime/" base))
+        (string-eq name (string-append "stdlib.comptime." base))
+        (string-eq name (string-append "stdlib.comptime/" base))
+        (string-eq name (string-append "stdlib/comptime." base))
+        (string-eq name (string-append "stdlib/comptime/" base))))))
+
+(define (ctfe-stdlib-string-helper-name? [name : String] [base : String]) : bool
+  (and
+    (ctfe-string-has-module-separator? name)
+    (or
+      (string-eq name (string-append "string." base))
+      (string-eq name (string-append "string/" base))
+      (string-eq name (string-append "stdlib.string." base))
+      (string-eq name (string-append "stdlib.string/" base))
+      (string-eq name (string-append "stdlib/string." base))
+      (string-eq name (string-append "stdlib/string/" base))
+      (string-eq name (string-append "stdlib/string.tl." base))
+      (string-eq name (string-append "stdlib/string.tl/" base))
+      (ctfe-string-suffix? name (string-append "/stdlib/string.tl." base))
+      (ctfe-string-suffix? name (string-append "/stdlib/string.tl/" base)))))
+
+(define (ctfe-string-eq-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_eq")
+    (string-eq name "string-eq")
+    (string-eq name "string=?")
+    (ctfe-stdlib-string-helper-name? name "string-eq")
+    (ctfe-stdlib-string-helper-name? name "string=?")))
+
+(define (ctfe-string-length-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_length")
+    (string-eq name "string-length")
+    (ctfe-stdlib-string-helper-name? name "string-length")
+    (string-eq name "length")))
+
+(define (ctfe-string-ref-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_ref")
+    (string-eq name "string-ref")
+    (string-eq name "char-at")
+    (ctfe-stdlib-string-helper-name? name "string-ref")
+    (ctfe-stdlib-string-helper-name? name "char-at")))
+
+(define (ctfe-string-to-int-helper-name? [name : String]) : bool
+  (or
+    (string-eq name "__tl_string_to_int")
+    (string-eq name "string->int")
+    (ctfe-stdlib-string-helper-name? name "string->int")))
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
-  (cond
-    [(ctfe-stdlib-comptime-helper-name? name "expr-bool") "expr-bool"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-int") "expr-int"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-var") "expr-var"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-splice") "expr-splice"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-if") "expr-if"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-type") "expr-type"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-value?")
-      "module-export-value?"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-type?")
-      "module-export-type?"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-macro?")
-      "module-export-macro?"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-value-type")
-      "module-export-value-type"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-type")
-      "module-export-type"]
-    [(ctfe-stdlib-comptime-helper-name? name "module-export-macro-type")
-      "module-export-macro-type"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-bool?") "expr-bool?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-bool-value")
-      "expr-bool-value"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-if?") "expr-if?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-if-cond") "expr-if-cond"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-if-then") "expr-if-then"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-if-else") "expr-if-else"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-list-empty?")
-      "expr-list-empty?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-list-length")
-      "expr-list-length"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-list-head") "expr-list-head"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-list-tail") "expr-list-tail"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-list-nth") "expr-list-nth"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-first")
-      "expr-clause-first"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-second")
-      "expr-clause-second"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-empty?")
-      "expr-clause-list-empty?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-length")
-      "expr-clause-list-length"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-head")
-      "expr-clause-list-head"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-tail")
-      "expr-clause-list-tail"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list-nth")
-      "expr-clause-list-nth"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-clause-list->expr-list")
-      "expr-clause-list->expr-list"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-name")
-      "expr-binding-clause-name"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-has-type?")
-      "expr-binding-clause-has-type?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-type")
-      "expr-binding-clause-type"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-init")
-      "expr-binding-clause-init"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-empty?")
-      "expr-binding-clause-list-empty?"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-length")
-      "expr-binding-clause-list-length"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-head")
-      "expr-binding-clause-list-head"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-tail")
-      "expr-binding-clause-list-tail"]
-    [(ctfe-stdlib-comptime-helper-name? name "expr-binding-clause-list-nth")
-      "expr-binding-clause-list-nth"]
-    [(ctfe-stdlib-comptime-helper-name?
-        name
-        "expr-binding-clause-list->expr-list")
-      "expr-binding-clause-list->expr-list"]
-    [(ctfe-stdlib-comptime-helper-name? name "string-append") "string-append"]
-    [(ctfe-stdlib-comptime-helper-name? name "string-concat") "string-concat"]
-    [(ctfe-stdlib-comptime-helper-name? name "int->string") "int->string"]
-    [else name]))
+  (let
+    [qualified : bool (ctfe-string-has-module-separator? name)]
+    (cond
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool")
+        "expr-bool"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-int") "expr-int"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-var") "expr-var"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-splice")
+        "expr-splice"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
+        "expr-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-value?")
+        "module-export-value?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-type?")
+        "module-export-type?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
+        "module-export-macro?"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "module-export-value-type")
+        "module-export-value-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-type")
+        "module-export-type"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "module-export-macro-type")
+        "module-export-macro-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool?")
+        "expr-bool?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool-value")
+        "expr-bool-value"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if?") "expr-if?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-cond")
+        "expr-if-cond"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-then")
+        "expr-if-then"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-else")
+        "expr-if-else"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-empty?")
+        "expr-list-empty?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-length")
+        "expr-list-length"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-head")
+        "expr-list-head"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-tail")
+        "expr-list-tail"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-nth")
+        "expr-list-nth"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-first")
+        "expr-clause-first"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-second")
+        "expr-clause-second"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-clause-list-empty?")
+        "expr-clause-list-empty?"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-clause-list-length")
+        "expr-clause-list-length"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-clause-list-head")
+        "expr-clause-list-head"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-clause-list-tail")
+        "expr-clause-list-tail"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-list-nth")
+        "expr-clause-list-nth"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-clause-list->expr-list")
+        "expr-clause-list->expr-list"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-name")
+        "expr-binding-clause-name"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-has-type?")
+        "expr-binding-clause-has-type?"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-type")
+        "expr-binding-clause-type"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-init")
+        "expr-binding-clause-init"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list-empty?")
+        "expr-binding-clause-list-empty?"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list-length")
+        "expr-binding-clause-list-length"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list-head")
+        "expr-binding-clause-list-head"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list-tail")
+        "expr-binding-clause-list-tail"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list-nth")
+        "expr-binding-clause-list-nth"]
+      [(ctfe-stdlib-comptime-helper-name?
+          name
+          qualified
+          "expr-binding-clause-list->expr-list")
+        "expr-binding-clause-list->expr-list"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "string-append")
+        "string-append"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "string-concat")
+        "string-concat"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "int->string")
+        "int->string"]
+      [else name])))
 
 (define (ctfe-eval-expr-bool-call
   [args : AstExprList]
@@ -4107,26 +4402,41 @@
     [(AstExprVar name)
       (let
         [raw-name : String (intern-str name)]
-        [call-name : String (ctfe-comptime-helper-call-name raw-name)]
+        [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
+        [call-name : String (ctfe-comptime-helper-call-name lookup-name)]
+        [string-helper-candidate : bool
+          (ctfe-string-helper-candidate-name? lookup-name)]
         (cond
-          [(or (string-eq raw-name "size-of") (string-eq raw-name "align-of"))
-            (ctfe-eval-size-align-query raw-name args expr env fuel)]
-          [(string-eq raw-name "offset-of")
+          [(or
+              (string-eq lookup-name "size-of")
+              (string-eq lookup-name "align-of"))
+            (ctfe-eval-size-align-query lookup-name args expr env fuel)]
+          [(string-eq lookup-name "offset-of")
             (ctfe-eval-offset-query args expr env fuel)]
-          [(ctfe-reflection-query-name? raw-name)
-            (ctfe-eval-reflection-query raw-name args expr env fuel)]
+          [(ctfe-reflection-query-name? lookup-name)
+            (ctfe-eval-reflection-query lookup-name args expr env fuel)]
           [(ctfe-module-export-query-name? call-name)
             (ctfe-eval-module-export-query call-name args expr env fuel)]
-          [(or (string-eq raw-name "string-eq") (string-eq raw-name "string=?"))
-            (ctfe-eval-string-eq-call raw-name args expr env fuel)]
+          [(and
+              string-helper-candidate
+              (ctfe-string-eq-helper-name? lookup-name))
+            (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
           [(or
               (string-eq call-name "string-append")
               (string-eq call-name "string-concat"))
             (ctfe-eval-string-append-call call-name args expr env fuel)]
-          [(or
-              (string-eq raw-name "string-length")
-              (string-eq raw-name "length"))
-            (ctfe-eval-string-length-call raw-name args expr env fuel)]
+          [(and
+              string-helper-candidate
+              (ctfe-string-length-helper-name? lookup-name))
+            (ctfe-eval-string-length-call lookup-name args expr env fuel)]
+          [(and
+              string-helper-candidate
+              (ctfe-string-ref-helper-name? lookup-name))
+            (ctfe-eval-string-ref-call lookup-name args expr env fuel)]
+          [(and
+              string-helper-candidate
+              (ctfe-string-to-int-helper-name? lookup-name))
+            (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
           [(string-eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
           [(string-eq call-name "expr-bool")

@@ -1,5 +1,8 @@
 (import stdlib.hashmap)
 
+;; lint-allow: unused-import
+(import stdlib.string)
+
 (define (hashmap-borrowed-value-len
   [lookup : (hashmap.StringStringMapBorrowedValueLookup map)]) : i64
   (match lookup

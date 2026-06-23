@@ -30,7 +30,7 @@
 (module stdlib.text_buf)
 
 (import stdlib.io)
-(import stdlib.string as string_mod)
+(import stdlib.string)
 
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
 (defenum TextBufChunkList
@@ -96,7 +96,7 @@
       [(= code 10) "\n"]
       [(= code 13) "\r"]
       [(and (>= code 32) (<= code 126))
-        (string_mod.substring
+        (string.substring
           stdlib.text_buf.text-buf-ascii-printable-table
           (- code 32)
           1)]
@@ -112,11 +112,11 @@
 
 ;: Append the decimal text for `value` to `buf`.
 (define (text-buf-append-int [buf : TextBuf] [value : i64]) : TextBuf
-  (stdlib.text_buf.text-buf-append buf (string_mod.int->string value)))
+  (stdlib.text_buf.text-buf-append buf (string.int->string value)))
 
 ;: Wrapper used by `text-buf-append-int!` macro expansions.
 (define (text-buf-int-string [value : i64]) : String
-  (string_mod.int->string value))
+  (string.int->string value))
 
 ;: Mutably append the decimal text for `value` to `buf`.
 (defmacro (text-buf-append-int! [buf : Expr] [value : i64]) : unit
@@ -155,7 +155,7 @@
     [(TextBufChunkCons chunk rest)
       (stdlib.text_buf.text-buf-chunks-render-rev
         (box-get rest)
-        (string_mod.string-append chunk out))]))
+        (string.string-append chunk out))]))
 
 ;: Return the number of chunk nodes in `chunks`, accumulating into `count`.
 (define (text-buf-chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
@@ -190,7 +190,7 @@
       (array-ref items lo)
       (let
         [mid : i64 (/ (+ lo hi) 2)]
-        (string_mod.string-append
+        (string.string-append
           (stdlib.text_buf.text-buf-chunks-render-array-range items lo mid)
           (stdlib.text_buf.text-buf-chunks-render-array-range items mid hi))))))
 
@@ -464,7 +464,7 @@
         (let
           [rendered : String (stdlib.text_buf.text-buf-render program-buf)]
           [expected : String "scoped"]
-          (if (string_mod.string-eq-borrowed (& rendered) (& expected))
+          (if (string.string-eq-borrowed (& rendered) (& expected))
             unit
             (fail)))))))
 

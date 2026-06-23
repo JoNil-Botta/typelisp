@@ -328,8 +328,8 @@ semantics are deferred to a future feature.
 - Not valid as a global initializer.
 - New public APIs must not introduce `(Array T)` as a growable collection type.
   During migration, intentionally runtime-sized uses are limited to vector
-  backing storage (#3577/#3579), SPMD lanes and result buffers until the
-  vector/slice surface lands (#3578), binary/byte compatibility while
+  backing storage (#3577/#3579), SPMD lanes and result buffers through the
+  vector/slice surface, binary/byte compatibility while
   `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
   compiler-internal pools. Final rejection/removal of public unsized
   `(Array T)` is tracked by #3581.
@@ -756,18 +756,18 @@ Repeated generation with the same identity is idempotent only when the new
 payload is structurally the same declaration after normalizing spans,
 doc-comments, and non-semantic formatting. The compiler reuses the existing
 declaration and does not create a second namespace item. Repeating the same key
-with a different declaration kind, signature, field/variant shape, body, export
-visibility, or namespace effects is an incompatible duplicate diagnostic.
+with a different declaration kind, signature, field/variant shape, body, or
+namespace effects is an incompatible duplicate diagnostic.
 Different generated identities that bind the same visible value/type/
 constructor/variant name are ordinary duplicate namespace errors, with the
 generated keys included in the diagnostic.
 
 Generated declarations enter the same namespaces as hand-written declarations:
 
-- `defstruct` binds the nominal type, struct constructor, and exported fields
-  according to the ordinary struct/export rules.
+- `defstruct` binds the nominal type, struct constructor, and fields
+  according to the ordinary struct rules.
 - `defenum` binds the nominal type plus variant constructors and patterns
-  according to the ordinary enum/export rules.
+  according to the ordinary enum rules.
 - `define` binds the ordinary value/function namespace item.
 
 After registry insertion, generated declarations participate in symbol
@@ -941,12 +941,12 @@ categories:
   `(import (macro args).item)`, or `(import (macro args).item as alias)`.
   A generated module has no inherent final identity segment, so bare
   `(import (macro args))` is rejected. `as` binds a qualified module alias;
-  `.*` imports every exported item unqualified; `.item` imports exactly one
-  exported item unqualified and may combine with `as` to rename that item.
+  `.*` imports every item unqualified; `.item` imports exactly one
+  item unqualified and may combine with `as` to rename that item.
   `.*` cannot combine with `as`. The macro operand is always the nested call
   form; a flat import such as `(import vector i64)` is not a module macro
   import. The generated module participates in ordinary
-  dot-qualified lookup, export checking, typechecking, lowering, tests, docs,
+  dot-qualified lookup, typechecking, lowering, tests, docs,
   and diagnostics after expansion.
 - `: Decls` means the macro body produces a declaration list. A call at module
   scope, for example `(point-vec i64)`, is replaced by those declarations at
@@ -978,8 +978,8 @@ name such as `(stdlib.vector.vector i64)`. A macro with `: Module` used outside
 and an expression macro used at module scope are diagnostics.
 
 Two unqualified generated module imports, whether through `.*` or `.item`, that
-export the same name create the same kind of namespace collision as hand-written
-imports. The diagnostic should name both generated module identities and suggest
+bring in the same name create the same kind of namespace collision as
+hand-written imports. The diagnostic should name both generated module identities and suggest
 qualified access through an explicit alias.
 
 Generated module identity and deduplication are keyed by the canonical macro
@@ -1178,9 +1178,9 @@ Rules:
 - Each identifier has a printed name and a scope set. Name resolution uses the
   scoped identifier, not only the printed name.
 - A macro declaration stores the lexical definition context in its macro
-  metadata. For exported macros, the serialized/imported macro metadata must
-  carry enough definition-context information for template free identifiers to
-  keep resolving as they did at the macro definition site.
+  metadata. For macros imported across modules, the serialized/imported macro
+  metadata must carry enough definition-context information for template free
+  identifiers to keep resolving as they did at the macro definition site.
 - Identifiers that come from a quoted or quasiquoted macro template carry the
   macro definition context.
 - Each macro expansion adds a fresh expansion scope to identifiers introduced by
@@ -2065,7 +2065,7 @@ inputs while preserving owned `String` results for allocation sites.
 
 | Category | Members | v1 ownership contract |
 |----------|---------|-----------------------|
-| Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
+| Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
@@ -2258,8 +2258,8 @@ inherit the unsafe marker.
 Imports another TypeLisp file. The current loader still preserves the legacy
 whole-program concatenation model: all top-level definitions from the imported
 file become available in one flat namespace. The selfhost module model
-specified below replaces that with canonical module identities, explicit
-exports, and qualified lookup.
+specified below replaces that with canonical module identities and qualified
+lookup.
 
 - Relative paths are resolved from the importing file's directory.
 - Absolute filesystem paths are accepted by the underlying path resolver.
@@ -2305,7 +2305,7 @@ contributes the package alias to the loader identity, but an explicit `(module
 ...)` declaration inside the file remains the public source-level identity.
 
 Importing a named module loads it and, by default, binds a qualified module
-alias. It does not merge exported declarations into the local unqualified
+alias. It does not merge the module's declarations into the local unqualified
 namespace by default. The default alias is the final segment of the imported
 module identity. If that alias would collide with an existing module alias, the
 import is rejected unless the source uses an explicit alias:
@@ -2320,18 +2320,18 @@ The named module import forms are:
 ```lisp test=ignore name=module-import-final-syntax reason="parser/resolver suffix work is tracked by #2454"
 (import stdlib.io)             ; binds alias `io`; use `io.write`
 (import stdlib.io as io2)      ; binds alias `io2`; use `io2.write`
-(import stdlib.io.*)           ; imports all exported items unqualified
-(import stdlib.io.write)       ; imports exported item `write` unqualified
-(import stdlib.io.write as w)  ; imports exported item `write` as `w`
+(import stdlib.io.*)           ; imports all items unqualified
+(import stdlib.io.write)       ; imports item `write` unqualified
+(import stdlib.io.write as w)  ; imports item `write` as `w`
 ```
 
-`.*` and `.item` are the only ways to pull exported items into the unqualified
-namespace. `.*` imports every exported item and cannot combine with `as`.
-`.item` imports one exported item and may combine with `as` to rename the local
+`.*` and `.item` are the only ways to pull a module's items into the unqualified
+namespace. `.*` imports every item and cannot combine with `as`.
+`.item` imports one item and may combine with `as` to rename the local
 binding. The resolver uses the longest dotted prefix that names a loadable
 module; if exactly one segment remains, that segment is treated as the selected
-exported item. The import is rejected if more than one segment remains or if the
-remaining segment is not exported by the resolved module.
+item. The import is rejected if more than one segment remains or if the
+remaining segment is not declared by the resolved module.
 
 Two unqualified imports, whether through `.*` or `.item`, that bring in the
 same name are a namespace collision. The diagnostic must name both module
@@ -2346,62 +2346,44 @@ implementation for `.*`, `.item`, `.item as alias`, and rejected bare macro
 imports is tracked by #2454; that implementation should add parser probes or
 fixtures for each accepted suffix shape and for `(import (macro args))`.
 
-#### 4.4.2 Exports and visibility
+#### 4.4.2 Default visibility
 
-Module declarations are private by default. Other modules may use only exported
-items through a qualified name. Value and type namespaces remain separate:
+Every top-level item of a module is visible to any module that imports it. There
+is no export declaration and no private/public distinction: all of the following
+are reachable through a qualified name from any importing module, and remain in
+separate namespaces.
 
-- Value exports cover function `define`s, variable `define`s, and TypeLisp
-  declarations for `extern`s.
-- Type exports cover enum and struct type names.
-- Macro exports cover top-level `defmacro` declarations. Macro exports live in
-  a separate compile-time namespace from value and type exports; they are
-  looked up only while expanding expression heads.
-- Enum variant constructors and struct constructors/accessors are value-space
-  capabilities that must be exported explicitly or through a transparent type
-  export.
+- Values: function `define`s, variable `define`s, and TypeLisp declarations for
+  `extern`s.
+- Types: enum and struct type names.
+- Macros: top-level `defmacro` declarations. Macros live in a separate
+  compile-time namespace and are looked up only while expanding expression
+  heads, so a macro and a value may share a spelling.
+- Enum variant constructors and struct constructors/field accessors.
 
-V1 export syntax is an explicit top-level form:
+Cross-module access therefore requires only that the item exist and that the
+referencing module import (or be) the defining module. A missing member, or a
+namespace mismatch such as using a value-qualified name where a type is required,
+is still a source-located error; there is no separate private/exported check.
 
-```lisp test=ignore name=module-export-syntax reason="selfhost exports are tracked by #910/#952"
+```lisp test=ignore name=module-default-visibility reason="selfhost default-export visibility"
 (module geometry)
 
 (defstruct Point
   (x i64)
   (y i64))
-
-(export
-  (type Point)
-  (constructor Point)
-  (field Point x)
-  (field Point y))
+;; No export form: `Point`, its constructor, and its fields are all reachable as
+;; `geometry.Point`, `(geometry.Point x y)`, and `(struct-get p x)` from any
+;; module that imports `geometry`.
 ```
 
-`(export (type Point))` exports only the nominal type name. For structs this is
-an opaque type export: external modules can mention `geometry.Point` but cannot
-construct it or read fields unless the constructor and fields are also exported.
-For enums, exporting only the type keeps variants private; variants can be
-exported separately with `(variant VariantName)`. A transparent convenience
-form such as `(type Point :transparent)` may be added later, but v1 semantics
-are defined by the explicit item forms above.
-
-Macro exports use the same item-list shape:
-
-```lisp test=ignore name=module-macro-export-syntax reason="macro exports are specified before #1140 implementation"
-(module bool-macros)
-
-(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
-  (expr-if lhs rhs (expr-bool false)))
-
-(export (macro and2))
-```
-
-Duplicate exports of the same item are accepted as idempotent only if they name
-the same namespace item and export kind. Unknown export names, private imported
-names, and namespace mistakes, such as exporting a type as a value or exporting
-a value as a macro, are rejected. A macro and value with the same spelling are
-distinct export kinds in module metadata, but v1 rejects declaring both in the
-same local module because expression-head lookup would otherwise be ambiguous.
+> **Deprecation (transitional).** Earlier revisions gated visibility with an
+> explicit top-level `(export (value ...) (type ...) (macro ...)
+> (constructor ...) (field ...) (variant ...))` form, and modules were private
+> by default. That form is deprecated: it is still parsed and accepted for
+> source compatibility, but it no longer affects visibility (everything is
+> exported by default) and is scheduled for removal together with its
+> module-metadata and reflection surfaces. New code must not use it.
 
 #### 4.4.3 Qualified lookup
 
@@ -2426,15 +2408,14 @@ Qualified lookup applies to:
 - Enum variants and patterns: `(json.Some value)` and `[(json.Err e) ...]`.
 - Struct constructors: `(geometry.Point 3 4)`.
 - Struct fields: `(struct-get p x)` resolves `x` through the receiver's struct
-  type; exporting the field controls whether external modules may use it.
+  type; fields of an imported struct are reachable from any importing module.
 - Macros: `(bool.and2 a b)` resolves `and2` in the imported module's macro
   namespace during expansion.
 - Generated declarations: generated family keys include the generator module
   identity plus the generated declaration identity.
 
-Missing module aliases, ambiguous aliases, missing qualified members, private
-members, and using a value-qualified name where a type is required are
-source-located errors.
+Missing module aliases, ambiguous aliases, missing qualified members, and using
+a value-qualified name where a type is required are source-located errors.
 
 Example with colliding local names:
 
@@ -2466,19 +2447,19 @@ sections 4.4 and 4.4.1; there is no separate macro search path.
 
 The compile driver prepends `stdlib/core_macros.tl` as an implicit macro
 prelude. Bare `when`, `unless`, `and`, `or`, and bracket-arm `cond` resolve to
-exported macros from `stdlib.core_macros` unless a local or imported macro with
+the prelude macros of `stdlib.core_macros` unless a local or imported macro with
 the same name takes precedence. The core `cond` surface is
 `(cond [test expr] ... [else fallback])`; flat
 `(cond test expr ... fallback)` calls are rejected. The module can also be
 loaded with an
 ordinary explicit import, for example
 `(import "stdlib/core_macros.tl" module stdlib.core_macros as core)`, and its
-exports can be called through the import alias such as `core.when`,
+macros can be called through the import alias such as `core.when`,
 `core.unless`, `core.and`, `core.or`, and `core.cond`.
 
 Before expanding a module's non-import forms, the loader parses the module,
 collects its import declarations, recursively loads imported modules, and builds
-the imported macro namespace from each dependency's exported macro items.
+the imported macro namespace from each dependency's macro declarations.
 Imported macros are then available to the importer for the entire expansion of
 that module through qualified names such as `bool.and2`. The imported macro's
 typed signature is used for call-site checking in the importing module; operand
@@ -2491,21 +2472,18 @@ declaration. Local macros may call imported macros and any local macro in the
 same module; recursive expansion is bounded by the macro expansion depth limit
 and rejected with a source-located diagnostic.
 
-Macro export tables are complete after the exporting module's own imports and
+Imported-macro tables are complete after the imported module's own imports and
 local macro declarations have been collected. V1 rejects cycles that require a
-macro export from a module whose macro table is still being built. Non-macro
+macro from a module whose macro table is still being built. Non-macro
 import cycles keep the ordinary loader behavior described in section 4.4 until
 the general module-cycle policy is tightened.
 
 Diagnostics required by v1:
 
-- Missing macro export: a qualified macro head names an imported module but no
-  exported macro of that name.
-- Private macro: the exporting module has a local macro of that name but does
-  not export it with `(export (macro name))`.
-- Duplicate macro export: two distinct macro declarations would be exported
-  under the same `(module, macro-name)` identity.
-- Unknown export item: `(export (macro name))` names no local macro.
+- Missing macro export: a qualified macro head names an imported module but that
+  module declares no macro of that name.
+- Duplicate macro: two distinct macro declarations share the same
+  `(module, macro-name)` identity.
 - Recursive macro expansion: expanding a macro reaches the implementation's
   deterministic depth limit, typically because macros expand to each other in a
   cycle.
@@ -2517,7 +2495,6 @@ Cross-module macro use:
 (module bool-macros)
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
-(export (macro and2))
 
 ;; main.tl
 (import "bool_macros.tl" module bool-macros :as bool)
@@ -2525,18 +2502,19 @@ Cross-module macro use:
   (if (bool.and2 true true) 0 1))
 ```
 
-Private or missing macro diagnostic:
+A macro defined in another module resolves without any export form, because
+every macro is visible to importers:
 
-```lisp test=ignore name=module-private-macro-diagnostic reason="negative macro visibility example for #1140"
-;; hidden.tl
-(module hidden)
-(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
+```lisp test=ignore name=module-cross-module-macro reason="default-visibility macro example for #1140"
+;; helper.tl
+(module helper)
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 
 ;; main.tl
-(import "hidden.tl" module hidden :as hidden)
+(import "helper.tl" module helper :as helper)
 (define (main) : i64
-  (if (hidden.private-and true true) 0 1)) ; error: private macro hidden.private-and
+  (if (helper.and2 true true) 0 1)) ; ok: helper.and2 is visible to importers
 ```
 
 Forward local macro use:
@@ -3118,9 +3096,10 @@ without moving it. In v1 these are limited to:
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
 - Compatibility inspection calls whose current signatures are not yet
-  reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
-  `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
-  `print-error`, compatibility dynamic-array `length`/`array-length`, `array-ref` when the
+  reference-typed: imported `stdlib/string.tl` helpers `string-length`,
+  `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`,
+  `print-string`/`print-str`, `print-error`, compatibility dynamic-array
+  `length`/`array-length`, `array-ref` when the
   element type is copyable, `struct-get` when the selected field type is
   copyable, and stdlib predicates that only inspect their aggregate argument.
 - `array-set!` and `array-push!` on an owned array receiver or mutable
@@ -3180,22 +3159,26 @@ borrowing and owned/borrowed text distinctions are deferred to #807.
 ```
 
 ```lisp test=ignore name=move-reject-aggregate-reuse reason="negative example for future move-only aggregate checks"
+(import "stdlib/string.tl")
+
 (define (bad-string-reuse [s : String]) : i64
   (let [taken s]
-    (length s)))
+    (string-length s)))
 ```
 
-The `let` binding moves `s` into `taken`; the later `length` inspection is a
-use-after-move even though `length` itself is non-consuming.
+The `let` binding moves `s` into `taken`; the later `string-length` inspection
+is a use-after-move even though `string-length` itself is non-consuming.
 
 ```lisp test=ignore name=move-reject-consumed-function-arg reason="negative example for future move-only call argument checks"
+(import "stdlib/string.tl")
+
 (define (take-string [s : String]) : i64
-  (length s))
+  (string-length s))
 
 (define (bad-call-reuse [s : String]) : i64
   (begin
     (take-string s)
-    (length s)))
+    (string-length s)))
 ```
 
 The call to `take-string` consumes `s` because ordinary parameters are
@@ -3223,12 +3206,14 @@ copyable. Moving the `String` field out directly is not allowed:
 ```
 
 ```lisp test=check name=move-match-payload-consumes-scrutinee
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
 
 (define (name-score [s : String]) : i64
-  (length s))
+  (string-length s))
 
 (define (score [m : MaybeName]) : i64
   (match m
@@ -3240,6 +3225,8 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 `name-score`.
 
 ```lisp test=ignore name=move-reject-match-scrutinee-reuse reason="negative example for future match move checks"
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
@@ -3247,10 +3234,10 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 (define (bad-match-reuse [m : MaybeName]) : i64
   (begin
     (match m
-      [(SomeName s) (length s)]
+      [(SomeName s) (string-length s)]
       [NoName 0])
     (match m
-      [(SomeName s) (length s)]
+      [(SomeName s) (string-length s)]
       [NoName 0])))
 ```
 
@@ -3258,12 +3245,14 @@ The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
 
 ```lisp test=check name=borrowed-enum-match-non-consuming
+(import "stdlib/string.tl")
+
 (defenum MaybeName
   (NoName)
   (SomeName String))
 
 (define (borrowed-name-score [s : (& m str)]) : i64
-  (length s))
+  (string-length s))
 
 (define (borrowed-score [m : MaybeName]) : i64
   (match (& m)
@@ -3720,9 +3709,11 @@ Current compatibility dynamic-buffer use cases:
 
 The public SPMD surface should not require users to spell unsized `(Array T)`
 after the array migration completes. Runtime-sized SPMD inputs and outputs are
-an intentionally dynamic use during migration; #3578 replaces them with
 vector/slice-style sources and mutable destinations that borrow storage instead
-of copying whole collections.
+of copying whole collections. Generated vector `slots`/`slots-mut` accessors
+and generated full-slice `slots` fields may be borrowed before a `foreach` body;
+the body then uses ordinary `array-ref`/`array-set!` over those borrowed backing
+arrays.
 
 Uniform and varying rules:
 
@@ -3735,7 +3726,7 @@ Uniform and varying rules:
 - `array-set!` with a varying index or value performs one write per active
   logical program instance.
 - There is no public `(varying T)` or mask type in the first source surface.
-  Public vector, mask, and `(varying T)` type spellings are reserved and
+  Public SIMD vector, mask, and `(varying T)` type spellings are reserved and
   rejected; varying information is inferred inside `foreach`, and vector/mask
   values are internal to lowering.
 - `let` bindings inside the `foreach` body may be uniform or varying by
@@ -4147,10 +4138,9 @@ Rules:
   It may read CPU/OS capability state and update hidden dispatch-cache storage.
 - A dispatch declaration creates a value-namespace binding for the logical name.
   It conflicts with an existing value declaration of that name.
-- Variant functions are ordinary declarations. Exporting the dispatch exports
-  only the logical name; variant functions are exported only if explicitly
-  exported as values. Imported modules call the logical name through the normal
-  qualified or selected import rules.
+- Variant functions are ordinary declarations. Imported modules call the logical
+  dispatch name through the normal qualified or selected import rules; the
+  individual variant functions are ordinary values reachable the same way.
 - Diagnostics must cover missing scalar fallback, duplicate variants for the
   same ISA, unsupported ISA names, unknown variant function names, mismatched
   signatures, using the logical dispatch name as one of its own variants, and
@@ -4160,7 +4150,7 @@ Rules:
 
 Unsupported in the current SPMD implementation:
 
-- Public vector types and public mask types.
+- Public SIMD vector types and public mask types.
 - Non-atomic scatter writes, vector lowering for general gather reads, and
   general non-contiguous memory operations beyond scalar gather-only reads.
 - Scans, general shuffles, general atomics beyond the explicit integer element
@@ -4373,6 +4363,11 @@ V1 primitive names and signatures are fixed as follows:
 Module export reflection is also compile-time-only metadata. It deliberately
 uses canonical module identity strings, such as the result of
 `type-nominal-module`, and does not introduce runtime `Module` handles.
+
+> **Deprecation (transitional).** These `module-export-*` queries are tied to the
+> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
+> item is exported by default they are redundant, and they are scheduled for
+> removal together with the export form. New code must not rely on them.
 
 | Primitive | Result | Notes |
 | --- | --- | --- |
@@ -4614,6 +4609,11 @@ interpret the signature/layout languages. Duplicate `(kind, name)` exports,
 unknown fields, unsupported versions, malformed S-expressions, empty required
 sections, bad magic/version/arch/ABI/hash, and truncated section ranges are
 diagnostics.
+
+> **Deprecation (transitional).** The `exports` section currently mirrors the
+> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
+> item is exported by default, the section's contents and its role in the image
+> schema are scheduled to be reworked or removed alongside the export form.
 
 Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
 are all empty. Code-bearing tlci files are valid with synthetic payload bytes
@@ -4897,16 +4897,25 @@ fixed-size-only public `Array`.
 | `array-set!` | `(Array t) i64 t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed dynamic/fixed array write through an owned array or mutable reference receiver (bounds checked) |
 | `array-push!` | `(Array t) t → unit` | Transitional alias for `stdlib/array.tl`'s macro-backed compatibility dynamic array append through an owned array or mutable reference receiver |
 | `array-data` | `(Array t) → (MutPtr t)` | Unsafe low-level pointer escape to array element storage for runtime/FFI/internal compatibility |
-| `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
-| `string-length` | `String → i64` | Get string byte length |
-| `string-eq` | `String String → bool` | Byte-wise string comparison |
+| `string-length` | `String → i64` / `(& r str) → i64` | Imported `stdlib/string.tl` helper over private `__tl_string_length`; get string byte length |
+| `string-ref` | `String i64 → char` / `(& r str) i64 → char` | Imported `stdlib/string.tl` helper over private `__tl_string_ref`; read byte from string (bounds checked) |
+| `char-at` | `String i64 → char` / `(& r str) i64 → char` | Alias for `string-ref` |
+| `string-eq` | `String String → bool` | Imported `stdlib/string.tl` helper over private `__tl_string_eq`; byte-wise string comparison |
 | `string=?` | `String String → bool` | Alias for `string-eq` |
 | `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
 | `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `substring-view` | `(& r str) i64 i64 → (& r str)` | Borrowed string view of `len` bytes starting at byte offset `start`. Bounds checked; does not copy bytes. |
 | `string-slice-view` | `(& r str) i64 i64 → (& r str)` | Alias for `substring-view` |
-| `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
+
+Public string inspection and parsing helpers are stdlib definitions in
+`stdlib/string.tl`: `string-length`, `string-ref`/`char-at`,
+`string-eq`/`string=?`, and `string->int` are unbound until that module is
+imported. Current compilers lower those stdlib helpers through private
+compiler-owned intrinsics named `__tl_string_length`, `__tl_string_ref`,
+`__tl_string_eq`, and `__tl_string_to_int`; user code must not call the private
+names directly. `length` remains a transitional compatibility builtin for
+arrays and string handles.
 
 User-facing fixed-arity string concatenation is the stdlib macro
 `stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
@@ -4928,7 +4937,8 @@ in-tree migrations are complete.
   a bulk zero helper, and share-safe 8-byte defaults may use a fill helper, but
   those helpers are implementation details; safe code observes initialized
   source values.
-- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice`
+- `array-ref`, `array-set!`, imported `string-ref`, and
+  `substring`/`string-slice`
   perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime
   trap (writes to stderr and exits with code 134). The slice range is checked
   with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value
@@ -4943,7 +4953,7 @@ in-tree migrations are complete.
   Public growable collection APIs should route through `stdlib/vector.tl` or a
   future slice/private-buffer surface, use `&`/`&mut` where possible, and
   mutate storage in place instead of returning copied collections.
-- The `char-at` operator is an alias for `string-ref`.
+- The stdlib `char-at` helper is an alias for `string-ref`.
 - The table above records the currently implemented compatibility signatures.
   The v1 owned `String` / borrowed `str` contract in section 3.11 changes
   non-consuming text inputs to `(& lifetime str)` while preserving owned
@@ -4972,7 +4982,7 @@ codegen:
 
 | Symbol(s) | Disposition |
 |-----------|-------------|
-| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Revisit after #3290 provides a suitable TLS access design. |
+| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
 | `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
@@ -4997,6 +5007,16 @@ initializers run; Windows x64 stores the current arena in the TEB
 arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
 current-arena slot before calling user code, so the worker's first allocation
 creates an independent default arena chain.
+
+The compiler provides two allocation-free current-arena TLS intrinsics for
+runtime-prelude code: `(tls-current-arena)` returns the current arena handle as
+`i64`, and `(tls-current-arena-set! arena)` writes that handle and requires an
+`unsafe` context. They lower directly to the platform TLS access used by the
+backend helpers (`%fs:tl_current_arena@tpoff` on Linux and `GS:0x28` on
+Windows), emit no calls, and require no imports, so they are valid in
+`stdlib/runtime.tl` before ordinary allocation is available. They intentionally
+name only the current-arena slot; arbitrary TLS slots remain out of scope until a
+separate source-level design exists.
 
 `tl_arena_make` creates an ordinary first-class arena whose bump cursor is
 single-threaded. `tl_arena_make_atomic` creates an arena handle with the same
@@ -5544,7 +5564,7 @@ stdlib surface.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
-| Non-allocating inspection | `length`/`array-length` on compatibility arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Non-allocating inspection | `length`/`array-length` on compatibility arrays; imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, and stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
 | Returns active-arena owned data | compatibility `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, future `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing; check-only `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` companion surfaces | Compatibility wrapper calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. The companion modules express the borrowed/caller-owned distinction in source/typecheck-only reference-typed aggregates; ordinary lowering of those aggregate values still waits for reference/borrow lowering. |
 | Mutates caller-provided storage | `array-set!`, future `byte-buf-set!`/`bytes-set!` style helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
@@ -5853,10 +5873,11 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Enums with pattern matching.
 - Structs with construction, field access, and field-place assignment.
 - Compatibility dynamic arrays: `make-array`, `array-ref`, `array-set!`,
-  `length`.
-- Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `str-cat`, `substring`/`string-slice`,
-  `string->int`, `int->string`.
+  `array-length`/`length`.
+- Strings: literals, imported `stdlib/string.tl` helpers
+  `string-ref`/`char-at`, `string-length`, `string-eq`/`string=?`,
+  `string->int`; imported `stdlib/str_cat.tl` `str-cat`; and compatibility
+  `substring`/`string-slice`, `int->string`.
 - Stdlib I/O helpers in `stdlib/io.tl`: `arg-count`, `arg`, `read-file`,
   `write-file`, `file-exists?`, `file-open`, `file-close`,
   `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
@@ -5875,8 +5896,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
-- Transitional compiler compatibility builtins for string/array primitives such
-  as `substring`, `string-ref`, and `array-ref`.
+- Transitional compiler compatibility builtins for array and slice primitives
+  such as `array-ref`, `array-length`/`length`, and `substring`.
 - Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.
@@ -6342,6 +6363,8 @@ fixed `(Array T N)` is the public `Array` end state.
 ### String operations
 
 ```lisp test=run name=string-length exit=5 stdout=""
+(import "stdlib/string.tl")
+
 (define (main) : i64
   (let
     [s : String "hello"]

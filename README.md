@@ -41,9 +41,10 @@ Language direction:
   Comptime-generated declarations, type reflection, and typed expression macros
   are implemented; see SPEC.md sections 3.7 and 5.17.
 - Move toward C3-style modules where module identity participates in name
-  resolution and prefixes TypeLisp linker symbols. Module identities and
-  exports are implemented; the repository-wide migration to dotted module
-  imports is tracked by #2452, #2453, #2454, and #2492.
+  resolution and prefixes TypeLisp linker symbols. Module identities are
+  implemented and every top-level item is exported by default; the
+  repository-wide migration to dotted module imports is tracked by #2452,
+  #2453, #2454, and #2492.
 - Use an arena-based memory model with a default program-lifetime arena and
   scoped `(with-arena ...)` allocation regions (implemented).
 - Land new language features in the self-hosted compiler ([`src/`](src)).
@@ -266,9 +267,11 @@ generic/type-constructor work in #483 is superseded by that chain.
 ### Top-level forms
 
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
-`extern`, and `import`. The selfhost module/macro path also supports `module`,
-`export`, and `defmacro` for typed expression macro workflows; the final
-stdlib-macro migration of parser-owned core forms remains separate.
+`extern`, and `import`. The selfhost module/macro path also supports `module`
+and `defmacro` for typed expression macro workflows; every top-level item is
+exported by default, so the legacy `export` form is deprecated (still parsed but
+inert). The final stdlib-macro migration of parser-owned core forms remains
+separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
@@ -310,7 +313,7 @@ module. Slash-qualified source names such as `string/length` are rejected.
 Legacy path imports such as `(import "lib/util.tl")` keep the transitional flat
 behavior while that spelling is removed; see `SPEC.md` section 4.4 for the
 migration contract. Macro
-exports/imports use the same module loader identities and path-resolution rules,
+imports use the same module loader identities and path-resolution rules,
 with macro expansion happening before ordinary runtime typechecking.
 
 Comptime layout queries such as `size-of`, `align-of`, and `offset-of` use
@@ -573,7 +576,7 @@ names** in separate namespaces:
   and the constructor live in different namespaces.
 
 The selfhost module model keeps the same value/type split inside each module,
-then qualifies exported names by module identity so two modules can define the
+then qualifies names by module identity so two modules can define the
 same local value or type name without colliding.
 
 ### Expression forms
@@ -604,7 +607,9 @@ reference loops; `--backend-mode avx2|avx512` supports a first contiguous
 map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
 `f32`, and `f64` lanes, with AVX-512 additionally supporting bool
 compatibility dynamic-buffer copies and bool-valued map results through private
-mask conversion.
+mask conversion. Contiguous maps may borrow generated vector backing storage or
+generated full-slice storage before the `foreach` body, so public APIs can use
+vector/slice views instead of exposing `(Array T)` parameters.
 Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the same CPUID/XGETBV capability checks exposed by `stdlib/cpu.tl`;
@@ -628,13 +633,17 @@ gang width.
 
 Compiler-owned compatibility builtins are `print`, `print-bool`,
 `print-newline`, `make-array`, `array-ref`, `array-set!`,
-`array-length`/`length`; strings: `string-length`/`length`,
-`string-ref`/`char-at`, `string-eq`/`string=?`, `substring`/`string-slice`,
-`string->int`, `int->string`; and `panic`/`error`.
+`array-length`/`length`; imported `stdlib/string.tl` string helpers
+`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`,
+`string->int`; compatibility string slice/format helpers
+`substring`/`string-slice`, `int->string`; and `panic`/`error`.
 Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
 argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 `stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
 `file-open`, `read-stdin-line`, `flush-stdout`, `fs-*`, and related APIs.
+Import `stdlib/string.tl` for public string inspection and parsing helpers:
+`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, and
+`string->int`.
 For user-facing string concatenation, import `stdlib/str_cat.tl` and use
 `str-cat` for fixed-arity joins; use `stdlib/text_buf.tl` for incremental
 builders. `string-append`/`string-concat` are deprecated low-level

@@ -319,7 +319,7 @@
     (let
       [name : String
         (vector.string-vec-get (process-env-vec-names env) index "")]
-      (if (string-eq name "")
+      (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (if (process-string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
@@ -675,7 +675,7 @@
   (match env
     [(ProcessEnvNil) (ProcessNoString)]
     [(ProcessEnvCons name _ rest)
-      (if (string-eq name "")
+      (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (let
           [text : String name]
@@ -686,11 +686,11 @@
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString
-  (if (string-eq (process-command-executable command) "")
+  (if (string.string-eq (process-command-executable command) "")
     (ProcessSomeString "process: executable path is empty")
     (match (process-command-cwd command)
       [(ProcessSomeString cwd)
-        (if (string-eq cwd "")
+        (if (string.string-eq cwd "")
           (ProcessSomeString "process: cwd path is empty")
           (process-env-validation-error (process-command-env command)))]
       [(ProcessNoString)
@@ -872,7 +872,7 @@
 
 ;: Inline test owned string assertion.
 (define (process-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (process-test-assert (string-eq actual expected)))
+  (process-test-assert (string.string-eq actual expected)))
 
 ;: Inline test assertion for an empty process string list.
 (define (process-test-assert-string-empty [items : ProcessStringList]) : unit

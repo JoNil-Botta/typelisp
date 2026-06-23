@@ -1111,10 +1111,26 @@
 (define (main) : i64
   (+ (bi.read (bi.make 20))
     (+ (bi2.read (bi2.make 1))
-      (+ (string-length (bs.read (bs.make \"typed\")))
-        (+ (struct-get (bp.read (bp.make (Pair 7))) value)
-          (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
-            (struct-get (bo.read (bo.make (Other 9))) value)))))))")
+      (+ (__tl_string_length (bs.read (bs.make \"typed\")))
+          (+ (struct-get (bp.read (bp.make (Pair 7))) value)
+            (+ (struct-get (bp2.read (bp2.make (Pair 8))) value)
+              (struct-get (bo.read (bo.make (Other 9))) value)))))))")
+
+(define (compiler-typecheck-smoke-module-macro-nested-vector-import-source) : String
+  "(defmacro (vector [T : type]) : Module
+  `(begin
+    (module generated.vector)
+    (define (id [value : ,T]) : ,T value)
+    (export (value id))))
+(defmacro (uses-vector) : Module
+  `(begin
+    (module generated.usesvec)
+    (import (vector i64) as v)
+    (define (answer) : i64
+      (v.id 42))
+    (export (value answer))))
+(import (uses-vector) as uv)
+(define (main) : i64 (uv.answer))")
 
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
@@ -1172,6 +1188,8 @@
       "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-type-key-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?
@@ -1547,6 +1565,44 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
+(define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
+  (let
+    [dir : String "target/tc_specialized_import_path"]
+    [dep : String (compiler-load-join-root-path dir "dep.tl")]
+    [entry : String (compiler-load-join-root-path dir "entry.tl")]
+    [roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    (begin
+      (compiler-load-test-mkdir dir)
+      (write-file dep "(define imported : i64 true)")
+      (write-file
+        entry
+        "(define (id [comptime T : type] [value : T]) : T value)
+(import \"dep.tl\")
+(define (main) : i64 0)")
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        entry
+        (sym-i64-empty)
+        roots
+        cfgs)
+        [(OkCompilerLoadWithPaths decls paths _ _)
+          (match (typecheck-compiler-program-with-paths-cache
+            (ast-program decls)
+            paths
+            roots
+            (compiler-typecheck-prefix-cache-scope
+              "typecheck-specialized-import-path-smoke"
+              roots
+              cfgs))
+            [(ErrCompilerTypecheck diag)
+              (and
+                (string-eq (compiler-diagnostic-path diag) dep)
+                (string-eq
+                  (compiler-diagnostic-message diag)
+                  "typecheck: value definition type mismatch"))]
+            [(OkCompilerTypecheck _) false])]
+        [(ErrCompilerLoadWithPaths _) false]))))
+
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
   "(module tc.macro.context.helper)
 (define (bump [value : i64]) : i64 (+ value 1))
@@ -1623,6 +1679,9 @@
     (unless
       (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
       (panic "typecheck: prefix cache flat local smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-specialized-import-path-ok?)
+      (panic "typecheck: specialized import diagnostic path smoke failed"))
     (unless
       (compiler-typecheck-smoke-macro-dependency-context-ok?)
       (panic "typecheck: macro dependency context smoke failed"))

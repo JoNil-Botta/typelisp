@@ -19,15 +19,17 @@
 ;# ```
 (module stdlib.core_macros)
 
+(import stdlib.comptime as comptime)
+
 ;: Short-circuiting boolean conjunction.
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
 (defmacro (and [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool true)
-    `(if ,(expr-list-head args)
-      (and ,@(expr-list-tail args))
+  (if (comptime.expr-list-empty? args)
+    (comptime.expr-bool true)
+    `(if ,(comptime.expr-list-head args)
+      (and ,@(comptime.expr-list-tail args))
       false)))
 
 ;: Short-circuiting boolean disjunction.
@@ -35,11 +37,11 @@
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `false`.
 (defmacro (or [args : bool ...]) : bool
-  (if (expr-list-empty? args)
-    (expr-bool false)
-    `(if ,(expr-list-head args)
+  (if (comptime.expr-list-empty? args)
+    (comptime.expr-bool false)
+    `(if ,(comptime.expr-list-head args)
       true
-      (or ,@(expr-list-tail args)))))
+      (or ,@(comptime.expr-list-tail args)))))
 
 ;: Evaluate `body` only when `condition` is true.
 ;:
@@ -66,28 +68,28 @@
 ;: results are captured as `ExprClause` operands; the expanded `if` chain
 ;: performs the ordinary post-expansion bool/result typechecking.
 (defmacro (cond [arms : ExprClause ...]) : Expr
-  (if (expr-clause-list-empty? arms)
-    (expr-var "core-cond-missing-else")
+  (if (comptime.expr-clause-list-empty? arms)
+    (comptime.expr-var "core-cond-missing-else")
     (let
-      [arm : ExprClause (expr-clause-list-head arms)]
-      [rest : ExprClauseList (expr-clause-list-tail arms)]
-      (match (expr-clause-first arm)
+      [arm : ExprClause (comptime.expr-clause-list-head arms)]
+      [rest : ExprClauseList (comptime.expr-clause-list-tail arms)]
+      (match (comptime.expr-clause-first arm)
         [(ExprVar name)
           (if (string-eq name "else")
-            (if (expr-clause-list-empty? rest)
-              (expr-clause-second arm)
-              (expr-var "core-cond-else-must-be-final"))
-            (if (expr-clause-list-empty? rest)
-              (expr-var "core-cond-missing-else")
-              `(if ,(expr-clause-first arm)
-                ,(expr-clause-second arm)
-                (cond ,@(expr-clause-list->expr-list rest)))))]
+            (if (comptime.expr-clause-list-empty? rest)
+              (comptime.expr-clause-second arm)
+              (comptime.expr-var "core-cond-else-must-be-final"))
+            (if (comptime.expr-clause-list-empty? rest)
+              (comptime.expr-var "core-cond-missing-else")
+              `(if ,(comptime.expr-clause-first arm)
+                ,(comptime.expr-clause-second arm)
+                (cond ,@(comptime.expr-clause-list->expr-list rest)))))]
         [_
-          (if (expr-clause-list-empty? rest)
-            (expr-var "core-cond-missing-else")
-            `(if ,(expr-clause-first arm)
-              ,(expr-clause-second arm)
-              (cond ,@(expr-clause-list->expr-list rest))))]))))
+          (if (comptime.expr-clause-list-empty? rest)
+            (comptime.expr-var "core-cond-missing-else")
+            `(if ,(comptime.expr-clause-first arm)
+              ,(comptime.expr-clause-second arm)
+              (cond ,@(comptime.expr-clause-list->expr-list rest))))]))))
 
 (test
   core-macros-api
@@ -154,7 +156,7 @@
         (begin
           (/ 1 0)
           unit))
-      (if (string-eq (cond [true "yes"] [else "no"]) "yes")
+      (if (cond [true true] [else false])
         unit
         (begin
           (/ 1 0)

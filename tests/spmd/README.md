@@ -26,6 +26,10 @@ falling back to scalar code.
 - `uniform_zip_i64.tl` - `foreach` zip over `n = 13` i64 lanes with
   `a[i] * b[i] + c[i] + r`: exercises vector multiply, a third array operand,
   uniform scalar broadcast, and tail handling.
+- `vector_slice_surface_i64.tl` - `foreach` maps whose public functions take
+  generated vectors and generated full slices, then borrow backing storage
+  before the SPMD body. This pins the array-surface migration away from public
+  `(Array T)` signatures.
 - `inline_helper_i64.tl` - `foreach` over `n = 1` i64 lane through a direct
   source-known helper with a varying scalar argument. Exit 42.
 - `inline_helper_shadow_i64.tl` - `foreach` over `n = 13` i64 lanes through a
@@ -99,6 +103,8 @@ Coverage map:
   `../integration/spmd_foreach.tl`, the two tail fixtures, and
   `uniform_zip_i64.tl`. The intentionally unsupported byte multiply policy is
   covered by `i8_mul_reject.tl`.
+- Vector/slice public-surface coverage for borrowed backing storage lives in
+  `vector_slice_surface_i64.tl`.
 - Scalar gather-read coverage for dynamic arrays lives in
   `../integration/spmd_gather_read.tl`; explicit SIMD modes keep a staged
   diagnostic until vector gather lowering is implemented.

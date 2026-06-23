@@ -25,6 +25,7 @@
 (module stdlib.random)
 
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64v)
 
@@ -438,7 +439,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (random-test-assert-true (string-eq actual expected) message))
+  (random-test-assert-true (string.string-eq actual expected) message))
 
 ;: Assert that a system seed result succeeded and was normalized.
 (define (random-test-assert-system-seed-ok [result : ResultSystemSeed]) : unit

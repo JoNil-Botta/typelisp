@@ -29,6 +29,12 @@
 ;# ```
 (module stdlib.sort)
 
+;; lint-allow: unused-import
+(import stdlib.string)
+
+;; lint-allow: unused-import
+(import stdlib.vector)
+
 ;: Return the character code at `idx` in borrowed text.
 (define (sort-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -140,7 +146,6 @@
   (value string-less?))
 
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).
-(cfg test (import stdlib.vector))
 (cfg test (import stdlib.test))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
 (cfg test (import (stdlib.sort.sort-vec i64) as i64sort))

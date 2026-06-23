@@ -702,8 +702,14 @@
     [display-name : String (compiler-symbol-module-key module name)]
     (match (compiler-symbols-add-value-id symbols key-id display-name handle)
       [(OkCompilerSymbols next)
-        (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
+        (if (compiler-symbols-comptime-module? module)
+          (OkCompilerSymbols next)
+          (OkCompilerSymbols
+            (compiler-symbols-add-value-alias next name handle)))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
+(define (compiler-symbols-comptime-module? [module : String]) : bool
+  (string-eq module "stdlib.comptime"))
 
 (define (compiler-symbols-add-type-in-module
   [symbols : CompilerSymbols]
@@ -715,7 +721,9 @@
     [display-name : String (compiler-symbol-module-key module name)]
     (match (compiler-symbols-add-type-id symbols key-id display-name handle)
       [(OkCompilerSymbols next)
-        (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle))]
+        (if (compiler-symbols-comptime-module? module)
+          (OkCompilerSymbols next)
+          (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle)))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
 
 (define (compiler-symbols-add-variant-value-in-module
@@ -751,8 +759,10 @@
           flat-display-name
           handle)
           [(OkCompilerSymbols with-flat)
-            (OkCompilerSymbols
-              (compiler-symbols-add-value-alias with-flat name handle))]
+            (if (compiler-symbols-comptime-module? module)
+              (OkCompilerSymbols with-flat)
+              (OkCompilerSymbols
+                (compiler-symbols-add-value-alias with-flat name handle)))]
           [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
 
@@ -2019,7 +2029,7 @@
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [index : i64]) : ResultCompilerSymbols
-  (build-compiler-symbol-list-in-module decls symbols index ""))
+  (build-compiler-symbol-list-in-module decls decls symbols index ""))
 
 (define (compiler-symbol-decl-counts-for-index? [decl : AstDecl]) : bool
   (match decl
@@ -2218,6 +2228,7 @@
           (CompilerNoString))))))
 
 (define (build-compiler-symbol-list-in-module
+  [all-decls : AstDeclList]
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [index : i64]
@@ -2229,21 +2240,49 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport _)
-            (build-compiler-symbol-list-in-module rest symbols index module)]
-          [(AstDeclIncludeStr _ _)
-            (build-compiler-symbol-list-in-module rest symbols index module)]
-          [(AstDeclIncludeBin _ _)
-            (build-compiler-symbol-list-in-module rest symbols index module)]
-          [(AstDeclExport _)
-            (build-compiler-symbol-list-in-module rest symbols index module)]
-          [(AstDeclModule next-module)
             (build-compiler-symbol-list-in-module
+              all-decls
               rest
               symbols
               index
-              (intern-str next-module))]
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclIncludeBin _ _)
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclExport _)
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (let
+              [next-module-name : String (intern-str next-module)]
+              (build-compiler-symbol-list-in-module
+                all-decls
+                rest
+                symbols
+                index
+                next-module-name))]
           [(AstDeclTest _ _ _)
-            (build-compiler-symbol-list-in-module rest symbols index module)]
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module)]
           [_
             (begin
               (compiler-symbols-index-decl! symbols decl index module)
@@ -2254,6 +2293,7 @@
                 index)
                 [(OkCompilerSymbols next-symbols)
                   (build-compiler-symbol-list-in-module
+                    all-decls
                     rest
                     next-symbols
                     (+ index 1)
@@ -2322,14 +2362,16 @@
               index
               module)]
           [(AstDeclModule next-module)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              (intern-str next-module))]
+            (let
+              [next-module-name : String (intern-str next-module)]
+              (build-compiler-symbol-list-with-paths-in-module
+                all-decls
+                all-paths
+                rest
+                rest-paths
+                symbols
+                index
+                next-module-name))]
           [(AstDeclTest _ _ _)
             (build-compiler-symbol-list-with-paths-in-module
               all-decls
@@ -4415,6 +4457,12 @@
                   1)
                 (=
                   (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value symbols "get")
+                    (compiler-symbol-kind-function-define)
+                    1)
+                  1)
+                (=
+                  (compiler-symbol-lookup-score
                     (compiler-symbols-lookup-macro symbols "d/all")
                     (compiler-symbol-kind-defmacro)
                     2)
@@ -4430,8 +4478,21 @@
                     4)
                   1)
                 (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "Point")
+                    (compiler-symbol-kind-defstruct)
+                    4)
+                  1)
+                (=
                   (compiler-registry-lookup-score
                     (compiler-registries-lookup-variant registries "d/Some")
+                    (compiler-symbol-kind-enum-variant)
+                    3
+                    1)
+                  1)
+                (=
+                  (compiler-registry-lookup-score
+                    (compiler-registries-lookup-variant registries "Some")
                     (compiler-symbol-kind-enum-variant)
                     3
                     1)
@@ -4447,6 +4508,97 @@
                     0)
                   1))]
             [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-symbols-comptime-root-helper-alias-source) : String
+  "(module stdlib.comptime)
+(comptime-decl
+  (:generated stdlib/comptime-well-known Expr \"v0\")
+  (defenum Expr (ExprBool bool)))
+(define (int->string [value : i64]) : String \"\")
+(define (string-append [left : String] [right : String]) : String left)
+(define (string-concat [left : String] [right : String]) : String left)
+(define (expr-bool [value : bool]) : Expr (ExprBool value))
+(module main)
+(defenum Expr (ExprBool i64))
+(define (expr-bool [value : i64]) : i64 value)")
+
+(define (compiler-symbols-comptime-root-helper-alias-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-comptime-root-helper-alias-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (and
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value
+                  symbols
+                  "stdlib.comptime/int->string")
+                (compiler-symbol-kind-function-define)
+                1)
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value
+                  symbols
+                  "stdlib.comptime/string-append")
+                (compiler-symbol-kind-function-define)
+                2)
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value
+                  symbols
+                  "stdlib.comptime/string-concat")
+                (compiler-symbol-kind-function-define)
+                3)
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value
+                  symbols
+                  "stdlib.comptime/expr-bool")
+                (compiler-symbol-kind-function-define)
+                4)
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-type symbols "stdlib.comptime/Expr")
+                (compiler-symbol-kind-defenum)
+                0)
+              1)
+            (=
+              (compiler-symbols-miss-score
+                (compiler-symbols-lookup-value symbols "int->string"))
+              1)
+            (=
+              (compiler-symbols-miss-score
+                (compiler-symbols-lookup-value symbols "string-append"))
+              1)
+            (=
+              (compiler-symbols-miss-score
+                (compiler-symbols-lookup-value symbols "string-concat"))
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value symbols "expr-bool")
+                (compiler-symbol-kind-function-define)
+                6)
+              1)
+            (=
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-type symbols "Expr")
+                (compiler-symbol-kind-defenum)
+                5)
+              1)
+            (=
+              (compiler-registry-lookup-score
+                (compiler-symbols-lookup-value symbols "ExprBool")
+                (compiler-symbol-kind-enum-variant)
+                5
+                0)
+              1))]
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
@@ -4503,6 +4655,9 @@
                     unit
                     (set! ok false))
                   (if (compiler-symbols-import-alias-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-symbols-comptime-root-helper-alias-ok?)
                     unit
                     (set! ok false))
                   (if (compiler-symbols-macro-namespace-ok?)

@@ -85,7 +85,7 @@
         entry
         "(import stdlib.list)
 (define (main) : i64
-  (string-length
+  (__tl_string_length
     (match (list.string-list-single \"a\")
       [(list.StringNil) \"\"]
       [(list.StringCons head _) head])))")
@@ -111,7 +111,7 @@
       (BackendTargetLinux)
       roots
       (BackendModeScalar)
-      (compiler-cfg-empty))
+      (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
       [(OkCompilerDriverLowered _ _ _ _) true]
       [(ErrCompilerDriverLowered _) false])))
 

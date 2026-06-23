@@ -3427,11 +3427,43 @@
     (lower-reach-add-runtime-prelude-string-helper-resolved
       all-functions
       names
-      (lower-reach-add-runtime-prelude-string-helper
+      (lower-reach-add-stdlib-string-public-helper
         all-functions
-        (lower-reach-add-logical all-functions state logical-name)
+        names
+        (lower-reach-add-runtime-prelude-string-helper
+          all-functions
+          (lower-reach-add-logical all-functions state logical-name)
+          source-name)
         source-name)
       logical-name)))
+
+(define (lower-stdlib-string-public-helper-name? [base : String]) : bool
+  (or
+    (string-eq base "string-length")
+    (string-eq base "string-ref")
+    (string-eq base "char-at")
+    (string-eq base "string-eq")
+    (string-eq base "string=?")
+    (string-eq base "string->int")
+    (string-eq base "string-eq-borrowed")
+    (string-eq base "string->int-borrowed")))
+
+(define (lower-reach-add-stdlib-string-public-helper
+  [all-functions : StringI64Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  (let
+    [base : String
+      (tc-qualified-name-base (lower-hygiene-source-name source-name))]
+    (if (lower-stdlib-string-public-helper-name? base)
+      (lower-reach-add-logical
+        all-functions
+        state
+        (lower-name-cache-resolve-source
+          names
+          (compiler-symbol-module-key "stdlib.string" base)))
+      state)))
 
 (define (lower-reach-expr-list
   [all-functions : StringI64Map]
@@ -4861,10 +4893,7 @@
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (lower-reach-expr all-functions names state expr))]
-    [(AstDeclDefMacro _ _ _ body-box)
-      (let
-        [expr : AstExpr (ast-node-get body-box)]
-        (lower-reach-expr all-functions names state expr))]
+    [(AstDeclDefMacro _ _ _ _) state]
     [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4894,14 +4923,8 @@
                 names
                 (lower-reach-expr all-functions names state expr)
                 rest))]
-          [(AstDeclDefMacro _ _ _ body-box)
-            (let
-              [expr : AstExpr (ast-node-get body-box)]
-              (lower-reach-global-decls
-                all-functions
-                names
-                (lower-reach-expr all-functions names state expr)
-                rest))]
+          [(AstDeclDefMacro _ _ _ _)
+            (lower-reach-global-decls all-functions names state rest)]
           [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
@@ -5551,6 +5574,9 @@
     (string-i64-map-contains? reachable logical-name)
     (string-i64-map-contains? dispatch-variants logical-name)))
 
+(define (lower-comptime-only-module? [module : String]) : bool
+  (string-eq module "stdlib.comptime"))
+
 (define (lower-export-value-item-kept?
   [_entry-path : String]
   [_decl-path : String]
@@ -5560,15 +5586,19 @@
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]
   [name : String]) : bool
-  (let
-    [logical-name : String
-      (lower-name-cache-resolve names (compiler-symbol-module-key module name))]
-    (if (string-i64-map-contains? all-functions logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        reachable
-        dispatch-variants
-        logical-name)
-      true)))
+  (if (lower-comptime-only-module? module)
+    true
+    (let
+      [logical-name : String
+        (lower-name-cache-resolve
+          names
+          (compiler-symbol-module-key module name))]
+      (if (string-i64-map-contains? all-functions logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          reachable
+          dispatch-variants
+          logical-name)
+        true))))
 
 (define (lower-export-item-kept?
   [entry-path : String]
@@ -5634,17 +5664,19 @@
   [reachable : StringI64Map]
   [dispatch-variants : StringI64Map]
   [decl : AstDecl]) : bool
-  (match (lower-function-logical-name-from-decl
-    entry-path
-    decl-path
-    module
-    decl)
-    [(TcSomeString logical-name)
-      (lower-function-kept-by-reach-or-dispatch?
-        reachable
-        dispatch-variants
-        logical-name)]
-    [(TcNoString) true]))
+  (if (lower-comptime-only-module? module)
+    true
+    (match (lower-function-logical-name-from-decl
+      entry-path
+      decl-path
+      module
+      decl)
+      [(TcSomeString logical-name)
+        (lower-function-kept-by-reach-or-dispatch?
+          reachable
+          dispatch-variants
+          logical-name)]
+      [(TcNoString) true])))
 
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
@@ -12666,6 +12698,72 @@
         [_
           (ErrLowerExpr
             (lower-diagnostic "lower: arena builtin expects one argument"))]))))
+
+(define (lower-tls-current-arena-read-call
+  [state : LowerState]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values
+        state
+        "tl_tls_current_arena_load"
+        IrValueNil
+        result-ty)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: tls-current-arena expects no arguments"))]))
+
+(define (lower-tls-current-arena-set-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg-node rest-box)
+      (let
+        [arg : AstExpr (ast-node-get arg-node)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprNil)
+            (match (lower-expr ctx state env type-env arg)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr arg-state arg-value arg-ty)
+                    (match (lower-cast-value
+                      arg-state
+                      arg-value
+                      arg-ty
+                      (AstTyI64))
+                      [(LowerExpr cast-state cast-value _)
+                        (lower-runtime-call-values
+                          cast-state
+                          "tl_tls_current_arena_store"
+                          (compiler-ir-value-cons cast-value IrValueNil)
+                          result-ty)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])]
+          [_
+            (ErrLowerExpr
+              (lower-diagnostic
+                "lower: tls-current-arena-set! expects exactly one argument"))]))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: tls-current-arena-set! expects exactly one argument"))]))
+
+(define (lower-tls-current-arena-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name-id : i64]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (compiler-builtin-lower-tls-current-arena-read-id? name-id)
+    (lower-tls-current-arena-read-call state args result-ty)
+    (lower-tls-current-arena-set-call ctx state env type-env args result-ty)))
 
 ;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
@@ -20034,7 +20132,7 @@
               state
               env
               type-env
-              "string->int"
+              "__tl_string_to_int"
               args
               result-ty
               origin)]))]
@@ -20044,7 +20142,7 @@
         state
         env
         type-env
-        "string->int"
+        "__tl_string_to_int"
         args
         result-ty
         origin)]))
@@ -20159,7 +20257,7 @@
                     state
                     env
                     type-env
-                    "string-eq"
+                    "__tl_string_eq"
                     args
                     result-ty
                     origin)]))]
@@ -20169,7 +20267,7 @@
               state
               env
               type-env
-              "string-eq"
+              "__tl_string_eq"
               args
               result-ty
               origin)]))]
@@ -20179,7 +20277,7 @@
         state
         env
         type-env
-        "string-eq"
+        "__tl_string_eq"
         args
         result-ty
         origin)]))
@@ -20193,16 +20291,22 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (or (string-eq name "string-eq") (string-eq name "string=?"))
+  (if (lower-private-string-eq-helper-call-name? type-env name)
     (lower-string-eq-call ctx state env type-env args result-ty origin)
-    (if (string-eq name "string->int")
+    (if (tc-string-to-int-helper-call-name? ctx type-env name name)
       (lower-string-to-int-call ctx state env type-env args result-ty origin)
       (lower-direct-call ctx state env type-env name args result-ty origin))))
 
-;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
-;; bounds-checked String byte index. Since #677 the parser emits these names as
-;; ordinary calls, so `lower-call` routes the unshadowed builtin here to lower it
-;; like the `AstExprStringRef` node.
+(define (lower-private-string-eq-helper-call-name?
+  [type-env : TcTypeEnv]
+  [name : String]) : bool
+  (and
+    (compiler-builtin-typecheck-string-eq-id? (tc-builtin-name-id name))
+    (tc-default-builtin-unshadowed? type-env name)))
+
+;; Lower an unshadowed `(__tl_string_ref s i)` intrinsic call to the
+;; bounds-checked String byte index, like the parser-owned `AstExprStringRef`
+;; node.
 (define (lower-string-ref-call
   [ctx : TcContext]
   [state : LowerState]
@@ -20746,13 +20850,15 @@
                 (OkTcString (tc-hygiene-global-call-name raw-text))
                 (lower-source-name-lookup-key ctx type-env raw-text))
                 [(OkTcString name)
-                  ;; `array-length`/`length` on a dynamic array, and
-                  ;; `string-length`/`length` on a String, load the fat value's length
-                  ;; field directly instead of calling a runtime symbol (#528, #527).
-                  ;; Other `length` argument types keep the ordinary direct-call path.
-                  ;; `string-ref`/`char-at` likewise recover their String byte-index
-                  ;; builtin here unless shadowed (#677).
+                  ;; `array-length`/`length` on a dynamic array and private
+                  ;; string intrinsics load fat-value fields directly instead of
+                  ;; calling runtime symbols. Other `length` argument types keep
+                  ;; the ordinary direct-call path.
                   (let
+                    [source-name : String
+                      (if (tc-hygiene-global-name? raw-text)
+                        (tc-hygiene-global-call-name raw-text)
+                        raw-text)]
                     [name-id : i64 (intern name)]
                     [builtin-available : bool
                       (not (lower-top-level-value-defined? ctx name))]
@@ -20788,6 +20894,56 @@
                               (string-append
                                 name
                                 " is compile-time only; wrap it in (comptime ...)"))))]
+                      [(tc-string-ref-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-string-ref-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name
+                          args
+                          result-ty
+                          origin)]
+                      [(tc-string-length-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-array-length
+                          ctx
+                          state
+                          env
+                          type-env
+                          "__tl_string_length"
+                          args
+                          result-ty
+                          origin)]
+                      [(lower-private-string-eq-helper-call-name? type-env name)
+                        (lower-string-eq-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)]
+                      [(tc-string-to-int-helper-call-name?
+                          ctx
+                          type-env
+                          source-name
+                          name)
+                        (lower-string-to-int-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)]
                       [(and
                           builtin-available
                           (compiler-builtin-lower-string-ref-call-id? name-id))
@@ -20869,6 +21025,17 @@
                           result-ty)]
                       [(and
                           builtin-available
+                          (compiler-builtin-lower-tls-current-arena-id? name-id))
+                        (lower-tls-current-arena-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          name-id
+                          args
+                          result-ty)]
+                      [(and
+                          builtin-available
                           (lower-bootstrap-runtime-builtin-id? name-id))
                         (lower-bootstrap-runtime-call
                           ctx
@@ -20927,9 +21094,8 @@
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
 ;; size, so index 1 with element type i64 addresses that length field, which a
-;; typed `Load` then reads. Dynamic-array and String arguments are both
-;; intercepted; other `length` arguments fall back to the direct-call path so
-;; their runtime helper is unchanged.
+;; typed `Load` then reads. Dynamic-array calls and private string-length calls
+;; are intercepted; other `length` arguments fall back to the direct-call path.
 (define (lower-array-length
   [ctx : TcContext]
   [state : LowerState]
@@ -21014,7 +21180,9 @@
   (match (tc-array-length-receiver ctx arr-ty)
     [(OkTcArrayReceiver _) (lower-array-length-load ctx state env type-env arr)]
     [(ErrTcArrayReceiver _)
-      (if (lower-length-handle-type? ctx arr-ty)
+      (if (and
+        (compiler-builtin-typecheck-string-length-id? (intern name))
+        (lower-length-handle-type? ctx arr-ty))
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call ctx state env type-env name args result-ty origin))]))
 
@@ -25741,6 +25909,20 @@
                   (LowerSomeArrayVar
                     var-id
                     (tc-type-without-regions (ty-node-get elem-ty)))]
+                [(AstTyRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
+                [(AstTyMutRef _ referent-ty)
+                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                    [(AstTyDynArray elem-ty)
+                      (LowerSomeArrayVar
+                        var-id
+                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                    [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
         [NoneI64 LowerNoArrayVar])]
@@ -35476,6 +35658,14 @@
 ;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
 ;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
 ;; threaded accumulators become loop state.
+(define (lower-skip-until-next-module [decls : AstDeclList]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule _) decls]
+        [_ (lower-skip-until-next-module (box-get rest))])]))
+
 (define (lower-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -35746,6 +35936,8 @@
                 [(AstDeclModule next-module)
                   (let
                     [next-module-str : String (intern-str next-module)]
+                    [skip-runtime : bool
+                      (lower-comptime-only-module? next-module-str)]
                     (match (lower-module-local-envs
                       ctx
                       top-env
@@ -35762,7 +35954,11 @@
                             cur-type-cache
                             (lower-type-cache-from-env cur-local-top-env))
                           (set! cur-module next-module-str)
-                          (set! cur-decls rest))]
+                          (set!
+                            cur-decls
+                            (if skip-runtime
+                              (lower-skip-until-next-module rest)
+                              rest)))]
                       [(ErrLowerModuleLocalEnv message)
                         (begin
                           (set!
@@ -36454,8 +36650,8 @@
   (RefBox text owned true))
 (define (ref-box-length [item : (RefBox text)]) : i64
   (if (struct-get item is-owned)
-    (string-length (struct-get item owned))
-    (string-length (struct-get item borrowed))))
+    (__tl_string_length (struct-get item owned))
+    (__tl_string_length (struct-get item borrowed))))
 (define (main [text : String] [owned : String]) : i64
   (let
     [borrowed : (RefBox text) (ref-box-borrowed (& text) owned)]
@@ -36484,12 +36680,12 @@
   (ReplaceResult text old replacement owned true))
 (define (replace-score [item : (ReplaceResult text old replacement)]) : i64
   (+
-    (string-length (struct-get item old-text))
+    (__tl_string_length (struct-get item old-text))
     (+
-      (string-length (struct-get item replacement-text))
+      (__tl_string_length (struct-get item replacement-text))
       (if (struct-get item is-owned)
-        (string-length (struct-get item owned))
-        (string-length (struct-get item borrowed))))))
+        (__tl_string_length (struct-get item owned))
+        (__tl_string_length (struct-get item borrowed))))))
 (define (main [text : String] [old : String] [replacement : String] [owned : String]) : i64
   (let
     [borrowed : (ReplaceResult text old replacement)
@@ -36509,15 +36705,15 @@
   (RefChoiceOwned owned))
 (define (choice-length [choice : (RefChoice text)]) : i64
   (match choice
-    [(RefChoiceBorrowed value) (string-length value)]
-    [(RefChoiceOwned value) (string-length value)]))
+    [(RefChoiceBorrowed value) (__tl_string_length value)]
+    [(RefChoiceOwned value) (__tl_string_length value)]))
 (define (choice-loop [choice : (RefChoice text)] [count : i64]) : i64
   (match choice
     [(RefChoiceBorrowed value)
       (if (> count 0)
         (choice-loop (RefChoiceBorrowed value) (- count 1))
-        (string-length value))]
-    [(RefChoiceOwned value) (string-length value)]))
+        (__tl_string_length value))]
+    [(RefChoiceOwned value) (__tl_string_length value)]))
 (define (main [text : String] [owned : String]) : i64
   (+
     (choice-length (borrowed-choice (& text)))
@@ -36572,7 +36768,7 @@
     [a : (Array i64) (make-array i64 2)]
     (begin
       (array-set! a 0 n)
-      ((lambda () : i64 (+ (string-length s) (array-ref a 0)))))))")
+      ((lambda () : i64 (+ (__tl_string_length s) (array-ref a 0)))))))")
 
 (define (compiler-lower-capturing-lambda-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
@@ -36854,14 +37050,58 @@
     [items : (Array OneWord) (make-array OneWord n)]
     (array-length items)))")
 
-;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
-;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
+;; Private string length lowers to the same fat `{ptr, len}` length load as
+;; `array-length` (#527): both lay out the i64 length at offset 8.
 (define (compiler-lower-string-length-source) : String
-  "(define (str-len [s : String]) : i64 (string-length s))
-(define (str-len-alias [s : String]) : i64 (length s))
-(define (str-len-borrow [s : String]) : i64 (string-length (& s)))
-(define (str-len-alias-borrow [s : String]) : i64 (length (& s)))
+  "(define (str-len [s : String]) : i64 (__tl_string_length s))
+(define (str-len-alias [s : String]) : i64 (__tl_string_length s))
+(define (str-len-borrow [s : String]) : i64 (__tl_string_length (& s)))
+(define (str-len-alias-borrow [s : String]) : i64 (__tl_string_length (& s)))
 (define (main) : i64 0)")
+
+(define (compiler-lower-stdlib-string-wrapper-prune-source) : String
+  "(module stdlib.string)
+(define (string-length [text : (& text str)]) : i64 0)
+(export (value string-length))
+(module stdlib.io)
+(import stdlib.string)
+(define (io-len [text : String]) : i64 (string-length text))
+(define (main) : i64 (io-len \"abc\"))")
+
+(define (compiler-lower-stdlib-string-wrapper-prune-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/string.tl"
+    (ast-decl-path-cons
+      "stdlib/string.tl"
+      (ast-decl-path-cons
+        "stdlib/string.tl"
+        (ast-decl-path-cons
+          "stdlib/io.tl"
+          (ast-decl-path-cons
+            "stdlib/io.tl"
+            (ast-decl-path-cons
+              "stdlib/io.tl"
+              (ast-decl-path-cons "stdlib/io.tl" AstDeclPathNil))))))))
+
+(define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
+  (match (parse-ast-source (compiler-lower-stdlib-string-wrapper-prune-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "stdlib/io.tl"
+        program
+        (compiler-lower-stdlib-string-wrapper-prune-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (or
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/string.tl::stdlib.string/string-length")
+                (lower-test-function-defined?
+                  functions
+                  "string.tl::stdlib.string/string-length"))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-string-runtime-source) : String
   "(define (print-string [text : String]) : unit
@@ -36872,7 +37112,7 @@
   \"joined\")
 (define (substring [text : (& text str)] [start : i64] [len : i64]) : String
   (let
-    [probe : char (string-ref text start)]
+    [probe : char (__tl_string_ref text start)]
     \"slice\"))
 (define (string-concat [left : (& left str)] [right : (& right str)]) : String
   (string-append left right))
@@ -36889,11 +37129,11 @@
     (begin
       (print-string joined)
       (print-str extended)
-      (+ (string-length (& joined))
-        (+ (string-length (& extended))
-          (+ (string->int (& digits))
-            (+ (if (string-eq (& joined) (& extended)) 1 0)
-              (cast (char-at (& spaced) 0) : i64))))))))")
+      (+ (__tl_string_length (& joined))
+        (+ (__tl_string_length (& extended))
+          (+ (__tl_string_to_int (& digits))
+            (+ (if (__tl_string_eq (& joined) (& extended)) 1 0)
+              (cast (__tl_string_ref (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-string-concat-fusion-source) : String
   "(define (string-append [left : String] [right : String]) : String
@@ -36907,7 +37147,8 @@
       (string-append
         \"a\"
         (string-append \"b\" (string-append \"c\" (string-append \"d\" \"e\"))))]
-    (+ (string-length three) (+ (string-length four) (string-length five)))))")
+    (+ (__tl_string_length three)
+      (+ (__tl_string_length four) (__tl_string_length five)))))")
 
 (define (compiler-lower-print-string-stdlib-source) : String
   "(define (print-string [text : String]) : unit
@@ -36922,21 +37163,21 @@
 
 (define (compiler-lower-borrowed-str-param-source) : String
   "(define (borrowed-score [path : (& path str)]) : i64
-  (string-length path))
+  (__tl_string_length path))
 (define (main [path : String]) : i64
   (borrowed-score (& path)))")
 
 (define (compiler-lower-stdlib-hash-string-source) : String
   "(define (hash-string [key : (& key str)]) : i64
   (let
-    [n : i64 (string-length key)]
+    [n : i64 (__tl_string_length key)]
     [i : i64 0]
     [hash : i64 0]
     (begin
       (while (< i n)
         (let
           [next : i64
-            (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+            (+ (+ (* hash 131) (cast (__tl_string_ref key i) : i64)) 1)]
           [reduced : i64
             (+ (bit-and next 0x7fffffff) (shr next 31))]
           (begin
@@ -36981,8 +37222,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (string-length (read-stdin-line))
-        (string-length (read-stdin-bytes 3)))))")
+        (__tl_string_length (read-stdin-line))
+        (__tl_string_length (read-stdin-bytes 3)))))")
 
 (define (compiler-lower-stdio-builtin-source) : String
   "(define stdin-eof-state : bool false)
@@ -37000,8 +37241,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (string-length (read-stdin-line))
-        (string-length (read-stdin-bytes count)))))")
+        (__tl_string_length (read-stdin-line))
+        (__tl_string_length (read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
   "(define (env-var-exists? [name : String]) : bool true)
@@ -37012,8 +37253,8 @@
     [separator : String (env-path-separator)]
     [value : String (env-var-value name)]
     (if (env-var-exists? name)
-      (+ (string-length value) (string-length separator))
-      (string-length separator))))")
+      (+ (__tl_string_length value) (__tl_string_length separator))
+      (__tl_string_length separator))))")
 
 (define (compiler-lower-cpu-builtin-source) : String
   "(define (main) : i64
@@ -37041,7 +37282,7 @@
   (os-write
     (cast handle : i32)
     (unsafe (string-data text))
-    (string-length text)))
+    (__tl_string_length text)))
 (define (file-flush-status [handle : i64]) : i64
   (cast (os-fflush (ptr-null : (Ptr u8))) : i64))
 (define (file-read-chunk-bytes [handle : i64]) : String
@@ -37064,7 +37305,7 @@
         (+ (file-read-chunk-status handle 4)
           (+ (file-write-status handle chunk)
             (+ (file-flush-status handle)
-              (+ (string-length (file-read-chunk-bytes handle))
+              (+ (__tl_string_length (file-read-chunk-bytes handle))
                 (+ (if (file-read-chunk-eof? handle) 1 0)
                    (file-close-status handle))))))))))")
 
@@ -37080,10 +37321,10 @@
 (define (fs-read-dir [path : String]) : String path)
 (define (fs-file-kind-status [path : String]) : i64 0)
 (define (fs-file-size-status [path : String]) : i64 0)
-(define (fs-file-size [path : String]) : i64 (string-length path))
+(define (fs-file-size [path : String]) : i64 (__tl_string_length path))
 (define (main) : i64
   (+ (fs-current-dir-status)
-    (+ (string-length (fs-current-dir))
+    (+ (__tl_string_length (fs-current-dir))
       (+ (fs-process-id)
         (+ (fs-mkdir-status \"target/typelisp-fs\")
           (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
@@ -37092,7 +37333,7 @@
                   \"target/typelisp-fs/from name\"
                   \"target/typelisp-fs/to name\")
                 (+ (fs-read-dir-status \"target/typelisp-fs\")
-                  (+ (string-length (fs-read-dir \"target/typelisp-fs\"))
+                  (+ (__tl_string_length (fs-read-dir \"target/typelisp-fs\"))
                     (+ (fs-file-kind-status \"target/typelisp-fs\")
                       (+ (fs-file-size-status \"target/typelisp-fs\")
                         (fs-file-size \"target/typelisp-fs\")))))))))))))")
@@ -37190,10 +37431,10 @@
   (SCons String (Box StringList)))
 (define (clone-tuple [items : (Array String)]) : i64
   (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
-    (string-length (tuple-ref pair 0))))
+    (__tl_string_length (tuple-ref pair 0))))
 (define (clone-fixed) : i64
   (let [fixed : (Array String 2) (clone (array \"left\" \"right\"))]
-    (string-length (array-ref fixed 0))))
+    (__tl_string_length (array-ref fixed 0))))
 (define (clone-dyn [items : (Array String)]) : i64
   (let [copied : (Array String) (clone items)]
     (array-length copied)))
@@ -37241,7 +37482,7 @@
 (define (main [s : String]) : i64
   (let
     [item : NestedClone (make-nested s)]
-    (string-length (struct-get (struct-get item used) name))))")
+    (__tl_string_length (struct-get (struct-get item used) name))))")
 
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
@@ -37495,7 +37736,7 @@
 (module main)
 (import stdlib.list)
 (define (main) : i64
-  (string-length
+  (__tl_string_length
     (match (list.string-list-cons \"a\" (list.StringNil))
       [(list.StringNil) \"\"]
       [(list.StringCons head _) head])))")
@@ -37610,7 +37851,7 @@
 (define (main) : i64
   (+
     (match (first-helper false)
-      [(FirstErr message) (string-length message)]
+      [(FirstErr message) (__tl_string_length message)]
       [(FirstOk value) value])
     (second-value-or (second-helper 40) 0)))")
 
@@ -37636,7 +37877,7 @@
     (second-value-or (second-helper 40) 0)
     (match (first-helper false)
       [(FirstOk value) value]
-      [(FirstErr message) (string-length message)])))")
+      [(FirstErr message) (__tl_string_length message)])))")
 
 (define (compiler-lower-inline-struct-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-inline-struct-source))
@@ -38038,7 +38279,7 @@
   "(defenum Item (Named String) (Empty))
 (define (score-item [item : Item]) : i64
   (match (& item)
-    [(Named s) (string-length s)]
+    [(Named s) (__tl_string_length s)]
     [Empty 0]))
 (define (main [text : String]) : i64 (score-item (Named text)))")
 
@@ -41038,7 +41279,7 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string-eq [left : String] [right : String]) : bool (= (string-length left) (string-length right)))
+(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (export (value string-eq))
 (module pkg.args)
 (import pkg.string)
@@ -43383,7 +43624,7 @@
   (with-arena r
     (let
       [s : String (int->string 41)]
-      (string-length s))))")
+      (__tl_string_length s))))")
 
 (define (compiler-lower-region-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-region-source))
@@ -43808,6 +44049,34 @@
         (if flag (return 7) unit)
         42))))"))
 
+(define (compiler-lower-tls-current-arena-source) : String
+  "(define (main) : i64
+  (let
+    [arena : i64 (tls-current-arena)]
+    (begin
+      (unsafe (tls-current-arena-set! arena))
+      arena)))")
+
+(define (compiler-lower-tls-current-arena-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tls-current-arena-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_tls_current_arena_load")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "tl_tls_current_arena_store")
+              1))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-in-arena-shape-ok?) : bool
   (let
     [ok : bool true]
@@ -43869,6 +44138,12 @@
 
 (define (compiler-lower-avx2-foreach-map-source) : String
   "(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-foreach-borrowed-array-map-source) : String
+  "(define (fill [a : (& a (Array i64))] [b : (& b (Array i64))] [out : (&mut out (Array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
@@ -44052,6 +44327,10 @@
   (and
     (compiler-lower-avx2-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      4)
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       4)
     (compiler-lower-avx2-foreach-map-source-shape-ok?
@@ -44296,6 +44575,10 @@
   (and
     (compiler-lower-avx512-foreach-map-source-shape-ok?
       (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-foreach-borrowed-array-map-source)
       (AstTyI64)
       8)
     (compiler-lower-avx512-foreach-map-source-shape-ok?
@@ -45329,6 +45612,9 @@
       (if (compiler-lower-string-length-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-stdlib-string-wrapper-prune-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-string-runtime-ok?)
         unit
         (set! ok false))
@@ -45725,6 +46011,44 @@
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
+(define (lower-test-export-list-has-value?
+  [items : AstExportItemList]
+  [name : String]) : bool
+  (match items
+    [(AstExportItemNil) false]
+    [(AstExportItemCons item rest)
+      (match item
+        [(AstExportValue found)
+          (if (string-eq found name)
+            true
+            (lower-test-export-list-has-value? (box-get rest) name))]
+        [_ (lower-test-export-list-has-value? (box-get rest) name)])]))
+
+(define (lower-test-decl-list-exports-value?
+  [decls : AstDeclList]
+  [name : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclExport items)
+          (if (lower-test-export-list-has-value? items name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [(AstDeclComptimeDecl _ inner-box)
+          (if (lower-test-decl-list-exports-value?
+            (ast-decl-cons (box-get inner-box) AstDeclNil)
+            name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [(AstDeclUnsafe inner-box)
+          (if (lower-test-decl-list-exports-value?
+            (ast-decl-cons (box-get inner-box) AstDeclNil)
+            name)
+            true
+            (lower-test-decl-list-exports-value? (box-get rest) name))]
+        [_ (lower-test-decl-list-exports-value? (box-get rest) name)])]))
+
 (define (compiler-lower-ast-dce-program) : AstProgram
   (ast-program
     (ast-decl-cons
@@ -45775,6 +46099,55 @@
           (AstTyI64)
           (ast-node-push (AstExprLiteral (ast-lit-int 9))))
         AstDeclNil))))
+
+(define (compiler-lower-macro-body-dce-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-def-fn
+        "main"
+        AstParamNil
+        (AstTyI64)
+        (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+      (ast-decl-cons
+        (ast-decl-def-fn
+          "macro-only-helper"
+          AstParamNil
+          (AstTyI64)
+          (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+        (ast-decl-cons
+          (ast-decl-def-macro
+            "macro-uses-helper"
+            AstMacroParamNil
+            (AstTyExpr)
+            (ast-expr-call
+              (ast-node-push (AstExprVar (intern "macro-only-helper")))
+              AstExprNil))
+          AstDeclNil)))))
+
+(define (compiler-lower-stdlib-comptime-runtime-dce-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-module "stdlib.comptime")
+      (ast-decl-cons
+        (ast-decl-def-fn
+          "ctfe-runtime-helper"
+          AstParamNil
+          (AstTyI64)
+          (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+        (ast-decl-cons
+          (AstDeclExport
+            (ast-export-item-cons
+              (AstExportValue "ctfe-runtime-helper")
+              AstExportItemNil))
+          (ast-decl-cons
+            (ast-decl-module "main")
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil)))))))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
@@ -45845,6 +46218,80 @@
                           (lower-test-decl-list-defines? kept "callback-target")
                           (not (lower-test-decl-list-defines? kept "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
+
+(define (compiler-lower-macro-body-dce-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-macro-body-dce-program)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions
+        "entry.tl"
+        program
+        AstDeclPathNil
+        names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 2)
+                (lower-test-decl-list-defines? kept "main")
+                (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
+
+(define (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-stdlib-comptime-runtime-dce-program)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions
+        "entry.tl"
+        program
+        AstDeclPathNil
+        names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ctfe-runtime-helper")
+                (lower-test-decl-list-exports-value? kept "ctfe-runtime-helper")))])])))
+
+(define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
+  (match (lower-compiler-program-with-decl-paths
+    "entry.tl"
+    (compiler-lower-stdlib-comptime-runtime-dce-program)
+    AstDeclPathNil)
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions externs)
+          (and
+            (= (compiler-ir-function-list-count functions) 1)
+            (= (compiler-ir-extern-list-count externs) 0)
+            (lower-test-function-defined? functions "main"))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok? [kept : AstDeclList]) : bool
   (and
@@ -45985,6 +46432,9 @@
       (if (compiler-lower-in-arena-shape-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-tls-current-arena-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-repr-c-shape-ok?)
         unit
         (set! ok false))
@@ -46077,6 +46527,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-macro-body-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-runtime-dce-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-unsafe-ast-dce-ok?)

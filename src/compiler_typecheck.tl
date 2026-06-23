@@ -35,14 +35,18 @@
                   expanded
                   expanded-paths)
                   [(OkCompilerSymbols _)
-                    (match (compiler-specialize-program expanded)
-                      [(OkSpecProgram specialized)
+                    (match (compiler-specialize-program-with-paths
+                      expanded
+                      expanded-paths
+                      (tc-decl-path-list-last expanded-paths ""))
+                      [(OkSpecProgramWithPaths specialized specialized-paths)
                         (typecheck-compiler-specialized-program-with-paths-cache
                           specialized
-                          AstDeclPathNil
+                          specialized-paths
                           stdlib-roots
                           cache-scope)]
-                      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])]
+                      [(ErrSpecProgramWithPaths diag)
+                        (ErrCompilerTypecheck diag)])]
                   [(ErrCompilerSymbols message)
                     (ErrCompilerTypecheck (tc-diag-at-start message))])
                 (typecheck-compiler-specialized-program-with-paths-cache
@@ -76,14 +80,18 @@
             (if (compiler-specialize-needed? expanded)
               (match (build-compiler-symbols-with-paths expanded expanded-paths)
                 [(OkCompilerSymbols _)
-                  (match (compiler-specialize-program expanded)
-                    [(OkSpecProgram specialized)
+                  (match (compiler-specialize-program-with-paths
+                    expanded
+                    expanded-paths
+                    (tc-decl-path-list-last expanded-paths ""))
+                    [(OkSpecProgramWithPaths specialized specialized-paths)
                       (typecheck-compiler-specialized-program-with-paths-checked-cache
                         specialized
-                        AstDeclPathNil
+                        specialized-paths
                         stdlib-roots
                         cache-scope)]
-                    [(ErrSpecProgram diag) (ErrCompilerTypecheckChecked diag)])]
+                    [(ErrSpecProgramWithPaths diag)
+                      (ErrCompilerTypecheckChecked diag)])]
                 [(ErrCompilerSymbols message)
                   (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
               (typecheck-compiler-specialized-program-with-paths-checked-cache
@@ -519,7 +527,7 @@
     [t : (Tuple i64 bool) (tuple 7 true)]
     [a : (Array i64) (make-array i64 n)]
     (begin
-      (array-set! a 0 (cast (string-ref s 0) : i64))
+      (array-set! a 0 (cast (__tl_string_ref s 0) : i64))
       (foreach ([i : i64 0 n])
         (array-set! a i (+ (array-ref a i) 1)))
       (+ (array-length a)
@@ -539,10 +547,10 @@
     (fs-file-size s)
     (fs-process-id)
     (fs-current-dir-status)
-    (string-length (fs-current-dir))
+    (__tl_string_length (fs-current-dir))
     (string-append (fs-read-dir s)
-      (string-append (substring s 0 (length s))
-                    (int->string (string->int \"7\"))))))"))
+      (string-append (substring s 0 (__tl_string_length s))
+                    (int->string (__tl_string_to_int \"7\"))))))"))
 
 (define (compiler-typecheck-stdio-source) : String
   (compiler-typecheck-with-io-source
@@ -550,8 +558,8 @@
   (begin
     (flush-stdout)
     (if (stdin-eof?)
-        (string-length (read-stdin-line))
-        (string-length (read-stdin-bytes 3)))))"))
+        (__tl_string_length (read-stdin-line))
+        (__tl_string_length (read-stdin-bytes 3)))))"))
 
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
@@ -571,7 +579,7 @@
   "(define bad : (Array i64 2) (array 1 true))")
 
 (define (compiler-typecheck-string-index-source) : String
-  "(define (main) : char (string-ref \"hi\" true))")
+  "(define (main) : char (__tl_string_ref \"hi\" true))")
 
 (define (compiler-typecheck-string-shadow-source) : String
   "(define (string-ref [a : i64] [b : i64]) : i64 (+ a b))
@@ -1422,6 +1430,11 @@
         [(data.Maybe.Some v) v]
         [data.Maybe.None 0]))))")
 
+;; Everything is exported by default: items that are not named in a legacy
+;; `(export ...)` list are now reachable across modules, so the cases that used
+;; to be rejected as private must now type-check. These sources keep their
+;; "private" names because they describe the source shape (an item omitted from
+;; the export list), but the expectation is now success.
 (define (compiler-typecheck-export-visibility-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -1430,28 +1443,24 @@
         (compiler-typecheck-export-visibility-allowed-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-alias-value-source)
-        "typecheck: private value d/private from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-alias-value-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-canonical-value-source)
-        "typecheck: private value data/private from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-canonical-value-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-export-type-only-opaque-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-type-only-constructor-source)
-        "typecheck: private constructor d/Opaque from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-type-only-constructor-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-type-only-field-source)
-        "typecheck: private field data/Opaque.value from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-type-only-field-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -1462,14 +1471,12 @@
         (compiler-typecheck-export-generated-cleanup-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-type-source)
-        "typecheck: private type data/Hidden from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-type-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-variant-pattern-source)
-        "typecheck: private variant d/Hidden from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-variant-pattern-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -2456,7 +2463,7 @@
   (with-arena r
     (let
       [s : String (int->string 41)]
-      (string-length s))))"))
+      (__tl_string_length s))))"))
 
 (define (compiler-typecheck-region-escape-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -2465,7 +2472,7 @@
 
 (define (compiler-typecheck-region-user-call-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
-    "(define (sink [s : String]) : i64 (string-length s))
+    "(define (sink [s : String]) : i64 (__tl_string_length s))
 (define (main) : i64
   (with-arena r
     (let
@@ -2486,7 +2493,7 @@
   (with-arena oute
     (let
       [s : String (int->string 1)]
-      (with-arena inner (string-length s)))))"))
+      (with-arena inner (__tl_string_length s)))))"))
 
 (define (compiler-typecheck-region-array-source) : String
   "(define (main [n : i64]) : i64
@@ -2512,7 +2519,7 @@
 (define (main) : i64
   (with-arena r
     (match (Text (int->string 1))
-      [(Text s) (string-length s)]
+      [(Text s) (__tl_string_length s)]
       [End 0])))"))
 
 (define (compiler-typecheck-with-escape-scalar-source) : String
@@ -3791,7 +3798,7 @@
 
 (define (compiler-typecheck-borrowed-enum-match-str-source) : String
   "(defenum Item (Named String) (Empty))
-(define (borrowed-name-length [s : (& item str)]) : i64 (string-length s))
+(define (borrowed-name-length [s : (& item str)]) : i64 (__tl_string_length s))
 (define (main [item : Item]) : i64
   (match (& item)
     [(Named s) (let [same : (& item str) s] (borrowed-name-length same))]
@@ -4023,7 +4030,7 @@
   (let
     [text : String (int->string 42)]
     (with-arena phase
-      (let [n : i64 (string-length text)] text))))"))
+      (let [n : i64 (__tl_string_length text)] text))))"))
 
 (define (compiler-typecheck-owner-scoped-arena-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -4031,7 +4038,7 @@
   (with-arena phase
     (let
       [text : String (int->string 42)]
-      (string-length text))))"))
+      (__tl_string_length text))))"))
 
 (define (compiler-typecheck-owner-scoped-arena-escape-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -5074,7 +5081,7 @@
 (define (compiler-typecheck-match-ok-string-payload-source) : String
   "(defenum Token (TIdent String) (TEnd))
 (define (main [t : Token]) : i64
-  (match t [(TIdent s) (string-length s)] [(TEnd) 0]))")
+  (match t [(TIdent s) (__tl_string_length s)] [(TEnd) 0]))")
 
 (define (compiler-typecheck-match-bad-string-payload-source) : String
   "(defenum Token (TIdent String) (TEnd))
@@ -5091,7 +5098,7 @@
   "(defenum SexprAtom (SInt i64) (SSym String) (SNil))
 (defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
-  (match s [(SCons (SSym op) rest) (string-length op)] [_ 0]))")
+  (match s [(SCons (SSym op) rest) (__tl_string_length op)] [_ 0]))")
 
 (define (compiler-typecheck-match-ok-nested-rest-source) : String
   "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons (Box Sexpr) (Box Sexpr)))
@@ -5107,7 +5114,7 @@
   "(defenum SexprAtom (SInt i64) (SSym String) (SNil))
 (defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
-  (match s [(SCons (SInt n) rest) (string-length n)] [_ 0]))")
+  (match s [(SCons (SInt n) rest) (__tl_string_length n)] [_ 0]))")
 
 (define (compiler-typecheck-match-bad-nested-non-enum-source) : String
   "(defenum Sexpr (SInt i64) (SNil))
@@ -5506,26 +5513,25 @@
       ok)))
 
 (define (compiler-typecheck-string-builtin-ok-length-source) : String
-  "(define (main) : i64 (string-length \"hi\"))")
+  "(define (main) : i64 (__tl_string_length \"hi\"))")
 
 (define (compiler-typecheck-string-builtin-ok-eq-source) : String
-  "(define (f) : bool (string-eq \"a\" \"b\"))")
+  "(define (f) : bool (__tl_string_eq \"a\" \"b\"))")
 
 (define (compiler-typecheck-string-helper-source-defined-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
     "(define (f [s : String]) : String
   (string-concat
     (string-append (substring s 0 1) (string-slice s 1 1))
-    (int->string (string->int \"7\"))))"))
+    (int->string (__tl_string_to_int \"7\"))))"))
 
 (define (compiler-typecheck-string-builtin-borrowed-source) : String
   "(define (main [text : String] [other : String]) : i64
   (begin
-    (+ (string-length (& text))
-      (+ (length (& text))
-        (+ (cast (string-ref (& text) 0) : i64)
-          (+ (if (string-eq (& text) (& other)) 1 0)
-             (string->int (& text))))))))")
+    (+ (__tl_string_length (& text))
+      (+ (cast (__tl_string_ref (& text) 0) : i64)
+        (+ (if (__tl_string_eq (& text) (& other)) 1 0)
+           (__tl_string_to_int (& text)))))))")
 
 (define (compiler-typecheck-string-builtin-no-default-int-source) : String
   "(define (main) : String (int->string 1))")
@@ -5550,10 +5556,10 @@
     (string-concat (& slice) (string-slice (& right) 0 1))))")
 
 (define (compiler-typecheck-string-builtin-bad-arg-source) : String
-  "(define (main) : i64 (string-length 5))")
+  "(define (main) : i64 (__tl_string_length 5))")
 
 (define (compiler-typecheck-string-builtin-bad-array-source) : String
-  "(define (main [items : (Array i64)]) : i64 (string-length items))")
+  "(define (main [items : (Array i64)]) : i64 (__tl_string_length items))")
 
 (define (compiler-typecheck-string-builtin-tests-ok?) : bool
   (let
@@ -5624,7 +5630,7 @@
 (define (compiler-typecheck-argv-builtin-ok-source) : String
   (compiler-typecheck-with-io-source
     "(define (main) : i64
-  (+ (arg-count) (string-length (arg 0))))"))
+  (+ (arg-count) (__tl_string_length (arg 0))))"))
 
 (define (compiler-typecheck-argv-builtin-bad-index-source) : String
   (compiler-typecheck-with-io-source "(define (main) : String (arg \"0\"))"))
@@ -5693,7 +5699,7 @@
 (define (compiler-typecheck-lambda-capture-string-source) : String
   "(define (main) : i64
   (let [s : String \"hi\"]
-    (let [g : (-> i64) (lambda () : i64 (string-length s))] (g))))")
+    (let [g : (-> i64) (lambda () : i64 (__tl_string_length s))] (g))))")
 
 (define (compiler-typecheck-lambda-capture-struct-source) : String
   "(defstruct P (a i64))
@@ -6405,6 +6411,36 @@
 (define (compiler-typecheck-unsafe-fn-body-still-safe-source) : String
   "(unsafe (define (read-it [p : (Ptr i64)]) : i64 (ptr-read p)))")
 
+(define (compiler-typecheck-tls-current-arena-read-source) : String
+  "(define (main) : i64 (tls-current-arena))")
+
+(define (compiler-typecheck-tls-current-arena-set-source) : String
+  "(define (main [arena : i64]) : unit
+  (tls-current-arena-set! arena))")
+
+(define (compiler-typecheck-tls-current-arena-unsafe-set-source) : String
+  "(define (main [arena : i64]) : unit
+  (unsafe (tls-current-arena-set! arena)))")
+
+(define (compiler-typecheck-tls-current-arena-shadow-source) : String
+  "(define (tls-current-arena) : i64 17)
+(define (tls-current-arena-set! [arena : i64]) : unit unit)
+(define (main) : i64
+  (begin
+    (tls-current-arena-set! 41)
+    (tls-current-arena)))")
+
+(define (compiler-typecheck-tls-current-arena-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-tls-current-arena-read-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-tls-current-arena-set-source)
+      "typecheck: tls-current-arena-set! requires unsafe context")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-tls-current-arena-unsafe-set-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-tls-current-arena-shadow-source))))
+
 (define (compiler-typecheck-unsafe-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
@@ -6473,7 +6509,7 @@
     "(define (main) : i64
   (with-arena r
     (let [s : String (int->string 41)]
-      (string-length s))))"))
+      (__tl_string_length s))))"))
 
 (define (compiler-typecheck-arena-safe-set-source) : String
   (compiler-typecheck-with-arena-source
@@ -6661,12 +6697,12 @@
 (define (main) : i64
   (+ (field-count-helper (type Point))
      (+ (enum-payload-helper (type Maybe))
-        (+ (comptime (if (string-eq (type-kind (type Point)) \"struct\") 1 0))
-           (+ (comptime (if (string-eq (type-nominal-name (type Point)) \"Point\") 1 0))
+        (+ (comptime (if (__tl_string_eq (type-kind (type Point)) \"struct\") 1 0))
+           (+ (comptime (if (__tl_string_eq (type-nominal-name (type Point)) \"Point\") 1 0))
               (+ (comptime (if (= (struct-field-type (type Point) 0) (type i64)) 1 0))
                  (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
                     (+ (comptime (array-length (type (Array i64 4))))
-                       (+ (comptime (if (string-eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
+                       (+ (comptime (if (__tl_string_eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
                           (comptime (function-param-count (type (-> i64 bool String)))))))))))))")
 
 (define (compiler-typecheck-reflection-runtime-source) : String
@@ -6920,7 +6956,7 @@
 
 (define (compiler-typecheck-macro-binding-clause-fixed-source) : String
   "(defmacro (binding-init [binding : ExprBindingClause]) : Expr
-  (if (string-eq (expr-binding-clause-name binding) \"answer\")
+  (if (__tl_string_eq (expr-binding-clause-name binding) \"answer\")
     (if (expr-binding-clause-has-type? binding)
       (expr-binding-clause-init binding)
       (expr-binding-clause-init binding))
@@ -6938,8 +6974,8 @@
         [first : ExprBindingClause (expr-binding-clause-list-head bindings)]
         [rest : ExprBindingClauseList (expr-binding-clause-list-tail bindings)]
         [second : ExprBindingClause (expr-binding-clause-list-nth bindings 1)]
-        (if (string-eq (expr-binding-clause-name first) \"a\")
-          (if (string-eq (expr-binding-clause-name second) \"b\")
+        (if (__tl_string_eq (expr-binding-clause-name first) \"a\")
+          (if (__tl_string_eq (expr-binding-clause-name second) \"b\")
             (if (expr-binding-clause-has-type? first)
               (if (expr-binding-clause-has-type? second)
                 (expr-int 0)
@@ -6983,20 +7019,20 @@
   "(defstruct Point (x i64))
 (defmacro (kind-code [value : Expr]) : i64
   (let [T : Expr (expr-type value)]
-    (if (string-eq (type-kind T) \"i64\")
+    (if (__tl_string_eq (type-kind T) \"i64\")
       (expr-int 1)
-      (if (string-eq (type-kind T) \"bool\")
+      (if (__tl_string_eq (type-kind T) \"bool\")
         (expr-int 2)
-        (if (string-eq (type-kind T) \"struct\")
-          (if (string-eq (type-nominal-name T) \"Point\")
+        (if (__tl_string_eq (type-kind T) \"struct\")
+          (if (__tl_string_eq (type-nominal-name T) \"Point\")
             (expr-int 3)
             (expr-int 0))
-          (if (string-eq (type-kind T) \"array\")
-            (if (string-eq (type-kind (array-element-type T)) \"i64\")
+          (if (__tl_string_eq (type-kind T) \"array\")
+            (if (__tl_string_eq (type-kind (array-element-type T)) \"i64\")
               (expr-int 4)
               (expr-int 0))
-            (if (string-eq (type-kind T) \"function\")
-              (if (string-eq (type-kind (function-return-type T)) \"i64\")
+            (if (__tl_string_eq (type-kind T) \"function\")
+              (if (__tl_string_eq (type-kind (function-return-type T)) \"i64\")
                 (expr-int 5)
                 (expr-int 0))
               (expr-int 0))))))))
@@ -7009,14 +7045,14 @@
 
 (define (compiler-typecheck-macro-qualified-expr-type-source) : String
   "(defmacro (kind-code [value : Expr]) : i64
-  (if (string-eq (type-kind (comptime.expr-type value)) \"i64\")
+  (if (__tl_string_eq (type-kind (comptime.expr-type value)) \"i64\")
     (expr-int 1)
     (expr-int 0)))
 (define (main) : i64 (kind-code 42))")
 
 (define (compiler-typecheck-macro-expr-type-untyped-source) : String
   "(defmacro (needs-type [value : Expr]) : i64
-  (if (string-eq (type-kind (expr-type value)) \"i64\")
+  (if (__tl_string_eq (type-kind (expr-type value)) \"i64\")
     (expr-int 1)
     (expr-int 0)))
 (define (main) : i64 (needs-type missing))")
@@ -7486,9 +7522,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-forward-qualified-export-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-private-source)
-      "typecheck: private macro hidden/private-and")
+    ;; Everything is exported by default: a macro that exists in the imported
+    ;; module now resolves even without a legacy export list. A name that does
+    ;; not exist at all is still a missing-export error.
+    (compiler-typecheck-ok? (compiler-typecheck-macro-private-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-missing-export-source)
       "typecheck: missing macro export hidden/missing")
@@ -7601,9 +7638,7 @@
       (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-qualified-private-source)
-      "typecheck: private value data/private from module data")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-qualified-private-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))
@@ -7638,6 +7673,9 @@
     (if (compiler-typecheck-unsafe-decl-tests-ok?)
       unit
       (panic "typecheck: unsafe declaration tests failed"))
+    (if (compiler-typecheck-tls-current-arena-tests-ok?)
+      unit
+      (panic "typecheck: tls current arena tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
       (panic "typecheck: arena unsafe primitive tests failed"))
@@ -8329,7 +8367,7 @@
   "(define (bad-box-take-reuse [cell : (Box String)]) : i64
   (let
     [value : String (box-take cell)]
-    (+ (string-length value) (string-length (box-get cell)))))")
+    (+ (__tl_string_length value) (__tl_string_length (box-get cell)))))")
 
 (define (compiler-typecheck-move-branch-arm-isolated-source) : String
   "(define (branch-arm-isolated [flag : bool] [s : String]) : String
@@ -9624,10 +9662,10 @@
       ok)))
 
 (define (compiler-typecheck-runtime-builtin-string-ref-bad-index-source) : String
-  "(define (main) : i64 (string-ref \"abc\" \"x\"))")
+  "(define (main) : i64 (__tl_string_ref \"abc\" \"x\"))")
 
 (define (compiler-typecheck-runtime-builtin-char-at-bad-index-source) : String
-  "(define (main) : i64 (char-at \"abc\" \"x\"))")
+  "(define (main) : i64 (__tl_string_ref \"abc\" \"x\"))")
 
 (define (compiler-typecheck-runtime-builtin-tests-ok?) : bool
   (and

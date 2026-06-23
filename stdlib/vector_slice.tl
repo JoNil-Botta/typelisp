@@ -133,23 +133,30 @@
           (struct-get slice start)
           (struct-get slice len)
           0))
-      (define (next [iter : (Iter source)]) : (IterNext source)
+      (define (next [iter : (&mut iter (Iter source))]) : (IterNext source)
         (let
           [index : i64 (struct-get iter index)]
           (if (>= index (struct-get iter len))
-            (IterNext.Done iter)
+            (IterNext.Done
+              (Iter
+                (struct-get iter slots)
+                (struct-get iter start)
+                (struct-get iter len)
+                index))
             (let
               [value : ,T
                 (array-ref
                   (struct-get iter slots)
                   (+ (struct-get iter start) index))]
-              (IterNext.Item
-                value
-                (Iter
-                  (struct-get iter slots)
-                  (struct-get iter start)
-                  (struct-get iter len)
-                  (+ index 1)))))))
+              (begin
+                (set! (struct-get iter index) (+ index 1))
+                (IterNext.Item
+                  value
+                  (Iter
+                    (struct-get iter slots)
+                    (struct-get iter start)
+                    (struct-get iter len)
+                    (+ index 1))))))))
       (define (iter-done? [result : (IterNext source)]) : bool
         (match result
           [(IterNext.Done _) true]
@@ -331,33 +338,33 @@
                   7
                   "slice to vec second")))
             (let
-              [iter0 : (i64s.Iter fv) (i64s.iterator middle)]
-              [step1 : (i64s.IterNext fv) (i64s.next iter0)]
-              [iter1 : (i64s.Iter fv) (i64s.iter-state step1)]
-              [step2 : (i64s.IterNext fv) (i64s.next iter1)]
-              [iter2 : (i64s.Iter fv) (i64s.iter-state step2)]
-              [step3 : (i64s.IterNext fv) (i64s.next iter2)]
-              [iter3 : (i64s.Iter fv) (i64s.iter-state step3)]
+              [iter : (i64s.Iter fv) (i64s.iterator middle)]
               (begin
-                (test.assert-i64-eq
-                  (i64s.iter-value-or step1 -1)
-                  6
-                  "slice iterator first")
-                (test.assert-i64-eq
-                  (i64s.iter-value-or step2 -1)
-                  7
-                  "slice iterator second")
+                (let
+                  [step1 : (i64s.IterNext fv) (i64s.next (&mut iter))]
+                  (test.assert-i64-eq
+                    (i64s.iter-value-or step1 -1)
+                    6
+                    "slice iterator first"))
+                (let
+                  [step2 : (i64s.IterNext fv) (i64s.next (&mut iter))]
+                  (test.assert-i64-eq
+                    (i64s.iter-value-or step2 -1)
+                    7
+                    "slice iterator second"))
+                (let
+                  [step3 : (i64s.IterNext fv) (i64s.next (&mut iter))]
+                  (test.assert-true
+                    (i64s.iter-done? step3)
+                    "slice iterator exhausted"))
                 (test.assert-true
-                  (i64s.iter-done? step3)
-                  "slice iterator exhausted")
-                (test.assert-true
-                  (i64s.iter-done? (i64s.next iter3))
+                  (i64s.iter-done? (i64s.next (&mut iter)))
                   "slice iterator repeated exhaustion")))
             (let
               [empty-slice : (i64s.Slice fv) (i64s.from-vec (& fv) 2 2)]
               [empty-iter : (i64s.Iter fv) (i64s.iterator empty-slice)]
               (test.assert-true
-                (i64s.iter-done? (i64s.next empty-iter))
+                (i64s.iter-done? (i64s.next (&mut empty-iter)))
                 "empty slice iterator exhausted"))
             (let
               [dst : i64v.Vec (i64v.with-capacity 3)]

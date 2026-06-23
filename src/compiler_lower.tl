@@ -8607,7 +8607,9 @@
         [(AstTyMutRef _ _)
           (lower-borrow-reference-var-address state env name result-ty)]
         [_
-          (if (tc-type-contains-reference? place-ty)
+          (if (and
+            (tc-type-contains-reference? place-ty)
+            (not (lower-supported-reference-type? ctx place-ty)))
             (ErrLowerExpr
               (lower-diagnostic-at-expr
                 origin

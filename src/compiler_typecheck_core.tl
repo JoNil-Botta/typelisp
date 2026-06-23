@@ -36570,6 +36570,24 @@
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
+(define (macro-alias-self-call-decl
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  ;; `(import stdlib.vector)` binds alias `vector`; module-scope `(vector T)`
+  ;; should resolve to macro `vector` in that aliased module.
+  (match (macro-import-alias-target-cached decls (intern module) lookup-name)
+    [(TcSomeString target-module)
+      (macro-unqualified-imported-target-call-decl-with-exports
+        ctx
+        macro-expand-exports-value
+        target-module
+        lookup-name
+        call-expr)]
+    [(TcNoString) (OkMacroCallDecl (MacroNoDecl))]))
+
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -36703,6 +36721,39 @@
           call-expr))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
 
+(define (macro-call-decl-with-self-alias
+  [ctx : TcContext]
+  [func : AstExpr]
+  [decls : AstDeclList]
+  [module : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (macro-call-decl
+    (tc-context-with-module ctx module)
+    func
+    decls
+    call-expr)
+    [(OkMacroCallDecl maybe-decl)
+      (match maybe-decl
+        [(MacroNoDecl)
+          (match (ast-expr-unspan func)
+            [(AstExprVar name)
+              (let
+                [lookup-name : String (intern-str name)]
+                (if (or
+                  (tc-hygiene-global-name? lookup-name)
+                  (tc-name-qualified? lookup-name)
+                  (>= (tc-name-first-dot lookup-name) 0))
+                  (OkMacroCallDecl maybe-decl)
+                  (macro-alias-self-call-decl
+                    ctx
+                    decls
+                    module
+                    lookup-name
+                    call-expr)))]
+            [_ (OkMacroCallDecl maybe-decl)])]
+        [_ (OkMacroCallDecl maybe-decl)])]
+    [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))
+
 (define (macro-call-decl-with-context
   [ctx : TcContext]
   [func : AstExpr]
@@ -36710,45 +36761,44 @@
   [module : String]
   [context : AstMaybeModuleName]
   [call-expr : AstExpr]) : ResultMacroCallDeclModule
-  (let
-    [primary-ctx : TcContext (tc-context-with-module ctx module)]
-    (match (macro-call-decl primary-ctx func decls call-expr)
-      [(OkMacroCallDecl maybe-decl)
-        (match maybe-decl
-          [(MacroNoDecl)
-            (match context
-              [(AstSomeModuleName context-module)
-                (if (string-eq context-module module)
-                  (OkMacroCallDeclModule maybe-decl module)
-                  (match (macro-call-decl
-                    (tc-context-with-module ctx context-module)
-                    func
-                    decls
-                    call-expr)
-                    [(OkMacroCallDecl context-decl)
-                      (match context-decl
-                        [(MacroNoDecl)
-                          (OkMacroCallDeclModule maybe-decl module)]
-                        [_ (OkMacroCallDeclModule context-decl context-module)])]
-                    [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
-              [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
-          [_ (OkMacroCallDeclModule maybe-decl module)])]
-      [(ErrMacroCallDecl primary-diag)
-        (match context
-          [(AstSomeModuleName context-module)
-            (if (string-eq context-module module)
-              (ErrMacroCallDeclModule primary-diag)
-              (match (macro-call-decl
-                (tc-context-with-module ctx context-module)
-                func
-                decls
-                call-expr)
-                [(OkMacroCallDecl context-decl)
-                  (match context-decl
-                    [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
-                    [_ (OkMacroCallDeclModule context-decl context-module)])]
-                [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
-          [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])])))
+  (match (macro-call-decl-with-self-alias ctx func decls module call-expr)
+    [(OkMacroCallDecl maybe-decl)
+      (match maybe-decl
+        [(MacroNoDecl)
+          (match context
+            [(AstSomeModuleName context-module)
+              (if (string-eq context-module module)
+                (OkMacroCallDeclModule maybe-decl module)
+                (match (macro-call-decl-with-self-alias
+                  ctx
+                  func
+                  decls
+                  context-module
+                  call-expr)
+                  [(OkMacroCallDecl context-decl)
+                    (match context-decl
+                      [(MacroNoDecl) (OkMacroCallDeclModule maybe-decl module)]
+                      [_ (OkMacroCallDeclModule context-decl context-module)])]
+                  [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
+            [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
+        [_ (OkMacroCallDeclModule maybe-decl module)])]
+    [(ErrMacroCallDecl primary-diag)
+      (match context
+        [(AstSomeModuleName context-module)
+          (if (string-eq context-module module)
+            (ErrMacroCallDeclModule primary-diag)
+            (match (macro-call-decl-with-self-alias
+              ctx
+              func
+              decls
+              context-module
+              call-expr)
+              [(OkMacroCallDecl context-decl)
+                (match context-decl
+                  [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
+                  [_ (OkMacroCallDeclModule context-decl context-module)])]
+              [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
+        [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])]))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str-cat

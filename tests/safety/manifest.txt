@@ -31,6 +31,7 @@ auto_borrow_assignment_after_last_use_ok|check-ok|tests/safety/auto_borrow_assig
 auto_borrow_move_after_last_use_ok|check-ok|tests/safety/auto_borrow_move_after_last_use_ok.tl|-|-
 mutable_reference_owner_read_after_last_use_ok|check-ok|tests/safety/mutable_reference_owner_read_after_last_use_ok.tl|-|-
 two_phase_mutable_call_read_ok|check-ok|tests/safety/two_phase_mutable_call_read_ok.tl|-|-
+lifetime_tagged_iterator_mut_next_ok|run-exit|tests/safety/lifetime_tagged_iterator_mut_next_ok.tl|42|-
 borrow_if_branch_local_after_join_ok|check-ok|tests/safety/borrow_if_branch_local_after_join_ok.tl|-|-
 borrow_match_branch_local_after_join_ok|check-ok|tests/safety/borrow_match_branch_local_after_join_ok.tl|-|-
 borrow_while_body_after_last_use_ok|check-ok|tests/safety/borrow_while_body_after_last_use_ok.tl|-|-
@@ -63,6 +64,8 @@ auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move
 two_phase_mutable_call_second_mut_reject|check-fail|tests/safety/two_phase_mutable_call_second_mut_reject.tl|-|cannot mutably borrow borrowed place `items`
 two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_call_escape_reject.tl|-|cannot mutably borrow borrowed place `items`
 two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|cannot assign to borrowed place `items`
+lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
+lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`

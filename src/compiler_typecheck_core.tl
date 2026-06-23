@@ -22151,6 +22151,16 @@
     [(TcNoString)
       (OkTcBorrowPlace (TcBorrowPlace name (tc-borrow-referent-type ty)))]))
 
+(define (tc-reference-containing-place-borrow-ok? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyEnumArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyStructArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstTyVarArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [_ false]))
+
 (define (tc-borrow-place-var [name : String] [ty : AstType]) : ResultTcBorrowPlace
   (match (tc-type-strip-region ty)
     [(AstTyRef lifetime referent-ty)
@@ -22164,7 +22174,9 @@
           lifetime
           (tc-borrow-referent-type (ty-node-get referent-ty))))]
     [_
-      (if (tc-type-contains-reference? ty)
+      (if (and
+        (tc-type-contains-reference? ty)
+        (not (tc-reference-containing-place-borrow-ok? ty)))
         (ErrTcBorrowPlace
           "typecheck: borrowing places that contain references is not implemented")
         (tc-borrow-place-var-by-value name ty))]))

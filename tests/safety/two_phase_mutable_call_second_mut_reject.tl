@@ -1,4 +1,5 @@
-;: SPEC borrow contract: a reservation rejects a second overlapping mutable borrow.
+;: SPEC borrow contract: compatibility dynamic-array reservation rejects a
+;: second overlapping mutable borrow (#3581 keeps this surface staged).
 (define (take-two
   [left : (&mut left (Array i64))]
   [right : (&mut right (Array i64))]) : unit

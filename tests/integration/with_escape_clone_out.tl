@@ -1,6 +1,9 @@
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
+;; Compatibility dynamic-array clone-out coverage kept until public unsized
+;; `(Array T)` removal in #3581. The fixed array and box cases below cover the
+;; non-dynamic-array escape paths.
 (defstruct EscapeBundle
   (name String)
   (items (Array String))

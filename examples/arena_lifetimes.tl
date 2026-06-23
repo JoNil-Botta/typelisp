@@ -13,7 +13,7 @@
   (frame-count i64))
 
 (defstruct LevelState
-  (frames (Array String))
+  (frame-scores (Array i64 3))
   (total-score i64))
 
 (define (frame-temp-score [frame-index : i64]) : i64
@@ -53,7 +53,7 @@
         level
         (let
           [frame-count : i64 (struct-get global frame-count)]
-          [frames : (Array String) (make-array String frame-count)]
+          [frame-scores : (Array i64 3) (array 0 0 0)]
           [frame-index : i64 0]
           [total : i64 0]
           (begin
@@ -62,14 +62,26 @@
                 [score : i64 (frame-temp-score frame-index)]
                 [summary : String (frame-summary scratch frame-index score)]
                 (begin
-                  (array-set! frames frame-index summary)
+                  (array-set! frame-scores frame-index score)
+                  (assert-i64-eq
+                    (string-length (& summary))
+                    15
+                    "frame summary length")
                   (set! total (+ total score))
                   (set! frame-index (+ frame-index 1)))))
             (let
-              [state : LevelState (LevelState frames total)]
+              [state : LevelState (LevelState frame-scores total)]
               [global-title : String (struct-get global title)]
-              [first : String (array-ref (struct-get state frames) 0)]
-              [last : String (array-ref (struct-get state frames) 2)]
+              [first : String
+                (frame-summary
+                  scratch
+                  0
+                  (array-ref (struct-get state frame-scores) 0))]
+              [last : String
+                (frame-summary
+                  scratch
+                  2
+                  (array-ref (struct-get state frame-scores) 2))]
               [want-title : String "arena-cookbook"]
               [want-first : String "frame:0/score:9"]
               [want-last : String "frame:2/score:9"]

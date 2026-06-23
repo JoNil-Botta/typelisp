@@ -1,7 +1,7 @@
-;; refs #1867: array-push! of an inline struct element into a dynamic array
-;; byte-copies the whole element into the correctly-strided slot instead of
-;; truncating to 8 bytes / striding by 8. main returns 42 only when both pushed
-;; structs read back through array-ref with their fields intact.
+;; refs #1867/#3581: compatibility dynamic-array `array-push!` of an inline
+;; struct element byte-copies the whole element into the correctly-strided slot
+;; instead of truncating to 8 bytes / striding by 8. main returns 42 only when
+;; both pushed structs read back through array-ref with their fields intact.
 (defstruct P
   (x i64)
   (y i64))

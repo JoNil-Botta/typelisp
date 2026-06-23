@@ -1,4 +1,5 @@
-;: SPEC borrow contract: a shared borrow created during reservation cannot escape activation.
+;: SPEC borrow contract: compatibility dynamic-array shared borrow created
+;: during reservation cannot escape activation (#3581 keeps this surface staged).
 (define (borrow-items [items : (& items (Array i64))]) : (& items (Array i64))
   items)
 

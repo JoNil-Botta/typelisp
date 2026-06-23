@@ -3899,6 +3899,18 @@
     [box : (RefBox n) (box-id (& n))]
     (let [value : (& n i64) (struct-get box value)] 0)))")
 
+(define (compiler-typecheck-lifetime-iterator-mut-borrow-source) : String
+  "(defstruct Iter
+  (:lifetimes source)
+  (slots (& source (Array i64)))
+  (index i64))
+(define (advance [iter : (&mut iter (Iter source))]) : unit
+  (set! (struct-get iter index) (+ (struct-get iter index) 1)))
+(define (main [items : (Array i64)]) : unit
+  (let
+    [iter : (Iter items) (Iter (& items) 0)]
+    (advance (&mut iter))))")
+
 (define (compiler-typecheck-regular-call-lifetime-conflict-source) : String
   "(define (same-owner [a : (& source i64)] [b : (& source i64)]) : i64 0)
 (define (main [n : i64]) : i64
@@ -4266,6 +4278,9 @@
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-regular-call-lifetime-subst-source))]
+    [lifetime-iterator-mut-borrow-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-lifetime-iterator-mut-borrow-source))]
     [regular-call-lifetime-conflict-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-regular-call-lifetime-conflict-source)
@@ -4435,6 +4450,9 @@
         unit
         (set! ok false))
       (if regular-call-lifetime-subst-ok
+        unit
+        (set! ok false))
+      (if lifetime-iterator-mut-borrow-ok
         unit
         (set! ok false))
       (if regular-call-lifetime-conflict-error-ok

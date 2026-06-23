@@ -96,11 +96,12 @@
 
 (define (clean-report [dry-run : bool] [path : String]) : unit
   (print-string
-    (string-append
+    (str-cat
       (if dry-run
         "Would remove: "
         "Removed: ")
-      (string-append path "\n"))))
+      path
+      "\n")))
 
 (define (clean-remove-file [dry-run : bool] [path : String]) : i64
   (if (clean-file-exists? path)
@@ -119,7 +120,8 @@
               (str-cat
                 "clean: failed to remove file "
                 path
-                (string-append ": " (io-error-message error))))
+                ": "
+                (io-error-message error)))
             1)]))
     0))
 
@@ -140,7 +142,8 @@
               (str-cat
                 "clean: failed to remove directory "
                 path
-                (string-append ": " (io-error-message error))))
+                ": "
+                (io-error-message error)))
             1)]))
     0))
 

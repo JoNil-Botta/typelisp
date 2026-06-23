@@ -8,7 +8,7 @@
     (let
       [prefix : String "scratch:"]
       [seed-text : String (string.int->string seed)]
-      [text : String (string.string-append-borrowed (& prefix) (& seed-text))]
+      [text : String (string.string-append (& prefix) (& seed-text))]
       (string-length (& text)))))
 
 (define (scratch-clone-message [scratch : arena.Arena] [seed : i64]) : String
@@ -17,14 +17,14 @@
     (let
       [prefix : String "kept:"]
       [seed-text : String (string.int->string seed)]
-      (string.string-append-borrowed (& prefix) (& seed-text)))))
+      (string.string-append (& prefix) (& seed-text)))))
 
 (define (scratch-one-shot-message [seed : i64]) : String
   (with-scratch
     (let
       [prefix : String "oneshot:"]
       [seed-text : String (string.int->string seed)]
-      (string.string-append-borrowed (& prefix) (& seed-text)))))
+      (string.string-append (& prefix) (& seed-text)))))
 
 (define (main) : i64
   (let

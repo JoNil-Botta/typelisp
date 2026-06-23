@@ -119,7 +119,7 @@
 
 ;: Return true when two borrowed string keys are equal.
 (define (hash-key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
-  (string.string-eq-borrowed a b))
+  (string.string-eq a b))
 
 (test
   hash-api

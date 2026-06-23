@@ -627,7 +627,7 @@ verify_compiler_driver_stdlib_string_runtime() {
   (let
     [joined : String (string-append "foo" "bar")]
     [extended : String (string-concat joined "!")]
-    [borrowed : String (string-append-borrowed (& extended) (& joined))]
+    [borrowed : String (string-append (& extended) (& joined))]
     [digits : String (int->string -42)]
     (if (and
       (string-eq borrowed "foobar!foobar")

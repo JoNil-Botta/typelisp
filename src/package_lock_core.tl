@@ -506,16 +506,16 @@
             [code : i64 (package-lock-char-code-at text i)]
             (cond
               [(= code 34)
-                (set! out (string-append out (string-append slash quote)))]
+                (set! out (string-concat3 out (string-append slash quote) ""))]
               [(= code 92)
-                (set! out (string-append out (string-append slash slash)))]
+                (set! out (string-concat3 out (string-append slash slash) ""))]
               [(= code 10)
-                (set! out (string-append out (string-append slash "n")))]
+                (set! out (string-concat3 out (string-append slash "n") ""))]
               [(= code 9)
-                (set! out (string-append out (string-append slash "t")))]
+                (set! out (string-concat3 out (string-append slash "t") ""))]
               [(= code 13)
-                (set! out (string-append out (string-append slash "r")))]
-              [else (set! out (string-append out (substring text i 1)))]))
+                (set! out (string-concat3 out (string-append slash "r") ""))]
+              [else (set! out (string-concat3 out (substring text i 1) ""))]))
           (set! i (+ i 1))))
       out)))
 

@@ -92,7 +92,7 @@
   [chunk : (& chunk str)]) : (TextBufBorrowed text)
   (text-buf-borrowed-append-owned
     buf
-    (string.substring-borrowed chunk 0 (string-length chunk))))
+    (string.substring chunk 0 (string-length chunk))))
 
 ;: Append rendered `right` after `left`. This is an explicit owned-copy
 ;: boundary, so `right` may be assembled independently before being appended.
@@ -105,7 +105,7 @@
 (define (text-buf-borrowed-chunk-string [chunk : (TextBufBorrowedChunk text)]) : String
   (match chunk
     [(TextBufBorrowedChunkBorrowed text)
-      (string.substring-borrowed text 0 (string-length text))]
+      (string.substring text 0 (string-length text))]
     [(TextBufBorrowedChunkOwned text) text]))
 
 ;: Convert borrowed chunks to the owned chunk-list shape without changing the

@@ -180,46 +180,48 @@
     [done : bool false]
     [clean-eof : bool false]
     [err : String ""]
+    [has-error : bool false]
     (begin
       (while (not done)
-        (if (string-eq err "")
-          (let
-            [line-read : StdinRead (stdin-read-line)]
-            [line : String
-              (lsp-frame-trim-right-space-cr (stdin-read-text line-read))]
-            (if (stdin-read-eof? line-read)
-              (if (= (string-length line) 0)
-                (if saw-header
-                  (begin
-                    (set! err "lsp: EOF before header terminator")
-                    (set! done true))
-                  (begin
-                    (set! clean-eof true)
-                    (set! done true)))
+        (let
+          [line-read : StdinRead (stdin-read-line)]
+          [line : String
+            (lsp-frame-trim-right-space-cr (stdin-read-text line-read))]
+          (if (stdin-read-eof? line-read)
+            (if (= (string-length line) 0)
+              (if saw-header
                 (begin
-                  (set! saw-header true)
-                  (match (lsp-frame-parse-content-length line)
-                    [(LspLengthIgnore) unit]
-                    [(LspLengthOk n) (set! content-length n)]
-                    [(LspLengthErr message)
-                      (begin
-                        (set! err message)
-                        (set! done true))])))
-              (if (string-eq line "")
-                (set! done true)
+                  (set! err "lsp: EOF before header terminator")
+                  (set! has-error true)
+                  (set! done true))
                 (begin
-                  (set! saw-header true)
-                  (match (lsp-frame-parse-content-length line)
-                    [(LspLengthIgnore) unit]
-                    [(LspLengthOk n) (set! content-length n)]
-                    [(LspLengthErr message)
-                      (begin
-                        (set! err message)
-                        (set! done true))])))))
-          (set! done true)))
+                  (set! clean-eof true)
+                  (set! done true)))
+              (begin
+                (set! saw-header true)
+                (match (lsp-frame-parse-content-length line)
+                  [(LspLengthIgnore) unit]
+                  [(LspLengthOk n) (set! content-length n)]
+                  [(LspLengthErr message)
+                    (begin
+                      (set! err message)
+                      (set! has-error true)
+                      (set! done true))])))
+            (if (string-eq line "")
+              (set! done true)
+              (begin
+                (set! saw-header true)
+                (match (lsp-frame-parse-content-length line)
+                  [(LspLengthIgnore) unit]
+                  [(LspLengthOk n) (set! content-length n)]
+                  [(LspLengthErr message)
+                    (begin
+                      (set! err message)
+                      (set! has-error true)
+                      (set! done true))]))))))
       (cond
         [clean-eof LspFrameEof]
-        [(not (string-eq err "")) (LspFrameErr err)]
+        [has-error (LspFrameErr err)]
         [(< content-length 0) (LspFrameErr "lsp: missing Content-Length")]
         [else
           (let
@@ -490,9 +492,10 @@
     [i : i64 0]
     [out : String ""]
     [err : String ""]
+    [has-error : bool false]
     (begin
       (while (< i n)
-        (if (string-eq err "")
+        (if (not has-error)
           (if (= (string-ref text i) '%')
             (if (< (+ i 2) n)
               (let
@@ -502,23 +505,26 @@
                   (match (json.json-codepoint-string (+ (* hi 16) lo))
                     [(json.OkJsonCodepointString decoded)
                       (begin
-                        (set! out (string-append out decoded))
+                        (set! out (string-concat3 out decoded ""))
                         (set! i (+ i 3)))]
                     [(json.ErrJsonCodepointString message)
                       (begin
                         (set! err message)
+                        (set! has-error true)
                         (set! i n))])
                   (begin
                     (set! err "lsp: invalid percent escape in file URI")
+                    (set! has-error true)
                     (set! i n))))
               (begin
                 (set! err "lsp: invalid percent escape in file URI")
+                (set! has-error true)
                 (set! i n)))
             (begin
-              (set! out (string-append out (substring text i 1)))
+              (set! out (string-concat3 out (substring text i 1) ""))
               (set! i (+ i 1))))
           (set! i n)))
-      (if (string-eq err "")
+      (if (not has-error)
         (OkLspString out)
         (ErrLspString err)))))
 
@@ -564,22 +570,21 @@
           (let
             [code : i64 (cast (string-ref path i) : i64)]
             (if (lsp-uri-safe-code? code)
-              (set! out (string-append out (substring path i 1)))
+              (set! out (string-concat3 out (substring path i 1) ""))
               (set!
                 out
                 (str-cat
                   out
                   "%"
-                  (string-append
-                    (json.json-hex-digit (/ code 16))
-                    (json.json-hex-digit (- code (* (/ code 16) 16))))))))
+                  (json.json-hex-digit (/ code 16))
+                  (json.json-hex-digit (- code (* (/ code 16) 16)))))))
           (set! i (+ i 1))))
       out)))
 
 (define (lsp-path-to-file-uri [path : String]) : String
   (if (and (> (string-length path) 0) (= (string-ref path 0) '/'))
-    (string-append "file://" (lsp-percent-encode-path path))
-    (string-append "file:///" (lsp-percent-encode-path path))))
+    (str-cat "file://" (lsp-percent-encode-path path))
+    (str-cat "file:///" (lsp-percent-encode-path path))))
 
 (define (lsp-resolved-path-to-file-uri [path : String]) : String
   (let
@@ -2673,8 +2678,9 @@
   (let
     [i : i64 start]
     [result : String ""]
+    [found : bool false]
     (begin
-      (while (and (< i end) (string-eq result ""))
+      (while (and (< i end) (not found))
         (let
           [c : char (string-ref text i)]
           (if (= c '"')
@@ -2684,9 +2690,11 @@
                 [vs : i64 (lsp-skip-space text (+ i 1) end)]
                 [ve : i64 (lsp-scan-ident text vs end)]
                 (if (string-eq (substring text vs (- ve vs)) needle)
-                  (set!
-                    result
-                    (substring text i (- (lsp-skip-paren-group text i end) i)))
+                  (begin
+                    (set!
+                      result
+                      (substring text i (- (lsp-skip-paren-group text i end) i)))
+                    (set! found true))
                   (set! i (lsp-skip-paren-group text i end))))
               (set! i (+ i 1))))))
       result)))
@@ -2726,7 +2734,7 @@
                         (set!
                           enum-name
                           (substring text name-start (- name-end name-start)))
-                        (set! variant-form variant)
+                        (set! variant-form (string-copy variant))
                         (set! found true))))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
@@ -2789,380 +2797,209 @@
 ;; Curated hover for builtins, operators, and special forms (no source
 ;; (define ...) exists for these). Returns markdown, or "" when unknown.
 (define (lsp-builtin-hover [name : String]) : String
-  (let
-    [result : String ""]
-    (begin
-      (if (and
-        (string-eq result "")
-        (or
-          (string-eq name "i64")
-          (string-eq name "i32")
-          (string-eq name "i16")
-          (string-eq name "i8")))
-        (set!
-          result
-          (lsp-hover-markdown
-            name
-            "Signed integer (two's complement) of the named bit width."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or
-          (string-eq name "u64")
-          (string-eq name "u32")
-          (string-eq name "u16")
-          (string-eq name "u8")))
-        (set!
-          result
-          (lsp-hover-markdown name "Unsigned integer of the named bit width."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or (string-eq name "f64") (string-eq name "f32")))
-        (set!
-          result
-          (lsp-hover-markdown
-            name
-            "IEEE-754 floating-point number (64- or 32-bit)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "bool"))
-        (set! result (lsp-hover-markdown "bool" "Boolean: `true` or `false`."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "char"))
-        (set!
-          result
-          (lsp-hover-markdown "char" "A character value (written like `'a'`)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "String"))
-        (set!
-          result
-          (lsp-hover-markdown "String" "Owned, heap-allocated UTF-8 string."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "str"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "str"
-            "Borrowed string slice (used as `(& str)`)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "unit"))
-        (set!
-          result
-          (lsp-hover-markdown "unit" "The unit type; its only value is `unit`."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "never"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "never"
-            "The empty type, for expressions that never return (e.g. `panic`)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "Array"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(Array T)"
-            "Dynamically sized, heap-allocated array of `T`."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "Tuple"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(Tuple A B ...)"
-            "Fixed-size tuple of the given element types."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "Box"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(Box T)"
-            "Heap-allocated `T`; used for recursive data structures."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "Ptr"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(Ptr T)"
-            "Raw immutable pointer to `T` (unsafe to dereference)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "MutPtr"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(MutPtr T)"
-            "Raw mutable pointer to `T` (unsafe to dereference)."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or
-          (string-eq name "+")
-          (string-eq name "-")
-          (string-eq name "*")
-          (string-eq name "/")))
-        (set!
-          result
-          (lsp-hover-markdown
-            (string-append name " : (-> num num num)")
-            "Arithmetic on two integers or floats of the same numeric type."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "%"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "% : (-> int int int)"
-            "Integer remainder (modulo)."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or (string-eq name "=") (string-eq name "!=")))
-        (set!
-          result
-          (lsp-hover-markdown
-            (string-append name " : (-> a a bool)")
-            "Equality / inequality comparison."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or
-          (string-eq name "<")
-          (string-eq name "<=")
-          (string-eq name ">")
-          (string-eq name ">=")))
-        (set!
-          result
-          (lsp-hover-markdown
-            (string-append name " : (-> a a bool)")
-            "Ordering comparison."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or (string-eq name "shl") (string-eq name "shr")))
-        (set!
-          result
-          (lsp-hover-markdown
-            (string-append name " : (-> int int int)")
-            "Bit shift left / right."))
-        unit)
-      (if (and
-        (string-eq result "")
-        (or
-          (string-eq name "bit-and")
-          (string-eq name "bit-or")
-          (string-eq name "bit-xor")))
-        (set!
-          result
-          (lsp-hover-markdown
-            (string-append name " : (-> int int int)")
-            "Bitwise and / or / xor."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "bit-not"))
-        (set!
-          result
-          (lsp-hover-markdown "bit-not : (-> int int)" "Bitwise complement."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "not"))
-        (set!
-          result
-          (lsp-hover-markdown "not : (-> bool bool)" "Logical negation."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "neg"))
-        (set!
-          result
-          (lsp-hover-markdown "neg : (-> num num)" "Numeric negation."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "string-length"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "string-length : (-> String i64)"
-            "Number of bytes in a string."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "string-ref"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "string-ref : (-> String i64 char)"
-            "Byte at the given index."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "string-data"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "string-data : (-> String (Ptr u8))"
-            "Pointer to a string's bytes."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "make-array"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "make-array : (-> Type i64 (Array T))"
-            "Allocate a zero-initialized array of the given element type and length."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "array-ref"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "array-ref : (-> (Array T) i64 T)"
-            "Read an array element (bounds-checked)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "array-set!"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "array-set! : (-> (Array T) i64 T unit)"
-            "Write an array element (bounds-checked)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "array-push!"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "array-push! : (-> (Array T) T unit)"
-            "Append a value to a dynamic array."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "array-data"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "array-data : (-> (Array T) (Ptr T))"
-            "Pointer to an array's storage."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "tuple-ref"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "tuple-ref : (-> Tuple i64 T)"
-            "Read a tuple element by constant index."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "struct-get"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "struct-get : (-> Struct field T)"
-            "Read a struct field by name."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-null"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-null : (-> (Ptr T))"
-            "Null pointer of the given type."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-null?"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-null? : (-> (Ptr T) bool)"
-            "Whether a pointer is null."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-read"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-read : (-> (Ptr T) i64 T)"
-            "Read the element at an offset from a pointer (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-write!"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-write! : (-> (MutPtr T) i64 T unit)"
-            "Write the element at an offset through a pointer (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-offset"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-offset : (-> (Ptr T) i64 (Ptr T))"
-            "Offset a pointer by N elements (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr-cast"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr-cast : (-> (Ptr A) Type (Ptr B))"
-            "Reinterpret a pointer's element type (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "ptr->int"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "ptr->int : (-> (Ptr T) u64)"
-            "Pointer to integer address (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "int->ptr"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "int->ptr : (-> u64 Type (Ptr T))"
-            "Integer address to pointer (unsafe)."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "if"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(if cond then else)"
-            "Conditional expression; both branches must have the same type."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "let"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(let [name : T value] ... body)"
-            "Introduce local bindings, then evaluate the body."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "begin"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(begin expr ...)"
-            "Evaluate expressions in sequence; the result is the last."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "while"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(while cond body)"
-            "Loop while the condition is true."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "set!"))
-        (set!
-          result
-          (lsp-hover-markdown "(set! name value)" "Mutate an existing binding."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "match"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(match value [pattern body] ...)"
-            "Pattern match on an enum value."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "return"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(return value)"
-            "Return early from the enclosing function."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "lambda"))
-        (set!
-          result
-          (lsp-hover-markdown "(lambda [p : T] ... body)" "Anonymous function."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "cast"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(cast value : Type)"
-            "Convert a value to another numeric or pointer type."))
-        unit)
-      (if (and (string-eq result "") (string-eq name "unsafe"))
-        (set!
-          result
-          (lsp-hover-markdown
-            "(unsafe body)"
-            "Permit unsafe operations (raw pointers, syscalls) within the body."))
-        unit)
-      result)))
+  (cond
+    [(or
+        (string-eq name "i64")
+        (string-eq name "i32")
+        (string-eq name "i16")
+        (string-eq name "i8"))
+      (lsp-hover-markdown
+        (string-copy name)
+        "Signed integer (two's complement) of the named bit width.")]
+    [(or
+        (string-eq name "u64")
+        (string-eq name "u32")
+        (string-eq name "u16")
+        (string-eq name "u8"))
+      (lsp-hover-markdown
+        (string-copy name)
+        "Unsigned integer of the named bit width.")]
+    [(or (string-eq name "f64") (string-eq name "f32"))
+      (lsp-hover-markdown
+        (string-copy name)
+        "IEEE-754 floating-point number (64- or 32-bit).")]
+    [(string-eq name "bool")
+      (lsp-hover-markdown "bool" "Boolean: `true` or `false`.")]
+    [(string-eq name "char")
+      (lsp-hover-markdown "char" "A character value (written like `'a'`).")]
+    [(string-eq name "String")
+      (lsp-hover-markdown "String" "Owned, heap-allocated UTF-8 string.")]
+    [(string-eq name "str")
+      (lsp-hover-markdown "str" "Borrowed string slice (used as `(& str)`).")]
+    [(string-eq name "unit")
+      (lsp-hover-markdown "unit" "The unit type; its only value is `unit`.")]
+    [(string-eq name "never")
+      (lsp-hover-markdown
+        "never"
+        "The empty type, for expressions that never return (e.g. `panic`).")]
+    [(string-eq name "Array")
+      (lsp-hover-markdown
+        "(Array T)"
+        "Dynamically sized, heap-allocated array of `T`.")]
+    [(string-eq name "Tuple")
+      (lsp-hover-markdown
+        "(Tuple A B ...)"
+        "Fixed-size tuple of the given element types.")]
+    [(string-eq name "Box")
+      (lsp-hover-markdown
+        "(Box T)"
+        "Heap-allocated `T`; used for recursive data structures.")]
+    [(string-eq name "Ptr")
+      (lsp-hover-markdown
+        "(Ptr T)"
+        "Raw immutable pointer to `T` (unsafe to dereference).")]
+    [(string-eq name "MutPtr")
+      (lsp-hover-markdown
+        "(MutPtr T)"
+        "Raw mutable pointer to `T` (unsafe to dereference).")]
+    [(or
+        (string-eq name "+")
+        (string-eq name "-")
+        (string-eq name "*")
+        (string-eq name "/"))
+      (lsp-hover-markdown
+        (string-append name " : (-> num num num)")
+        "Arithmetic on two integers or floats of the same numeric type.")]
+    [(string-eq name "%")
+      (lsp-hover-markdown "% : (-> int int int)" "Integer remainder (modulo).")]
+    [(or (string-eq name "=") (string-eq name "!="))
+      (lsp-hover-markdown
+        (string-append name " : (-> a a bool)")
+        "Equality / inequality comparison.")]
+    [(or
+        (string-eq name "<")
+        (string-eq name "<=")
+        (string-eq name ">")
+        (string-eq name ">="))
+      (lsp-hover-markdown
+        (string-append name " : (-> a a bool)")
+        "Ordering comparison.")]
+    [(or (string-eq name "shl") (string-eq name "shr"))
+      (lsp-hover-markdown
+        (string-append name " : (-> int int int)")
+        "Bit shift left / right.")]
+    [(or
+        (string-eq name "bit-and")
+        (string-eq name "bit-or")
+        (string-eq name "bit-xor"))
+      (lsp-hover-markdown
+        (string-append name " : (-> int int int)")
+        "Bitwise and / or / xor.")]
+    [(string-eq name "bit-not")
+      (lsp-hover-markdown "bit-not : (-> int int)" "Bitwise complement.")]
+    [(string-eq name "not")
+      (lsp-hover-markdown "not : (-> bool bool)" "Logical negation.")]
+    [(string-eq name "neg")
+      (lsp-hover-markdown "neg : (-> num num)" "Numeric negation.")]
+    [(string-eq name "string-length")
+      (lsp-hover-markdown
+        "string-length : (-> String i64)"
+        "Number of bytes in a string.")]
+    [(string-eq name "string-ref")
+      (lsp-hover-markdown
+        "string-ref : (-> String i64 char)"
+        "Byte at the given index.")]
+    [(string-eq name "string-data")
+      (lsp-hover-markdown
+        "string-data : (-> String (Ptr u8))"
+        "Pointer to a string's bytes.")]
+    [(string-eq name "make-array")
+      (lsp-hover-markdown
+        "make-array : (-> Type i64 (Array T))"
+        "Allocate a zero-initialized array of the given element type and length.")]
+    [(string-eq name "array-ref")
+      (lsp-hover-markdown
+        "array-ref : (-> (Array T) i64 T)"
+        "Read an array element (bounds-checked).")]
+    [(string-eq name "array-set!")
+      (lsp-hover-markdown
+        "array-set! : (-> (Array T) i64 T unit)"
+        "Write an array element (bounds-checked).")]
+    [(string-eq name "array-push!")
+      (lsp-hover-markdown
+        "array-push! : (-> (Array T) T unit)"
+        "Append a value to a dynamic array.")]
+    [(string-eq name "array-data")
+      (lsp-hover-markdown
+        "array-data : (-> (Array T) (Ptr T))"
+        "Pointer to an array's storage.")]
+    [(string-eq name "tuple-ref")
+      (lsp-hover-markdown
+        "tuple-ref : (-> Tuple i64 T)"
+        "Read a tuple element by constant index.")]
+    [(string-eq name "struct-get")
+      (lsp-hover-markdown
+        "struct-get : (-> Struct field T)"
+        "Read a struct field by name.")]
+    [(string-eq name "ptr-null")
+      (lsp-hover-markdown
+        "ptr-null : (-> (Ptr T))"
+        "Null pointer of the given type.")]
+    [(string-eq name "ptr-null?")
+      (lsp-hover-markdown
+        "ptr-null? : (-> (Ptr T) bool)"
+        "Whether a pointer is null.")]
+    [(string-eq name "ptr-read")
+      (lsp-hover-markdown
+        "ptr-read : (-> (Ptr T) i64 T)"
+        "Read the element at an offset from a pointer (unsafe).")]
+    [(string-eq name "ptr-write!")
+      (lsp-hover-markdown
+        "ptr-write! : (-> (MutPtr T) i64 T unit)"
+        "Write the element at an offset through a pointer (unsafe).")]
+    [(string-eq name "ptr-offset")
+      (lsp-hover-markdown
+        "ptr-offset : (-> (Ptr T) i64 (Ptr T))"
+        "Offset a pointer by N elements (unsafe).")]
+    [(string-eq name "ptr-cast")
+      (lsp-hover-markdown
+        "ptr-cast : (-> (Ptr A) Type (Ptr B))"
+        "Reinterpret a pointer's element type (unsafe).")]
+    [(string-eq name "ptr->int")
+      (lsp-hover-markdown
+        "ptr->int : (-> (Ptr T) u64)"
+        "Pointer to integer address (unsafe).")]
+    [(string-eq name "int->ptr")
+      (lsp-hover-markdown
+        "int->ptr : (-> u64 Type (Ptr T))"
+        "Integer address to pointer (unsafe).")]
+    [(string-eq name "if")
+      (lsp-hover-markdown
+        "(if cond then else)"
+        "Conditional expression; both branches must have the same type.")]
+    [(string-eq name "let")
+      (lsp-hover-markdown
+        "(let [name : T value] ... body)"
+        "Introduce local bindings, then evaluate the body.")]
+    [(string-eq name "begin")
+      (lsp-hover-markdown
+        "(begin expr ...)"
+        "Evaluate expressions in sequence; the result is the last.")]
+    [(string-eq name "while")
+      (lsp-hover-markdown
+        "(while cond body)"
+        "Loop while the condition is true.")]
+    [(string-eq name "set!")
+      (lsp-hover-markdown "(set! name value)" "Mutate an existing binding.")]
+    [(string-eq name "match")
+      (lsp-hover-markdown
+        "(match value [pattern body] ...)"
+        "Pattern match on an enum value.")]
+    [(string-eq name "return")
+      (lsp-hover-markdown
+        "(return value)"
+        "Return early from the enclosing function.")]
+    [(string-eq name "lambda")
+      (lsp-hover-markdown "(lambda [p : T] ... body)" "Anonymous function.")]
+    [(string-eq name "cast")
+      (lsp-hover-markdown
+        "(cast value : Type)"
+        "Convert a value to another numeric or pointer type.")]
+    [(string-eq name "unsafe")
+      (lsp-hover-markdown
+        "(unsafe body)"
+        "Permit unsafe operations (raw pointers, syscalls) within the body.")]
+    [else ""]))
 
 (define (lsp-hover-respond
   [id : json.Json]
@@ -3501,7 +3338,7 @@
     [end-off : i64 (lsp-offset-at-position text (- el 1) (- ec 1))]
     [before : String (substring text 0 start-off)]
     [after : String (substring text end-off (- (string-length text) end-off))]
-    (string-append (string-append before new-text) after)))
+    (str-cat before new-text after)))
 
 ;; tl/listFunctions - List all top-level function names in a document
 (define (lsp-handle-tl-list-functions
@@ -3791,7 +3628,7 @@
             (lsp-write-error id -32600 "Missing name or position parameter")
             (LspContinue docs))
           (let
-            [text-copy : String (string-copy-borrowed (& text))]
+            [text-copy : String (string-copy (& text))]
             [decls : LspDeclList (lsp-scan-decls text-copy)]
             (match (lsp-json-string-field params "destination")
               [(OkLspJsonText destination)
@@ -3836,7 +3673,7 @@
       (match (lsp-json-string-field params "name")
         [(OkLspJsonText name)
           (let
-            [text-copy : String (string-copy-borrowed (& text))]
+            [text-copy : String (string-copy (& text))]
             [decls : LspDeclList (lsp-scan-decls text-copy)]
             [i : i64 0]
             [n : i64 (lsp-decl-list-len decls)]
@@ -4002,19 +3839,19 @@
                 (let
                   [size : i64 (tc-inlay-hints-size)]
                   [i : i64 0]
-                  [found-type : String ""]
+                  [found-idx : i64 -1]
                   (begin
-                    (while (and (< i size) (string-eq found-type ""))
+                    (while (and (< i size) (= found-idx -1))
                       (let
                         [hint-line : i64 (tc-inlay-hint-line-at i)]
                         [hint-col : i64 (tc-inlay-hint-col-at i)]
                         (begin
                           (if (and (= hint-line line1) (= hint-col col1))
-                            (set! found-type (tc-inlay-hint-type-at i))
+                            (set! found-idx i)
                             unit)
                           (set! i (+ i 1)))))
                     (tc-inlay-hints-disable!)
-                    (if (string-eq found-type "")
+                    (if (= found-idx -1)
                       (begin
                         (lsp-write-response
                           id
@@ -4025,15 +3862,17 @@
                             (json.JsonString
                               "No type information at this position")))
                         (LspContinue docs))
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool true)
-                            "type"
-                            (json.JsonString found-type)))
-                        (LspContinue docs)))))))]
+                      (let
+                        [found-type : String (tc-inlay-hint-type-at found-idx)]
+                        (begin
+                          (lsp-write-response
+                            id
+                            (lsp-json-object2
+                              "success"
+                              (json.JsonBool true)
+                              "type"
+                              (json.JsonString found-type)))
+                          (LspContinue docs))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
@@ -4322,15 +4161,13 @@
                   (lsp-validate-forms-error new-text)))
               (LspContinue docs))
             (let
-              [text-copy : String (string-copy-borrowed (& text))]
+              [text-copy : String (string-copy (& text))]
               [decls : LspDeclList (lsp-scan-decls text-copy)]
               [n : i64 (lsp-decl-list-len decls)]
               [result : String ""]
               (begin
                 (if (= n 0)
-                  (set!
-                    result
-                    (string-append (string-append text "\n\n") new-text))
+                  (set! result (str-cat text "\n\n" new-text))
                   (let
                     [last-entry : LspDeclEntry
                       (lsp-decl-list-get
@@ -4345,7 +4182,7 @@
                         (struct-get last-entry form-end-col)
                         (struct-get last-entry form-end-line)
                         (struct-get last-entry form-end-col)
-                        (string-append "\n\n" new-text)))))
+                        (str-cat "\n\n" new-text)))))
                 (let
                   [formatted : String (lsp-format-edit-text result)]
                   (begin
@@ -4987,14 +4824,14 @@
             (>= (+ i old-len) n)
             (not (lsp-ident-char? (string-ref text (+ i old-len))))))
           (begin
-            (set! result (string-append result new))
+            (set! result (string-concat3 result new ""))
             (set! i (+ i old-len)))
           (begin
-            (set! result (string-append result (substring text i 1)))
+            (set! result (string-concat3 result (substring text i 1) ""))
             (set! i (+ i 1)))))
       (while (< i n)
         (begin
-          (set! result (string-append result (substring text i 1)))
+          (set! result (string-concat3 result (substring text i 1) ""))
           (set! i (+ i 1))))
       result)))
 
@@ -5074,7 +4911,7 @@
                 (match (lsp-json-string-field params "newPattern")
                   [(OkLspJsonText new-pattern)
                     (let
-                      [text-copy : String (string-copy-borrowed (& text))]
+                      [text-copy : String (string-copy (& text))]
                       [decls : LspDeclList (lsp-scan-decls text-copy)]
                       [i : i64 0]
                       [n : i64 (lsp-decl-list-len decls)]
@@ -5232,7 +5069,7 @@
   [name : String]
   [new-body : String]) : LspEditResult
   (let
-    [text-copy : String (string-copy-borrowed (& text))]
+    [text-copy : String (string-copy (& text))]
     [decls : LspDeclList (lsp-scan-decls text-copy)]
     [i : i64 0]
     [n : i64 (lsp-decl-list-len decls)]
@@ -5319,7 +5156,7 @@
   (if (string-eq old-pattern "")
     (ErrLspEdit "oldPattern cannot be empty")
     (let
-      [text-copy : String (string-copy-borrowed (& text))]
+      [text-copy : String (string-copy (& text))]
       [decls : LspDeclList (lsp-scan-decls text-copy)]
       [i : i64 0]
       [n : i64 (lsp-decl-list-len decls)]
@@ -5418,7 +5255,7 @@
         "newText is not valid form(s): "
         (lsp-validate-forms-error new-text)))
     (let
-      [text-copy : String (string-copy-borrowed (& text))]
+      [text-copy : String (string-copy (& text))]
       [decls : LspDeclList (lsp-scan-decls text-copy)]
       [i : i64 0]
       [n : i64 (lsp-decl-list-len decls)]

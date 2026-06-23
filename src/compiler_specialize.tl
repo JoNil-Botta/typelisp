@@ -1382,11 +1382,12 @@
     [c : char (string-ref name index)]
     [code : i64 (cast c : i64)]
     (if (and (>= code 65) (<= code 90))
-      (string-append
+      (string-concat3
         (if (> index 0)
           "-"
           "")
-        (gen-hashmap-one-byte-string (+ code 32)))
+        (gen-hashmap-one-byte-string (+ code 32))
+        "")
       (if (= code 95)
         "-"
         (substring name index 1)))))

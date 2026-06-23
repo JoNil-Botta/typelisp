@@ -122,7 +122,7 @@
 
 ;: Copy a borrowed string into active-arena owned storage.
 (define (process-borrowed-string-owned [value : (& value str)]) : String
-  (string.substring-borrowed value 0 (string-length value)))
+  (string.substring value 0 (string-length value)))
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (process-borrowed-args-owned [args : (ProcessBorrowedStringList text)]) : process.ProcessStringList
@@ -455,7 +455,7 @@
       (match (process-borrowed-args-normalize (box-get rest))
         [(ProcessBorrowedStringNil)
           (process-borrowed-test-assert-true
-            (string.string-eq-borrowed actual (& expected)))]
+            (string.string-eq actual (& expected)))]
         [_ (process-borrowed-test-fail)])]
     [(ProcessBorrowedStringNil) (process-borrowed-test-fail)]))
 
@@ -465,8 +465,7 @@
   [expected : String]) : unit
   (match (process-borrowed-maybe-normalize value)
     [(ProcessBorrowedSomeString actual)
-      (process-borrowed-test-assert-true
-        (string.string-eq-borrowed actual (& expected)))]
+      (process-borrowed-test-assert-true (string.string-eq actual (& expected)))]
     [(ProcessBorrowedNoString) (process-borrowed-test-fail)]))
 
 ;: Inline test assertion for the head of an owned process environment list.
@@ -495,9 +494,9 @@
     [(ProcessBorrowedEnvCons name value _)
       (begin
         (process-borrowed-test-assert-true
-          (string.string-eq-borrowed name (& expected-name)))
+          (string.string-eq name (& expected-name)))
         (process-borrowed-test-assert-true
-          (string.string-eq-borrowed value (& expected-value))))]
+          (string.string-eq value (& expected-value))))]
     [(ProcessBorrowedEnvNil) (process-borrowed-test-fail)]))
 
 ;: Inline test assertion for invalid borrowed process output results.
@@ -554,7 +553,7 @@
     [owned : process.ProcessCommand (process-borrowed-command-owned borrowed)]
     (begin
       (process-borrowed-test-assert-true
-        (string.string-eq-borrowed
+        (string.string-eq
           (process-borrowed-command-executable borrowed)
           (& exe)))
       (process-borrowed-test-assert-borrowed-string-list1

@@ -26,7 +26,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string-append out (doc-html-escape-one text i)))
+          (set! out (string-concat3 out (doc-html-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -47,7 +47,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! out (string-append out (doc-html-escape-text-one text i)))
+          (set! out (string-concat3 out (doc-html-escape-text-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
@@ -256,12 +256,14 @@
                     "</span>"))
                 (set! i escape-end))
               (begin
-                (set! out (string-append out (doc-html-escape-one source i)))
+                (set!
+                  out
+                  (string-concat3 out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))))
           (begin
-            (set! out (string-append out (doc-html-escape-one source i)))
+            (set! out (string-concat3 out (doc-html-escape-one source i) ""))
             (set! i (+ i 1)))))
-      (string-append out "</span>"))))
+      (string-concat3 out "</span>" ""))))
 
 (define (doc-html-syntax-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -427,7 +429,10 @@
                 (begin
                   (set!
                     out
-                    (string-append out (doc-html-syntax-span class-name line)))
+                    (string-concat3
+                      out
+                      (doc-html-syntax-span class-name line)
+                      ""))
                   (set! i end)))]
             [(= c '"')
               (let
@@ -435,9 +440,10 @@
                 (begin
                   (set!
                     out
-                    (string-append
+                    (string-concat3
                       out
-                      (doc-html-syntax-render-string source i end)))
+                      (doc-html-syntax-render-string source i end)
+                      ""))
                   (set! i end)))]
             [(= c '\'')
               (let
@@ -446,16 +452,17 @@
                   (begin
                     (set!
                       out
-                      (string-append
+                      (string-concat3
                         out
                         (doc-html-syntax-span
                           "tl-syn-string"
-                          (substring source i (- end i)))))
+                          (substring source i (- end i)))
+                        ""))
                     (set! i end))
                   (begin
                     (set!
                       out
-                      (string-append out (doc-html-escape-one source i)))
+                      (string-concat3 out (doc-html-escape-one source i) ""))
                     (set! i (+ i 1)))))]
             [(doc-html-syntax-number-start? source i)
               (let
@@ -463,11 +470,12 @@
                 (begin
                   (set!
                     out
-                    (string-append
+                    (string-concat3
                       out
                       (doc-html-syntax-span
                         "tl-syn-number"
-                        (substring source i (- end i)))))
+                        (substring source i (- end i)))
+                      ""))
                   (set! i end)))]
             [(doc-html-syntax-token-start? c)
               (let
@@ -478,15 +486,18 @@
                 (begin
                   (set!
                     out
-                    (string-append
+                    (string-concat3
                       out
                       (if (= (string-length class-name) 0)
                         (doc-html-escape token)
-                        (doc-html-syntax-span class-name token))))
+                        (doc-html-syntax-span class-name token))
+                      ""))
                   (set! i end)))]
             [else
               (begin
-                (set! out (string-append out (doc-html-escape-one source i)))
+                (set!
+                  out
+                  (string-concat3 out (doc-html-escape-one source i) ""))
                 (set! i (+ i 1)))])))
       out)))
 

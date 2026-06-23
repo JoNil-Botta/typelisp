@@ -61,7 +61,7 @@
     [(ErrFmtWrite message)
       (if (string-eq message "fmt: failed to write : io: invalid path: ")
         unit
-        (panic message))]))
+        (panic (string-copy message)))]))
 
 (test
   fmt-parse-diagnostic-includes-path-line-and-column

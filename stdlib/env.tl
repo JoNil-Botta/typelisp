@@ -310,7 +310,7 @@
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
   (let
-    [owned-name : String (string.string-copy-borrowed name)]
+    [owned-name : String (string.string-copy name)]
     (if (env-var-exists? owned-name)
       (env-some-string (env-var-value owned-name))
       EnvNoString)))
@@ -336,13 +336,13 @@
                   items
                   (vector.string-vec-push
                     items
-                    (string.substring-borrowed value start (- i start))))
+                    (string.substring value start (- i start))))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
           (vector.string-vec-push
             items
-            (string.substring-borrowed value start (- n start))))))))
+            (string.substring value start (- n start))))))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator
@@ -383,8 +383,7 @@
     [(EnvStringCons head rest)
       (env-path-join-tail
         (let
-          [acc-with-separator : String
-            (string.string-append-borrowed (& acc) separator)]
+          [acc-with-separator : String (string.string-append (& acc) separator)]
           (string.string-append acc-with-separator head))
         (box-get rest)
         separator)]))
@@ -399,8 +398,7 @@
     acc
     (env-path-join-vec-tail
       (let
-        [acc-with-separator : String
-          (string.string-append-borrowed (& acc) separator)]
+        [acc-with-separator : String (string.string-append (& acc) separator)]
         (string.string-append
           acc-with-separator
           (vector.string-vec-get items index "")))

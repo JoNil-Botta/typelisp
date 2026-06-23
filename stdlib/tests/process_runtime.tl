@@ -129,16 +129,15 @@
     (process.process-command "/usr/bin/cat" (process.process-args-empty))
     "stdin-from-typelisp"))
 
+(define (process-runtime-large-stdin-from [text : String] [i : i64]) : String
+  (if (>= i 17)
+    text
+    (process-runtime-large-stdin-from
+      (string.string-append (& text) (& text))
+      (+ i 1))))
+
 (define (process-runtime-large-stdin) : String
-  (let
-    [text : String "a"]
-    [i : i64 0]
-    (begin
-      (while (< i 17)
-        (begin
-          (set! text (string.string-append text text))
-          (set! i (+ i 1))))
-      text)))
+  (process-runtime-large-stdin-from "a" 0))
 
 (define (process-runtime-stdin-ignored-command) : process.ProcessCommand
   (process.process-command-with-stdin

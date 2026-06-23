@@ -67,7 +67,7 @@
   [actual : (& actual str)]
   [expected : (& expected str)]
   [message : String]) : unit
-  (assert-true (string.string-eq-borrowed actual expected) message))
+  (assert-true (string.string-eq actual expected) message))
 
 (test
   test-assert-success

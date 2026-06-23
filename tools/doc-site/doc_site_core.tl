@@ -307,11 +307,12 @@
   (doc-string-contains? target "."))
 
 (define (doc-site-repo-source-url [target : String]) : String
-  (string-append
+  (str-cat
     (if (doc-site-href-file-like? target)
       doc-site-repo-blob-root
       doc-site-repo-tree-root)
-    target))
+    target
+    ""))
 
 (define (doc-site-guide-output-for-source
   [target : String]
@@ -415,23 +416,19 @@
                     (set!
                       out
                       (str-cat
-                        (string-append
-                          out
-                          (substring html cursor (- href-start cursor)))
+                        out
+                        (substring html cursor (- href-start cursor))
                         "href=\""
                         (doc-site-rewrite-language-link-target sections target)
-                        "\""
-                        ""))
+                        "\""))
                     (set! cursor (+ target-end 1))))
                 (begin
                   (set!
                     out
-                    (string-append out (substring html cursor (- n cursor))))
+                    (str-cat out (substring html cursor (- n cursor)) ""))
                   (set! cursor n))))
             (begin
-              (set!
-                out
-                (string-append out (substring html cursor (- n cursor))))
+              (set! out (str-cat out (substring html cursor (- n cursor)) ""))
               (set! cursor n)))))
       out)))
 
@@ -652,9 +649,10 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
-              (doc-site-index-module-entry (doc-site-module-list-ref modules i))))
+              (doc-site-index-module-entry (doc-site-module-list-ref modules i))
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -676,10 +674,11 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
               (doc-site-index-guide-entry
-                (doc-site-guide-page-list-ref guides i))))
+                (doc-site-guide-page-list-ref guides i))
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -723,10 +722,11 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
               (doc-site-render-index-section
-                (doc-site-section-list-ref sections i))))
+                (doc-site-section-list-ref sections i))
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -802,11 +802,12 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
               (doc-site-sidebar-guide-entry
                 (doc-site-guide-page-list-ref guides i)
-                current)))
+                current)
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -832,11 +833,12 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
               (doc-site-sidebar-module-entry
                 (doc-site-module-list-ref modules i)
-                current)))
+                current)
+              ""))
           (set! i (+ i 1))))
       out)))
 
@@ -880,11 +882,12 @@ pre {
         (begin
           (set!
             out
-            (string-append
+            (str-cat
               out
               (doc-site-sidebar-section
                 (doc-site-section-list-ref sections i)
-                current)))
+                current)
+              ""))
           (set! i (+ i 1))))
       out)))
 

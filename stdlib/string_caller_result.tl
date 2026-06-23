@@ -54,7 +54,7 @@
   [result : (StringReplaceResult text old replacement)]) : String
   (if (string-replace-result-owned? result)
     (struct-get result owned)
-    (string.substring-borrowed
+    (string.substring
       (struct-get result borrowed)
       0
       (string-length (struct-get result borrowed)))))
@@ -92,10 +92,10 @@
   (let
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
-    [prefix : String (string.substring-borrowed s 0 index)]
-    [prefix-new : String (string.string-append-borrowed (& prefix) new)]
+    [prefix : String (string.substring s 0 index)]
+    [prefix-new : String (string.string-append (& prefix) new)]
     [suffix : String
-      (string.substring-borrowed s (+ index olen) (- (- hlen index) olen))]
+      (string.substring s (+ index olen) (- (- hlen index) olen))]
     (string.string-append prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow

@@ -194,15 +194,17 @@
           [code : i64 (cast (string-ref text i) : i64)]
           (begin
             (if (package-cache-safe-code? code)
-              (set! out (string-append out (substring-borrowed text i 1)))
-              (set! out (string-append out (package-cache-escape-code code))))
+              (set! out (string-concat3 out (substring text i 1) ""))
+              (set!
+                out
+                (string-concat3 out (package-cache-escape-code code) "")))
             (set! i (+ i 1)))))
       out)))
 
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
   (let
     [target : String
-      (fs-path-join-owned-pair (string-copy-borrowed package-root) "target")]
+      (fs-path-join-owned-pair (string-copy package-root) "target")]
     [typelisp : String (fs-path-join-owned-pair target "typelisp")]
     [cache : String (fs-path-join-owned-pair typelisp "cache")]
     (fs-path-join-owned-pair cache "packages")))
@@ -216,8 +218,7 @@
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
-    [git-dir : String
-      (fs-path-join-owned-pair (string-copy-borrowed root) "git")]
+    [git-dir : String (fs-path-join-owned-pair (string-copy root) "git")]
     [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
     (fs-path-join-owned-pair git-dir url-dir)))
 
@@ -238,7 +239,7 @@
     (fs-path-join-owned-pair rev-dir commit-dir)))
 
 (define (package-cache-staging-root [root : (& root str)]) : String
-  (fs-path-join-owned-pair (string-copy-borrowed root) "_staging"))
+  (fs-path-join-owned-pair (string-copy root) "_staging"))
 
 (define (package-cache-staging-url-dir
   [root : (& root str)]
@@ -269,19 +270,17 @@
     (fs-path-join-owned-pair rev-dir staged-name)))
 
 (define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
-  (fs-path-join-owned-pair
-    (string-copy-borrowed entry-path)
-    package-cache-metadata-name))
+  (fs-path-join-owned-pair (string-copy entry-path) package-cache-metadata-name))
 
 (define (package-cache-complete-marker-path [entry-path : (& entry_path str)]) : String
   (fs-path-join-owned-pair
-    (string-copy-borrowed entry-path)
+    (string-copy entry-path)
     package-cache-complete-marker-name))
 
 (define (package-cache-metadata-content [key : (& key PackageCacheKey)]) : String
   (let
-    [url : String (string-copy-borrowed (& (struct-get key url)))]
-    [commit : String (string-copy-borrowed (& (struct-get key commit)))]
+    [url : String (string-copy (& (struct-get key url)))]
+    [commit : String (string-copy (& (struct-get key commit)))]
     (string-append
       "typelisp-package-cache-v1\nurl="
       (string-append
@@ -307,38 +306,38 @@
     [has-marker : bool (package-cache-file-exists? marker-path)]
     (cond
       [(and (not has-entry) (not has-metadata) (not has-marker))
-        (PackageCacheMiss (string-copy-borrowed entry-path))]
+        (PackageCacheMiss (string-copy entry-path))]
       [(not has-metadata)
         (PackageCachePartialOrCorrupt
-          (string-copy-borrowed entry-path)
+          (string-copy entry-path)
           "missing metadata")]
       [(not has-marker)
         (PackageCachePartialOrCorrupt
-          (string-copy-borrowed entry-path)
+          (string-copy entry-path)
           "missing completion marker")]
       [else
         (match (try-read-file (& metadata-path))
           [(ErrIoString error)
             (PackageCachePartialOrCorrupt
-              (string-copy-borrowed entry-path)
+              (string-copy entry-path)
               (string-append "metadata read failed: " (io-error-message error)))]
           [(OkIoString metadata)
             (if (not (string-eq metadata (package-cache-metadata-content key)))
               (PackageCachePartialOrCorrupt
-                (string-copy-borrowed entry-path)
+                (string-copy entry-path)
                 "metadata mismatch")
               (match (try-read-file (& marker-path))
                 [(ErrIoString error)
                   (PackageCachePartialOrCorrupt
-                    (string-copy-borrowed entry-path)
+                    (string-copy entry-path)
                     (string-append
                       "completion marker read failed: "
                       (io-error-message error)))]
                 [(OkIoString marker)
                   (if (string-eq marker (package-cache-complete-marker-content))
-                    (PackageCacheCompleteHit (string-copy-borrowed entry-path))
+                    (PackageCacheCompleteHit (string-copy entry-path))
                     (PackageCachePartialOrCorrupt
-                      (string-copy-borrowed entry-path)
+                      (string-copy entry-path)
                       "completion marker mismatch"))]))])])))
 
 (define (package-cache-entry-reusable? [state : PackageCacheEntryState]) : bool
@@ -355,8 +354,7 @@
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : ResultIoUnit
   (let
-    [git-dir : String
-      (fs-path-join-owned-pair (string-copy-borrowed root) "git")]
+    [git-dir : String (fs-path-join-owned-pair (string-copy root) "git")]
     [url-dir : String (package-cache-entry-url-dir root key)]
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     (package-cache-then-mkdir
@@ -380,7 +378,7 @@
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String
-      (fs-path-join-owned-pair (string-copy-borrowed (& staging-root)) "git")]
+      (fs-path-join-owned-pair (string-copy (& staging-root)) "git")]
     [url-dir : String (package-cache-staging-url-dir root key)]
     [rev-dir : String (package-cache-staging-rev-dir root key)]
     (package-cache-then-mkdir

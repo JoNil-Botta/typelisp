@@ -2468,31 +2468,20 @@
                     [body-zero-c : String
                       (str-cat ", " dst-reg "\n" done-label ":\n")]
                     [body-asm : String
-                      (string-append
+                      (str-cat
                         body-range
-                        (string-append
-                          body-nonzero-a
-                          (string-append
-                            body-nonzero-b
-                            (string-append
-                              body-mask-a
-                              (string-append
-                                body-mask-b
-                                (string-append
-                                  body-mask-c
-                                  (string-append
-                                    body-full-a
-                                    (string-append
-                                      body-full-b
-                                      (string-append
-                                        body-full-c
-                                        (string-append
-                                          body-zero-a
-                                          (string-append
-                                            body-zero-b
-                                            body-zero-c)))))))))))]
-                    (OkCompilerBackend
-                      (string-append index-asm (string-append end-asm body-asm))))]
+                        body-nonzero-a
+                        body-nonzero-b
+                        body-mask-a
+                        body-mask-b
+                        body-mask-c
+                        body-full-a
+                        body-full-b
+                        body-full-c
+                        body-zero-a
+                        body-zero-b
+                        body-zero-c)]
+                    (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
                     (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -2858,15 +2847,15 @@
         src
         "reduce source")
         [(OkBackendReg src-reg)
-          (OkCompilerBackend
-            (string-append
+          (let
+            [reduce-asm : String
               (match op
                 [(IrMaskReduceAny)
                   (str-cat
                     "    "
                     kortest-op
                     " "
-                    src-reg
+                    (string-copy src-reg)
                     ", "
                     src-reg
                     "\n    setne %al\n")]
@@ -2876,7 +2865,7 @@
                       "    "
                       kortest-op
                       " "
-                      src-reg
+                      (string-copy src-reg)
                       ", "
                       src-reg
                       "\n    setc %al\n")
@@ -2884,22 +2873,24 @@
                       "    "
                       mask-move
                       " "
-                      src-reg
+                      (string-copy src-reg)
                       ", "
-                      mask-gpr
+                      (string-copy mask-gpr)
                       "\n    "
                       cmp-op
                       " $"
                       (int->string full-mask)
                       ", "
                       mask-gpr
-                      "\n    sete %al\n"))])
-              (string-append
+                      "\n    sete %al\n"))])]
+            [store-asm : String
+              (str-cat
                 "    movzbl %al, %eax\n"
                 (compiler-backend-emit-store-var-with-plan
                   assignments
                   dst
-                  "%rax"))))]
+                  "%rax"))]
+            (OkCompilerBackend (str-cat reduce-asm store-asm)))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))]))))
@@ -2945,38 +2936,60 @@
                         (OkCompilerBackend
                           (cond
                             [(and
-                                (string-eq dst-reg true-reg)
-                                (not (string-eq true-reg false-reg)))
-                              (string-append
-                                (str-cat "    " move " " true-reg ", %zmm15\n")
-                                (string-append
-                                  (string-append
-                                    (str-cat "    " move " " false-reg ", ")
-                                    (str-cat dst-reg "\n"))
-                                  (string-append
-                                    (str-cat
-                                      "    "
-                                      move
-                                      " %zmm15, "
-                                      dst-reg
-                                      "{")
-                                    (str-cat mask-reg "}\n"))))]
-                            [(string-eq true-reg false-reg)
-                              (if (string-eq dst-reg false-reg)
+                                (string-eq (& dst-reg) (& true-reg))
+                                (not (string-eq (& true-reg) (& false-reg))))
+                              (str-cat
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                ", %zmm15\n"
+                                "    "
+                                move
+                                " "
+                                false-reg
+                                ", "
+                                dst-reg
+                                "\n"
+                                "    "
+                                move
+                                " %zmm15, "
+                                dst-reg
+                                "{"
+                                mask-reg
+                                "}\n")]
+                            [(string-eq (& true-reg) (& false-reg))
+                              (if (string-eq (& dst-reg) (& false-reg))
                                 ""
-                                (string-append
-                                  (str-cat "    " move " " false-reg ", ")
-                                  (str-cat dst-reg "\n")))]
+                                (str-cat
+                                  "    "
+                                  move
+                                  " "
+                                  false-reg
+                                  ", "
+                                  dst-reg
+                                  "\n"))]
                             [else
-                              (string-append
-                                (if (string-eq dst-reg false-reg)
+                              (str-cat
+                                (if (string-eq (& dst-reg) (& false-reg))
                                   ""
-                                  (string-append
-                                    (str-cat "    " move " " false-reg ", ")
-                                    (str-cat dst-reg "\n")))
-                                (string-append
-                                  (str-cat "    " move " " true-reg ", ")
-                                  (str-cat dst-reg "{" mask-reg "}\n")))]))]
+                                  (str-cat
+                                    "    "
+                                    move
+                                    " "
+                                    false-reg
+                                    ", "
+                                    dst-reg
+                                    "\n"))
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                ", "
+                                dst-reg
+                                "{"
+                                mask-reg
+                                "}\n")]))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-with-message instr-diag message))])]
@@ -6052,7 +6065,7 @@
     ""))
 
 (define (compiler-backend-divmod-guard-asm [ty : AstType]) : String
-  (string-append
+  (str-cat
     (compiler-backend-div-zero-guard-asm ty)
     (compiler-backend-div-overflow-guard-asm ty)))
 
@@ -6064,7 +6077,7 @@
     [signed : bool (compiler-backend-type-signed? ty)]
     (cond
       [(= size 1)
-        (string-append
+        (str-cat
           (if signed
             "    cbw\n    idivb %r8b\n"
             "    andw $0x00ff, %ax\n    divb %r8b\n")
@@ -6072,7 +6085,7 @@
             "    movb %ah, %al\n"
             ""))]
       [(= size 2)
-        (string-append
+        (str-cat
           (if signed
             "    cwd\n    idivw %r8w\n"
             "    xorw %dx, %dx\n    divw %r8w\n")
@@ -6080,7 +6093,7 @@
             "    movw %dx, %ax\n"
             ""))]
       [(= size 4)
-        (string-append
+        (str-cat
           (if signed
             "    cdq\n    idivl %r8d\n"
             "    xorl %edx, %edx\n    divl %r8d\n")
@@ -6088,7 +6101,7 @@
             "    movl %edx, %eax\n"
             ""))]
       [else
-        (string-append
+        (str-cat
           (if signed
             "    cqto\n    idivq %r8\n"
             "    xorq %rdx, %rdx\n    divq %r8\n")
@@ -6099,7 +6112,7 @@
 (define (compiler-backend-binop-divmod-asm
   [ty : AstType]
   [want-remainder : bool]) : String
-  (string-append
+  (str-cat
     (compiler-backend-divmod-guard-asm ty)
     (compiler-backend-binop-divmod-core-asm ty want-remainder)))
 
@@ -6439,40 +6452,32 @@
     [shift : i64 (struct-get plan shift)]
     [quotient-asm : String
       (if want-remainder
-        (string-append
+        (str-cat
           "    movq %rax, %r10\n"
-          (string-append
-            (compiler-backend-emit-load-u64-absolute magic "%r8")
-            (string-append
-              "    imulq %r8\n"
-              (string-append
-                (if (compiler-backend-u64-high-bit? magic)
-                  "    addq %r10, %rdx\n"
-                  "")
-                (string-append
-                  (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
-                  "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rdx\n")))))
-        (string-append
+          (compiler-backend-emit-load-u64-absolute magic "%r8")
+          "    imulq %r8\n"
+          (if (compiler-backend-u64-high-bit? magic)
+            "    addq %r10, %rdx\n"
+            "")
+          (compiler-backend-divmod-shift-reg "sar" shift "%rdx")
+          "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rdx\n")
+        (str-cat
           "    movq %rax, %r10\n"
-          (string-append
-            (compiler-backend-emit-load-u64-absolute magic "%r8")
-            (string-append
-              "    imulq %r8\n    movq %rdx, %rax\n"
-              (string-append
-                (if (compiler-backend-u64-high-bit? magic)
-                  "    addq %r10, %rax\n"
-                  "")
-                (string-append
-                  (compiler-backend-divmod-shift-rax "sar" shift)
-                  "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rax\n"))))))]
+          (compiler-backend-emit-load-u64-absolute magic "%r8")
+          "    imulq %r8\n    movq %rdx, %rax\n"
+          (if (compiler-backend-u64-high-bit? magic)
+            "    addq %r10, %rax\n"
+            "")
+          (compiler-backend-divmod-shift-rax "sar" shift)
+          "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rax\n"))]
     (if want-remainder
-      (string-append
+      (str-cat
         quotient-asm
         (compiler-backend-divmod-remainder-from-quotient-reg
           (cast divisor : u64)
           "%rdx"))
       (if negative-divisor
-        (string-append quotient-asm "    negq %rax\n")
+        (str-cat quotient-asm "    negq %rax\n")
         quotient-asm))))
 
 (define (compiler-backend-signed-constant-divmod-strength-asm
@@ -7159,7 +7164,7 @@
           dst-home)
           [(OkCompilerBackend lhs-asm)
             (OkCompilerBackend
-              (string-append
+              (str-cat
                 lhs-asm
                 (if (match op
                   [(IrBinBitAnd) true]
@@ -7167,14 +7172,14 @@
                   (if (string-eq imm "$255")
                     (str-cat
                       "    movzbq "
-                      (compiler-backend-reg-part dst-home 1)
+                      (compiler-backend-reg-part (string-copy dst-home) 1)
                       ", "
                       dst-home
                       "\n")
                     (if (string-eq imm "$65535")
                       (str-cat
                         "    movzwq "
-                        (compiler-backend-reg-part dst-home 2)
+                        (compiler-backend-reg-part (string-copy dst-home) 2)
                         ", "
                         dst-home
                         "\n")
@@ -7210,22 +7215,20 @@
               (match (compiler-backend-float-binop-asm op fty)
                 [(OkCompilerBackend op-asm)
                   (OkCompilerBackend
-                    (string-append
+                    (str-cat
                       lhs-asm
-                      (string-append
-                        rhs-asm
-                        (string-append
-                          op-asm
-                          (if (compiler-backend-float-type? ty)
-                            (compiler-backend-emit-store-float-var-with-plan
-                              assignments
-                              dst
-                              "%xmm0"
-                              ty)
-                            (compiler-backend-emit-store-var-with-plan
-                              assignments
-                              dst
-                              "%rax"))))))]
+                      rhs-asm
+                      op-asm
+                      (if (compiler-backend-float-type? ty)
+                        (compiler-backend-emit-store-float-var-with-plan
+                          assignments
+                          dst
+                          "%xmm0"
+                          ty)
+                        (compiler-backend-emit-store-var-with-plan
+                          assignments
+                          dst
+                          "%rax"))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
@@ -7833,32 +7836,33 @@
         "%rax")
         [(OkCompilerBackend load)
           (OkCompilerBackend
-            (string-append
+            (str-cat
               load
-              (string-append
-                "    testq %rax, %rax\n"
+              "    testq %rax, %rax\n"
+              (if (compiler-backend-jump-target-is-fallthrough?
+                false-label
+                fallthrough)
+                (str-cat
+                  "    jne "
+                  (compiler-backend-asm-label function true-label)
+                  "\n"
+                  "")
                 (if (compiler-backend-jump-target-is-fallthrough?
-                  false-label
+                  true-label
                   fallthrough)
                   (str-cat
-                    "    jne "
-                    (compiler-backend-asm-label function true-label)
+                    "    je "
+                    (compiler-backend-asm-label function false-label)
                     "\n"
                     "")
-                  (if (compiler-backend-jump-target-is-fallthrough?
-                    true-label
-                    fallthrough)
-                    (str-cat
-                      "    je "
-                      (compiler-backend-asm-label function false-label)
-                      "\n"
-                      "")
-                    (str-cat
-                      "    jne "
-                      (compiler-backend-asm-label function true-label)
-                      "\n    jmp "
-                      (compiler-backend-asm-label function false-label)
-                      "\n"))))))]
+                  (str-cat
+                    "    jne "
+                    (compiler-backend-asm-label
+                      (string-copy function)
+                      true-label)
+                    "\n    jmp "
+                    (compiler-backend-asm-label function false-label)
+                    "\n")))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-compare-op? [op : CompilerIrBinOp]) : bool
@@ -8967,27 +8971,26 @@
       (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
         [(OkCompilerBackend ptr-asm)
           (OkCompilerBackend
-            (string-append
+            (str-cat
               ptr-asm
-              (string-append
-                "    movq (%r10), %r10\n"
-                (if (compiler-backend-float-type? second-ty)
-                  (string-append
-                    (compiler-backend-emit-load-float-memory
-                      "(%r10)"
-                      "%xmm0"
-                      second-ty)
-                    (compiler-backend-emit-store-float-var-with-plan
-                      assignments
-                      second-dst
-                      "%xmm0"
-                      second-ty))
-                  (string-append
-                    (compiler-backend-emit-load-memory "(%r10)" second-ty)
-                    (compiler-backend-emit-store-var-with-plan
-                      assignments
-                      second-dst
-                      "%rax"))))))]
+              "    movq (%r10), %r10\n"
+              (if (compiler-backend-float-type? second-ty)
+                (str-cat
+                  (compiler-backend-emit-load-float-memory
+                    "(%r10)"
+                    "%xmm0"
+                    second-ty)
+                  (compiler-backend-emit-store-float-var-with-plan
+                    assignments
+                    second-dst
+                    "%xmm0"
+                    second-ty))
+                (str-cat
+                  (compiler-backend-emit-load-memory "(%r10)" second-ty)
+                  (compiler-backend-emit-store-var-with-plan
+                    assignments
+                    second-dst
+                    "%rax")))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])
       (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
 
@@ -9007,10 +9010,13 @@
         program-index)
         [(OkCompilerBackend src-asm)
           (OkCompilerBackend
-            (string-append
+            (str-cat
               src-asm
               (if (compiler-backend-float-type? ty)
-                (compiler-backend-emit-store-xmm-to-memory addr "%xmm0" ty)
+                (compiler-backend-emit-store-xmm-to-memory
+                  (string-copy addr)
+                  "%xmm0"
+                  ty)
                 (compiler-backend-emit-store-rax-to-memory addr ty))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
@@ -9084,7 +9090,7 @@
                     (compiler-backend-gep-index-address base-reg scale)]
                   [addr-asm : String
                     (if (string-eq addr "")
-                      (string-append
+                      (str-cat
                         (if (string-eq base-reg "%r10")
                           ""
                           (str-cat "    movq " base-reg ", " "%r10" "\n"))
@@ -9254,22 +9260,21 @@
     program-index)
     [(OkCompilerBackend load)
       (OkCompilerBackend
-        (string-append
+        (str-cat
           load
-          (string-append
-            (match from-ty
-              [(AstTyU64)
-                (compiler-backend-u64-to-float-cast-asm
-                  function
-                  current-label
-                  dst
-                  to-ty)]
-              [_ (compiler-backend-int-to-float-cast-asm to-ty)])
-            (compiler-backend-emit-store-float-var-with-plan
-              assignments
-              dst
-              "%xmm0"
-              to-ty))))]
+          (match from-ty
+            [(AstTyU64)
+              (compiler-backend-u64-to-float-cast-asm
+                function
+                current-label
+                dst
+                to-ty)]
+            [_ (compiler-backend-int-to-float-cast-asm to-ty)])
+          (compiler-backend-emit-store-float-var-with-plan
+            assignments
+            dst
+            "%xmm0"
+            to-ty)))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-float-to-int-cast
@@ -13303,11 +13308,15 @@
   (match value
     [(IrNoValue)
       (OkCompilerBackend
-        (string-append
+        (str-cat
           (if (string-eq source-function "main")
             "    xorl %eax, %eax\n"
             "")
-          (compiler-backend-return-tail source-function assignments vars blocks)))]
+          (compiler-backend-return-tail
+            (string-copy source-function)
+            assignments
+            vars
+            blocks)))]
     [(IrSomeValue v)
       ;; #2386: a register-group return goes in %rax:%rdx (word0:word1).
       (if (compiler-backend-group-type? program-index ret-ty)
@@ -13321,7 +13330,7 @@
           program-index)
           [(OkCompilerBackend load)
             (OkCompilerBackend
-              (string-append
+              (str-cat
                 load
                 (compiler-backend-return-tail
                   source-function
@@ -13336,7 +13345,7 @@
           program-index)
           [(OkCompilerBackend load)
             (OkCompilerBackend
-              (string-append
+              (str-cat
                 load
                 (compiler-backend-return-tail
                   source-function
@@ -14261,7 +14270,7 @@
           (compiler-builtin-backend-tl-alloc-id?
             (compiler-backend-runtime-helper-name-id call-symbol)))
         (OkCompilerBackend
-          (string-append
+          (str-cat
             (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
               (compiler-backend-emit-inline-fast-alloc
                 target
@@ -15389,7 +15398,7 @@
                       program-index)
                       [(OkCompilerBackend load)
                         (OkCompilerBackend
-                          (string-append
+                          (str-cat
                             load
                             (if (compiler-backend-float-type? ty)
                               (str-cat
@@ -15429,7 +15438,7 @@
                 vars)
                 [(OkCompilerBackend copies)
                   (OkCompilerBackend
-                    (string-append
+                    (str-cat
                       copies
                       (if (compiler-backend-jump-target-is-fallthrough?
                         target
@@ -17568,7 +17577,7 @@
                       (text-buf-append
                         buf
                         (if (string-eq plain-direct-return "")
-                          (string-append
+                          (str-cat
                             fused-copies
                             (if (compiler-backend-jump-target-is-fallthrough?
                               target-label
@@ -21229,7 +21238,7 @@
                   vars)
                   [(OkCompilerBackend tail)
                     (OkCompilerBackend
-                      (string-append
+                      (str-cat
                         (if is-float
                           (str-cat
                             "    "
@@ -21248,15 +21257,14 @@
                                 stack-idx))
                             "(%rbp), %rax\n"
                             ""))
-                        (string-append
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            var-id
-                            (if is-float
-                              "%xmm0"
-                              "%rax")
-                            ty)
-                          tail)))]
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          var-id
+                          (if is-float
+                            "%xmm0"
+                            "%rax")
+                          ty)
+                        tail))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg
@@ -22965,7 +22973,7 @@
     [(IrGlobalCons global rest)
       (match global
         [(IrGlobal name ty value)
-          (string-append
+          (str-cat
             (if (compiler-backend-runtime-global? ty value)
               (compiler-backend-global-init-call name ty program-index)
               "")
@@ -24321,28 +24329,23 @@ tl_profile_alloc_peak_bytes:
         div-abort
         shift-abort
         tail-plan)
-      (string-append
-        (string-append
-          (compiler-backend-runtime-arena-data-for-target target)
-          (string-append
-            (compiler-backend-runtime-profile-data
-              (compiler-backend-runtime-tail-profile? tail-plan))
-            (if alloc
-              (compiler-backend-runtime-alloc-data-for-target target)
-              "")))
-        (string-append
-          ;; The oob/division/shift fault messages now live in the runtime
-          ;; prelude (stdlib/runtime.tl) handlers, not backend rodata (#2143).
-          ""
-          (string-append
-            (if region-reset
-              (compiler-backend-runtime-region-reset-data)
-              "")
-            (string-append
-              (compiler-backend-runtime-argv-data)
-              (compiler-backend-runtime-env-data
-                target
-                (or env-var-exists env-var-value))))))]))
+      (str-cat
+        (compiler-backend-runtime-arena-data-for-target target)
+        (compiler-backend-runtime-profile-data
+          (compiler-backend-runtime-tail-profile? tail-plan))
+        (if alloc
+          (compiler-backend-runtime-alloc-data-for-target target)
+          "")
+        ;; The oob/division/shift fault messages now live in the runtime
+        ;; prelude (stdlib/runtime.tl) handlers, not backend rodata (#2143).
+        ""
+        (if region-reset
+          (compiler-backend-runtime-region-reset-data)
+          "")
+        (compiler-backend-runtime-argv-data)
+        (compiler-backend-runtime-env-data
+          target
+          (or env-var-exists env-var-value)))]))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]
@@ -24760,25 +24763,18 @@ tl_alloc:
     jmp tl_oom_abort
 
 "]
-    (string-append
+    (str-cat
       prefix
-      (string-append
-        fast-profile
-        (string-append
-          atomic-fast-asm
-          (string-append
-            atomic-fast-profile
-            (string-append
-              atomic-lock-asm
-              (string-append
-                atomic-locked-profile
-                (string-append
-                  atomic-map-asm
-                  (string-append
-                    atomic-new-profile
-                    (string-append
-                      ordinary-new-asm
-                      (string-append new-profile tail-asm))))))))))))
+      fast-profile
+      atomic-fast-asm
+      atomic-fast-profile
+      atomic-lock-asm
+      atomic-locked-profile
+      atomic-map-asm
+      atomic-new-profile
+      ordinary-new-asm
+      new-profile
+      tail-asm)))
 
 (define (compiler-backend-runtime-region-mark-functions
   [target : CompilerBackendTarget]) : String
@@ -26381,35 +26377,33 @@ tl_memcpy:
   [capture-env : bool]
   [global-inits : String]) : String
   (if (or capture-argv capture-env)
-    (string-append
+    (str-cat
       "_tl_start:
     movq (%rsp), %rax
 "
-      (string-append
-        (if capture-argv
-          "    movq %rax, .L_tl_argc(%rip)
+      (if capture-argv
+        "    movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax
     movq %rax, .L_tl_argv(%rip)
 "
-          "")
-        (string-append
-          (if capture-env
-            (string-append
-              (if capture-argv
-                "    movq (%rsp), %rax\n"
-                "")
-              "    leaq 16(%rsp,%rax,8), %rax
+        "")
+      (if capture-env
+        (str-cat
+          (if capture-argv
+            "    movq (%rsp), %rax\n"
+            "")
+          "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
 ")
-            "")
-          (string-append
-            "    call tl_thread_init\n"
-            (string-append global-inits (compiler-backend-entry-call-main))))))
-    (string-append
+        "")
+      "    call tl_thread_init\n"
+      global-inits
+      (compiler-backend-entry-call-main))
+    (str-cat
       "_tl_start:\n"
-      (string-append
-        "    call tl_thread_init\n"
-        (string-append global-inits (compiler-backend-entry-call-main))))))
+      "    call tl_thread_init\n"
+      global-inits
+      (compiler-backend-entry-call-main))))
 
 (define (compiler-backend-entry-for-target-with-crt
   [target : CompilerBackendTarget]
@@ -26564,27 +26558,23 @@ tl_memcpy:
           (compiler-backend-plan-provides? plan "tl_shift_abort")
           (compiler-backend-plan-provides? plan "tl_region_reset"))]
       [needs-get-std-handle : bool needs-write-exit]
-      (string-append
+      (str-cat
         "    .extern VirtualAlloc
     .extern VirtualFree
     .extern ExitProcess
 "
-        (string-append
-          (if needs-write-exit
-            "    .extern WriteFile
+        (if needs-write-exit
+          "    .extern WriteFile
 "
-            "")
-          (string-append
-            (if needs-get-std-handle
-              "    .extern GetStdHandle
+          "")
+        (if needs-get-std-handle
+          "    .extern GetStdHandle
 "
-              "")
-            (string-append
-              (if (compiler-backend-plan-provides? plan "tl_print_f64")
-                "    .extern _snprintf
+          "")
+        (if (compiler-backend-plan-provides? plan "tl_print_f64")
+          "    .extern _snprintf
 "
-                "")
-              "")))))
+          "")))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

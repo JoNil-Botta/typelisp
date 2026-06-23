@@ -508,8 +508,8 @@
         (unsafe
           (tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string-copy-borrowed (& key))]
-          [persistent-module : String (string-copy-borrowed (& module))]
+          [persistent-key : String (string-copy (& key))]
+          [persistent-module : String (string-copy (& module))]
           (begin
             (unsafe
               (tl_arena_set prev-arena))
@@ -714,23 +714,17 @@
       (tc-canonical-diagnostic diag))))
 
 (define (tc-located-error [span : AstSourceSpan] [message : String]) : String
-  (string-append
+  (str-cat
     (tc-located-error-prefix)
-    (string-append
-      (int->string (struct-get span start-line))
-      (string-append
-        "|"
-        (string-append
-          (int->string (struct-get span start-col))
-          (string-append
-            "|"
-            (string-append
-              (int->string (struct-get span end-line))
-              (string-append
-                "|"
-                (string-append
-                  (int->string (struct-get span end-col))
-                  (string-append "|" message))))))))))
+    (int->string (struct-get span start-line))
+    "|"
+    (int->string (struct-get span start-col))
+    "|"
+    (int->string (struct-get span end-line))
+    "|"
+    (int->string (struct-get span end-col))
+    "|"
+    message))
 
 (define (tc-located-error-diag [message : String]) : CompilerDiagnostic
   (let
@@ -3126,11 +3120,11 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (str-cat
           (tc-type-render head)
           (match rest
             [(AstTypeNil) ""]
-            [_ (string-append " " (tc-type-list-render rest))])))]))
+            [_ (str-cat " " (tc-type-list-render rest))])))]))
 
 (define (tc-lifetime-list-render [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -3138,19 +3132,16 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append
+        (str-cat
           head
           (match rest
             [(AstLifetimeNil) ""]
-            [_ (string-append " " (tc-lifetime-list-render rest))])))]))
+            [_ (str-cat " " (tc-lifetime-list-render rest))])))]))
 
 (define (tc-render-nominal-lifetime-type
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (str-cat
-    "("
-    name
-    (string-append " " (string-append (tc-lifetime-list-render lifetimes) ")"))))
+  (str-cat "(" name " " (tc-lifetime-list-render lifetimes) ")"))
 
 (define (tc-type-render [ty : AstType]) : String
   (match ty
@@ -3177,9 +3168,9 @@
       (str-cat
         "(-> "
         (tc-type-list-render (box-get args))
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get ret)) ")")))]
+        " "
+        (tc-type-render (ty-node-get ret))
+        ")")]
     [(AstTyTuple elems)
       (str-cat "(Tuple " (tc-type-list-render (box-get elems)) ")")]
     [(AstTyArray elem count)
@@ -3196,26 +3187,11 @@
     [(AstTyMutPtr elem)
       (str-cat "(MutPtr " (tc-type-render (ty-node-get elem)) ")")]
     [(AstTyRef region inner)
-      (str-cat
-        "(& "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(& " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyMutRef region inner)
-      (str-cat
-        "(&mut "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(&mut " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyRegion region inner)
-      (str-cat
-        "(Region "
-        region
-        (string-append
-          " "
-          (string-append (tc-type-render (ty-node-get inner)) ")")))]
+      (str-cat "(Region " region " " (tc-type-render (ty-node-get inner)) ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
       (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
@@ -5722,7 +5698,7 @@
               "."
               (substring name i 1))]
           (begin
-            (set! out (string-append out chunk))
+            (set! out (string-concat3 out chunk ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -6219,6 +6195,30 @@
         [_ false])]
     [_ false]))
 
+(define (tc-stdlib-string-copy-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons left rest1)
+          (let
+            [left : AstType (ty-node-get left)]
+            [rest1 : AstTypeList (box-get rest1)]
+            (match rest1
+              [(AstTypeCons right rest2)
+                (let
+                  [right : AstType (ty-node-get right)]
+                  [rest2 : AstTypeList (box-get rest2)]
+                  (match rest2
+                    [(AstTypeNil)
+                      (and
+                        (tc-str-ref-type? left)
+                        (tc-str-ref-type? right)
+                        (tc-type-eq (ty-node-get ret) (AstTyString)))]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (tc-stdlib-string-to-int-wrapper-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyFunc args ret)
@@ -6244,6 +6244,8 @@
     [(string-eq base "char-at") (tc-stdlib-string-ref-wrapper-type? ty)]
     [(string-eq base "string-eq") (tc-stdlib-string-eq-wrapper-type? ty)]
     [(string-eq base "string=?") (tc-stdlib-string-eq-wrapper-type? ty)]
+    [(string-eq base "string-append") (tc-stdlib-string-copy-wrapper-type? ty)]
+    [(string-eq base "string-concat") (tc-stdlib-string-copy-wrapper-type? ty)]
     [(string-eq base "string->int") (tc-stdlib-string-to-int-wrapper-type? ty)]
     [else false]))
 
@@ -6310,6 +6312,37 @@
           [_ false]))]
     [_ false]))
 
+(define (tc-stdlib-string-copy-wrapper-decl?
+  [ctx : TcContext]
+  [base : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefFn name params ret _ _)
+      (and
+        (string-eq (intern-str name) base)
+        (tc-type-eq (tc-resolve-type ctx ret) (AstTyString))
+        (match params
+          [(AstParamCons left-param rest1)
+            (let
+              [rest1 : AstParamList (box-get rest1)]
+              (match rest1
+                [(AstParamCons right-param rest2)
+                  (let
+                    [rest2 : AstParamList (box-get rest2)]
+                    (match left-param
+                      [(AstParam _ left _)
+                        (match right-param
+                          [(AstParam _ right _)
+                            (and
+                              (tc-str-ref-type? (tc-resolve-type ctx left))
+                              (tc-str-ref-type? (tc-resolve-type ctx right))
+                              (match rest2
+                                [(AstParamNil) true]
+                                [_ false]))])]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
 (define (tc-stdlib-string-helper-symbol-wrapper?
   [ctx : TcContext]
   [base : String]) : bool
@@ -6331,6 +6364,10 @@
                     (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
                   [(string-eq base "char-at")
                     (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+                  [(string-eq base "string-append")
+                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
+                  [(string-eq base "string-concat")
+                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
                   [else false]))))]
         [(NoneI64) false])]))
 
@@ -8955,7 +8992,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-append out piece))
+          (set! out (string-concat3 out piece ""))
           (set! i (+ i 1))))
       out)))
 
@@ -12698,9 +12735,12 @@
           [(OkTcType got)
             (if (tc-call-actual-reference? ctx got)
               (OkTcType got)
-              (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                (OkTcType want)
-                (tc-call-auto-borrow-type ctx env arg)))]
+              (match (tc-call-auto-borrow-type ctx env arg)
+                [(OkTcType borrowed) (OkTcType borrowed)]
+                [(ErrTcType message)
+                  (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                    (OkTcType want)
+                    (ErrTcType message))]))]
           [(ErrTcType message) (ErrTcType message)])])
     (tc-expr-with-expected-or-actual-call-arg ctx env arg want)))
 
@@ -12745,11 +12785,12 @@
             [(OkTcType got)
               (if (tc-call-actual-reference? ctx got)
                 (OkTcExpr arg)
-                (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                  (OkTcExpr arg)
-                  (match (tc-call-auto-borrow-type ctx env arg)
-                    [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
-                    [(ErrTcType message) (ErrTcExpr message)])))]
+                (match (tc-call-auto-borrow-type ctx env arg)
+                  [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+                  [(ErrTcType message)
+                    (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                      (OkTcExpr arg)
+                      (ErrTcExpr message))]))]
             [(ErrTcType message) (ErrTcExpr message)])]))
     (OkTcExpr arg)))
 
@@ -14739,6 +14780,25 @@
       lookup-id
       "string=?")))
 
+(define (tc-string-copy-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [lookup-id : i64]) : bool
+  (or
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (= source-id (tc-name-id "string-append"))
+      lookup-id
+      "string-append")
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (= source-id (tc-name-id "string-concat"))
+      lookup-id
+      "string-concat")))
+
 (define (tc-string-to-int-helper-call-name?
   [_ctx : TcContext]
   [env : TcTypeEnv]
@@ -15130,6 +15190,8 @@
             (tc-borrowed-string-builtin-call ctx env name args)]
           [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
+          [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
+            (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
           [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and

@@ -1873,7 +1873,7 @@ This section defines the source contract for the owned `String` / borrowed
 `str` split. The `str` frontend and stdlib API migration are implemented
 (#1453, #1454): borrowing a `String` place produces a `(& lifetime str)` view,
 and stdlib string helpers expose borrowed-`str` signatures (for example
-`string-eq-borrowed` and `substring-borrowed` in `stdlib/string.tl`). Several
+`string-eq` and `substring` in `stdlib/string.tl`). Several
 compiler builtins keep the compatibility `String` forms listed in section 6.1.
 It also reserves the v1 mutable byte-buffer family from #2782 so binary IO,
 FFI, and builder code do not invent incompatible names while implementation
@@ -4916,10 +4916,12 @@ fixed-size-only public `Array`.
 | `string-length` | `String → i64` / `(& r str) → i64` | Imported `stdlib/string.tl` helper over private `__tl_string_length`; get string byte length |
 | `string-ref` | `String i64 → char` / `(& r str) i64 → char` | Imported `stdlib/string.tl` helper over private `__tl_string_ref`; read byte from string (bounds checked) |
 | `char-at` | `String i64 → char` / `(& r str) i64 → char` | Alias for `string-ref` |
-| `string-eq` | `String String → bool` | Imported `stdlib/string.tl` helper over private `__tl_string_eq`; byte-wise string comparison |
-| `string=?` | `String String → bool` | Alias for `string-eq` |
-| `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
-| `string-slice` | `String i64 i64 → String` | Alias for `substring` |
+| `string-eq` | `(& l str) (& r str) → bool` | Imported `stdlib/string.tl` helper over private `__tl_string_eq`; byte-wise string comparison. Owned `String` places auto-borrow at typed call sites. |
+| `string=?` | `(& l str) (& r str) → bool` | Alias for `string-eq` |
+| `string->int` | `(& r str) → i64` | Imported `stdlib/string.tl` helper over private `__tl_string_to_int`; legacy decimal parser rules. Owned `String` places auto-borrow at typed call sites. |
+| `string-copy` | `(& r str) → String` | Fresh active-arena copy of borrowed text. Owned `String` places auto-borrow at typed call sites. |
+| `substring` | `(& r str) i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. Owned `String` places auto-borrow at typed call sites. |
+| `string-slice` | `(& r str) i64 i64 → String` | Alias for `substring` |
 | `substring-view` | `(& r str) i64 i64 → (& r str)` | Borrowed string view of `len` bytes starting at byte offset `start`. Bounds checked; does not copy bytes. |
 | `string-slice-view` | `(& r str) i64 i64 → (& r str)` | Alias for `substring-view` |
 | `int->string` | `i64 → String` | Format integer as decimal string |

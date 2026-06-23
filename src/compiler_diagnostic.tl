@@ -44,38 +44,52 @@
   (secondary CompilerDiagnosticLabelList)
   (notes CompilerDiagnosticNoteList))
 
-(define (compiler-diagnostic-span-path [span : CompilerDiagnosticSpan]) : String
-  (struct-get span path))
+(define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
+  (string-copy (& (struct-get span path))))
 
-(define (compiler-diagnostic-span-start-line [span : CompilerDiagnosticSpan]) : i64
+(define (compiler-diagnostic-span-start-line
+  [span : (& span CompilerDiagnosticSpan)]) : i64
   (struct-get span start-line))
 
-(define (compiler-diagnostic-span-start-col [span : CompilerDiagnosticSpan]) : i64
+(define (compiler-diagnostic-span-start-col
+  [span : (& span CompilerDiagnosticSpan)]) : i64
   (struct-get span start-col))
 
-(define (compiler-diagnostic-span-end-line [span : CompilerDiagnosticSpan]) : i64
+(define (compiler-diagnostic-span-end-line
+  [span : (& span CompilerDiagnosticSpan)]) : i64
   (struct-get span end-line))
 
-(define (compiler-diagnostic-span-end-col [span : CompilerDiagnosticSpan]) : i64
+(define (compiler-diagnostic-span-end-col
+  [span : (& span CompilerDiagnosticSpan)]) : i64
   (struct-get span end-col))
 
 (define (compiler-diagnostic-path [diag : CompilerDiagnostic]) : String
-  (compiler-diagnostic-span-path (struct-get diag primary)))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-path (& primary))))
 
 (define (compiler-diagnostic-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-line (struct-get diag primary)))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-start-line (& primary))))
 
 (define (compiler-diagnostic-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-col (struct-get diag primary)))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-start-col (& primary))))
 
 (define (compiler-diagnostic-message [diag : CompilerDiagnostic]) : String
   (struct-get diag message))
 
 (define (compiler-diagnostic-end-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-line (struct-get diag primary)))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-end-line (& primary))))
 
 (define (compiler-diagnostic-end-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-col (struct-get diag primary)))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-end-col (& primary))))
 
 (define (compiler-diagnostic-level [diag : CompilerDiagnostic]) : CompilerDiagnosticLevel
   (struct-get diag level))
@@ -348,7 +362,7 @@
     (begin
       (while (< idx count)
         (begin
-          (set! out (string-append out chunk))
+          (set! out (string-concat3 out chunk ""))
           (set! idx (+ idx 1))))
       out)))
 
@@ -401,7 +415,9 @@
           ok))
       false)))
 
-(define (compiler-diagnostic-source-line [source : String] [target-line : i64]) : CompilerDiagnosticMaybeString
+(define (compiler-diagnostic-source-line
+  [source : (& source str)]
+  [target-line : i64]) : CompilerDiagnosticMaybeString
   (if (< target-line 1)
     CompilerDiagnosticNoString
     (let
@@ -412,7 +428,9 @@
       [done : bool false]
       [out : String ""]
       (begin
-        (while (and (< idx n) (not done))
+        (while (if (< idx n)
+          (not done)
+          false)
           (begin
             (if (= line target-line)
               (if (= (string-ref source idx) '\n')
@@ -477,19 +495,20 @@
   (compiler-diagnostic-render-span-location-with-fallback "" span))
 
 (define (compiler-diagnostic-render-location [diag : CompilerDiagnostic]) : String
-  (compiler-diagnostic-render-span-location
-    (compiler-diagnostic-primary-span diag)))
+  (let
+    [span : CompilerDiagnosticSpan (compiler-diagnostic-primary-span diag)]
+    (compiler-diagnostic-render-span-location span)))
 
 (define (compiler-diagnostic-render-label-suffix
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
-    [(CompilerDiagnosticSomeString text) (str-cat " " text)]
+    [(CompilerDiagnosticSomeString text) (string-append " " text)]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-source-snippet
   [span : CompilerDiagnosticSpan]
-  [source : String]
-  [label : CompilerDiagnosticMaybeString]) : String
+  [source : (& source str)]
+  [label-suffix : (& label-suffix str)]) : String
   (match (compiler-diagnostic-source-line
     source
     (compiler-diagnostic-span-start-line span))
@@ -512,14 +531,15 @@
             " | "
             padding
             underline
-            (compiler-diagnostic-render-label-suffix label)
+            (string-copy label-suffix)
             "\n")))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-label-only
   [label : CompilerDiagnosticMaybeString]) : String
   (match label
-    [(CompilerDiagnosticSomeString text) (str-cat "   = label: " text "\n")]
+    [(CompilerDiagnosticSomeString text)
+      (string-append "   = label: " (string-append text "\n"))]
     [CompilerDiagnosticNoString ""]))
 
 (define (compiler-diagnostic-render-secondary-span
@@ -530,18 +550,31 @@
     [span : CompilerDiagnosticSpan (struct-get entry span)]
     [label : CompilerDiagnosticMaybeString (struct-get entry label)]
     [path : String (compiler-diagnostic-span-path span)]
-    (string-append
-      (compiler-diagnostic-render-span-location-with-fallback primary-path span)
-      (string-append
+    [same-path : bool
+      (if (string-eq path "")
+        true
+        (string-eq path primary-path))]
+    [label-suffix : String (compiler-diagnostic-render-label-suffix label)]
+    [label-only : String
+      (compiler-diagnostic-render-secondary-label-only label)]
+    [snippet : String
+      (compiler-diagnostic-render-source-snippet
+        span
+        (& source)
+        (& label-suffix))]
+    (string-concat3
+      (compiler-diagnostic-render-span-location-with-fallback
+        (string-copy primary-path)
+        span)
+      (string-concat3
         "   |\n"
-        (if (or (string-eq path "") (string-eq path primary-path))
-          (let
-            [snippet : String
-              (compiler-diagnostic-render-source-snippet span source label)]
-            (if (string-eq snippet "")
-              (compiler-diagnostic-render-secondary-label-only label)
-              snippet))
-          (compiler-diagnostic-render-secondary-label-only label))))))
+        (if same-path
+          (if (string-eq snippet "")
+            (string-copy label-only)
+            (string-copy snippet))
+          (string-copy label-only))
+        "")
+      "")))
 
 (define (compiler-diagnostic-render-secondary-spans
   [primary-path : String]
@@ -580,26 +613,30 @@
   [level : CompilerDiagnosticLevel]
   [code : CompilerDiagnosticMaybeString]
   [help : CompilerDiagnosticMaybeString]) : String
-  (string-append
-    (compiler-diagnostic-render-header diag level code)
+  (let
+    [primary-span : CompilerDiagnosticSpan
+      (compiler-diagnostic-primary-span diag)]
+    [empty-label : String ""]
     (string-append
-      (compiler-diagnostic-render-location diag)
+      (compiler-diagnostic-render-header diag level code)
       (string-append
-        "   |\n"
+        (compiler-diagnostic-render-location diag)
         (string-append
-          (compiler-diagnostic-render-source-snippet
-            (compiler-diagnostic-primary-span diag)
-            source
-            CompilerDiagnosticNoString)
+          "   |\n"
           (string-append
-            (compiler-diagnostic-render-secondary-spans
-              (compiler-diagnostic-path diag)
-              source
-              (compiler-diagnostic-secondary-spans diag))
+            (compiler-diagnostic-render-source-snippet
+              primary-span
+              (& source)
+              (& empty-label))
             (string-append
-              (compiler-diagnostic-render-help help)
-              (compiler-diagnostic-render-source-notes
-                (compiler-diagnostic-notes diag)))))))))
+              (compiler-diagnostic-render-secondary-spans
+                (compiler-diagnostic-path diag)
+                source
+                (compiler-diagnostic-secondary-spans diag))
+              (string-append
+                (compiler-diagnostic-render-help help)
+                (compiler-diagnostic-render-source-notes
+                  (compiler-diagnostic-notes diag))))))))))
 
 (define (compiler-diagnostic-render-source
   [diag : CompilerDiagnostic]
@@ -758,7 +795,8 @@
                 (match rest-labels
                   [(CompilerDiagnosticLabelCons _ _)
                     (string-eq
-                      (compiler-diagnostic-span-path (struct-get label span))
+                      (compiler-diagnostic-span-path
+                        (& (struct-get label span)))
                       "other.tl")]
                   [CompilerDiagnosticLabelNil false])
                 (match (compiler-diagnostic-code diag)

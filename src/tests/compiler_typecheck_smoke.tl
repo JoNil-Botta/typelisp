@@ -251,6 +251,15 @@
 (define (main [n : i64]) : i64
   (take-mut n))")
 
+(define (compiler-typecheck-auto-borrow-string-aggregate-place-source) : String
+  "(defstruct Named (name String))
+(define (len [text : (& text str)]) : i64 1)
+(define (same [left : (& left str)] [right : (& right str)]) : bool true)
+(define (main [named : Named] [items : (Array String 1)]) : i64
+  (if (same (struct-get named name) (array-ref items 0))
+    (+ (len (struct-get named name)) (len (array-ref items 0)))
+    0))")
+
 (define (compiler-typecheck-auto-borrow-assignment-after-last-use-source) : String
   "(define (take [n : (& n i64)]) : i64 1)
 (define (main [n : i64]) : i64
@@ -299,6 +308,8 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-mutable-param-source)
       "typecheck: argument type mismatch")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-auto-borrow-string-aggregate-place-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-assignment-after-last-use-source))
     (compiler-typecheck-ok?

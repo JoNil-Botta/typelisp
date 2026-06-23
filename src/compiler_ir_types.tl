@@ -1289,11 +1289,11 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (str-cat
           (compiler-ir-type-render head)
           (match rest
             [(AstTypeNil) ""]
-            [_ (string-append " " (compiler-ir-type-list-render rest))])))]))
+            [_ (str-cat " " (compiler-ir-type-list-render rest))])))]))
 
 (define (compiler-ir-lifetime-list-render [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -1301,21 +1301,16 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append
+        (str-cat
           head
           (match rest
             [(AstLifetimeNil) ""]
-            [_ (string-append " " (compiler-ir-lifetime-list-render rest))])))]))
+            [_ (str-cat " " (compiler-ir-lifetime-list-render rest))])))]))
 
 (define (compiler-ir-nominal-lifetime-render
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (str-cat
-    "("
-    name
-    (string-append
-      " "
-      (string-append (compiler-ir-lifetime-list-render lifetimes) ")"))))
+  (str-cat "(" name " " (compiler-ir-lifetime-list-render lifetimes) ")"))
 
 (define (compiler-ir-type-render [ty : AstType]) : String
   (match ty
@@ -1342,9 +1337,9 @@
       (str-cat
         "(-> "
         (compiler-ir-type-list-render (box-get args))
-        (string-append
-          " "
-          (string-append (compiler-ir-type-render (ty-node-get ret)) ")")))]
+        " "
+        (compiler-ir-type-render (ty-node-get ret))
+        ")")]
     [(AstTyTuple elems)
       (str-cat "(Tuple " (compiler-ir-type-list-render (box-get elems)) ")")]
     [(AstTyArray elem count)
@@ -1362,23 +1357,23 @@
       (str-cat
         "(Region "
         region
-        (string-append
-          " "
-          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
+        " "
+        (compiler-ir-type-render (ty-node-get inner))
+        ")")]
     [(AstTyRef region inner)
       (str-cat
         "(& "
         region
-        (string-append
-          " "
-          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
+        " "
+        (compiler-ir-type-render (ty-node-get inner))
+        ")")]
     [(AstTyMutRef region inner)
       (str-cat
         "(&mut "
         region
-        (string-append
-          " "
-          (string-append (compiler-ir-type-render (ty-node-get inner)) ")")))]
+        " "
+        (compiler-ir-type-render (ty-node-get inner))
+        ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
@@ -1425,12 +1420,11 @@
   (match values
     [(IrValueNil) ""]
     [(IrValueCons value rest)
-      (string-append
+      (str-cat
         (compiler-ir-value-render value)
         (match (box-get rest)
           [(IrValueNil) ""]
-          [_
-            (string-append ", " (compiler-ir-value-list-render (box-get rest)))]))]))
+          [_ (str-cat ", " (compiler-ir-value-list-render (box-get rest)))]))]))
 
 (define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
   (match case
@@ -1440,14 +1434,12 @@
   (match cases
     [(IrSwitchCaseNil) ""]
     [(IrSwitchCaseCons case rest)
-      (string-append
+      (str-cat
         (compiler-ir-switch-case-render case)
         (match (box-get rest)
           [(IrSwitchCaseNil) ""]
           [_
-            (string-append
-              ", "
-              (compiler-ir-switch-case-list-render (box-get rest)))]))]))
+            (str-cat ", " (compiler-ir-switch-case-list-render (box-get rest)))]))]))
 
 (define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
   (match values
@@ -1489,13 +1481,11 @@
   [index : i64]) : String
   (if (>= index (array-length values))
     ""
-    (string-append
+    (str-cat
       (compiler-ir-value-render (array-ref values index))
       (if (= (+ index 1) (array-length values))
         ""
-        (string-append
-          ", "
-          (compiler-ir-call-args-array-render values (+ index 1)))))))
+        (str-cat ", " (compiler-ir-call-args-array-render values (+ index 1)))))))
 
 (define (compiler-ir-call-args-render [args : CompilerIrCallArgs]) : String
   (match args
@@ -1798,12 +1788,10 @@
       (compiler-source-spans-entry-list-lookup entries name)]))
 
 (define (compiler-source-spans-value-key [function : String] [var-id : i64]) : String
-  (string-append
-    (string-append "value:" function)
-    (string-append ":" (int->string var-id))))
+  (str-cat "value:" function ":" (int->string var-id)))
 
 (define (compiler-source-spans-store-key [function : String] [name : String]) : String
-  (string-append (string-append "store:" function) (string-append ":" name)))
+  (str-cat "store:" function ":" name))
 
 (define (compiler-source-spans-insert-instr-entry
   [spans : CompilerSourceSpans]
@@ -2858,13 +2846,11 @@
   [index : i64]) : String
   (if (>= index (array-length values))
     ""
-    (string-append
+    (str-cat
       (compiler-ir-value-describe (array-ref values index))
       (if (= (+ index 1) (array-length values))
         ""
-        (string-append
-          ", "
-          (compiler-ir-call-args-array-describe values (+ index 1)))))))
+        (str-cat ", " (compiler-ir-call-args-array-describe values (+ index 1)))))))
 
 (define (compiler-ir-call-args-describe [args : CompilerIrCallArgs]) : String
   (match args

@@ -534,7 +534,7 @@
               (set! scan-pos body-next)
               (set! done true))
             (begin
-              (set! body (string-append body (string-append body-line "\n")))
+              (set! body (string-concat3 body body-line "\n"))
               (set! scan-pos body-next)))))
       (MdScanBlock
         scan-pos
@@ -643,7 +643,7 @@
                 text
                 (if (= (string-length text) 0)
                   (md-trim line)
-                  (string-append text (string-append " " (md-trim line)))))
+                  (str-cat text " " (md-trim line))))
               (set! scan-pos next)))))
       (MdScanBlock scan-pos (MdParagraph text)))))
 
@@ -735,12 +735,13 @@
                     (set!
                       out
                       (str-cat
-                        (string-append out "<code>")
+                        out
+                        "<code>"
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</code>"))
                     (set! i (+ j 1)))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [(or (= c '*') (= c '_'))
               (let
@@ -750,12 +751,13 @@
                     (set!
                       out
                       (str-cat
-                        (string-append out "<em>")
+                        out
+                        "<em>"
                         (doc-html-escape (substring text (+ i 1) (- j (+ i 1))))
                         "</em>"))
                     (set! i (+ j 1)))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [(= c '[')
               (let
@@ -769,27 +771,30 @@
                           (begin
                             (set!
                               out
-                              (string-append
+                              (string-concat3
                                 out
-                                (md-render-link text i jclose kclose)))
+                                (md-render-link text i jclose kclose)
+                                ""))
                             (set! i (+ kclose 1)))
                           (begin
                             (set!
                               out
-                              (string-append out (md-escape-char text i)))
+                              (string-concat3 out (md-escape-char text i) ""))
                             (set! i (+ i 1)))))
                       (begin
-                        (set! out (string-append out (md-escape-char text i)))
+                        (set!
+                          out
+                          (string-concat3 out (md-escape-char text i) ""))
                         (set! i (+ i 1))))
                     (begin
-                      (set! out (string-append out (md-escape-char text i)))
+                      (set! out (string-concat3 out (md-escape-char text i) ""))
                       (set! i (+ i 1))))
                   (begin
-                    (set! out (string-append out (md-escape-char text i)))
+                    (set! out (string-concat3 out (md-escape-char text i) ""))
                     (set! i (+ i 1)))))]
             [else
               (begin
-                (set! out (string-append out (md-escape-char text i)))
+                (set! out (string-concat3 out (md-escape-char text i) ""))
                 (set! i (+ i 1)))])))
       out)))
 
@@ -888,7 +893,7 @@
 (define (md-render-table-rows-from [rows : MdTableRowList] [index : i64]) : String
   (if (>= index (md-table-row-list-count rows))
     ""
-    (string-append
+    (str-cat
       (md-render-table-row (md-table-row-list-ref rows index))
       (md-render-table-rows-from rows (+ index 1)))))
 
@@ -917,7 +922,7 @@
 (define (md-render-blocks-from [blocks : MdBlockList] [index : i64]) : String
   (if (>= index (md-block-list-count blocks))
     ""
-    (string-append
+    (str-cat
       (md-render-block (md-block-list-get (& blocks) index MdBlank))
       (md-render-blocks-from blocks (+ index 1)))))
 
@@ -1012,19 +1017,14 @@
 (define (compiler-doc-md-block-self-test) : i64
   (let
     [fixture : String
-      (string-append
+      (str-cat
         "# Title `x`\n\n"
-        (string-append
-          "Paragraph with *em*\n"
-          (string-append
-            "> quote [a](b)\n> second\n"
-            (string-append
-              "- one\n- two\n"
-              (string-append
-                "1. first\n2. second\n"
-                (string-append
-                  "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
-                  "| Name | Type |\n| --- | --- |\n| x | i64 |\n"))))))]
+        "Paragraph with *em*\n"
+        "> quote [a](b)\n> second\n"
+        "- one\n- two\n"
+        "1. first\n2. second\n"
+        "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
+        "| Name | Type |\n| --- | --- |\n| x | i64 |\n")]
     [blocks : MdBlockList (md-scan-blocks fixture)]
     (begin
       (unless (= (md-block-list-count blocks) 8) (return 100))

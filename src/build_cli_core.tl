@@ -9,6 +9,7 @@
 (import "../stdlib/io.tl")
 (import "../stdlib/list.tl")
 (import "../stdlib/string.tl")
+(import "../stdlib/core_macros.tl")
 (import "../stdlib/str_cat.tl")
 (import "host_plan.tl")
 (import "build_run_core.tl")
@@ -171,7 +172,8 @@
   (profile BuildProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
-  (stdlib-roots StringVec))
+  (stdlib-roots StringVec)
+  (resolved-deps CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
   (OkBuildPackageWorkerConfig BuildPackageWorkerConfig)
@@ -237,7 +239,8 @@
   (str-cat
     "invalid package manifest '"
     (compiler-diagnostic-path diag)
-    (string-append "': " (compiler-diagnostic-message diag))))
+    "': "
+    (compiler-diagnostic-message diag)))
 
 (define (build-unknown-target [value : String]) : String
   (str-cat "build: unknown target " value ""))
@@ -319,7 +322,7 @@
     [(BuildPackageLockDefault) args]))
 
 (define (build-append-stdlib [stdlib-lines : String] [root : String]) : String
-  (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
+  (str-cat stdlib-lines (host-plan-netline "stdlib-root" root)))
 
 (define (build-parse-target [value : String]) : ResultBuildTarget
   (if (or (string-eq value "linux-x86_64") (string-eq value "linux_x86_64"))
@@ -645,7 +648,7 @@
               stdlib-lines
               stdlib-roots))]
         [(host-plan-flag? current)
-          (ErrBuildConfig (string-append "build: unknown flag " current))]
+          (ErrBuildConfig (str-cat "build: unknown flag " current))]
         [else
           (if has-source
             (ErrBuildConfig "build: accepts only one source file")
@@ -704,7 +707,8 @@
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : StringVec]) : ResultBuildPackageWorkerConfig
+  [stdlib-roots : StringVec]
+  [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
       (OkBuildPackageWorkerConfig
@@ -716,7 +720,8 @@
           profile
           opt-level
           lock-policy
-          stdlib-roots))
+          stdlib-roots
+          (build-package-dep-list-reverse resolved-deps)))
       (ErrBuildPackageWorkerConfig
         "build: --package-worker requires --manifest-path"))
     (let
@@ -737,7 +742,8 @@
               opt-level
               has-opt-level
               lock-policy
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig "build: --target requires a value")
@@ -756,7 +762,8 @@
                     opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots)]
+                    stdlib-roots
+                    resolved-deps)]
                 [(ErrSourceToolTarget _)
                   (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))]
         [(string-eq current "--backend-mode")
@@ -778,7 +785,8 @@
                     opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots)]
+                    stdlib-roots
+                    resolved-deps)]
                 [(ErrSourceToolBackendMode message)
                   (ErrBuildPackageWorkerConfig message)])))]
         [(string-eq current "--profile")
@@ -803,7 +811,8 @@
                     next-opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots))]))]
+                    stdlib-roots
+                    resolved-deps))]))]
         [(string-eq current "--release")
           (build-package-worker-parse-options
             (+ idx 1)
@@ -818,7 +827,8 @@
               (build-profile-default-opt-level (BuildProfileRelease)))
             has-opt-level
             lock-policy
-            stdlib-roots)]
+            stdlib-roots
+            resolved-deps)]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig "build: --opt-level requires a value")
@@ -836,7 +846,8 @@
                   (string->int value)
                   true
                   lock-policy
-                  stdlib-roots)
+                  stdlib-roots
+                  resolved-deps)
                 (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))]
         [(string-eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
@@ -853,7 +864,8 @@
               opt-level
               has-opt-level
               (BuildPackageLockLocked)
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
             (ErrBuildPackageWorkerConfig
@@ -869,7 +881,8 @@
               opt-level
               has-opt-level
               (BuildPackageLockUpdate)
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig
@@ -885,13 +898,33 @@
               opt-level
               has-opt-level
               lock-policy
-              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              resolved-deps))]
+        [(string-eq current "--resolved-dep")
+          (if (>= (+ idx 2) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --resolved-dep requires alias and path")
+            (build-package-worker-parse-options
+              (+ idx 3)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              lock-policy
+              stdlib-roots
+              (CompilerPkgDepCons
+                (CompilerPkgDep (arg (+ idx 1)) (arg (+ idx 2)))
+                (box resolved-deps))))]
         [(host-plan-flag? current)
           (ErrBuildPackageWorkerConfig
-            (string-append "build: unknown package worker flag " current))]
+            (str-cat "build: unknown package worker flag " current))]
         [else
           (ErrBuildPackageWorkerConfig
-            (string-append "build: unexpected package worker argument " current))]))))
+            (str-cat "build: unexpected package worker argument " current))]))))
 
 (define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
   (build-package-worker-parse-options
@@ -905,7 +938,8 @@
     (build-package-default-opt-level)
     false
     (BuildPackageLockDefault)
-    (string-vec-new)))
+    (string-vec-new)
+    CompilerPkgDepNil))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
   (match config
@@ -918,35 +952,30 @@
         mode
         opt-level
         stdlib-lines)
-      (string-append
+      (str-cat
         (host-plan-header)
-        (string-append
-          (host-plan-word-line "action" "build-source")
-          (string-append
-            (host-plan-netline "source" source)
-            (string-append
-              (if has-output
-                (host-plan-netline "output" output)
-                "")
-              (string-append
-                (host-plan-word-line "target" target)
-                (string-append
-                  (host-plan-word-line "backend-mode" mode)
-                  (string-append
-                    (if (string-eq opt-level "")
-                      ""
-                      (host-plan-word-line "opt-level" opt-level))
-                    (string-append stdlib-lines "end\n"))))))))]
+        (host-plan-word-line "action" "build-source")
+        (host-plan-netline "source" source)
+        (if has-output
+          (host-plan-netline "output" output)
+          "")
+        (host-plan-word-line "target" target)
+        (host-plan-word-line "backend-mode" mode)
+        (if (string-eq opt-level "")
+          ""
+          (host-plan-word-line "opt-level" opt-level))
+        stdlib-lines
+        "end\n")]
     [_ ""]))
 
 (define (build-discover-manifest-up [prefix : String] [fuel : i64]) : CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
-      [candidate : String (string-append prefix "typelisp.pkg")]
+      [candidate : String (str-cat prefix "typelisp.pkg")]
       (if (file-exists? candidate)
         (CompilerLoadSomePath candidate)
-        (build-discover-manifest-up (string-append prefix "../") (- fuel 1))))))
+        (build-discover-manifest-up (str-cat prefix "../") (- fuel 1))))))
 
 (define (build-load-manifest [manifest-path : String]) : ResultBuildManifest
   (if (file-exists? manifest-path)
@@ -964,7 +993,7 @@
 
 (define (build-package-output-dir-profile
   [manifest-dir : String]
-  [_name : String]
+  [_name : (& name str)]
   [profile : BuildProfile]) : String
   (compiler-load-join-root-path
     (compiler-load-join-root-path manifest-dir "target")
@@ -978,8 +1007,8 @@
   [name : String]
   [profile : BuildProfile]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir-profile manifest-dir name profile)
-    (string-append name ".s")))
+    (build-package-output-dir-profile manifest-dir "" profile)
+    (str-cat name ".s")))
 
 (define (build-package-obj-path
   [manifest-dir : String]
@@ -997,10 +1026,8 @@
   [profile : BuildProfile]
   [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir-profile manifest-dir name profile)
-    (string-append
-      name
-      (string-append "." (source-tool-object-extension target)))))
+    (build-package-output-dir-profile manifest-dir "" profile)
+    (str-cat name "." (source-tool-object-extension target))))
 
 (define (build-package-bin-path
   [manifest-dir : String]
@@ -1018,8 +1045,8 @@
   [profile : BuildProfile]
   [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir-profile manifest-dir name profile)
-    (string-append name (source-tool-executable-extension target))))
+    (build-package-output-dir-profile manifest-dir "" profile)
+    (str-cat name (source-tool-executable-extension target))))
 
 (define (build-package-lib-path
   [manifest-dir : String]
@@ -1037,7 +1064,7 @@
   [profile : BuildProfile]
   [target : CompilerBackendTarget]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir-profile manifest-dir name profile)
+    (build-package-output-dir-profile manifest-dir "" profile)
     (source-tool-static-library-filename name target)))
 
 (define (build-package-tlci-path [manifest-dir : String] [name : String]) : String
@@ -1048,8 +1075,8 @@
   [name : String]
   [profile : BuildProfile]) : String
   (compiler-load-join-root-path
-    (build-package-output-dir-profile manifest-dir name profile)
-    (string-append name ".tlci")))
+    (build-package-output-dir-profile manifest-dir "" profile)
+    (str-cat name ".tlci")))
 
 (define (build-package-artifact-path
   [manifest-dir : String]
@@ -1206,6 +1233,19 @@
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
 
+(define (build-package-dep-list-reverse-onto
+  [deps : CompilerPkgDepList]
+  [acc : CompilerPkgDepList]) : CompilerPkgDepList
+  (match deps
+    [(CompilerPkgDepNil) acc]
+    [(CompilerPkgDepCons dep rest)
+      (build-package-dep-list-reverse-onto
+        (box-get rest)
+        (CompilerPkgDepCons dep (box acc)))]))
+
+(define (build-package-dep-list-reverse [deps : CompilerPkgDepList]) : CompilerPkgDepList
+  (build-package-dep-list-reverse-onto deps CompilerPkgDepNil))
+
 (define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
   (compiler-load-normalize-path
     (compiler-load-join-root-path manifest-dir (struct-get dep path))))
@@ -1230,11 +1270,7 @@
       (build-string-index-from s needle (+ i 1) n))))
 
 (define (build-github-dep-relative-root [alias : String]) : String
-  (compiler-load-join-root-path
-    (compiler-load-join-root-path
-      (compiler-load-join-root-path "target" "typelisp")
-      "git-deps")
-    alias))
+  (str-cat "target/typelisp/git-deps/" alias))
 
 (define (build-github-dep-cache-root [manifest-dir : String] [alias : String]) : String
   (compiler-load-normalize-path
@@ -1250,10 +1286,12 @@
       (build-github-dep-cache-root manifest-dir alias)
       "typelisp.pkg")))
 
-(define (build-git-dep-error [alias : String] [message : String]) : String
-  (string-append
+(defmacro (build-git-dep-error [alias : Expr] [message : Expr]) : Expr
+  `(str-cat
     "build: GitHub dependency `"
-    (string-append alias (string-append "` " message))))
+    (substring ,alias 0 (string-length ,alias))
+    "` "
+    ,message))
 
 (define (build-parse-git-dependency [alias : String] [path : String]) : ResultBuildGitDependency
   (let
@@ -1263,17 +1301,16 @@
       (ErrBuildGitDependency
         (build-git-dep-error alias "has invalid normalized path"))
       (let
-        [remote : String (substring-borrowed (& path) 0 hash)]
-        [pin : String (substring-borrowed (& path) (+ hash 1) (- n (+ hash 1)))]
+        [remote : String (substring (& path) 0 hash)]
+        [pin : String (substring (& path) (+ hash 1) (- n (+ hash 1)))]
         [pin-len : i64 (string-length pin)]
         [eq : i64 (build-string-index-from (& pin) '=' 0 pin-len)]
         (if (<= eq 0)
           (ErrBuildGitDependency (build-git-dep-error alias "has invalid pin"))
           (let
-            [kind : String (substring-borrowed (& pin) 0 eq)]
-            [value : String
-              (substring-borrowed (& pin) (+ eq 1) (- pin-len (+ eq 1)))]
-            [kind-for-check : String (string-copy-borrowed (& kind))]
+            [kind : String (substring (& pin) 0 eq)]
+            [value : String (substring (& pin) (+ eq 1) (- pin-len (+ eq 1)))]
+            [kind-for-check : String (string-copy (& kind))]
             (if (= (string-length value) 0)
               (ErrBuildGitDependency
                 (build-git-dep-error alias "has empty pin"))
@@ -1286,7 +1323,7 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultPackageCachePinKind
   (let
-    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
+    [kind : String (string-copy (& (struct-get dep pin-kind)))]
     (cond
       [(string-eq kind "rev") (OkPackageCachePinKind (PackageCachePinRev))]
       [(string-eq kind "tag") (OkPackageCachePinKind (PackageCachePinTag))]
@@ -1309,15 +1346,13 @@
             (str-cat
               "build: cannot read package lock '"
               path
-              (string-append "': " (io-error-message error))))]
+              "': "
+              (io-error-message error)))]
         [(OkIoString source)
           (match (package-lock-parse source)
             [(ErrPackageLockFile message)
               (ErrBuildPackageLockState
-                (str-cat
-                  "build: invalid package lock '"
-                  path
-                  (string-append "': " message)))]
+                (str-cat "build: invalid package lock '" path "': " message))]
             [(OkPackageLockFile lock)
               (OkBuildPackageLockState
                 (BuildPackageLockState path (struct-get lock entries) true))])])
@@ -1338,7 +1373,8 @@
           (str-cat
             "build: cannot write package lock '"
             path
-            (string-append "': " (io-error-message error))))])))
+            "': "
+            (io-error-message error)))])))
 
 (define (build-package-lock-entry-matches?
   [entry : PackageLockEntry]
@@ -1348,12 +1384,10 @@
     [(ErrPackageCachePinKind _) false]
     [(OkPackageCachePinKind kind)
       (and
-        (string-eq (struct-get entry alias) alias)
-        (string-eq-borrowed
-          (& (struct-get entry url))
-          (& (struct-get dep remote)))
+        (string-eq (& (struct-get entry alias)) alias)
+        (string-eq (& (struct-get entry url)) (& (struct-get dep remote)))
         (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-        (string-eq-borrowed
+        (string-eq
           (& (struct-get entry pin-value))
           (& (struct-get dep pin-value))))]))
 
@@ -1401,39 +1435,34 @@
       (OkPackageLockEntry
         (PackageLockEntry
           alias
-          (string-copy-borrowed (& (struct-get dep remote)))
+          (string-copy (& (struct-get dep remote)))
           kind
-          (string-copy-borrowed (& (struct-get dep pin-value)))
+          (string-copy (& (struct-get dep pin-value)))
           commit))]))
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
   [commit : String]) : BuildGitDependency
-  (BuildGitDependency
-    (string-copy-borrowed (& (struct-get dep remote)))
-    "rev"
-    commit))
+  (BuildGitDependency (string-copy (& (struct-get dep remote))) "rev" commit))
 
 (define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
   (let
-    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
+    [kind : String (string-copy (& (struct-get dep pin-kind)))]
     (if (string-eq kind "branch")
-      (string-append
-        "origin/"
-        (string-copy-borrowed (& (struct-get dep pin-value))))
-      (string-copy-borrowed (& (struct-get dep pin-value))))))
+      (str-cat "origin/" (string-copy (& (struct-get dep pin-value))))
+      (string-copy (& (struct-get dep pin-value))))))
 
 (define (build-git-executable) : String
-  (source-tool-resolve-command "git"))
+  (source-tool-git-executable))
 
 (define (build-process-output-detail [output : ProcessOutput]) : String
   (let
     [stderr : String (process-output-stderr output)]
     [stdout : String (process-output-stdout output)]
     (if (> (string-length stderr) 0)
-      (string-append ": " stderr)
+      (str-cat ": " stderr)
       (if (> (string-length stdout) 0)
-        (string-append ": " stdout)
+        (str-cat ": " stdout)
         ""))))
 
 (define (build-run-captured [context : String] [command : ProcessCommand]) : ResultBuildString
@@ -1442,63 +1471,22 @@
       (if (process-success? output)
         (OkBuildString (process-output-stdout output))
         (ErrBuildString
-          (string-append
+          (str-cat
             context
-            (string-append
-              " failed with status "
-              (string-append
-                (int->string (process-output-status output))
-                (build-process-output-detail output))))))]
+            " failed with status "
+            (int->string (process-output-status output))
+            (build-process-output-detail output))))]
     [(ErrProcessOutput error)
-      (ErrBuildString
-        (string-append
-          context
-          (string-append ": " (process-error-message error))))]))
+      (ErrBuildString (str-cat context ": " (process-error-message error)))]))
 
 (define (build-git-clone-command [remote : String] [root : String]) : ProcessCommand
-  (process-command
-    (build-git-executable)
-    (source-tool-args-append
-      (source-tool-args-append
-        (source-tool-args-append
-          (source-tool-args-append
-            (source-tool-args-append (process-args-empty) "-c")
-            "core.longpaths=true")
-          "clone")
-        remote)
-      root)))
+  (source-tool-git-clone-command remote root))
 
 (define (build-git-checkout-command [root : String] [checkout-ref : String]) : ProcessCommand
-  (process-command
-    (build-git-executable)
-    (source-tool-args-append
-      (source-tool-args-append
-        (source-tool-args-append
-          (source-tool-args-append
-            (source-tool-args-append
-              (source-tool-args-append
-                (source-tool-args-append (process-args-empty) "-c")
-                "core.longpaths=true")
-              "-C")
-            root)
-          "checkout")
-        "--detach")
-      checkout-ref)))
+  (source-tool-git-checkout-command root checkout-ref))
 
 (define (build-git-rev-parse-command [root : String]) : ProcessCommand
-  (process-command
-    (build-git-executable)
-    (source-tool-args-append
-      (source-tool-args-append
-        (source-tool-args-append
-          (source-tool-args-append
-            (source-tool-args-append
-              (source-tool-args-append (process-args-empty) "-c")
-              "core.longpaths=true")
-            "-C")
-          root)
-        "rev-parse")
-      "HEAD")))
+  (source-tool-git-rev-parse-command root))
 
 (define (build-trim-command-output [output : String]) : String
   (string-trim (& output)))
@@ -1524,25 +1512,22 @@
   [manifest-dir : String]
   [alias : String]) : ResultBuildString
   (let
-    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [target-dir : String
+      (compiler-load-join-root-path (string-copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path
-        (string-copy-borrowed (& target-dir))
-        "typelisp")]
+      (compiler-load-join-root-path (string-copy target-dir) "typelisp")]
     [deps-dir : String
-      (compiler-load-join-root-path
-        (string-copy-borrowed (& typelisp-dir))
-        "git-deps")]
+      (compiler-load-join-root-path (string-copy typelisp-dir) "git-deps")]
     (cond
-      [(not (build-mkdir-ok? target-dir))
+      [(not (build-mkdir-ok-owned? (string-copy target-dir)))
         (ErrBuildString
           (build-git-dep-error alias "could not create target directory"))]
-      [(not (build-mkdir-ok? typelisp-dir))
+      [(not (build-mkdir-ok-owned? (string-copy typelisp-dir)))
         (ErrBuildString
           (build-git-dep-error
             alias
             "could not create target/typelisp directory"))]
-      [(not (build-mkdir-ok? deps-dir))
+      [(not (build-mkdir-ok-owned? (string-copy deps-dir)))
         (ErrBuildString
           (build-git-dep-error
             alias
@@ -1558,64 +1543,54 @@
 (define (build-github-cache-needs-git? [manifest-dir : String] [alias : String]) : bool
   (or
     (not
-      (file-exists? (build-github-dep-cache-manifest-path manifest-dir alias)))
+      (file-exists?
+        (build-github-dep-cache-manifest-path
+          (string-copy manifest-dir)
+          (string-copy alias))))
     (file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
 (define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
-  (let
-    [kind : String (string-copy-borrowed (& (struct-get dep pin-kind)))]
-    (string-eq kind "rev")))
+  (string-eq (& (struct-get dep pin-kind)) "rev"))
 
 (define (build-package-cache-relative-root) : String
-  (compiler-load-join-root-path
-    (compiler-load-join-root-path
-      (compiler-load-join-root-path
-        (compiler-load-join-root-path "target" "typelisp")
-        "cache")
-      "packages")
-    package-cache-version))
+  "target/typelisp/cache/packages/v1")
 
-(define (build-package-cache-manifest-path [entry-path : String]) : String
-  (compiler-load-join-root-path entry-path "typelisp.pkg"))
+(define (build-package-cache-manifest-path [entry-path : (& entry-path str)]) : String
+  (string-append entry-path "/typelisp.pkg"))
 
 (define (build-ensure-package-cache-root
   [manifest-dir : String]
   [alias : String]) : ResultBuildString
   (let
-    [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
+    [target-dir : String
+      (compiler-load-join-root-path (string-copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path
-        (string-copy-borrowed (& target-dir))
-        "typelisp")]
+      (compiler-load-join-root-path (string-copy target-dir) "typelisp")]
     [cache-dir : String
-      (compiler-load-join-root-path
-        (string-copy-borrowed (& typelisp-dir))
-        "cache")]
+      (compiler-load-join-root-path (string-copy typelisp-dir) "cache")]
     [packages-dir : String
-      (compiler-load-join-root-path
-        (string-copy-borrowed (& cache-dir))
-        "packages")]
+      (compiler-load-join-root-path (string-copy cache-dir) "packages")]
     [root : String (package-cache-default-root manifest-dir)]
     (cond
-      [(not (build-mkdir-ok? target-dir))
+      [(not (build-mkdir-ok-owned? (string-copy target-dir)))
         (ErrBuildString
           (build-git-dep-error alias "could not create target directory"))]
-      [(not (build-mkdir-ok? typelisp-dir))
+      [(not (build-mkdir-ok-owned? (string-copy typelisp-dir)))
         (ErrBuildString
           (build-git-dep-error
             alias
             "could not create target/typelisp directory"))]
-      [(not (build-mkdir-ok? cache-dir))
+      [(not (build-mkdir-ok-owned? (string-copy cache-dir)))
         (ErrBuildString
           (build-git-dep-error
             alias
             "could not create target/typelisp/cache directory"))]
-      [(not (build-mkdir-ok? packages-dir))
+      [(not (build-mkdir-ok-owned? (string-copy packages-dir)))
         (ErrBuildString
           (build-git-dep-error
             alias
             "could not create target/typelisp/cache/packages directory"))]
-      [(not (build-mkdir-ok? root))
+      [(not (build-mkdir-ok-owned? (string-copy root)))
         (ErrBuildString
           (build-git-dep-error
             alias
@@ -1626,9 +1601,7 @@
   [alias : String]
   [action : String]
   [error : IoError]) : String
-  (build-git-dep-error
-    alias
-    (string-append action (string-append ": " (io-error-message error)))))
+  (build-git-dep-error alias (str-cat action ": " (io-error-message error))))
 
 (define (build-package-cache-staging-path
   [alias : String]
@@ -1647,7 +1620,7 @@
 (define (build-package-cache-conflict-backup-path
   [entry-path : String]
   [attempt : i64]) : String
-  (string-append entry-path (string-append ".corrupt." (int->string attempt))))
+  (str-cat entry-path ".corrupt." (int->string attempt)))
 
 (define (build-package-cache-move-conflict-attempt
   [alias : String]
@@ -1686,7 +1659,7 @@
   [alias : String]
   [entry-path : String]
   [relative-entry-root : String]) : ResultBuildString
-  (if (file-exists? (build-package-cache-manifest-path entry-path))
+  (if (file-exists? (build-package-cache-manifest-path (& entry-path)))
     (OkBuildString relative-entry-root)
     (ErrBuildString
       (build-git-dep-error alias "cached package is missing typelisp.pkg"))))
@@ -1749,7 +1722,7 @@
           (match (build-run-captured
             (build-git-dep-error alias "git clone")
             (build-git-clone-command
-              (string-copy-borrowed (& (struct-get dep remote)))
+              (string-copy (& (struct-get dep remote)))
               staged-path))
             [(ErrBuildString message) (ErrBuildString message)]
             [(OkBuildString _)
@@ -1767,7 +1740,7 @@
                     [(OkBuildString _)
                       (if (not
                         (file-exists?
-                          (build-package-cache-manifest-path staged-path)))
+                          (build-package-cache-manifest-path (& staged-path))))
                         (ErrBuildString
                           (build-git-dep-error
                             alias
@@ -1805,8 +1778,8 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
-    [remote : String (string-copy-borrowed (& (struct-get dep remote)))]
-    [pin-value : String (string-copy-borrowed (& (struct-get dep pin-value)))]
+    [remote : String (string-copy (& (struct-get dep remote)))]
+    [pin-value : String (string-copy (& (struct-get dep pin-value)))]
     [key : PackageCacheKey (PackageCacheKey remote pin-value)]
     [root : String (package-cache-default-root manifest-dir)]
     [entry-path : String (package-cache-entry-path root (& key))]
@@ -1818,7 +1791,7 @@
       (package-cache-entry-state entry-path (& key))]
     (match state
       [(PackageCacheCompleteHit _)
-        (if (file-exists? (build-package-cache-manifest-path entry-path))
+        (if (file-exists? (build-package-cache-manifest-path (& entry-path)))
           (OkBuildString relative-entry-root)
           (match (build-ensure-package-cache-root manifest-dir alias)
             [(ErrBuildString message) (ErrBuildString message)]
@@ -1865,9 +1838,7 @@
     (OkBuildString root)
     (build-run-captured
       (build-git-dep-error alias "git clone")
-      (build-git-clone-command
-        (string-copy-borrowed (& (struct-get dep remote)))
-        root))))
+      (build-git-clone-command (string-copy (& (struct-get dep remote))) root))))
 
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
@@ -1940,8 +1911,7 @@
       (let
         [commit-result : ResultBuildString
           (if (build-git-dep-rev? (& dep))
-            (OkBuildString
-              (string-copy-borrowed (& (struct-get dep pin-value))))
+            (OkBuildString (string-copy (& (struct-get dep pin-value))))
             (build-resolve-git-head
               alias
               (build-absolute-dep-root manifest-dir dep-root)))]
@@ -1995,17 +1965,17 @@
   (let
     [path : String (struct-get dep path)]
     [alias : String (struct-get dep alias)]
-    [path-for-kind : String (string-copy-borrowed (& path))]
+    [path-for-kind : String (string-copy (& path))]
     (if (compiler-load-github-dependency-path? path-for-kind)
       (let
-        [parse-alias : String (string-copy-borrowed (& alias))]
-        [parse-path : String (string-copy-borrowed (& path))]
+        [parse-alias : String (substring alias 0 (string-length alias))]
+        [parse-path : String (string-copy (& path))]
         (match (build-parse-git-dependency parse-alias parse-path)
           [(ErrBuildGitDependency message) (ErrBuildResolvedPkgDep message)]
           [(OkBuildGitDependency git-dep)
             (match (build-resolve-github-dependency
               manifest-dir
-              (string-copy-borrowed (& alias))
+              alias
               git-dep
               lock-entries
               lock-policy)
@@ -2201,16 +2171,16 @@
         [tail : String (build-package-path-list-render (box-get rest))]
         (if (= (string-length tail) 0)
           path
-          (string-append tail (string-append " -> " path))))]))
+          (str-cat tail " -> " path)))]))
 
 (define (build-package-cycle-message
   [stack : BuildPackagePathList]
   [manifest-path : String]) : String
-  (string-append
+  (str-cat
     "build: dependency cycle: "
-    (string-append
-      (build-package-path-list-render stack)
-      (string-append " -> " manifest-path))))
+    (build-package-path-list-render stack)
+    " -> "
+    manifest-path))
 
 (define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
   (struct-get v len))
@@ -2304,11 +2274,11 @@
         (match (build-load-manifest dep-manifest-path)
           [(ErrBuildManifest message)
             (ErrBuildPackageGraphNode
-              (string-append
+              (str-cat
                 "dependency `"
-                (string-append
-                  (struct-get resolved-dep alias)
-                  (string-append "`: " message))))]
+                (struct-get resolved-dep alias)
+                "`: "
+                message))]
           [(OkBuildManifest dep-manifest)
             (match (build-package-resolve-manifest-deps
               dep-manifest-path
@@ -2319,15 +2289,12 @@
                 (if (not
                   (build-package-kind-lib? (struct-get resolved-manifest kind)))
                   (ErrBuildPackageGraphNode
-                    (string-append
+                    (str-cat
                       "build: dependency `"
-                      (string-append
-                        (struct-get resolved-dep alias)
-                        (string-append
-                          "` at "
-                          (string-append
-                            dep-manifest-path
-                            " must be a staticlib package")))))
+                      (struct-get resolved-dep alias)
+                      "` at "
+                      dep-manifest-path
+                      " must be a staticlib package"))
                   (OkBuildPackageGraphNode
                     (BuildPackageGraphNode dep-manifest-path resolved-manifest)))])]))]))
 
@@ -2426,6 +2393,11 @@
     [status : i64 (fs-mkdir-status path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
+(define (build-mkdir-ok-owned? [path : String]) : bool
+  (let
+    [status : i64 (fs-mkdir-status-owned path)]
+    (or (= status build-status-ok) (= status build-status-already-exists))))
+
 (define (build-ensure-package-output-dirs
   [manifest-dir : String]
   [_name : String]
@@ -2434,7 +2406,7 @@
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [profile-dir : String
       (compiler-load-join-root-path
-        (string-copy-borrowed (& target-dir))
+        (string-copy target-dir)
         (build-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
@@ -3516,6 +3488,63 @@
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
 
+(define (build-package-finish-artifacts
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : SourceToolLinkInputs]
+  [tlci-path : String]
+  [tlci-text : String]
+  [asm : String]
+  [direct-object : ResultSourceToolString]) : i64
+  (match (source-tool-write-file
+    asm-path
+    (source-tool-augment-assembly-for-target asm target)
+    "build: failed to write package assembly")
+    [(SourceToolCommandErr message)
+      (begin
+        (print-error message)
+        1)]
+    [(SourceToolCommandOk)
+      (let
+        [direct-status : SourceToolDirectObjectStatus
+          (match direct-object
+            [(OkSourceToolString obj)
+              (build-package-write-linux-direct-object-artifact
+                kind
+                target
+                obj-path
+                artifact-path
+                link-inputs
+                obj)]
+            [(ErrSourceToolString message)
+              (SourceToolDirectObjectUnavailable message)])]
+        (match (build-package-artifact-status
+          kind
+          target
+          asm-path
+          obj-path
+          artifact-path
+          link-inputs
+          direct-status)
+          [(SourceToolCommandErr message)
+            (begin
+              (print-error message)
+              1)]
+          [(SourceToolCommandOk)
+            (match (build-package-write-tlci tlci-path tlci-text)
+              [(SourceToolCommandErr message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(SourceToolCommandOk)
+                (begin
+                  (print-string (str-cat "Built " artifact-path "\n"))
+                  (print-string (str-cat "Built " tlci-path "\n"))
+                  0)])]))]))
+
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
     [(AstDeclPathNil) AstDeclPathNil]
@@ -3695,6 +3724,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]
   [dep-libs : ProcessStringList]) : i64
   (let
@@ -3719,7 +3749,7 @@
     (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
         (print-error
-          (string-append
+          (str-cat
             "build: failed to create package output directory "
             (build-package-output-dir-profile manifest-dir name profile)))
         1)
@@ -3785,87 +3815,87 @@
                     (print-error (compiler-diagnostic-render diag))
                     1)]
                 [(OkCompilerDriver asm)
-                  (match (build-package-tlci-text manifest decls owned-paths)
-                    [(ErrBuildPackageTlciText message)
-                      (begin
-                        (print-error message)
-                        1)]
-                    [(OkBuildPackageTlciText tlci-text)
-                      (let
-                        [direct-object : ResultSourceToolString
-                          (build-package-try-render-linux-direct-object
-                            kind
-                            target
-                            opt-level
-                            mode
-                            emit-entry
-                            crt-entry
-                            decls
-                            owned-paths)]
-                        [_reset-before-doctests : unit
-                          (compiler-driver-reset-file-state!)]
-                        [doctest-status : i64
-                          (build-doctest-typecheck-package-paths
-                            (build-package-doctest-paths name paths)
-                            stdlib-roots
-                            manifest-dir
-                            (struct-get manifest deps))]
-                        (if (= doctest-status 0)
-                          (match (source-tool-write-file
-                            asm-path
-                            (source-tool-augment-assembly-for-target asm target)
-                            "build: failed to write package assembly")
-                            [(SourceToolCommandErr message)
-                              (begin
-                                (print-error message)
-                                1)]
-                            [(SourceToolCommandOk)
+                  (begin
+                    (compiler-driver-release-lower-arenas-after-emit!)
+                    (match (build-package-tlci-text manifest decls owned-paths)
+                      [(ErrBuildPackageTlciText message)
+                        (begin
+                          (print-error message)
+                          1)]
+                      [(OkBuildPackageTlciText tlci-text)
+                        (if (build-package-async-process-supported?)
+                          (let
+                            [_reset-before-doctests : unit
+                              (compiler-driver-reset-analysis-state!)]
+                            [doctest-status : i64
+                              (build-package-run-doctest-worker
+                                manifest-path
+                                target
+                                opt-level
+                                profile
+                                mode
+                                lock-policy
+                                (compiler-pkg-deps-list
+                                  (struct-get manifest deps))
+                                stdlib-roots)]
+                            (if (= doctest-status 0)
                               (let
-                                [direct-status : SourceToolDirectObjectStatus
-                                  (match direct-object
-                                    [(OkSourceToolString obj)
-                                      (build-package-write-linux-direct-object-artifact
-                                        kind
-                                        target
-                                        obj-path
-                                        artifact-path
-                                        effective-link-inputs
-                                        obj)]
-                                    [(ErrSourceToolString message)
-                                      (SourceToolDirectObjectUnavailable
-                                        message)])]
-                                (match (build-package-artifact-status
+                                [direct-object : ResultSourceToolString
+                                  (build-package-try-render-linux-direct-object
+                                    kind
+                                    target
+                                    opt-level
+                                    mode
+                                    emit-entry
+                                    crt-entry
+                                    decls
+                                    owned-paths)]
+                                [_reset-after-direct-object : unit
+                                  (compiler-driver-reset-analysis-state!)]
+                                (build-package-finish-artifacts
                                   kind
                                   target
                                   asm-path
                                   obj-path
                                   artifact-path
                                   effective-link-inputs
-                                  direct-status)
-                                  [(SourceToolCommandErr message)
-                                    (begin
-                                      (print-error message)
-                                      1)]
-                                  [(SourceToolCommandOk)
-                                    (match (build-package-write-tlci
-                                      tlci-path
-                                      tlci-text)
-                                      [(SourceToolCommandErr message)
-                                        (begin
-                                          (print-error message)
-                                          1)]
-                                      [(SourceToolCommandOk)
-                                        (begin
-                                          (print-string
-                                            (string-append
-                                              "Built "
-                                              (string-append artifact-path "\n")))
-                                          (print-string
-                                            (string-append
-                                              "Built "
-                                              (string-append tlci-path "\n")))
-                                          0)])]))])
-                          doctest-status))])]))])))))
+                                  tlci-path
+                                  tlci-text
+                                  asm
+                                  direct-object))
+                              doctest-status))
+                          (let
+                            [direct-object : ResultSourceToolString
+                              (build-package-try-render-linux-direct-object
+                                kind
+                                target
+                                opt-level
+                                mode
+                                emit-entry
+                                crt-entry
+                                decls
+                                owned-paths)]
+                            [_reset-before-doctests : unit
+                              (compiler-driver-reset-file-state!)]
+                            [doctest-status : i64
+                              (build-doctest-typecheck-package-paths
+                                (build-package-doctest-paths name paths)
+                                stdlib-roots
+                                manifest-dir
+                                (struct-get manifest deps))]
+                            (if (= doctest-status 0)
+                              (build-package-finish-artifacts
+                                kind
+                                target
+                                asm-path
+                                obj-path
+                                artifact-path
+                                effective-link-inputs
+                                tlci-path
+                                tlci-text
+                                asm
+                                direct-object)
+                              doctest-status)))]))]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))
@@ -3900,19 +3930,63 @@
           (set! i (+ i 1))))
       out)))
 
-(define (build-package-worker-args
+(define (build-package-worker-append-resolved-deps
+  [args : ProcessStringList]
+  [deps : CompilerPkgDepList]) : ProcessStringList
+  (match deps
+    [(CompilerPkgDepNil) args]
+    [(CompilerPkgDepCons dep rest)
+      (build-package-worker-append-resolved-deps
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append args "--resolved-dep")
+            (struct-get dep alias))
+          (struct-get dep path))
+        (box-get rest))]))
+
+(define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
+  (let
+    [remote : CompilerPkgDep
+      (CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
+    [local : CompilerPkgDep (CompilerPkgDep "local" "../local")]
+    [deps : CompilerPkgDepList
+      (CompilerPkgDepCons
+        remote
+        (box (CompilerPkgDepCons local (box CompilerPkgDepNil))))]
+    [actual : ProcessStringList
+      (build-package-worker-append-resolved-deps (process-args-empty) deps)]
+    [expected0 : ProcessStringList
+      (source-tool-args-append (process-args-empty) "--resolved-dep")]
+    [expected1 : ProcessStringList (source-tool-args-append expected0 "remote")]
+    [expected2 : ProcessStringList
+      (source-tool-args-append expected1 "target/typelisp/git-deps/remote")]
+    [expected3 : ProcessStringList
+      (source-tool-args-append expected2 "--resolved-dep")]
+    [expected4 : ProcessStringList (source-tool-args-append expected3 "local")]
+    [expected : ProcessStringList
+      (source-tool-args-append expected4 "../local")]
+    (source-tool-string-list-eq? actual expected)))
+
+(test
+  build-package-worker-resolved-deps-args-smoke
+  (unless
+    (build-package-worker-resolved-deps-args-smoke-ok?)
+    (panic "build package worker resolved deps args smoke failed")))
+
+(define (build-package-worker-args-with-flag
+  [worker-flag : String]
   [manifest-path : String]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
   [stdlib-roots : StringVec]) : ProcessStringList
   (let
     [args0 : ProcessStringList
       (build-package-worker-command-prefix (process-args-empty))]
-    [args1 : ProcessStringList
-      (source-tool-args-append args0 "--package-worker")]
+    [args1 : ProcessStringList (source-tool-args-append args0 worker-flag)]
     [args2 : ProcessStringList
       (build-package-worker-append-option args1 "--manifest-path" manifest-path)]
     [args3 : ProcessStringList
@@ -3937,7 +4011,28 @@
         (int->string opt-level))]
     [args7 : ProcessStringList
       (build-package-lock-policy-arg args6 lock-policy)]
-    (build-package-worker-append-stdlib-roots args7 stdlib-roots)))
+    [args8 : ProcessStringList
+      (build-package-worker-append-resolved-deps args7 resolved-deps)]
+    (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
+
+(define (build-package-worker-args
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : StringVec]) : ProcessStringList
+  (build-package-worker-args-with-flag
+    "--package-worker"
+    manifest-path
+    target
+    opt-level
+    profile
+    mode
+    lock-policy
+    CompilerPkgDepNil
+    stdlib-roots))
 
 (define (build-package-worker-command
   [manifest-path : String]
@@ -3958,6 +4053,59 @@
       lock-policy
       stdlib-roots)))
 
+(define (build-package-doctest-worker-command
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
+  [stdlib-roots : StringVec]) : ProcessCommand
+  (process-command
+    (arg 0)
+    (build-package-worker-args-with-flag
+      "--package-doctest-worker"
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      resolved-deps
+      stdlib-roots)))
+
+(define (build-package-run-doctest-worker
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
+  [stdlib-roots : StringVec]) : i64
+  (match (process-output
+    (build-package-doctest-worker-command
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      resolved-deps
+      stdlib-roots))
+    [(OkProcessOutput output)
+      (begin
+        (source-tool-forward-output output)
+        (process-output-status output))]
+    [(ErrProcessOutput error)
+      (begin
+        (print-error
+          (str-cat
+            "build: failed to run package doctest worker: "
+            (process-error-message error)))
+        1)]))
+
 (define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
   (match (build-package-worker-config-from idx count)
     [(ErrBuildPackageWorkerConfig message)
@@ -3972,33 +4120,109 @@
         (match (build-load-manifest normalized-path)
           [(ErrBuildManifest message)
             (begin
-              (print-error (string-append "Error: " message))
+              (print-error (str-cat "Error: " message))
               1)]
           [(OkBuildManifest manifest)
-            (match (build-package-resolve-manifest-deps
-              normalized-path
-              manifest
-              (struct-get config lock-policy))
-              [(ErrBuildManifest message)
-                (begin
-                  (print-error message)
-                  1)]
-              [(OkBuildManifest resolved-manifest)
-                (if (build-package-kind-lib?
-                  (struct-get resolved-manifest kind))
-                  (build-package-emit-one
-                    normalized-path
-                    resolved-manifest
-                    (struct-get config target)
-                    (struct-get config opt-level)
-                    (struct-get config profile)
-                    (struct-get config mode)
-                    (struct-get config stdlib-roots)
-                    (process-args-empty))
+            (let
+              [resolved-deps : CompilerPkgDepList
+                (struct-get config resolved-deps)]
+              [resolved-manifest-result : ResultBuildManifest
+                (match resolved-deps
+                  [(CompilerPkgDepNil)
+                    (build-package-resolve-manifest-deps
+                      normalized-path
+                      manifest
+                      (struct-get config lock-policy))]
+                  [_
+                    (OkBuildManifest
+                      (CompilerPkgManifest
+                        (struct-get manifest name)
+                        (struct-get manifest version)
+                        (struct-get manifest kind)
+                        (struct-get manifest entry)
+                        (compiler-pkg-deps-from-list resolved-deps)
+                        (struct-get manifest link)))])]
+              (match resolved-manifest-result
+                [(ErrBuildManifest message)
                   (begin
-                    (print-error
-                      "build: package worker can only build staticlib packages")
-                    1))])]))]))
+                    (print-error message)
+                    1)]
+                [(OkBuildManifest resolved-manifest)
+                  (if (build-package-kind-lib?
+                    (struct-get resolved-manifest kind))
+                    (build-package-emit-one
+                      normalized-path
+                      resolved-manifest
+                      (struct-get config target)
+                      (struct-get config opt-level)
+                      (struct-get config profile)
+                      (struct-get config mode)
+                      (struct-get config lock-policy)
+                      (struct-get config stdlib-roots)
+                      (process-args-empty))
+                    (begin
+                      (print-error
+                        "build: package worker can only build staticlib packages")
+                      1))]))]))]))
+
+(define (build-package-doctest-worker-run-from [idx : i64] [count : i64]) : i64
+  (match (build-package-worker-config-from idx count)
+    [(ErrBuildPackageWorkerConfig message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkBuildPackageWorkerConfig config)
+      (let
+        [manifest-path : String (struct-get config manifest-path)]
+        [normalized-path : String
+          (build-package-normalize-manifest-path manifest-path)]
+        (match (build-load-manifest normalized-path)
+          [(ErrBuildManifest message)
+            (begin
+              (print-error (str-cat "Error: " message))
+              1)]
+          [(OkBuildManifest manifest)
+            (let
+              [resolved-deps : CompilerPkgDepList
+                (struct-get config resolved-deps)]
+              [resolved-manifest-result : ResultBuildManifest
+                (match resolved-deps
+                  [(CompilerPkgDepNil)
+                    (build-package-resolve-manifest-deps
+                      normalized-path
+                      manifest
+                      (struct-get config lock-policy))]
+                  [_
+                    (OkBuildManifest
+                      (CompilerPkgManifest
+                        (struct-get manifest name)
+                        (struct-get manifest version)
+                        (struct-get manifest kind)
+                        (struct-get manifest entry)
+                        (compiler-pkg-deps-from-list resolved-deps)
+                        (struct-get manifest link)))])]
+              (match resolved-manifest-result
+                [(ErrBuildManifest message)
+                  (begin
+                    (print-error message)
+                    1)]
+                [(OkBuildManifest resolved-manifest)
+                  (let
+                    [manifest-dir : String
+                      (compiler-load-dirname normalized-path)]
+                    [entry-path : String
+                      (compiler-load-join-root-path
+                        manifest-dir
+                        (struct-get resolved-manifest entry))]
+                    [kind : CompilerPkgKind (struct-get resolved-manifest kind)]
+                    (build-package-closure-doctest-status
+                      (struct-get resolved-manifest name)
+                      entry-path
+                      (struct-get config target)
+                      (struct-get config stdlib-roots)
+                      manifest-dir
+                      (struct-get resolved-manifest deps)
+                      (build-package-kind-entry? kind)))]))]))]))
 
 (define (build-package-async-process-supported?) : bool
   (not (string-eq (env-path-list-separator) ";")))
@@ -4135,11 +4359,11 @@
           (BuildPackageGraphWorker node artifacts child))]
       [(ErrProcessChild error)
         (ErrBuildPackageGraphWorker
-          (string-append
+          (str-cat
             "build: failed to start package dependency `"
-            (string-append
-              name
-              (string-append "`: " (process-error-message error)))))])))
+            name
+            "`: "
+            (process-error-message error)))])))
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
@@ -4289,13 +4513,11 @@
                       [status : i64 (process-output-status output)]
                       (begin
                         (print-error
-                          (string-append
+                          (str-cat
                             "build: package dependency `"
-                            (string-append
-                              name
-                              (string-append
-                                "` failed with status "
-                                (int->string status)))))
+                            name
+                            "` failed with status "
+                            (int->string status)))
                         (set!
                           next-failed-status
                           (build-package-failure-status
@@ -4304,11 +4526,11 @@
               [(ErrProcessOutput error)
                 (begin
                   (print-error
-                    (string-append
+                    (str-cat
                       "build: failed to wait for package dependency `"
-                      (string-append
-                        name
-                        (string-append "`: " (process-error-message error)))))
+                      name
+                      "`: "
+                      (process-error-message error)))
                   (set!
                     next-failed-status
                     (build-package-failure-status next-failed-status 1)))])
@@ -4397,7 +4619,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [_lock-policy : BuildPackageLockPolicy]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (let
     [index : i64 0]
@@ -4418,19 +4640,18 @@
               opt-level
               profile
               mode
+              lock-policy
               stdlib-roots
               (process-args-empty))]
           (if (= node-status 0)
             (set! index (+ index 1))
             (begin
               (print-error
-                (string-append
+                (str-cat
                   "build: package dependency `"
-                  (string-append
-                    (struct-get manifest name)
-                    (string-append
-                      "` failed with status "
-                      (int->string node-status)))))
+                  (struct-get manifest name)
+                  "` failed with status "
+                  (int->string node-status)))
               (set! status node-status)))))
       status)))
 
@@ -4569,6 +4790,7 @@
                       opt-level
                       profile
                       mode
+                      lock-policy
                       stdlib-roots
                       (build-package-graph-link-libs nodes profile target))
                     dep-status))])]))]))
@@ -4591,7 +4813,7 @@
       (match (build-load-manifest manifest-path)
         [(ErrBuildManifest message)
           (begin
-            (print-error (string-append "Error: " message))
+            (print-error (str-cat "Error: " message))
             1)]
         [(OkBuildManifest manifest)
           (build-package-emit
@@ -4940,7 +5162,7 @@
               "build: --manifest-path is handled by Rust typelisp build; selfhost build tool expects a source file"))]
         [(BuildCliOptionOther)
           (if (source-tool-flag? current)
-            (ErrBuildCliConfig (string-append "build: unknown flag " current))
+            (ErrBuildCliConfig (str-cat "build: unknown flag " current))
             (if has-source
               (ErrBuildCliConfig "build: accepts only one source file")
               (build-cli-parse-options
@@ -5042,8 +5264,11 @@
 ;; first argument after any subcommand name). `--direct` remains accepted as a
 ;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
-  (if (and (> count start) (string-eq (arg start) "--package-worker"))
-    (build-package-worker-run-from (+ start 1) count)
-    (if (and (> count start) (string-eq (arg start) "--direct"))
-      (build-direct-from (+ start 1) count)
-      (build-direct-from start count))))
+  (cond
+    [(and (> count start) (string-eq (arg start) "--package-worker"))
+      (build-package-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string-eq (arg start) "--package-doctest-worker"))
+      (build-package-doctest-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string-eq (arg start) "--direct"))
+      (build-direct-from (+ start 1) count)]
+    [else (build-direct-from start count)]))

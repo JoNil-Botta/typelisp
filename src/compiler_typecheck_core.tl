@@ -6430,64 +6430,28 @@
             [decls : AstDeclList (box-get decls-box)]
             (macro-resolve-qualified-module decls current-module qualifier))])]))
 
-(define (tc-qualified-access-private-message
-  [kind-name : String]
-  [name : String]
-  [target-module : String]) : String
-  (string-append
-    "typecheck: private "
-    (string-append
-      kind-name
-      (string-append
-        " "
-        (string-append name (string-append " from module " target-module))))))
-
-;; #2944: qualified visibility checks use the whole-program export table. Build
-;; that table once during typecheck setup and carry it in TcContext so each
-;; cross-module qualified reference can do an O(1) lookup without rebuilding or
-;; reading another program's exports in batched check/lint/doc-test processes.
+;; Everything is exported by default: cross-module qualified references no longer
+;; consult an export table, so visibility checks unconditionally succeed. The
+;; legacy `(export ...)` form is still parsed (accepted as a no-op) during the
+;; phased removal, but it no longer gates which items another module may use.
+;; Missing members and namespace mismatches are still reported by the ordinary
+;; name-resolution paths; only the private/exported distinction is gone.
 (define (tc-qualified-export-visible-ok
-  [ctx : TcContext]
-  [kind-name : String]
-  [display-name : String]
-  [target-module : String]
-  [export-name : String]) : ResultTcUnit
-  (if (string-eq target-module (tc-context-module ctx))
-    OkTcUnit
-    (match (compiler-exports-lookup-id
-      (tc-context-exports ctx)
-      (intern kind-name)
-      (intern target-module)
-      (intern export-name))
-      [(SomeI64 _) OkTcUnit]
-      [(NoneI64)
-        (ErrTcUnit
-          (tc-qualified-access-private-message
-            kind-name
-            display-name
-            target-module))])))
+  [_ctx : TcContext]
+  [_kind-name : String]
+  [_display-name : String]
+  [_target-module : String]
+  [_export-name : String]) : ResultTcUnit
+  OkTcUnit)
 
 (define (tc-qualified-export-visible-ok-with-source
-  [ctx : TcContext]
-  [kind-name : String]
-  [source-name : String]
-  [lookup-name : String]
-  [target-module : String]
-  [export-name : String]) : ResultTcUnit
-  (if (string-eq target-module (tc-context-module ctx))
-    OkTcUnit
-    (match (compiler-exports-lookup-id
-      (tc-context-exports ctx)
-      (intern kind-name)
-      (intern target-module)
-      (intern export-name))
-      [(SomeI64 _) OkTcUnit]
-      [(NoneI64)
-        (ErrTcUnit
-          (tc-qualified-access-private-message
-            kind-name
-            (tc-source-lookup-display-name ctx source-name lookup-name)
-            target-module))])))
+  [_ctx : TcContext]
+  [_kind-name : String]
+  [_source-name : String]
+  [_lookup-name : String]
+  [_target-module : String]
+  [_export-name : String]) : ResultTcUnit
+  OkTcUnit)
 
 (define (tc-qualified-name-export-visible-ok-with-display
   [ctx : TcContext]
@@ -35562,8 +35526,8 @@
     (+ (* module-id 2654435761) (* name-id 40503))
     (- macro-unqualified-import-cache-capacity 1)))
 
-;; Returns the cached target module id, -1 for "no imported macro", -3 for
-;; "private imported macro", or -2 when absent.
+;; Returns the cached target module id, -1 for "no imported macro", or -2 when
+;; absent.
 (define (macro-unqualified-import-cache-get [module-id : i64] [name-id : i64]) : i64
   (let
     [cursor : i64 (macro-unqualified-import-cache-bucket module-id name-id)]
@@ -35998,9 +35962,6 @@
 (define (macro-missing-export-message [name : String]) : String
   (string-append "typecheck: missing macro export " name))
 
-(define (macro-private-message [name : String]) : String
-  (string-append "typecheck: private macro " name))
-
 (define (macro-qualified-call-decl-with-exports
   [ctx : TcContext]
   [exports : CompilerExports]
@@ -36032,9 +35993,21 @@
         (tc-context-symbols ctx)
         (intern target-module)
         (intern base))
-        [(SomeI64 _)
-          (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
+        ;; Everything is exported by default: a macro that exists in the target
+        ;; module resolves whether or not it appeared in a legacy export list.
+        [(SomeI64 handle)
+          (match (macro-decl-at-index-in-module
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle)
+            target-module)
+            [(MacroSomeDecl macro-name def-module params ret body)
+              (OkMacroCallDecl
+                (MacroSomeDecl macro-name def-module params ret body))]
+            [(MacroNoDecl)
+              (ErrMacroCallDecl
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  (macro-missing-export-message name)))])]
         [(NoneI64)
           (match (compiler-symbols-lookup-value-in-module-id
             (tc-context-symbols ctx)
@@ -36089,13 +36062,16 @@
 ;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module-with-exports
-  [exports : CompilerExports]
+  [_exports : CompilerExports]
   [symbols : CompilerSymbols]
   [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup-id
-    exports
-    (intern (compiler-export-kind-macro))
+  ;; Everything is exported by default: the implicit core_macros prelude resolves
+  ;; its macros straight from the module's symbol table rather than an export
+  ;; list. core_macros declares exactly the prelude macros, so this resolves the
+  ;; same set (`and`, `or`, `when`, `unless`, `cond`).
+  (match (compiler-symbols-lookup-macro-in-module-id
+    symbols
     (intern module-name)
     (intern lookup-name))
     [(SomeI64 handle)
@@ -36158,7 +36134,7 @@
   [exports : CompilerExports]
   [target-module : String]
   [lookup-name : String]
-  [call-expr : AstExpr]) : ResultMacroCallDecl
+  [_call-expr : AstExpr]) : ResultMacroCallDecl
   (match (compiler-exports-lookup-id
     exports
     (intern (compiler-export-kind-macro))
@@ -36178,11 +36154,17 @@
         (tc-context-symbols ctx)
         (intern target-module)
         (intern lookup-name))
-        [(SomeI64 _)
-          (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-private-message lookup-name)))]
+        ;; Everything is exported by default: resolve an imported macro that
+        ;; exists in the target module regardless of legacy export lists.
+        [(SomeI64 handle)
+          (match (macro-decl-at-index-in-module
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle)
+            target-module)
+            [(MacroSomeDecl macro-name def-module params ret body)
+              (OkMacroCallDecl
+                (MacroSomeDecl macro-name def-module params ret body))]
+            [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
         [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])]))
 
 (define (macro-unqualified-imported-call-target-with-exports
@@ -36201,7 +36183,9 @@
         (tc-context-symbols ctx)
         target-module-id
         lookup-name-id)
-        [(SomeI64 _) -3]
+        ;; Everything is exported by default: any macro present in the target
+        ;; module is a resolution candidate, not a private-access error.
+        [(SomeI64 _) target-module-id]
         [(NoneI64) -1])]))
 
 (define (macro-unqualified-imported-call-target-from-imports
@@ -36240,10 +36224,7 @@
       (intern-str target)
       lookup-name
       call-expr)
-    (if (= target -3)
-      (ErrMacroCallDecl
-        (ctfe-diagnostic-at-expr call-expr (macro-private-message lookup-name)))
-      (OkMacroCallDecl (MacroNoDecl)))))
+    (OkMacroCallDecl (MacroNoDecl))))
 
 (define (macro-unqualified-imported-call-decl-with-exports
   [ctx : TcContext]

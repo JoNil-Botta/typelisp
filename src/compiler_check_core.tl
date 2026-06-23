@@ -576,10 +576,12 @@
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_exported.tl"
       (compiler-check-qualified-export-cache-exported-source))
-    (compiler-check-direct-source-error-ok?
+    ;; Everything is exported by default: a value omitted from a legacy export
+    ;; list is now reachable across modules, so this previously-private access
+    ;; type-checks.
+    (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_private.tl"
-      (compiler-check-qualified-export-cache-private-source)
-      "typecheck: private value a/x from module a")))
+      (compiler-check-qualified-export-cache-private-source))))
 
 (define (compiler-check-virtual-error-ok?) : bool
   (match (compiler-check-source

@@ -1430,6 +1430,11 @@
         [(data.Maybe.Some v) v]
         [data.Maybe.None 0]))))")
 
+;; Everything is exported by default: items that are not named in a legacy
+;; `(export ...)` list are now reachable across modules, so the cases that used
+;; to be rejected as private must now type-check. These sources keep their
+;; "private" names because they describe the source shape (an item omitted from
+;; the export list), but the expectation is now success.
 (define (compiler-typecheck-export-visibility-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -1438,28 +1443,24 @@
         (compiler-typecheck-export-visibility-allowed-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-alias-value-source)
-        "typecheck: private value d/private from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-alias-value-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-canonical-value-source)
-        "typecheck: private value data/private from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-canonical-value-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-export-type-only-opaque-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-type-only-constructor-source)
-        "typecheck: private constructor d/Opaque from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-type-only-constructor-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-type-only-field-source)
-        "typecheck: private field data/Opaque.value from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-type-only-field-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -1470,14 +1471,12 @@
         (compiler-typecheck-export-generated-cleanup-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-type-source)
-        "typecheck: private type data/Hidden from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-type-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-private-variant-pattern-source)
-        "typecheck: private variant d/Hidden from module data")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-private-variant-pattern-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -7523,9 +7522,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-forward-qualified-export-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-private-source)
-      "typecheck: private macro hidden/private-and")
+    ;; Everything is exported by default: a macro that exists in the imported
+    ;; module now resolves even without a legacy export list. A name that does
+    ;; not exist at all is still a missing-export error.
+    (compiler-typecheck-ok? (compiler-typecheck-macro-private-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-missing-export-source)
       "typecheck: missing macro export hidden/missing")
@@ -7638,9 +7638,7 @@
       (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-qualified-private-source)
-      "typecheck: private value data/private from module data")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-qualified-private-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))

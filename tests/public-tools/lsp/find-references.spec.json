@@ -2,6 +2,6 @@
   "exit": 0,
   "stderr_exact": "",
   "message_checks": [
-    {"jsonpath_id": 2, "raw_contains": "error", "raw_contains": "-32600", "raw_contains": "Not yet implemented"}
+    {"jsonpath_id": 2, "raw_contains": "\"success\":true", "raw_contains": "\"references\"", "raw_contains": "\"line\":0", "raw_contains": "\"character\":9", "raw_contains": "\"line\":2", "raw_contains": "\"character\":21"}
   ]
 }

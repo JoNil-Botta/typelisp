@@ -3076,6 +3076,31 @@
 (define (tc-type-list3 [a : AstType] [b : AstType] [c : AstType]) : AstTypeList
   (ast-type-cons a (ast-type-cons b (ast-type-cons c AstTypeNil))))
 
+(define (tc-type-list1-with-pools [pools : AstNodePoolContext] [a : AstType]) : AstTypeList
+  (ast-type-cons-with-pools pools a AstTypeNil))
+
+(define (tc-type-list2-with-pools
+  [pools : AstNodePoolContext]
+  [a : AstType]
+  [b : AstType]) : AstTypeList
+  (ast-type-cons-with-pools
+    pools
+    a
+    (ast-type-cons-with-pools pools b AstTypeNil)))
+
+(define (tc-type-list3-with-pools
+  [pools : AstNodePoolContext]
+  [a : AstType]
+  [b : AstType]
+  [c : AstType]) : AstTypeList
+  (ast-type-cons-with-pools
+    pools
+    a
+    (ast-type-cons-with-pools
+      pools
+      b
+      (ast-type-cons-with-pools pools c AstTypeNil))))
+
 (define (tc-fn0 [ret : AstType]) : AstType
   (ast-ty-func AstTypeNil ret))
 
@@ -3301,6 +3326,16 @@
 (define (tc-stdlib-array-name-type [name : String]) : AstType
   (ast-ty-dyn-array (tc-stdlib-name-type name)))
 
+(define (tc-stdlib-box-name-type-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]) : AstType
+  (ast-ty-box-with-pools pools (tc-stdlib-name-type name)))
+
+(define (tc-stdlib-array-name-type-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]) : AstType
+  (ast-ty-dyn-array-with-pools pools (tc-stdlib-name-type name)))
+
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ErrTcUnit
     (str-cat
@@ -3410,11 +3445,86 @@
     [(AstProgram decls-box)
       (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
 
+(define (tc-stdlib-type-list-ref
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [index : i64]) : ResultTcType
+  (if (< index 0)
+    (ErrTcType "typecheck: tuple index out of bounds")
+    (match types
+      [(AstTypeNil) (ErrTcType "typecheck: tuple index out of bounds")]
+      [(AstTypeCons ty rest)
+        (let
+          [ty : AstType (tc-context-type-get ctx ty)]
+          [rest : AstTypeList (box-get rest)]
+          (if (= index 0)
+            (OkTcType ty)
+            (tc-stdlib-type-list-ref ctx rest (- index 1))))])))
+
+(define (tc-stdlib-type-match-normalized?
+  [ctx : TcContext]
+  [actual : AstType]
+  [expected : AstType]) : bool
+  (match actual
+    [(AstTyI64)
+      (match expected
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstTyI32)
+      (match expected
+        [(AstTyI32) true]
+        [_ false])]
+    [(AstTyBool)
+      (match expected
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstTyString)
+      (match expected
+        [(AstTyString) true]
+        [_ false])]
+    [(AstTyExpr)
+      (match expected
+        [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match expected
+        [(AstTyExprList) true]
+        [_ false])]
+    [(AstTyBox actual-inner)
+      (match expected
+        [(AstTyBox expected-inner)
+          (tc-stdlib-type-match?
+            ctx
+            (tc-context-type-get ctx actual-inner)
+            (tc-context-type-get ctx expected-inner))]
+        [_ false])]
+    [(AstTyDynArray actual-inner)
+      (match expected
+        [(AstTyDynArray expected-inner)
+          (tc-stdlib-type-match?
+            ctx
+            (tc-context-type-get ctx actual-inner)
+            (tc-context-type-get ctx expected-inner))]
+        [_ false])]
+    [(AstTyStruct actual-name)
+      (match expected
+        [(AstTyStruct expected-name) (= actual-name expected-name)]
+        [_ false])]
+    [(AstTyEnum actual-name)
+      (match expected
+        [(AstTyEnum expected-name) (= actual-name expected-name)]
+        [_ false])]
+    [(AstTyVar actual-name)
+      (match expected
+        [(AstTyVar expected-name) (= actual-name expected-name)]
+        [_ false])]
+    [_ false]))
+
 (define (tc-stdlib-type-match?
   [ctx : TcContext]
   [actual : AstType]
   [expected : AstType]) : bool
-  (tc-type-eq (tc-resolve-type ctx actual) (tc-resolve-type ctx expected)))
+  (tc-stdlib-type-match-normalized? ctx actual expected))
 
 (define (tc-stdlib-check-field-specs
   [ctx : TcContext]
@@ -3475,9 +3585,9 @@
       (str-cat "payload arity mismatch for variant " variant-name))
     (if (= index (tc-type-list-len expected))
       OkTcUnit
-      (match (tc-type-list-ref actual index)
+      (match (tc-stdlib-type-list-ref ctx actual index)
         [(OkTcType actual-ty)
-          (match (tc-type-list-ref expected index)
+          (match (tc-stdlib-type-list-ref ctx expected index)
             [(OkTcType expected-ty)
               (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
                 (tc-stdlib-check-payload-specs
@@ -3610,85 +3720,115 @@
       [(SomeI64 _) true]
       [(NoneI64) false])))
 
-(define (tc-stdlib-expr-specs) : TcStdlibVariantSpecList
-  (tc-stdlib-variant-spec-cons
-    "ExprBool"
-    (tc-type-list1 (AstTyBool))
+(define (tc-stdlib-expr-specs [ctx : TcContext]) : TcStdlibVariantSpecList
+  (let
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
     (tc-stdlib-variant-spec-cons
-      "ExprInt"
-      (tc-type-list1 (AstTyI64))
+      "ExprBool"
+      (tc-type-list1-with-pools pools (AstTyBool))
       (tc-stdlib-variant-spec-cons
-        "ExprVar"
-        (tc-type-list1 (AstTyString))
+        "ExprInt"
+        (tc-type-list1-with-pools pools (AstTyI64))
         (tc-stdlib-variant-spec-cons
-          "ExprSplice"
-          (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+          "ExprVar"
+          (tc-type-list1-with-pools pools (AstTyString))
           (tc-stdlib-variant-spec-cons
-            "ExprIf"
-            (tc-type-list3
-              (tc-stdlib-box-name-type "Expr")
-              (tc-stdlib-box-name-type "Expr")
-              (tc-stdlib-box-name-type "Expr"))
+            "ExprSplice"
+            (tc-type-list1-with-pools
+              pools
+              (tc-stdlib-box-name-type-with-pools pools "Expr"))
             (tc-stdlib-variant-spec-cons
-              "ExprCall"
-              (tc-type-list2
-                (tc-stdlib-box-name-type "Expr")
-                (tc-stdlib-name-type "ExprList"))
+              "ExprIf"
+              (tc-type-list3-with-pools
+                pools
+                (tc-stdlib-box-name-type-with-pools pools "Expr")
+                (tc-stdlib-box-name-type-with-pools pools "Expr")
+                (tc-stdlib-box-name-type-with-pools pools "Expr"))
               (tc-stdlib-variant-spec-cons
-                "ExprBegin"
-                (tc-type-list1 (tc-stdlib-name-type "ExprList"))
+                "ExprCall"
+                (tc-type-list2-with-pools
+                  pools
+                  (tc-stdlib-box-name-type-with-pools pools "Expr")
+                  (tc-stdlib-name-type "ExprList"))
                 (tc-stdlib-variant-spec-cons
-                  "ExprQuote"
-                  (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                  "ExprBegin"
+                  (tc-type-list1-with-pools
+                    pools
+                    (tc-stdlib-name-type "ExprList"))
                   (tc-stdlib-variant-spec-cons
-                    "ExprQuasiquote"
-                    (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                    "ExprQuote"
+                    (tc-type-list1-with-pools
+                      pools
+                      (tc-stdlib-box-name-type-with-pools pools "Expr"))
                     (tc-stdlib-variant-spec-cons
-                      "ExprUnquote"
-                      (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
+                      "ExprQuasiquote"
+                      (tc-type-list1-with-pools
+                        pools
+                        (tc-stdlib-box-name-type-with-pools pools "Expr"))
                       (tc-stdlib-variant-spec-cons
-                        "ExprUnquoteSplicing"
-                        (tc-type-list1 (tc-stdlib-box-name-type "Expr"))
-                        (TcStdlibVariantSpecNil)))))))))))))
+                        "ExprUnquote"
+                        (tc-type-list1-with-pools
+                          pools
+                          (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                        (tc-stdlib-variant-spec-cons
+                          "ExprUnquoteSplicing"
+                          (tc-type-list1-with-pools
+                            pools
+                            (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                          (TcStdlibVariantSpecNil))))))))))))))
 
-(define (tc-stdlib-sequence-fields [elem-name : String]) : TcStdlibFieldSpecList
-  (tc-stdlib-field-spec-cons
-    "items"
-    (tc-stdlib-array-name-type elem-name)
-    (tc-stdlib-field-spec-cons "len" (AstTyI64) (TcStdlibFieldSpecNil))))
+(define (tc-stdlib-sequence-fields [ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
+  (let
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
+    (tc-stdlib-field-spec-cons
+      "items"
+      (tc-stdlib-array-name-type-with-pools pools elem-name)
+      (tc-stdlib-field-spec-cons "len" (AstTyI64) (TcStdlibFieldSpecNil)))))
 
-(define (tc-stdlib-type-info-specs) : TcStdlibVariantSpecList
-  (tc-stdlib-variant-spec-cons
-    "TypeInfoBuiltin"
-    (tc-type-list1 (AstTyString))
+(define (tc-stdlib-type-info-specs [ctx : TcContext]) : TcStdlibVariantSpecList
+  (let
+    [pools : AstNodePoolContext (tc-context-pools ctx)]
     (tc-stdlib-variant-spec-cons
-      "TypeInfoArray"
-      (tc-type-list2 (tc-stdlib-box-name-type "TypeInfo") (AstTyI64))
+      "TypeInfoBuiltin"
+      (tc-type-list1-with-pools pools (AstTyString))
       (tc-stdlib-variant-spec-cons
-        "TypeInfoDynArray"
-        (tc-type-list1 (tc-stdlib-box-name-type "TypeInfo"))
+        "TypeInfoArray"
+        (tc-type-list2-with-pools
+          pools
+          (tc-stdlib-box-name-type-with-pools pools "TypeInfo")
+          (AstTyI64))
         (tc-stdlib-variant-spec-cons
-          "TypeInfoFunction"
-          (tc-type-list2
-            (tc-stdlib-name-type "TypeInfoList")
-            (tc-stdlib-box-name-type "TypeInfo"))
+          "TypeInfoDynArray"
+          (tc-type-list1-with-pools
+            pools
+            (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
           (tc-stdlib-variant-spec-cons
-            "TypeInfoTuple"
-            (tc-type-list1 (tc-stdlib-name-type "TypeInfoList"))
+            "TypeInfoFunction"
+            (tc-type-list2-with-pools
+              pools
+              (tc-stdlib-name-type "TypeInfoList")
+              (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
             (tc-stdlib-variant-spec-cons
-              "TypeInfoStruct"
-              (tc-type-list2
-                (AstTyString)
-                (tc-stdlib-name-type "TypeFieldList"))
+              "TypeInfoTuple"
+              (tc-type-list1-with-pools
+                pools
+                (tc-stdlib-name-type "TypeInfoList"))
               (tc-stdlib-variant-spec-cons
-                "TypeInfoEnum"
-                (tc-type-list2
+                "TypeInfoStruct"
+                (tc-type-list2-with-pools
+                  pools
                   (AstTyString)
-                  (tc-stdlib-name-type "TypeVariantList"))
+                  (tc-stdlib-name-type "TypeFieldList"))
                 (tc-stdlib-variant-spec-cons
-                  "TypeInfoOpaque"
-                  (tc-type-list1 (AstTyString))
-                  (TcStdlibVariantSpecNil))))))))))
+                  "TypeInfoEnum"
+                  (tc-type-list2-with-pools
+                    pools
+                    (AstTyString)
+                    (tc-stdlib-name-type "TypeVariantList"))
+                  (tc-stdlib-variant-spec-cons
+                    "TypeInfoOpaque"
+                    (tc-type-list1-with-pools pools (AstTyString))
+                    (TcStdlibVariantSpecNil)))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -3754,7 +3894,7 @@
       (tc-stdlib-name-type "TypeInfo")
       (TcStdlibFieldSpecNil))))
 
-(define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
+(define (tc-stdlib-comptime-surface-ok-impl [ctx : TcContext]) : ResultTcUnit
   (if (not (tc-stdlib-comptime-present? ctx))
     OkTcUnit
     (let
@@ -3764,7 +3904,7 @@
           result
           (tc-stdlib-comptime-surface-step
             result
-            (tc-stdlib-check-enum ctx "Expr" (tc-stdlib-expr-specs))))
+            (tc-stdlib-check-enum ctx "Expr" (tc-stdlib-expr-specs ctx))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3772,7 +3912,7 @@
             (tc-stdlib-check-struct
               ctx
               "ExprList"
-              (tc-stdlib-sequence-fields "Expr"))))
+              (tc-stdlib-sequence-fields ctx "Expr"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3788,7 +3928,7 @@
             (tc-stdlib-check-struct
               ctx
               "ExprClauseList"
-              (tc-stdlib-sequence-fields "ExprClause"))))
+              (tc-stdlib-sequence-fields ctx "ExprClause"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3804,7 +3944,7 @@
             (tc-stdlib-check-struct
               ctx
               "ExprBindingClauseList"
-              (tc-stdlib-sequence-fields "ExprBindingClause"))))
+              (tc-stdlib-sequence-fields ctx "ExprBindingClause"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3812,7 +3952,7 @@
             (tc-stdlib-check-struct
               ctx
               "TypeInfoList"
-              (tc-stdlib-sequence-fields "TypeInfo"))))
+              (tc-stdlib-sequence-fields ctx "TypeInfo"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3828,7 +3968,7 @@
             (tc-stdlib-check-struct
               ctx
               "TypeFieldList"
-              (tc-stdlib-sequence-fields "TypeField"))))
+              (tc-stdlib-sequence-fields ctx "TypeField"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3844,7 +3984,7 @@
             (tc-stdlib-check-struct
               ctx
               "TypeVariantPayloadList"
-              (tc-stdlib-sequence-fields "TypeVariantPayload"))))
+              (tc-stdlib-sequence-fields ctx "TypeVariantPayload"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3860,7 +4000,7 @@
             (tc-stdlib-check-struct
               ctx
               "TypeVariantList"
-              (tc-stdlib-sequence-fields "TypeVariant"))))
+              (tc-stdlib-sequence-fields ctx "TypeVariant"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
@@ -3876,13 +4016,25 @@
             (tc-stdlib-check-struct
               ctx
               "TypeParamList"
-              (tc-stdlib-sequence-fields "TypeParam"))))
+              (tc-stdlib-sequence-fields ctx "TypeParam"))))
         (set!
           result
           (tc-stdlib-comptime-surface-step
             result
-            (tc-stdlib-check-enum ctx "TypeInfo" (tc-stdlib-type-info-specs))))
+            (tc-stdlib-check-enum
+              ctx
+              "TypeInfo"
+              (tc-stdlib-type-info-specs ctx))))
         result))))
+
+(define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
+  (let
+    [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [_install : unit (ast-node-pool-context-install! (tc-context-pools ctx))]
+    [result : ResultTcUnit (tc-stdlib-comptime-surface-ok-impl ctx)]
+    (begin
+      (ast-node-pool-context-install! prev)
+      result)))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -6190,6 +6342,21 @@
         [(OkTcString lookup-name) lookup-name]
         [(ErrTcString _) source-name])
       source-name)))
+
+(define (tc-call-builtin-lookup-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]
+  [source-id : i64]) : i64
+  (if (and
+    (not (tc-hygiene-local-name? source-name))
+    (intern-qualified? source-id))
+    source-id
+    (if (>= (intern-first-dot source-id) 0)
+      (match (tc-source-name-lookup-key ctx env source-name)
+        [(OkTcString lookup-name) (tc-builtin-name-id lookup-name)]
+        [(ErrTcString _) source-id])
+      source-id)))
 
 (define (tc-source-dotted-alias-key
   [ctx : TcContext]
@@ -10018,29 +10185,36 @@
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
                     (CtfeExprClause
                       (ast-expr-clause
-                        (ast-node-push
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
                           (AstExprVar
                             (intern (string-append (intern-str name) "$first"))))
-                        (ast-node-push
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
                           (AstExprVar
                             (intern (string-append (intern-str name) "$second"))))))]
                   [(tc-macro-expr-binding-clause-type?
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
                     (let
                       [unit-expr : i64
-                        (ast-node-push (AstExprLiteral (AstLitUnit)))]
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
+                          (AstExprLiteral (AstLitUnit)))]
                       (CtfeExprBindingClause
                         (ast-expr-binding-clause-id
                           name
                           false
                           unit-expr
-                          (ast-node-push
+                          (ast-node-pool-context-expr-push
+                            (tc-context-pools ctx)
                             (AstExprVar
                               (intern (string-append (intern-str name) "$init"))))
                           (AstSourceSpan 0 0 0 0))))]
                   [else
                     (CtfeExpr
-                      (ast-node-push (AstExprVar name))
+                      (ast-node-pool-context-expr-push
+                        (tc-context-pools ctx)
+                        (AstExprVar name))
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
               rest)]))]))
 
@@ -11933,10 +12107,13 @@
 (define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
 
-(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (tc-region-arg-builtin-name? name)
-    (tc-default-builtin-unshadowed-scan? env name)
+(define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (if (compiler-builtin-typecheck-region-arg-id? name-id)
+    (tc-default-builtin-unshadowed-scan-id? env name-id)
     false))
+
+(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
+  (tc-default-builtin-unshadowed-id? env (tc-name-id name)))
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
@@ -14133,9 +14310,8 @@
     [(AstExprVar raw-name)
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
@@ -14147,23 +14323,17 @@
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
-          [(tc-string-ref-helper-call-id?
-              ctx
-              env
-              name
-              name-id
-              lookup-name
-              lookup-id)
+          [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
           [(and
-              (tc-borrowed-string-builtin-name? name)
-              (tc-default-builtin-unshadowed? env name))
+              (tc-borrowed-string-builtin-id? name-id)
+              (tc-default-builtin-unshadowed-id? env name-id))
             (tc-borrowed-string-builtin-call ctx env name args)]
-          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
-          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+          [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
@@ -14482,22 +14652,18 @@
   (tc-string-ref-helper-call-id?
     ctx
     env
-    source-name
     (tc-builtin-name-id source-name)
-    lookup-name
     (tc-builtin-name-id lookup-name)))
 
 (define (tc-string-ref-helper-call-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [_source-name : String]
   [source-id : i64]
-  [lookup-name : String]
   [lookup-id : i64]) : bool
   (or
     (and
       (compiler-builtin-typecheck-string-ref-call-id? lookup-id)
-      (not (tc-name-bound? env lookup-name)))
+      (not (tc-name-bound-id? env lookup-id)))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -14522,19 +14688,17 @@
     ctx
     env
     (tc-builtin-name-id source-name)
-    lookup-name
     (tc-builtin-name-id lookup-name)))
 
 (define (tc-string-eq-helper-call-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [source-id : i64]
-  [lookup-name : String]
   [lookup-id : i64]) : bool
   (or
     (and
       (compiler-builtin-typecheck-string-eq-id? lookup-id)
-      (tc-default-builtin-unshadowed? env lookup-name))
+      (tc-default-builtin-unshadowed-id? env lookup-id))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -14556,21 +14720,15 @@
   [env : TcTypeEnv]
   [_source-name : String]
   [lookup-name : String]) : bool
-  (tc-string-to-int-helper-call-id?
-    env
-    lookup-name
-    (tc-builtin-name-id lookup-name)))
+  (tc-string-to-int-helper-call-id? env (tc-builtin-name-id lookup-name)))
 
-(define (tc-string-to-int-helper-call-id?
-  [env : TcTypeEnv]
-  [lookup-name : String]
-  [lookup-id : i64]) : bool
+(define (tc-string-to-int-helper-call-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (and
     (compiler-builtin-typecheck-string-to-int-id? lookup-id)
-    (tc-default-builtin-unshadowed? env lookup-name)))
+    (tc-default-builtin-unshadowed-id? env lookup-id)))
 
-(define (tc-borrowed-string-builtin-name? [name : String]) : bool
-  (compiler-builtin-typecheck-borrowed-string-id? (tc-builtin-name-id name)))
+(define (tc-borrowed-string-builtin-id? [name-id : i64]) : bool
+  (compiler-builtin-typecheck-borrowed-string-id? name-id))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
@@ -14921,9 +15079,8 @@
       ;; original name for the ordinary call/resolution paths.
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
@@ -14935,13 +15092,7 @@
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
-          [(tc-string-ref-helper-call-id?
-              ctx
-              env
-              name
-              name-id
-              lookup-name
-              lookup-id)
+          [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
@@ -14950,12 +15101,12 @@
               (not (tc-name-bound? env name)))
             (tc-tls-current-arena-call ctx env name-id args)]
           [(and
-              (tc-borrowed-string-builtin-name? name)
-              (tc-default-builtin-unshadowed? env name))
+              (tc-borrowed-string-builtin-id? name-id)
+              (tc-default-builtin-unshadowed-id? env name-id))
             (tc-borrowed-string-builtin-call ctx env name args)]
-          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
-          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+          [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
@@ -21861,13 +22012,14 @@
 ;; rewound scratch arena) and reset per compile at the top of that function.
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
   (if macro-expand-ctfe-env-ready
-    macro-expand-ctfe-env-value
+    (ctfe-env-rebase-pools macro-expand-ctfe-env-value (tc-context-pools ctx))
     (if ctfe-needs-metadata
-      (ctfe-env-with-metadata
+      (ctfe-env-with-metadata-and-pools
         (tc-ctfe-layouts ctx)
         (ctfe-reflections-from-program (tc-context-program ctx))
-        (tc-ctfe-module-exports ctx))
-      (ctfe-env-empty))))
+        (tc-ctfe-module-exports ctx)
+        (tc-context-pools ctx))
+      (ctfe-env-empty-with-pools (tc-context-pools ctx)))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -27949,14 +28101,21 @@
               (AstTyExpr)
               "typecheck: macro body must return Expr")
               [(OkTcUnit)
-                (match (compiler-ctfe-eval
-                  body
-                  (tc-ctfe-env-extend-macro-params ctx (tc-ctfe-env ctx) params)
-                  (ctfe-fuel-limit))
-                  [(OkCtfe value _)
-                    (tc-check-defmacro-produced-type ctx ret value)]
-                  [(ErrCtfe diag)
-                    (ErrTcUnit (compiler-diagnostic-message diag))])]
+                (begin
+                  (tc-context-capture-active-pools! ctx)
+                  (match (compiler-ctfe-eval
+                    body
+                    (tc-ctfe-env-extend-macro-params
+                      ctx
+                      (tc-ctfe-env ctx)
+                      params)
+                    (ctfe-fuel-limit))
+                    [(OkCtfe value _)
+                      (begin
+                        (ast-node-pool-context-install! (tc-context-pools ctx))
+                        (tc-check-defmacro-produced-type ctx ret value))]
+                    [(ErrCtfe diag)
+                      (ErrTcUnit (compiler-diagnostic-message diag))]))]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
@@ -31541,18 +31700,11 @@
     [(AstExprVar raw-name)
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (or
           (tc-string-length-helper-call-id? ctx env name-id lookup-id)
-          (tc-string-ref-helper-call-id?
-            ctx
-            env
-            name
-            name-id
-            lookup-name
-            lookup-id)))]
+          (tc-string-ref-helper-call-id? ctx env name-id lookup-id)))]
     [_ false]))
 
 (define (tc-borrow-check-call-args-with-types
@@ -36561,6 +36713,24 @@
       [(ErrCompilerExports message)
         (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
 
+(define (macro-alias-self-call-decl
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [lookup-name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  ;; `(import stdlib.vector)` binds alias `vector`; module-scope `(vector T)`
+  ;; should resolve to macro `vector` in that aliased module.
+  (match (macro-import-alias-target-cached decls (intern module) lookup-name)
+    [(TcSomeString target-module)
+      (macro-unqualified-imported-target-call-decl-with-exports
+        ctx
+        macro-expand-exports-value
+        target-module
+        lookup-name
+        call-expr)]
+    [(TcNoString) (OkMacroCallDecl (MacroNoDecl))]))
+
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -36694,6 +36864,39 @@
           call-expr))]
     [_ (OkMacroCallDecl (MacroNoDecl))]))
 
+(define (macro-call-decl-with-self-alias
+  [ctx : TcContext]
+  [func : AstExpr]
+  [decls : AstDeclList]
+  [module : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (macro-call-decl
+    (tc-context-with-module ctx module)
+    func
+    decls
+    call-expr)
+    [(OkMacroCallDecl maybe-decl)
+      (match maybe-decl
+        [(MacroNoDecl)
+          (match (ast-expr-unspan func)
+            [(AstExprVar name)
+              (let
+                [lookup-name : String (intern-str name)]
+                (if (or
+                  (tc-hygiene-global-name? lookup-name)
+                  (tc-name-qualified? lookup-name)
+                  (>= (tc-name-first-dot lookup-name) 0))
+                  (OkMacroCallDecl maybe-decl)
+                  (macro-alias-self-call-decl
+                    ctx
+                    decls
+                    module
+                    lookup-name
+                    call-expr)))]
+            [_ (OkMacroCallDecl maybe-decl)])]
+        [_ (OkMacroCallDecl maybe-decl)])]
+    [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))
+
 (define (macro-call-decl-with-context
   [ctx : TcContext]
   [func : AstExpr]
@@ -36701,45 +36904,44 @@
   [module : String]
   [context : AstMaybeModuleName]
   [call-expr : AstExpr]) : ResultMacroCallDeclModule
-  (let
-    [primary-ctx : TcContext (tc-context-with-module ctx module)]
-    (match (macro-call-decl primary-ctx func decls call-expr)
-      [(OkMacroCallDecl maybe-decl)
-        (match maybe-decl
-          [(MacroNoDecl)
-            (match context
-              [(AstSomeModuleName context-module)
-                (if (string-eq context-module module)
-                  (OkMacroCallDeclModule maybe-decl module)
-                  (match (macro-call-decl
-                    (tc-context-with-module ctx context-module)
-                    func
-                    decls
-                    call-expr)
-                    [(OkMacroCallDecl context-decl)
-                      (match context-decl
-                        [(MacroNoDecl)
-                          (OkMacroCallDeclModule maybe-decl module)]
-                        [_ (OkMacroCallDeclModule context-decl context-module)])]
-                    [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
-              [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
-          [_ (OkMacroCallDeclModule maybe-decl module)])]
-      [(ErrMacroCallDecl primary-diag)
-        (match context
-          [(AstSomeModuleName context-module)
-            (if (string-eq context-module module)
-              (ErrMacroCallDeclModule primary-diag)
-              (match (macro-call-decl
-                (tc-context-with-module ctx context-module)
-                func
-                decls
-                call-expr)
-                [(OkMacroCallDecl context-decl)
-                  (match context-decl
-                    [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
-                    [_ (OkMacroCallDeclModule context-decl context-module)])]
-                [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
-          [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])])))
+  (match (macro-call-decl-with-self-alias ctx func decls module call-expr)
+    [(OkMacroCallDecl maybe-decl)
+      (match maybe-decl
+        [(MacroNoDecl)
+          (match context
+            [(AstSomeModuleName context-module)
+              (if (string-eq context-module module)
+                (OkMacroCallDeclModule maybe-decl module)
+                (match (macro-call-decl-with-self-alias
+                  ctx
+                  func
+                  decls
+                  context-module
+                  call-expr)
+                  [(OkMacroCallDecl context-decl)
+                    (match context-decl
+                      [(MacroNoDecl) (OkMacroCallDeclModule maybe-decl module)]
+                      [_ (OkMacroCallDeclModule context-decl context-module)])]
+                  [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
+            [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
+        [_ (OkMacroCallDeclModule maybe-decl module)])]
+    [(ErrMacroCallDecl primary-diag)
+      (match context
+        [(AstSomeModuleName context-module)
+          (if (string-eq context-module module)
+            (ErrMacroCallDeclModule primary-diag)
+            (match (macro-call-decl-with-self-alias
+              ctx
+              func
+              decls
+              context-module
+              call-expr)
+              [(OkMacroCallDecl context-decl)
+                (match context-decl
+                  [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
+                  [_ (OkMacroCallDeclModule context-decl context-module)])]
+              [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
+        [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])]))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str-cat
@@ -36761,7 +36963,11 @@
     ", got bracket clause"))
 
 (define (macro-type-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroTypeArg
-  (match (ctfe-expr-to-type arg arg (ctfe-fuel-limit))
+  (match (ctfe-expr-to-type
+    arg
+    arg
+    (ctfe-env-empty-with-pools (tc-context-pools ctx))
+    (ctfe-fuel-limit))
     [(OkCtfeQuoteType ty _)
       (match (tc-source-type-policy-ok ctx ty)
         [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
@@ -36992,7 +37198,9 @@
     (if capture-expr-types
       (match (tc-expr ctx env arg)
         [(OkTcType actual)
-          (ctfe-captured-expr-type (tc-resolve-type ctx actual))]
+          (ctfe-captured-expr-type-with-pools
+            (tc-context-pools ctx)
+            (tc-resolve-type ctx actual))]
         [(ErrTcType _) (ctfe-untyped-expr-type)])
       (ctfe-untyped-expr-type))
     resolved-expected))
@@ -37157,34 +37365,46 @@
   ;; unbound value.
   (match (macro-expand-exprs ctx type-env decls depth args)
     [(OkMacroExprList expanded-args)
-      (match (macro-bind-params
-        ctx
-        type-env
-        params
-        expanded-args
-        (tc-ctfe-env ctx)
-        (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
-        call-expr)
-        [(OkMacroEnv env)
-          (begin
-            (cfg compile-profile (compiler-tc-macro-profile-start))
-            (match (ctfe-eval-node
-              body
-              (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
-              (ctfe-fuel-limit))
-              [(OkCtfe value _)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (OkMacroValue value))]
-              [(ErrCtfe diag)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (ErrMacroValue diag))]))]
-        [(ErrMacroEnv diag) (ErrMacroValue diag)])]
+      (begin
+        (tc-context-capture-active-pools! ctx)
+        (match (macro-bind-params
+          ctx
+          type-env
+          params
+          expanded-args
+          (tc-ctfe-env ctx)
+          (tc-string-list-contains
+            macro-expand-expr-type-macro-names
+            macro-name)
+          call-expr)
+          [(OkMacroEnv env)
+            (begin
+              (cfg compile-profile (compiler-tc-macro-profile-start))
+              (match (ctfe-eval-node
+                body
+                (ctfe-env-extend
+                  env
+                  (ctfe-hygiene-enabled-name)
+                  (CtfeBool true))
+                (ctfe-fuel-limit))
+                [(OkCtfe value _)
+                  (begin
+                    (ast-node-pool-context-install! (tc-context-pools ctx))
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (OkMacroValue value))]
+                [(ErrCtfe diag)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (ErrMacroValue diag))]))]
+          [(ErrMacroEnv diag) (ErrMacroValue diag)]))]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
@@ -40818,68 +41038,69 @@
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (begin
     (tc-nominal-owner-cache-reset!)
-    (match (build-compiler-symbols-with-paths program paths)
-      [(OkCompilerSymbols symbols)
-        (match (build-compiler-registries-with-symbols program symbols)
-          [(OkCompilerRegistries registries)
-            (match (build-compiler-exports-with program symbols registries)
-              [(OkCompilerExports exports)
-                (let
-                  [ctx : TcContext
-                    (TcContext
-                      program
-                      symbols
-                      registries
-                      exports
-                      ""
-                      (ast-node-pool-context-capture-active))]
-                  (match (tc-stdlib-comptime-surface-ok ctx)
-                    [(OkTcUnit)
-                      (match (tc-program-source-types-policy-ok ctx program)
+    (let
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      (match (build-compiler-symbols-with-paths program paths)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries-with-symbols program symbols)
+            [(OkCompilerRegistries registries)
+              (match (build-compiler-exports-with program symbols registries)
+                [(OkCompilerExports exports)
+                  (let
+                    [ctx : TcContext
+                      (TcContext program symbols registries exports "" pools)]
+                    (begin
+                      (ast-node-pool-context-install! pools)
+                      (match (tc-stdlib-comptime-surface-ok ctx)
                         [(OkTcUnit)
-                          (match (tc-build-top-env ctx program)
-                            [(OkTcEnv top-env)
-                              (match program
-                                [(AstProgram decls-box)
-                                  (let
-                                    [decls : AstDeclList (box-get decls-box)]
-                                    (begin
-                                      (tc-hygiene-reset-active-top-env! top-env)
-                                      (tc-context-capture-active-pools! ctx)
-                                      (tc-clone-able-cache-populate! ctx)
-                                      (tc-macro-helper-env-cache-reset!)
-                                      (match (tc-check-decls-with-paths
-                                        ctx
-                                        top-env
-                                        decls
-                                        paths
-                                        (CompilerTypecheckSummary 0 0 0)
-                                        stdlib-roots
-                                        cache-scope)
-                                        [(OkCompilerTypecheck summary)
-                                          (begin
-                                            (tc-context-capture-active-pools!
-                                              ctx)
-                                            (OkCompilerTypecheckChecked
-                                              summary
-                                              ctx
-                                              top-env))]
-                                        [(ErrCompilerTypecheck diag)
-                                          (ErrCompilerTypecheckChecked diag)])))])]
-                            [(ErrTcEnv message)
+                          (match (tc-program-source-types-policy-ok ctx program)
+                            [(OkTcUnit)
+                              (match (tc-build-top-env ctx program)
+                                [(OkTcEnv top-env)
+                                  (match program
+                                    [(AstProgram decls-box)
+                                      (let
+                                        [decls : AstDeclList
+                                          (box-get decls-box)]
+                                        (begin
+                                          (tc-hygiene-reset-active-top-env!
+                                            top-env)
+                                          (tc-context-capture-active-pools! ctx)
+                                          (tc-clone-able-cache-populate! ctx)
+                                          (tc-macro-helper-env-cache-reset!)
+                                          (match (tc-check-decls-with-paths
+                                            ctx
+                                            top-env
+                                            decls
+                                            paths
+                                            (CompilerTypecheckSummary 0 0 0)
+                                            stdlib-roots
+                                            cache-scope)
+                                            [(OkCompilerTypecheck summary)
+                                              (begin
+                                                (tc-context-capture-active-pools!
+                                                  ctx)
+                                                (OkCompilerTypecheckChecked
+                                                  summary
+                                                  ctx
+                                                  top-env))]
+                                            [(ErrCompilerTypecheck diag)
+                                              (ErrCompilerTypecheckChecked diag)])))])]
+                                [(ErrTcEnv message)
+                                  (ErrCompilerTypecheckChecked
+                                    (tc-diag-at-start message))])]
+                            [(ErrTcUnit message)
                               (ErrCompilerTypecheckChecked
                                 (tc-diag-at-start message))])]
                         [(ErrTcUnit message)
                           (ErrCompilerTypecheckChecked
-                            (tc-diag-at-start message))])]
-                    [(ErrTcUnit message)
-                      (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
-              [(ErrCompilerExports message)
-                (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-          [(ErrCompilerRegistries message)
-            (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-      [(ErrCompilerSymbols message)
-        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))
+                            (tc-diag-at-start message))])))]
+                [(ErrCompilerExports message)
+                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+            [(ErrCompilerRegistries message)
+              (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+        [(ErrCompilerSymbols message)
+          (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]

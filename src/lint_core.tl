@@ -1087,13 +1087,29 @@
     true
     (lint-name-qualified-by-separator? name qualifier '/')))
 
+(define (lint-name-self-alias-import?
+  [name : String]
+  [alias : String]
+  [module-name : String]) : bool
+  (let
+    [module-n : i64 (string-length module-name)]
+    [alias-n : i64 (string-length alias)]
+    [start : i64 (- module-n alias-n)]
+    (and
+      (string-eq name alias)
+      (>= start 0)
+      (string-eq (substring module-name start alias-n) alias)
+      (or (= start 0) (char-eq (string-ref module-name (- start 1)) '.')))))
+
 (define (lint-name-uses-import?
   [name : String]
   [alias : String]
   [module-name : String]) : bool
   (if (lint-name-qualified-by? name alias)
     true
-    (lint-name-qualified-by? name module-name)))
+    (if (lint-name-qualified-by? name module-name)
+      true
+      (lint-name-self-alias-import? name alias module-name))))
 
 (define (lint-name-id-uses-import?
   [name : i64]

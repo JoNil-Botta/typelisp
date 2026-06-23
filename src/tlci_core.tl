@@ -84,7 +84,9 @@
   (byte-size i64)
   (host-context i64)
   (reserved0 i64)
-  (reserved1 i64))
+  (reserved1 i64)
+  (invoke-callback i64)
+  (abort-callback i64))
 
 (defstruct TlciImageRegistration
   (magic i64)
@@ -92,7 +94,9 @@
   (byte-size i64)
   (image-context i64)
   (reserved0 i64)
-  (reserved1 i64))
+  (reserved1 i64)
+  (macro-entry-table i64)
+  (macro-entry-count i64))
 
 (defenum ResultTlciHostAbi
   (OkTlciHostAbi)
@@ -118,10 +122,14 @@
   6076287494138317908)
 (define tlci-image-registration-magic : i64
   5134470027336174676)
+(define tlci-host-callback-table-header-size : i64
+  48)
 (define tlci-host-callback-table-size : i64
+  64)
+(define tlci-image-registration-header-size : i64
   48)
 (define tlci-image-registration-size : i64
-  48)
+  64)
 (define tlci-host-callback-table-magic-offset : i64
   0)
 (define tlci-host-callback-table-abi-version-offset : i64
@@ -134,6 +142,10 @@
   32)
 (define tlci-host-callback-table-reserved1-offset : i64
   40)
+(define tlci-host-callback-table-invoke-offset : i64
+  48)
+(define tlci-host-callback-table-abort-offset : i64
+  56)
 (define tlci-image-registration-magic-offset : i64
   0)
 (define tlci-image-registration-abi-version-offset : i64
@@ -146,6 +158,128 @@
   32)
 (define tlci-image-registration-reserved1-offset : i64
   40)
+(define tlci-image-registration-macro-entry-table-offset : i64
+  48)
+(define tlci-image-registration-macro-entry-count-offset : i64
+  56)
+(define tlci-macro-entry-record-size : i64
+  32)
+(define tlci-macro-entry-name-ptr-offset : i64
+  0)
+(define tlci-macro-entry-name-len-offset : i64
+  8)
+(define tlci-macro-entry-function-offset : i64
+  16)
+(define tlci-macro-entry-reserved0-offset : i64
+  24)
+(define tlci-host-callback-status-ok : i64
+  0)
+(define tlci-host-callback-status-diagnostic : i64
+  1)
+(define tlci-host-callback-status-fuel-exhausted : i64
+  2)
+(define tlci-host-callback-status-panic : i64
+  3)
+(define tlci-host-callback-status-bad-request : i64
+  4)
+(define tlci-host-callback-op-fuel-check : i64
+  1)
+(define tlci-host-callback-op-diagnostic : i64
+  2)
+(define tlci-host-callback-op-scratch-alloc : i64
+  3)
+(define tlci-host-callback-op-scratch-reset : i64
+  4)
+(define tlci-host-callback-op-expr-bool : i64
+  100)
+(define tlci-host-callback-op-expr-int : i64
+  101)
+(define tlci-host-callback-op-expr-var : i64
+  102)
+(define tlci-host-callback-op-string-concat : i64
+  103)
+(define tlci-host-callback-op-string-append : i64
+  104)
+(define tlci-host-callback-op-int->string : i64
+  105)
+(define tlci-host-callback-op-expr-splice : i64
+  106)
+(define tlci-host-callback-op-expr-if : i64
+  107)
+(define tlci-host-callback-op-expr-type : i64
+  108)
+(define tlci-host-callback-op-module-export-value? : i64
+  109)
+(define tlci-host-callback-op-module-export-type? : i64
+  110)
+(define tlci-host-callback-op-module-export-macro? : i64
+  111)
+(define tlci-host-callback-op-module-export-value-type : i64
+  112)
+(define tlci-host-callback-op-module-export-type : i64
+  113)
+(define tlci-host-callback-op-module-export-macro-type : i64
+  114)
+(define tlci-host-callback-op-expr-bool? : i64
+  115)
+(define tlci-host-callback-op-expr-bool-value : i64
+  116)
+(define tlci-host-callback-op-expr-if? : i64
+  117)
+(define tlci-host-callback-op-expr-if-cond : i64
+  118)
+(define tlci-host-callback-op-expr-if-then : i64
+  119)
+(define tlci-host-callback-op-expr-if-else : i64
+  120)
+(define tlci-host-callback-op-expr-list-empty? : i64
+  121)
+(define tlci-host-callback-op-expr-list-length : i64
+  122)
+(define tlci-host-callback-op-expr-list-head : i64
+  123)
+(define tlci-host-callback-op-expr-list-tail : i64
+  124)
+(define tlci-host-callback-op-expr-list-nth : i64
+  125)
+(define tlci-host-callback-op-expr-clause-first : i64
+  126)
+(define tlci-host-callback-op-expr-clause-second : i64
+  127)
+(define tlci-host-callback-op-expr-clause-list-empty? : i64
+  128)
+(define tlci-host-callback-op-expr-clause-list-length : i64
+  129)
+(define tlci-host-callback-op-expr-clause-list-head : i64
+  130)
+(define tlci-host-callback-op-expr-clause-list-tail : i64
+  131)
+(define tlci-host-callback-op-expr-clause-list-nth : i64
+  132)
+(define tlci-host-callback-op-expr-clause-list->expr-list : i64
+  133)
+(define tlci-host-callback-op-expr-binding-clause-name : i64
+  134)
+(define tlci-host-callback-op-expr-binding-clause-has-type? : i64
+  135)
+(define tlci-host-callback-op-expr-binding-clause-type : i64
+  136)
+(define tlci-host-callback-op-expr-binding-clause-init : i64
+  137)
+(define tlci-host-callback-op-expr-binding-clause-list-empty? : i64
+  138)
+(define tlci-host-callback-op-expr-binding-clause-list-length : i64
+  139)
+(define tlci-host-callback-op-expr-binding-clause-list-head : i64
+  140)
+(define tlci-host-callback-op-expr-binding-clause-list-tail : i64
+  141)
+(define tlci-host-callback-op-expr-binding-clause-list-nth : i64
+  142)
+(define tlci-host-callback-op-expr-binding-clause-list->expr-list : i64
+  143)
+(define tlci-host-callback-stdlib-op-count : i64
+  44)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -182,6 +316,10 @@
     [(not (= (struct-get table reserved1) 0))
       (ErrTlciHostAbi
         "tlci host ABI: host callback table reserved1 must be zero")]
+    [(= (struct-get table invoke-callback) 0)
+      (ErrTlciHostAbi "tlci host ABI: host invoke callback must be nonzero")]
+    [(= (struct-get table abort-callback) 0)
+      (ErrTlciHostAbi "tlci host ABI: host abort callback must be nonzero")]
     [else (OkTlciHostAbi)]))
 
 (define (tlci-validate-image-registration
@@ -201,6 +339,14 @@
     [(not (= (struct-get registration reserved1) 0))
       (ErrTlciHostAbi
         "tlci host ABI: image registration reserved1 must be zero")]
+    [(and
+        (= (struct-get registration macro-entry-table) 0)
+        (not (= (struct-get registration macro-entry-count) 0)))
+      (ErrTlciHostAbi "tlci host ABI: macro entry count requires a table")]
+    [(and
+        (not (= (struct-get registration macro-entry-table) 0))
+        (= (struct-get registration macro-entry-count) 0))
+      (ErrTlciHostAbi "tlci host ABI: macro entry table requires a count")]
     [else (OkTlciHostAbi)]))
 
 (define (tlci-empty-bytes) : (Array u8)
@@ -1239,7 +1385,9 @@
     tlci-host-callback-table-size
     1234
     0
-    0))
+    0
+    4096
+    8192))
 
 (define (tlci-test-image-registration) : TlciImageRegistration
   (TlciImageRegistration
@@ -1248,7 +1396,9 @@
     tlci-image-registration-size
     5678
     0
-    0))
+    0
+    12288
+    1))
 
 (define (tlci-test-host-abi-rejects?
   [result : ResultTlciHostAbi]
@@ -1263,24 +1413,93 @@
     (string-eq tlci-image-entry-symbol "tlci_image_entry")
     (= tlci-image-entry-param-count 2)
     (= tlci-image-entry-success 0)
-    (= tlci-host-callback-table-size 48)
-    (= tlci-image-registration-size 48)
+    (= tlci-host-callback-table-header-size 48)
+    (= tlci-host-callback-table-size 64)
+    (= tlci-image-registration-header-size 48)
+    (= tlci-image-registration-size 64)
     (= tlci-host-callback-table-magic-offset 0)
     (= tlci-host-callback-table-abi-version-offset 8)
     (= tlci-host-callback-table-byte-size-offset 16)
     (= tlci-host-callback-table-host-context-offset 24)
     (= tlci-host-callback-table-reserved0-offset 32)
     (= tlci-host-callback-table-reserved1-offset 40)
+    (= tlci-host-callback-table-invoke-offset 48)
+    (= tlci-host-callback-table-abort-offset 56)
     (= tlci-image-registration-magic-offset 0)
     (= tlci-image-registration-abi-version-offset 8)
     (= tlci-image-registration-byte-size-offset 16)
     (= tlci-image-registration-image-context-offset 24)
     (= tlci-image-registration-reserved0-offset 32)
-    (= tlci-image-registration-reserved1-offset 40)))
+    (= tlci-image-registration-reserved1-offset 40)
+    (= tlci-image-registration-macro-entry-table-offset 48)
+    (= tlci-image-registration-macro-entry-count-offset 56)
+    (= tlci-macro-entry-record-size 32)
+    (= tlci-macro-entry-name-ptr-offset 0)
+    (= tlci-macro-entry-name-len-offset 8)
+    (= tlci-macro-entry-function-offset 16)
+    (= tlci-macro-entry-reserved0-offset 24)))
+
+(define (tlci-test-host-callback-op-layout-ok?) : bool
+  (and
+    (= tlci-host-callback-status-ok 0)
+    (= tlci-host-callback-status-diagnostic 1)
+    (= tlci-host-callback-status-fuel-exhausted 2)
+    (= tlci-host-callback-status-panic 3)
+    (= tlci-host-callback-status-bad-request 4)
+    (= tlci-host-callback-op-fuel-check 1)
+    (= tlci-host-callback-op-diagnostic 2)
+    (= tlci-host-callback-op-scratch-alloc 3)
+    (= tlci-host-callback-op-scratch-reset 4)
+    (= tlci-host-callback-op-expr-bool 100)
+    (= tlci-host-callback-op-expr-int 101)
+    (= tlci-host-callback-op-expr-var 102)
+    (= tlci-host-callback-op-string-concat 103)
+    (= tlci-host-callback-op-string-append 104)
+    (= tlci-host-callback-op-int->string 105)
+    (= tlci-host-callback-op-expr-splice 106)
+    (= tlci-host-callback-op-expr-if 107)
+    (= tlci-host-callback-op-expr-type 108)
+    (= tlci-host-callback-op-module-export-value? 109)
+    (= tlci-host-callback-op-module-export-type? 110)
+    (= tlci-host-callback-op-module-export-macro? 111)
+    (= tlci-host-callback-op-module-export-value-type 112)
+    (= tlci-host-callback-op-module-export-type 113)
+    (= tlci-host-callback-op-module-export-macro-type 114)
+    (= tlci-host-callback-op-expr-bool? 115)
+    (= tlci-host-callback-op-expr-bool-value 116)
+    (= tlci-host-callback-op-expr-if? 117)
+    (= tlci-host-callback-op-expr-if-cond 118)
+    (= tlci-host-callback-op-expr-if-then 119)
+    (= tlci-host-callback-op-expr-if-else 120)
+    (= tlci-host-callback-op-expr-list-empty? 121)
+    (= tlci-host-callback-op-expr-list-length 122)
+    (= tlci-host-callback-op-expr-list-head 123)
+    (= tlci-host-callback-op-expr-list-tail 124)
+    (= tlci-host-callback-op-expr-list-nth 125)
+    (= tlci-host-callback-op-expr-clause-first 126)
+    (= tlci-host-callback-op-expr-clause-second 127)
+    (= tlci-host-callback-op-expr-clause-list-empty? 128)
+    (= tlci-host-callback-op-expr-clause-list-length 129)
+    (= tlci-host-callback-op-expr-clause-list-head 130)
+    (= tlci-host-callback-op-expr-clause-list-tail 131)
+    (= tlci-host-callback-op-expr-clause-list-nth 132)
+    (= tlci-host-callback-op-expr-clause-list->expr-list 133)
+    (= tlci-host-callback-op-expr-binding-clause-name 134)
+    (= tlci-host-callback-op-expr-binding-clause-has-type? 135)
+    (= tlci-host-callback-op-expr-binding-clause-type 136)
+    (= tlci-host-callback-op-expr-binding-clause-init 137)
+    (= tlci-host-callback-op-expr-binding-clause-list-empty? 138)
+    (= tlci-host-callback-op-expr-binding-clause-list-length 139)
+    (= tlci-host-callback-op-expr-binding-clause-list-head 140)
+    (= tlci-host-callback-op-expr-binding-clause-list-tail 141)
+    (= tlci-host-callback-op-expr-binding-clause-list-nth 142)
+    (= tlci-host-callback-op-expr-binding-clause-list->expr-list 143)
+    (= tlci-host-callback-stdlib-op-count 44)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and
     (tlci-test-host-abi-layout-ok?)
+    (tlci-test-host-callback-op-layout-ok?)
     (match (tlci-validate-host-callback-table (tlci-test-host-callback-table))
       [(OkTlciHostAbi) true]
       [(ErrTlciHostAbi _) false])
@@ -1295,7 +1514,9 @@
           tlci-host-callback-table-size
           0
           0
-          0))
+          0
+          1
+          1))
       "tlci host ABI: bad host callback table magic")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
@@ -1305,7 +1526,9 @@
           tlci-host-callback-table-size
           0
           0
-          0))
+          0
+          1
+          1))
       "tlci host ABI: unsupported callback ABI version 2")
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
@@ -1315,14 +1538,42 @@
           (- tlci-host-callback-table-size 1)
           0
           0
-          0))
+          0
+          1
+          1))
       "tlci host ABI: host callback table byte-size is smaller than v1")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          0
+          0
+          0
+          1))
+      "tlci host ABI: host invoke callback must be nonzero")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-host-callback-table
+        (TlciHostCallbackTable
+          tlci-host-callback-table-magic
+          tlci-host-abi-version
+          tlci-host-callback-table-size
+          0
+          0
+          0
+          1
+          0))
+      "tlci host ABI: host abort callback must be nonzero")
     (tlci-test-host-abi-rejects?
       (tlci-validate-image-registration
         (TlciImageRegistration
           0
           tlci-host-abi-version
           tlci-image-registration-size
+          0
+          0
           0
           0
           0))
@@ -1335,6 +1586,8 @@
           tlci-image-registration-size
           0
           0
+          0
+          0
           0))
       "tlci host ABI: unsupported callback ABI version 2")
     (tlci-test-host-abi-rejects?
@@ -1345,8 +1598,34 @@
           (- tlci-image-registration-size 1)
           0
           0
+          0
+          0
           0))
-      "tlci host ABI: image registration byte-size is smaller than v1")))
+      "tlci host ABI: image registration byte-size is smaller than v1")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          tlci-image-registration-magic
+          tlci-host-abi-version
+          tlci-image-registration-size
+          0
+          0
+          0
+          0
+          1))
+      "tlci host ABI: macro entry count requires a table")
+    (tlci-test-host-abi-rejects?
+      (tlci-validate-image-registration
+        (TlciImageRegistration
+          tlci-image-registration-magic
+          tlci-host-abi-version
+          tlci-image-registration-size
+          0
+          0
+          0
+          1
+          0))
+      "tlci host ABI: macro entry table requires a count")))
 
 (define (tlci-test-parse-round-trip? [image : TlciImage]) : bool
   (match (tlci-emit-image image)

@@ -4571,37 +4571,174 @@ convention:
 | 1 | pointer-sized integer | Address of a writable image registration record |
 | return | `i64` status | `0` on successful registration; nonzero values are reserved diagnostics |
 
-No callback slots are assigned in v1. The callback table begins with a fixed
-48-byte header, and any bytes after `byte-size` are outside the record:
+The callback table begins with the original fixed 48-byte header and appends
+two required function-pointer slots. Any bytes after `byte-size` are outside the
+record:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIHOST` |
 | 8 | 8 | Host callback ABI version, currently `1` |
-| 16 | 8 | Callback table byte size; must be at least `48` |
+| 16 | 8 | Callback table byte size; must be at least `64` |
 | 24 | 8 | Opaque host context pointer, or `0` |
 | 32 | 8 | Reserved, must be `0` in v1 |
 | 40 | 8 | Reserved, must be `0` in v1 |
+| 48 | 8 | Required `invoke` callback function pointer |
+| 56 | 8 | Required `abort` callback function pointer |
+
+The `invoke` callback is the only stdlib/comptime operation dispatcher in v1.
+It uses the host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque host context from the table |
+| 1 | pointer-sized integer | Opaque expansion/session context passed to the macro entry |
+| 2 | `i64` | Callback operation id from the catalog below |
+| 3 | pointer-sized integer | Address of an array of 64-bit argument handles/scalars, or `0` for no arguments |
+| 4 | `i64` | Argument count |
+| 5 | pointer-sized integer | Address of one writable 64-bit result slot, or `0` for unit/no result |
+| return | `i64` status | `0` on success; nonzero status values are listed below |
+
+The `abort` callback is for native image failures that cannot be represented as
+a normal macro diagnostic. It uses the same host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque host context from the table |
+| 1 | pointer-sized integer | Opaque expansion/session context, or `0` before macro dispatch |
+| 2 | `i64` | Abort reason/status code |
+| 3 | pointer-sized integer | Optional message byte pointer |
+| 4 | `i64` | Message byte length |
+| 5 | `i64` | Optional tlci symbol-table id/offset for symbolized native failures, or `0` |
+| return | `i64` status | `0` when the host recorded the abort |
+
+Callback status values are fixed:
+
+| Value | Meaning |
+| ---: | --- |
+| 0 | Success |
+| 1 | Macro diagnostic was reported |
+| 2 | Macro fuel exhausted |
+| 3 | Native macro panic/abort |
+| 4 | Bad callback request or malformed arguments |
+
+Callback operation ids are append-only. IDs `1` through `99` are host-control
+operations; IDs `100` and above mirror the current exported
+`stdlib.comptime` helper surface. V1 assigns:
+
+| ID | Operation |
+| ---: | --- |
+| 1 | `fuel-check` |
+| 2 | `diagnostic` |
+| 3 | `scratch-alloc` |
+| 4 | `scratch-reset` |
+| 100 | `expr-bool` |
+| 101 | `expr-int` |
+| 102 | `expr-var` |
+| 103 | `string-concat` |
+| 104 | `string-append` |
+| 105 | `int->string` |
+| 106 | `expr-splice` |
+| 107 | `expr-if` |
+| 108 | `expr-type` |
+| 109 | `module-export-value?` |
+| 110 | `module-export-type?` |
+| 111 | `module-export-macro?` |
+| 112 | `module-export-value-type` |
+| 113 | `module-export-type` |
+| 114 | `module-export-macro-type` |
+| 115 | `expr-bool?` |
+| 116 | `expr-bool-value` |
+| 117 | `expr-if?` |
+| 118 | `expr-if-cond` |
+| 119 | `expr-if-then` |
+| 120 | `expr-if-else` |
+| 121 | `expr-list-empty?` |
+| 122 | `expr-list-length` |
+| 123 | `expr-list-head` |
+| 124 | `expr-list-tail` |
+| 125 | `expr-list-nth` |
+| 126 | `expr-clause-first` |
+| 127 | `expr-clause-second` |
+| 128 | `expr-clause-list-empty?` |
+| 129 | `expr-clause-list-length` |
+| 130 | `expr-clause-list-head` |
+| 131 | `expr-clause-list-tail` |
+| 132 | `expr-clause-list-nth` |
+| 133 | `expr-clause-list->expr-list` |
+| 134 | `expr-binding-clause-name` |
+| 135 | `expr-binding-clause-has-type?` |
+| 136 | `expr-binding-clause-type` |
+| 137 | `expr-binding-clause-init` |
+| 138 | `expr-binding-clause-list-empty?` |
+| 139 | `expr-binding-clause-list-length` |
+| 140 | `expr-binding-clause-list-head` |
+| 141 | `expr-binding-clause-list-tail` |
+| 142 | `expr-binding-clause-list-nth` |
+| 143 | `expr-binding-clause-list->expr-list` |
+
+The operation catalog deliberately does not assign `TypeInfo` constructor or
+reflection helper operations yet. `TypeInfo` value shapes are public, but the
+remaining #2653 migration still decides which helpers become ordinary stdlib
+functions and which bridge operations stay intrinsic. Those future operations
+must be appended without reusing the IDs above.
 
 The image fills the writable registration record before returning success. The
-v1 registration record is also 48 bytes:
+v1 registration record keeps the original 48-byte header and appends the macro
+entry table:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIIMAG` |
 | 8 | 8 | Host callback ABI version used by the image, currently `1` |
-| 16 | 8 | Registration record byte size; must be at least `48` |
+| 16 | 8 | Registration record byte size; must be at least `64` |
 | 24 | 8 | Opaque image context pointer for later dispatch, or `0` |
 | 32 | 8 | Reserved, must be `0` in v1 |
 | 40 | 8 | Reserved, must be `0` in v1 |
+| 48 | 8 | Macro entry table pointer, or `0` when the image registers no macros |
+| 56 | 8 | Macro entry record count; must be `0` when the table pointer is `0` |
+
+Each macro entry record is 32 bytes and is owned by the image for the lifetime
+of the mapped tlci image:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Macro name byte pointer |
+| 8 | 8 | Macro name byte length |
+| 16 | 8 | Macro entry function pointer |
+| 24 | 8 | Reserved, must be `0` in v1 |
+
+A macro entry function uses the host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque image context from registration |
+| 1 | pointer-sized integer | Opaque host context from the callback table |
+| 2 | pointer-sized integer | Opaque expansion/session context |
+| 3 | pointer-sized integer | Address of an array of operand handles |
+| 4 | `i64` | Operand count |
+| 5 | pointer-sized integer | Address of one writable result-handle slot |
+| return | `i64` status | Same status values as the host callbacks |
+
+Macro operands, generated `Expr` values, reflected metadata values, and strings
+cross this boundary only as host-owned opaque handles or scalar values. Native
+macro code must construct public `Expr`/reflection values through the callback
+catalog above and must not mutate compiler AST/typechecker structures directly.
+The host creates a fresh expansion session/scratch arena for one macro
+invocation. On diagnostic, fuel exhaustion, native abort, or any nonzero status,
+the host discards that session state; only diagnostics already recorded through
+callbacks survive. Successful expansion commits exactly the result handle
+written by the macro entry.
 
 Compatibility is append-only. Future ABI versions may require larger byte-size
-values and assign callback or registration fields after the v1 header, but they
-must not reinterpret the v1 offsets above. A v1 loader accepts larger records
-when the magic, ABI version, minimum byte size, and reserved-zero fields are
-valid, and ignores the tail. The v1 skeleton does not execute callbacks, load
-dependent images, enforce macro fuel, or dispatch compiled macros; those are
-later loader and stdlib macro-surface slices.
+values and assign callback, operation, macro-entry, or registration fields
+after the v1 ranges above, but they must not reinterpret the v1 offsets or
+operation ids. A v1 loader accepts larger records when the magic, ABI version,
+minimum byte size, required callback pointers, macro table/count consistency,
+and reserved-zero fields are valid, and ignores unknown tails. This section
+specifies the contract only; loading mapped pages, invoking macro entries,
+enforcing fuel, embedding stdlib tlci, and package dependency dispatch remain
+the #2657/#2658/#2659 implementation slices.
 
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 

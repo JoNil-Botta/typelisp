@@ -402,7 +402,10 @@ builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
 Assembly and object side artifacts use the same `target/<profile>/` directory.
 Package builds also emit a metadata-only comptime image named `<name>.tlci`
 beside the native artifact; `typelisp inspect <file.tlci>` renders the tlci
-header, section table, package metadata, and exports.
+header, section table, package metadata, and exports. The `.tlci` name is
+target-independent today because v1 images carry host compile-time metadata,
+not target runtime object code; cross-target package builds keep separate
+runtime artifacts while sharing the same host comptime image path.
 `kind "lib"` remains accepted as a compatibility alias. Dependency entries may
 use a local path relative to that same package root, an absolute path, or the
 GitHub shorthand form shown above. `tag` and `branch` pins are also accepted,

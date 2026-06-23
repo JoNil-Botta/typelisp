@@ -893,7 +893,7 @@
 (define (md-render-table-rows-from [rows : MdTableRowList] [index : i64]) : String
   (if (>= index (md-table-row-list-count rows))
     ""
-    (string-append
+    (str-cat
       (md-render-table-row (md-table-row-list-ref rows index))
       (md-render-table-rows-from rows (+ index 1)))))
 
@@ -922,7 +922,7 @@
 (define (md-render-blocks-from [blocks : MdBlockList] [index : i64]) : String
   (if (>= index (md-block-list-count blocks))
     ""
-    (string-append
+    (str-cat
       (md-render-block (md-block-list-get (& blocks) index MdBlank))
       (md-render-blocks-from blocks (+ index 1)))))
 
@@ -1017,19 +1017,14 @@
 (define (compiler-doc-md-block-self-test) : i64
   (let
     [fixture : String
-      (string-append
+      (str-cat
         "# Title `x`\n\n"
-        (string-append
-          "Paragraph with *em*\n"
-          (string-append
-            "> quote [a](b)\n> second\n"
-            (string-append
-              "- one\n- two\n"
-              (string-append
-                "1. first\n2. second\n"
-                (string-append
-                  "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
-                  "| Name | Type |\n| --- | --- |\n| x | i64 |\n"))))))]
+        "Paragraph with *em*\n"
+        "> quote [a](b)\n> second\n"
+        "- one\n- two\n"
+        "1. first\n2. second\n"
+        "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
+        "| Name | Type |\n| --- | --- |\n| x | i64 |\n")]
     [blocks : MdBlockList (md-scan-blocks fixture)]
     (begin
       (unless (= (md-block-list-count blocks) 8) (return 100))

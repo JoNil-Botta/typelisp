@@ -15,15 +15,15 @@
 
 (define (arena-atomic-worker [owner : i64]) : i64
   (let
-    [home : i64 (arena.arena-current)]
+    [home : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
-        (arena.arena-set! owner))
+        (arena.tl_arena_set owner))
       (let
         [sum : i64 (arena-atomic-worker-loop 0 0)]
         (begin
           (unsafe
-            (arena.arena-set! home))
+            (arena.tl_arena_set home))
           (if (> sum 0)
             42
             7))))))
@@ -61,8 +61,8 @@
 
 (define (main) : i64
   (let
-    [owner : i64 (arena.arena-make-atomic)]
-    [result : i64 (arena-atomic-run owner)]
+    [owner : arena.Arena (arena.arena-make-atomic)]
+    [result : i64 (arena-atomic-run (arena.arena-raw-handle owner))]
     (begin
       (unsafe
         (arena.arena-destroy owner))

@@ -17,9 +17,10 @@ use.
 
 ## Current Modules
 
-- `arena.tl`: first-class arena helper declarations for manual allocation
-  control. `arena-make`, `arena-current`, and `arena-mark` are safe; switching,
-  destroying, and rewinding arenas require `(unsafe ...)`. Import it with
+- `arena.tl`: typed first-class `Arena` and `ArenaMark` helper declarations for
+  manual allocation control. `arena-make`, `arena-make-atomic`,
+  `arena-current`, and `arena-mark` are safe; switching, destroying, and
+  rewinding arenas require `(unsafe ...)`. Import it with
   `(import "stdlib/arena.tl")`.
 - `atomic.tl`: explicit sequentially consistent atomic integer operations on
   one dynamic-array element. The first surface supports `i32` and `i64`
@@ -381,7 +382,7 @@ any scoped arena, or the innermost scoped arena inside `(with-arena ...)`. The
 arena model uses the term "scoped arena" for this behavior. Stdlib policy tests
 use `(with-arena ...)` as the executable witness for active-arena semantics.
 
-Use three standard scratch patterns:
+Use four standard scratch patterns:
 
 - **Temporary scratch only:** put phase-local work in `(with-arena scratch ...)`
   and return only scalars or values allocated outside the scoped arena. This is
@@ -390,9 +391,15 @@ Use three standard scratch patterns:
   `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
   Supported body results are cloned into the enclosing active arena before the
   scratch arena is rewound.
+- **One-shot clone-out:** use `(with-scratch body ...)` when a supported result
+  should be cloned out of a fresh scratch arena and the caller does not need to
+  reuse the arena handle.
+- **Keep results in a first-class arena:** allocate or receive a typed `Arena`
+  and wrap the build in `(in-arena arena ...)`. The result remains owned by that
+  first-class arena.
 - **Manual unsafe arena:** import `stdlib/arena.tl` and call `arena-set!`,
   `arena-rewind`, or `arena-destroy` only inside `(unsafe ...)` when the caller
-  can prove every invalidated heap handle is dead. Prefer the two safe patterns
+  can prove every invalidated heap handle is dead. Prefer the safe patterns
   above for normal tool code.
 
 Written reference and arena lifetime syntax exists, and stdlib APIs migrate
@@ -447,7 +454,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
-| `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent ordinary arena handle, `arena-make-atomic` creates an independent atomic arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
+| `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional list spines, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
 | `string-eq`, `string=?`, `string-eq-borrowed`, `string->int`, `string->int-borrowed` | Equality and integer parsing helpers inspect string bytes without allocating. The owned wrappers borrow their inputs internally; the borrowed variants are available to stdlib code that already has `(& r str)` values. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |

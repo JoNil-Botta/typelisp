@@ -47,8 +47,8 @@
 
 (define (escape-string [seed : i64]) : String
   (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [enclosing : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (begin
       (unsafe
         (arena-set! scratch))
@@ -57,7 +57,7 @@
         (begin
           (force-overflow)
           (let
-            [scratch-head : i64 (arena-current)]
+            [scratch-head : Arena (arena-current)]
             (begin
               (unsafe
                 (arena-set! enclosing))
@@ -70,8 +70,8 @@
 
 (define (escape-list [count : i64] [seed : i64]) : StressList
   (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [enclosing : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (begin
       (unsafe
         (arena-set! scratch))
@@ -80,7 +80,7 @@
         (begin
           (force-overflow)
           (let
-            [scratch-head : i64 (arena-current)]
+            [scratch-head : Arena (arena-current)]
             (begin
               (unsafe
                 (arena-set! enclosing))
@@ -91,25 +91,25 @@
                     (arena-destroy scratch-head))
                   escaped)))))))))
 
-(define (escape-list-rewind [scratch : i64] [count : i64] [seed : i64]) : StressList
+(define (escape-list-rewind [scratch : Arena] [count : i64] [seed : i64]) : StressList
   (let
-    [enclosing : i64 (arena-current)]
+    [enclosing : Arena (arena-current)]
     (begin
       (unsafe
         (arena-set! scratch))
       (let
-        [mark : i64 (arena-mark)]
+        [mark : ArenaMark (arena-mark)]
         [raw : StressList (make-list count seed)]
         (begin
           (force-overflow)
           (let
-            [scratch-head : i64 (arena-current)]
+            [scratch-head : Arena (arena-current)]
             (begin
               (unsafe
                 (arena-set! enclosing))
               (let
                 [escaped : StressList (clone raw)]
-                [new-enclosing : i64 (arena-current)]
+                [new-enclosing : Arena (arena-current)]
                 (begin
                   (unsafe
                     (arena-set! scratch-head)
@@ -139,7 +139,7 @@
         (list-cycles (- n 1) (+ acc 1))
         0))))
 
-(define (rewind-list-cycles-inner [scratch : i64] [n : i64] [acc : i64]) : i64
+(define (rewind-list-cycles-inner [scratch : Arena] [n : i64] [acc : i64]) : i64
   (if (= n 0)
     acc
     (let
@@ -151,7 +151,7 @@
 
 (define (rewind-list-cycles [n : i64]) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     [score : i64 (rewind-list-cycles-inner scratch n 0)]
     (begin
       (unsafe

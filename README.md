@@ -730,12 +730,12 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
-...)` with a first-class arena from `arena-make` when one supported result must
-be cloned out across repeated scratch builds; use `(with-scratch body ...)`
-when a supported result should be cloned out from a fresh one-shot scratch
-arena; use `(arena-make-atomic)` for a shared atomic allocation target; use
-`(in-arena arena body ...)` when the result should remain
-owned by that first-class arena; reserve manual `arena-set!` / `arena-rewind` /
+...)` with a typed first-class `Arena` from `arena-make` when one supported
+result must be cloned out across repeated scratch builds; use `(with-scratch
+body ...)` when a supported result should be cloned out from a fresh one-shot
+scratch arena; use `(arena-make-atomic)` for a shared atomic allocation target;
+use `(in-arena arena body ...)` when the result should remain owned by that
+first-class arena; reserve manual `arena-set!` / `arena-rewind` /
 `arena-destroy` calls for unsafe internals that can prove every invalidated
 handle is dead.
 
@@ -777,13 +777,14 @@ functions in reverse binding order on scope exit for files, process handles,
 locks, mapped files, and similar resources; it does not imply destructors,
 `free`, or arena reset semantics.
 
-Programs that need manual control import `stdlib/arena.tl` and use the
-first-class arena helpers. `arena-make`, `arena-make-atomic`, `arena-current`,
-and `arena-mark` are safe because they only create/read handles or record a reset
-mark. `arena-set!`, `arena-destroy`, and `arena-rewind` require
-`(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
-live heap handles. The safe `with-arena` surface remains preferred for scoped
-cleanup, while `in-arena` is the safe dynamic allocation-target switch without
+Programs that need manual control import `stdlib/arena.tl` and use the typed
+first-class arena helpers. `arena-make`, `arena-make-atomic`, and
+`arena-current` create or observe an `Arena`; `arena-mark` records an
+`ArenaMark`. Raw integers do not satisfy those public helper signatures.
+`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`,
+because switching, freeing, or rewinding arenas can invalidate live heap
+handles. The safe `with-arena` surface remains preferred for scoped cleanup,
+while `in-arena` is the safe dynamic allocation-target switch without
 marking, rewinding, destroying, or cloning. See [SPEC.md §7.3](SPEC.md) for
 details.
 

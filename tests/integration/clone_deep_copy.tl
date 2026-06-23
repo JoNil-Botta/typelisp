@@ -51,7 +51,7 @@
     (string-append "a" "a")
     (box (SCons (string-append "b" "bb") (box SNil)))))
 
-(define (copy-from-scratch [home : i64] [scratch : i64]) : i64
+(define (copy-from-scratch [home : Arena] [scratch : Arena]) : i64
   (begin
     (unsafe
       (arena-set! scratch))
@@ -76,8 +76,8 @@
 
 (define (main) : i64
   (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (if (= (copy-from-scratch home scratch) 12)
       42
       1)))

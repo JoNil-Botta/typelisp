@@ -502,17 +502,17 @@
   [module : String]
   [summary : CompilerTypecheckSummary]) : bool
   (let
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     [stored : bool
       (begin
         (unsafe
-          (arena-set! node-pool-base-arena))
+          (tl_arena_set node-pool-base-arena))
         (let
           [persistent-key : String (string-copy-borrowed (& key))]
           [persistent-module : String (string-copy-borrowed (& module))]
           (begin
             (unsafe
-              (arena-set! prev-arena))
+              (tl_arena_set prev-arena))
             (tc-prefix-snapshot-cache-store
               persistent-key
               count
@@ -2711,7 +2711,7 @@
 (define (tc-hygiene-module-env-cache-arena-handle) : i64
   (begin
     (if (= tc-hygiene-module-env-cache-arena 0)
-      (set! tc-hygiene-module-env-cache-arena (arena-make))
+      (set! tc-hygiene-module-env-cache-arena (tl_arena_make))
       unit)
     tc-hygiene-module-env-cache-arena))
 
@@ -2808,7 +2808,7 @@
       unit
       (begin
         (unsafe
-          (arena-destroy tc-hygiene-module-env-cache-arena))
+          (tl_arena_destroy tc-hygiene-module-env-cache-arena))
         (set! tc-hygiene-module-env-cache-arena 0)))))
 
 (define (tc-unsafe-marker-name) : String
@@ -4231,7 +4231,22 @@
   [name-id : i64]) : ResultTcType
   (let
     [name : String (intern-str name-id)]
-    (match (tc-lookup-id env name-id)
+    [found : ResultTcType
+      (match (tc-lookup-id env name-id)
+        [(OkTcType ty) (OkTcType ty)]
+        [(ErrTcType message)
+          (let
+            [module : String (tc-context-module ctx)]
+            (if (and
+              (> (string-length module) 0)
+              (not (tc-name-qualified? name)))
+              (match (tc-lookup-id
+                env
+                (tc-name-id (compiler-symbol-module-key module name)))
+                [(OkTcType ty) (OkTcType ty)]
+                [(ErrTcType _) (ErrTcType message)])
+              (ErrTcType message)))])]
+    (match found
       [(OkTcType ty)
         (match (tc-qualified-value-visible-ok ctx name)
           [(OkTcUnit) (OkTcType ty)]
@@ -4317,10 +4332,10 @@
       ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
       ;; survives the scratch arenas active during per-decl typechecking.
       (let
-        [prev-arena : i64 (arena-current)]
+        [prev-arena : i64 (tl_arena_current)]
         [_switched : unit
           (unsafe
-            (arena-set! (tc-hygiene-module-env-cache-arena-handle)))]
+            (tl_arena_set (tc-hygiene-module-env-cache-arena-handle)))]
         (match (tc-module-local-env-cached
           ctx
           tc-hygiene-active-top-env
@@ -4330,12 +4345,12 @@
             (begin
               (set! tc-hygiene-module-env-cache next-cache)
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (OkTcEnv def-env))]
           [(ErrTcModuleLocalEnv message)
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (ErrTcEnv message))])))
     (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
 
@@ -5590,6 +5605,21 @@
 (define (tc-source-name-bound-exact? [env : TcTypeEnv] [name : String]) : bool
   (tc-source-name-bound-exact-id? env (tc-name-id name)))
 
+(define (tc-current-module-source-lookup-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : TcMaybeString
+  (let
+    [module : String (tc-context-module ctx)]
+    (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+      (let
+        [module-key : String (compiler-symbol-module-key module name)]
+        [module-key-id : i64 (tc-name-id module-key)]
+        (if (tc-source-name-bound-exact-id? env module-key-id)
+          (TcSomeString module-key)
+          (TcNoString)))
+      (TcNoString))))
+
 (define (tc-source-leading-segment-bound?
   [env : TcTypeEnv]
   [name : String]
@@ -6381,7 +6411,11 @@
       (let
         [first-dot : i64 (intern-first-dot name-id)]
         (if (< first-dot 0)
-          (OkTcString name)
+          (if (tc-source-name-bound-exact-id? env name-id)
+            (OkTcString name)
+            (match (tc-current-module-source-lookup-key ctx env name)
+              [(TcSomeString key) (OkTcString key)]
+              [(TcNoString) (OkTcString name)]))
           (if (and
             check-local-field
             (tc-source-leading-segment-wins-over-exact-from-id?
@@ -6643,7 +6677,7 @@
         (tc-resolved-nominal-type name handle)
         (if (tc-current-module-enum? ctx name)
           (AstTyEnum (intern name))
-          (tc-resolved-nominal-type name handle)))]
+          (tc-resolved-nominal-type owner-name handle)))]
     [(ErrTcString _)
       (if (tc-current-module-enum? ctx name)
         (AstTyEnum (intern name))
@@ -6660,7 +6694,7 @@
         (tc-resolved-nominal-type-with-args name handle lifetimes)
         (if (tc-current-module-enum? ctx name)
           (ast-ty-enum-args (intern name) lifetimes)
-          (tc-resolved-nominal-type-with-args name handle lifetimes)))]
+          (tc-resolved-nominal-type-with-args owner-name handle lifetimes)))]
     [(ErrTcString _)
       (if (tc-current-module-enum? ctx name)
         (ast-ty-enum-args (intern name) lifetimes)
@@ -10769,13 +10803,21 @@
   [ctx : TcContext]
   [all-decls : AstDeclList]
   [decls : AstDeclList]
-  [env : TcTypeEnv]) : ResultTcEnv
+  [env : TcTypeEnv]
+  [module : String]) : ResultTcEnv
   (match decls
     [(AstDeclNil) (OkTcEnv env)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
+          [(AstDeclModule next-module)
+            (tc-build-top-env-aliases-list
+              ctx
+              all-decls
+              rest
+              env
+              (intern-str next-module))]
           [(AstDeclImport
               (AstImportSpec
                 _
@@ -10788,11 +10830,16 @@
               all-decls
               env
               target-module
-              alias)
+              (compiler-symbols-import-alias-key module alias))
               [(OkTcEnv next-env)
-                (tc-build-top-env-aliases-list ctx all-decls rest next-env)]
+                (tc-build-top-env-aliases-list
+                  ctx
+                  all-decls
+                  rest
+                  next-env
+                  module)]
               [(ErrTcEnv message) (ErrTcEnv message)])]
-          [_ (tc-build-top-env-aliases-list ctx all-decls rest env)]))]))
+          [_ (tc-build-top-env-aliases-list ctx all-decls rest env module)]))]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
@@ -10803,7 +10850,7 @@
           [decls : AstDeclList (box-get decls-box)]
           (match (tc-build-top-env-list ctx decls (tc-default-env))
             [(OkTcEnv env)
-              (match (tc-build-top-env-aliases-list ctx decls decls env)
+              (match (tc-build-top-env-aliases-list ctx decls decls env "")
                 [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
             [(ErrTcEnv message) (ErrTcEnv message)]))])))
@@ -10940,6 +10987,23 @@
             (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
+    [(AstDeclImport
+        (AstImportSpec
+          _
+          _
+          (AstSomeModuleName target-module)
+          (AstSomeImportAlias alias)
+          _))
+      (if (string-eq alias "")
+        (match (tc-context-program ctx)
+          [(AstProgram decls-box)
+            (tc-bind-import-alias-module
+              ctx
+              (box-get decls-box)
+              env
+              target-module
+              "")])
+        (OkTcEnv env))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -12720,6 +12784,43 @@
       (string-eq (tc-qualified-name-base name) base)
       false)))
 
+(define (tc-arena-type-name) : String
+  "stdlib.arena/Arena")
+
+(define (tc-arena-module-name) : String
+  "stdlib.arena")
+
+(define (tc-arena-mark-type-name) : String
+  "stdlib.arena/ArenaMark")
+
+(define (tc-nominal-struct-type-name-eq?
+  [ctx : TcContext]
+  [ty : AstType]
+  [name : String]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct actual) (string-eq (intern-str actual) name)]
+    [(AstTyStructArgs actual _) (string-eq (intern-str actual) name)]
+    [_ false]))
+
+(define (tc-arena-type? [ctx : TcContext] [ty : AstType]) : bool
+  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-type-name)))
+
+(define (tc-arena-mark-type? [ctx : TcContext] [ty : AstType]) : bool
+  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-mark-type-name)))
+
+(define (tc-arena-owner-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [base : String]) : bool
+  (if (tc-name-qualified? name)
+    (string-eq (tc-qualified-name-base name) base)
+    (and
+      (string-eq name base)
+      (or
+        (not (tc-name-local-bound-before-module? env base))
+        (string-eq (tc-context-module ctx) (tc-arena-module-name))))))
+
 (define (tc-arena-owner-kind-none) : i64
   0)
 
@@ -12729,7 +12830,10 @@
 (define (tc-arena-owner-kind-atomic) : i64
   2)
 
-(define (tc-arena-owner-call-kind [env : TcTypeEnv] [expr : AstExpr]) : i64
+(define (tc-arena-owner-call-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : i64
   (match (ast-expr-unspan expr)
     [(AstExprCall func-box args)
       (match args
@@ -12737,16 +12841,9 @@
           (match (tc-expr-var-name (ast-node-get func-box))
             [(TcSomeString name)
               (cond
-                [(and
-                    (string-eq name "arena-make-atomic")
-                    (not
-                      (tc-name-local-bound-before-module?
-                        env
-                        "arena-make-atomic")))
+                [(tc-arena-owner-call-name? ctx env name "arena-make-atomic")
                   (tc-arena-owner-kind-atomic)]
-                [(and
-                    (string-eq name "arena-make")
-                    (not (tc-name-local-bound-before-module? env "arena-make")))
+                [(tc-arena-owner-call-name? ctx env name "arena-make")
                   (tc-arena-owner-kind-ordinary)]
                 [else (tc-arena-owner-kind-none)])]
             [(TcNoString) (tc-arena-owner-kind-none)])]
@@ -12754,11 +12851,12 @@
     [_ (tc-arena-owner-kind-none)]))
 
 (define (tc-bind-arena-owner-if-needed-id
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
   [init : AstExpr]) : TcTypeEnv
   (let
-    [kind : i64 (tc-arena-owner-call-kind env init)]
+    [kind : i64 (tc-arena-owner-call-kind ctx env init)]
     (cond
       [(= kind (tc-arena-owner-kind-atomic))
         (tc-bind-atomic-arena-owner env (intern-str name))]
@@ -12774,8 +12872,10 @@
   [init : AstExpr]) : TcTypeEnv
   (let
     [owner-env : TcTypeEnv
-      (if (tc-type-eq (tc-type-strip-region ty) (AstTyI64))
-        (tc-bind-arena-owner-if-needed-id env name init)
+      (if (or
+        (tc-type-eq (tc-type-strip-region ty) (AstTyI64))
+        (tc-arena-type? ctx ty))
+        (tc-bind-arena-owner-if-needed-id ctx env name init)
         env)]
     (if (and (tc-c-abi-fnptr-type? ty) (tc-expr-c-abi-fnptr? ctx env init))
       (tc-bind-c-abi-fnptr-id owner-env name ty)
@@ -20732,15 +20832,15 @@
   [key : i64]
   [layout : TcInlineAggregateLayout]) : unit
   (let
-    [prev : i64 (arena-current)]
+    [prev : i64 (tl_arena_current)]
     (begin
       (unsafe
-        (arena-set! node-pool-base-arena))
+        (tl_arena_set node-pool-base-arena))
       (let
         [persistent : TcInlineAggregateLayout (clone layout)]
         (begin
           (unsafe
-            (arena-set! prev))
+            (tl_arena_set prev))
           (array-set! tc-agg-layout-cache key (TcAggLayoutCacheFull persistent)))))))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
@@ -25129,16 +25229,16 @@
   [env : TcTypeEnv]
   [scratch : AstExpr]
   [body : AstExprList]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env scratch (AstTyI64))
+  (match (tc-expr ctx env scratch)
     [(OkTcType scratch-ty)
-      (if (tc-type-eq scratch-ty (AstTyI64))
+      (if (tc-arena-type? ctx scratch-ty)
         (match (tc-begin-list ctx env body)
           [(OkTcType body-ty)
             (if (tc-clone-able-type? ctx body-ty)
               (OkTcType (tc-type-without-regions body-ty))
               (ErrTcType (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ErrTcType message) (ErrTcType message)])
-        (ErrTcType "typecheck: with-escape arena must be i64"))]
+        (ErrTcType "typecheck: with-escape arena must be Arena"))]
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-with-escape-expr-with-expected
@@ -25147,16 +25247,16 @@
   [scratch : AstExpr]
   [body : AstExprList]
   [expected : AstType]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env scratch (AstTyI64))
+  (match (tc-expr ctx env scratch)
     [(OkTcType scratch-ty)
-      (if (tc-type-eq scratch-ty (AstTyI64))
+      (if (tc-arena-type? ctx scratch-ty)
         (match (tc-begin-list-with-expected ctx env body expected)
           [(OkTcType body-ty)
             (if (tc-clone-able-type? ctx body-ty)
               (OkTcType (tc-type-without-regions body-ty))
               (ErrTcType (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ErrTcType message) (ErrTcType message)])
-        (ErrTcType "typecheck: with-escape arena must be i64"))]
+        (ErrTcType "typecheck: with-escape arena must be Arena"))]
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-with-scratch-expr
@@ -25200,11 +25300,11 @@
   [env : TcTypeEnv]
   [arena : AstExpr]
   [body : AstExprList]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env arena (AstTyI64))
+  (match (tc-expr ctx env arena)
     [(OkTcType arena-ty)
-      (if (tc-type-eq arena-ty (AstTyI64))
+      (if (tc-arena-type? ctx arena-ty)
         (tc-begin-list ctx (tc-in-arena-body-env env arena) body)
-        (ErrTcType "typecheck: in-arena arena must be i64"))]
+        (ErrTcType "typecheck: in-arena arena must be Arena"))]
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-in-arena-expr-with-expected
@@ -25213,15 +25313,15 @@
   [arena : AstExpr]
   [body : AstExprList]
   [expected : AstType]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual ctx env arena (AstTyI64))
+  (match (tc-expr ctx env arena)
     [(OkTcType arena-ty)
-      (if (tc-type-eq arena-ty (AstTyI64))
+      (if (tc-arena-type? ctx arena-ty)
         (tc-begin-list-with-expected
           ctx
           (tc-in-arena-body-env env arena)
           body
           expected)
-        (ErrTcType "typecheck: in-arena arena must be i64"))]
+        (ErrTcType "typecheck: in-arena arena must be Arena"))]
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-with-resource-expr
@@ -39848,7 +39948,7 @@
 (define (tc-fn-scratch-arena-get) : i64
   (if (= tc-fn-scratch-arena 0)
     (let
-      [scratch : i64 (arena-make)]
+      [scratch : i64 (tl_arena_make)]
       (begin
         (set! tc-fn-scratch-arena scratch)
         scratch))
@@ -39859,7 +39959,7 @@
     unit
     (begin
       (unsafe
-        (arena-destroy tc-fn-scratch-arena))
+        (tl_arena_destroy tc-fn-scratch-arena))
       (set! tc-fn-scratch-arena 0))))
 
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
@@ -39882,31 +39982,31 @@
   [body-box : i64]) : ResultTcUnit
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [enclosing : i64 (arena-current)]
+    [enclosing : i64 (tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get)]
     (begin
       (intern-persistent-storage-enable!)
       (unsafe
-        (arena-set! scratch))
+        (tl_arena_set scratch))
       (let
-        [mark : i64 (arena-mark)]
+        [mark : i64 (tl_region_mark)]
         [raw : ResultTcUnit
           (tc-check-fn-decl-body ctx global-env params ret body-box)]
-        [scratch-head : i64 (arena-current)]
+        [scratch-head : i64 (tl_arena_current)]
         (begin
           (unsafe
-            (arena-set! enclosing))
+            (tl_arena_set enclosing))
           (let
             [escaped : ResultTcUnit
               (match raw
                 [(OkTcUnit) OkTcUnit]
                 [(ErrTcUnit message) (ErrTcUnit (clone message))])]
-            [new-enclosing : i64 (arena-current)]
+            [new-enclosing : i64 (tl_arena_current)]
             (begin
               (unsafe
-                (arena-set! scratch-head)
-                (arena-rewind mark)
-                (arena-set! new-enclosing))
+                (tl_arena_set scratch-head)
+                (tl_region_reset mark)
+                (tl_arena_set new-enclosing))
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))
@@ -40685,7 +40785,7 @@
       unit
       (begin
         (unsafe
-          (arena-destroy tc-hygiene-module-env-cache-arena))
+          (tl_arena_destroy tc-hygiene-module-env-cache-arena))
         (set! tc-hygiene-module-env-cache-arena 0)))
     (set! macro-expand-active-module "")
     (set! macro-expand-macro-names (TcStringNil))

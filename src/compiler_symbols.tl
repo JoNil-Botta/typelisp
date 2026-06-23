@@ -1996,10 +1996,18 @@
     0
     ""))
 
+(define (compiler-symbols-import-alias-key
+  [importer-module : String]
+  [alias : String]) : String
+  (if (string-eq alias "")
+    importer-module
+    alias))
+
 (define (build-compiler-symbol-aliases-list
   [all-decls : AstDeclList]
   [decls : AstDeclList]
-  [symbols : CompilerSymbols]) : CompilerSymbols
+  [symbols : CompilerSymbols]
+  [module : String]) : CompilerSymbols
   (match decls
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
@@ -2021,9 +2029,21 @@
                   target-module)
                 all-decls
                 target-module
-                alias)]
+                (compiler-symbols-import-alias-key module alias))]
             [_ symbols])]
-        (build-compiler-symbol-aliases-list all-decls rest next-symbols))]))
+        (match decl
+          [(AstDeclModule next-module)
+            (build-compiler-symbol-aliases-list
+              all-decls
+              rest
+              next-symbols
+              (intern-str next-module))]
+          [_
+            (build-compiler-symbol-aliases-list
+              all-decls
+              rest
+              next-symbols
+              module)]))]))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
@@ -2422,7 +2442,7 @@
           0)
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
-              (build-compiler-symbol-aliases-list decls decls symbols))]
+              (build-compiler-symbol-aliases-list decls decls symbols ""))]
           [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))
 
 (define (build-compiler-symbols-with-paths
@@ -2443,7 +2463,7 @@
           "")
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
-              (build-compiler-symbol-aliases-list decls decls symbols))]
+              (build-compiler-symbol-aliases-list decls decls symbols ""))]
           [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols
@@ -2875,7 +2895,8 @@
 (define (build-compiler-registry-aliases-list
   [all-decls : AstDeclList]
   [decls : AstDeclList]
-  [registries : CompilerRegistries]) : CompilerRegistries
+  [registries : CompilerRegistries]
+  [module : String]) : CompilerRegistries
   (match decls
     [(AstDeclNil) registries]
     [(AstDeclCons decl rest)
@@ -2894,9 +2915,21 @@
                 registries
                 all-decls
                 target-module
-                alias)]
+                (compiler-symbols-import-alias-key module alias))]
             [_ registries])]
-        (build-compiler-registry-aliases-list all-decls rest next-registries))]))
+        (match decl
+          [(AstDeclModule next-module)
+            (build-compiler-registry-aliases-list
+              all-decls
+              rest
+              next-registries
+              (intern-str next-module))]
+          [_
+            (build-compiler-registry-aliases-list
+              all-decls
+              rest
+              next-registries
+              module)]))]))
 
 (define (build-compiler-variant-registry-list
   [variants : AstVariantDefList]
@@ -3186,7 +3219,7 @@
           0)
           [(OkCompilerRegistries registries)
             (OkCompilerRegistries
-              (build-compiler-registry-aliases-list decls decls registries))]
+              (build-compiler-registry-aliases-list decls decls registries ""))]
           [(ErrCompilerRegistries message) (ErrCompilerRegistries message)]))]))
 
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries

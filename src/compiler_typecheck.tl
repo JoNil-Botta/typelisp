@@ -245,18 +245,25 @@
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
   (string-append
-    "(extern (tl_arena_make) : i64)
+    "(module stdlib.arena)
+(extern (tl_arena_make) : i64)
+(extern (tl_arena_make_atomic) : i64)
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
 (unsafe (extern (tl_arena_set [arg0 : i64]) : unit))
 (unsafe (extern (tl_arena_destroy [arg0 : i64]) : unit))
 (unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
-(define (arena-make) : i64 (tl_arena_make))
-(define (arena-current) : i64 (tl_arena_current))
-(define (arena-mark) : i64 (tl_region_mark))
-(unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
-(unsafe (define (arena-destroy [arena : i64]) : unit (unsafe (tl_arena_destroy arena))))
-(unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+(defstruct Arena (handle i64))
+(defstruct ArenaMark (handle i64))
+(define (arena-make) : Arena (Arena (tl_arena_make)))
+(define (arena-make-atomic) : Arena (Arena (tl_arena_make_atomic)))
+(define (arena-current) : Arena (Arena (tl_arena_current)))
+(define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
+(define (arena-raw-handle [arena : Arena]) : i64 (struct-get arena handle))
+(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 (struct-get mark handle))
+(unsafe (define (arena-set! [arena : Arena]) : unit (unsafe (tl_arena_set (arena-raw-handle arena)))))
+(unsafe (define (arena-destroy [arena : Arena]) : unit (unsafe (tl_arena_destroy (arena-raw-handle arena)))))
+(unsafe (define (arena-rewind [mark : ArenaMark]) : unit (unsafe (tl_region_reset (arena-mark-raw-handle mark)))))
 "
     (compiler-typecheck-with-alloc-string-helper-source src)))
 
@@ -2526,21 +2533,21 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch 40 42)))"))
 
 (define (compiler-typecheck-with-escape-string-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch (int->string 42))))"))
 
 (define (compiler-typecheck-with-escape-region-strip-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-arena r
       (with-escape scratch (int->string 42)))))"))
 
@@ -2552,14 +2559,14 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : (Array i64)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch (make-array i64 4))))"))
 
 (define (compiler-typecheck-with-escape-box-result-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : (Box String)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch (box (int->string 4)))))"))
 
 (define (compiler-typecheck-with-escape-owning-aggregate-source) : String
@@ -2573,7 +2580,7 @@
   (EscapeNone))
 (define (main) : EscapeResult
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
         [items : (Array String) (make-array String 2)]
@@ -2591,7 +2598,7 @@
     "(define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : (-> i64 i64)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch inc)))"))
 
 (define (compiler-typecheck-with-escape-tests-ok?) : bool
@@ -2624,7 +2631,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-escape-bad-arena-source)
-        "typecheck: with-escape arena must be i64")
+        "typecheck: with-escape arena must be Arena")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2638,21 +2645,21 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch (int->string 42))))"))
 
 (define (compiler-typecheck-in-arena-array-result-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : (Array i64)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch (make-array i64 4))))"))
 
 (define (compiler-typecheck-in-arena-box-result-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : (Box String)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch (box (int->string 4)))))"))
 
 (define (compiler-typecheck-in-arena-bad-arena-source) : String
@@ -2663,7 +2670,7 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch
       (with-arena inner (int->string 1)))))"))
 
@@ -2684,7 +2691,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-in-arena-bad-arena-source)
-        "typecheck: in-arena arena must be i64")
+        "typecheck: in-arena arena must be Arena")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4059,9 +4066,7 @@
 
 (define (compiler-typecheck-channel-atomic-string-send-source) : String
   (compiler-typecheck-with-arena-source
-    "(extern (tl_arena_make_atomic) : i64)
-(define (arena-make-atomic) : i64 (tl_arena_make_atomic))
-(defstruct ChannelString (raw i64))
+    "(defstruct ChannelString (raw i64))
 (defenum ChannelStringSendResult
   (ChannelStringSendOk)
   (ChannelStringSendErr String))
@@ -4071,7 +4076,7 @@
   (ChannelStringSendOk))
 (define (main) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     [channel : ChannelString (ChannelString 0)]
     [message (in-arena owner (string-append \"atom\" \"ic\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
@@ -4089,7 +4094,7 @@
   (ChannelStringSendOk))
 (define (main) : i64
   (let
-    [owner : i64 (arena-make)]
+    [owner : Arena (arena-make)]
     [channel : ChannelString (ChannelString 0)]
     [message (in-arena owner (string-append \"ordinary\" \"arena\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
@@ -5763,7 +5768,7 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (let
       [n : i64 0]
       (let
@@ -6517,10 +6522,12 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : i64
   (let
-    [arena : i64 (arena-make)]
-    [current : i64 (arena-current)]
-    [mark : i64 (arena-mark)]
-    (+ arena (+ current mark))))"))
+    [arena : Arena (arena-make)]
+    [current : Arena (arena-current)]
+    [mark : ArenaMark (arena-mark)]
+    (+
+      (arena-raw-handle arena)
+      (+ (arena-raw-handle current) (arena-mark-raw-handle mark)))))"))
 
 (define (compiler-typecheck-arena-with-arena-safe-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
@@ -6548,7 +6555,7 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : unit
   (let
-    [rewind : (-> i64 unit) arena-rewind]
+    [rewind : (-> ArenaMark unit) arena-rewind]
     (rewind (arena-mark))))"))
 
 (define (compiler-typecheck-arena-unimported-source) : String
@@ -6575,8 +6582,8 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : unit
   (let
-    [arena : i64 (arena-current)]
-    [mark : i64 (arena-mark)]
+    [arena : Arena (arena-current)]
+    [mark : ArenaMark (arena-mark)]
     (unsafe
       (arena-rewind mark)
       (arena-set! arena)
@@ -6586,10 +6593,10 @@
   (compiler-typecheck-with-arena-source
     "(define (main) : unit
   (let
-    [mark : i64 (arena-mark)]
+    [mark : ArenaMark (arena-mark)]
     (unsafe
       (let
-        [rewind : (-> i64 unit) arena-rewind]
+        [rewind : (-> ArenaMark unit) arena-rewind]
         (rewind mark)))))"))
 
 (define (compiler-typecheck-arena-unsafe-tests-ok?) : bool

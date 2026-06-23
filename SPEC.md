@@ -4269,9 +4269,9 @@ execution or document a target-specific limitation.
 
 **First-class arena escape:** `(with-escape arena-expr body ...)` is a
 separate scoped form for first-class scratch arenas. `arena-expr` must
-typecheck as `i64` and evaluates to an arena handle such as one created by
-`arena-make`; it is not a lexical region binder and does not conflict with
-`with-arena`.
+typecheck as `Arena` from `stdlib/arena.tl`, such as a handle created by
+`arena-make` or `arena-make-atomic`; it is not a lexical region binder and does
+not conflict with `with-arena`. A raw `i64` does not satisfy this requirement.
 
 The body is a non-empty expression sequence evaluated with that arena as the
 active allocation target. On exit, the result is cloned into the enclosing active
@@ -4300,11 +4300,12 @@ through `with-escape` for reusable first-class scratch arenas and
 
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
-typecheck as `i64`. The body is a non-empty expression sequence evaluated with
-that arena as the active allocation target; the previous active arena is restored
-on normal exit and function-local early exit. The form does not mark, rewind,
-destroy, or clone. Its result type is the body result type unchanged, so owned
-values allocated in the target arena remain owned by that arena.
+typecheck as `Arena` from `stdlib/arena.tl`. The body is a non-empty expression
+sequence evaluated with that arena as the active allocation target; the previous
+active arena is restored on normal exit and function-local early exit. The form
+does not mark, rewind, destroy, or clone. Its result type is the body result type
+unchanged, so owned values allocated in the target arena remain owned by that
+arena.
 
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
@@ -5603,7 +5604,7 @@ is:
 
 (define (build-message) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch
       (int->string 42))))
 ```
@@ -5648,7 +5649,7 @@ first-class arena rather than being cloned back to the caller's active arena:
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
-(define (build-in-level [level : i64]) : String
+(define (build-in-level [level : Arena]) : String
   (in-arena level (int->string 42)))
 ```
 
@@ -5670,12 +5671,12 @@ The source wrapper for `tl_arena_make_atomic` is:
 
 (define (main) : i64
   (let
-    [shared : i64 (arena-make-atomic)]
-    shared))
+    [shared : Arena (arena-make-atomic)]
+    (arena-raw-handle shared)))
 ```
 
-`arena-make-atomic` returns a first-class arena handle and does not make that
-arena current. A thread allocates into an atomic arena by making it the active
+`arena-make-atomic` returns a typed first-class `Arena` handle and does not make
+that arena current. A thread allocates into an atomic arena by making it the active
 allocation target for a dynamic extent. The safe spelling is `in-arena`: it
 evaluates `arena-expr`, saves the calling thread's current arena, installs the
 target for `body`, then restores the saved arena without marking, rewinding,
@@ -5729,8 +5730,8 @@ first-class arena helpers:
 
 (define (main) : unit
   (let
-    [home : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
+    [home : Arena (arena-current)]
+    [scratch : Arena (arena-make)]
     (unsafe
       (begin
         (arena-set! scratch)
@@ -5739,9 +5740,11 @@ first-class arena helpers:
         (arena-destroy scratch)))))
 ```
 
-`arena-make`, `arena-make-atomic`, `arena-current`, and `arena-mark` are safe:
-they create an arena handle, read the active arena handle, or record the active
-arena bump pointer.
+`Arena` and `ArenaMark` are nominal public wrappers over the raw runtime
+handles. `arena-make`, `arena-make-atomic`, and `arena-current` safely create or
+read an `Arena`; `arena-mark` safely records an `ArenaMark` for the active arena.
+Raw `i64` values do not satisfy the public arena helper signatures, and an
+`Arena` cannot be passed where an `ArenaMark` is required.
 By themselves they do not switch the active arena, free arena chains, rewind
 allocation, or invalidate live safe handles.
 

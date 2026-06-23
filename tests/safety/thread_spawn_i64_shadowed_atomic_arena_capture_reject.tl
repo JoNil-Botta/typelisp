@@ -4,10 +4,10 @@
 
 (define (main) : i64
   (let
-    [arena-make-atomic : (-> i64)
-      (lambda () : i64
+    [arena-make-atomic : (-> Arena)
+      (lambda () : Arena
         (arena-make))]
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     [text : String (in-arena owner (string-append "not" "atomic"))]
     (match (thread-spawn-i64
       (lambda () : i64

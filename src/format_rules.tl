@@ -43,33 +43,32 @@
 (define (format-rules-node-colon-list? [node : FormatCst]) : bool
   (match node
     [(FmtCstList items)
-      (match (box-get items)
-        [(FmtCstCons head _) (format-rules-node-colon? head)]
+      (match (fmt-cst-list-step (box-get items))
+        [(FmtCstListStepItem head _) (format-rules-node-colon? head)]
         [_ false])]
     [_ false]))
 
 (define (format-rules-define-value-rest? [rest : FormatCstList]) : bool
-  (match rest
-    [(FmtCstCons target _)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target _)
       (match target
         [(FmtCstList _) false]
         [_ true])]
     [_ false]))
 
 (define (format-rules-cfg-top-form-family [rest : FormatCstList]) : String
-  (match rest
-    [(FmtCstCons _ after-predicate-box)
-      (match (box-get after-predicate-box)
-        [(FmtCstCons inner _) (format-rules-top-form-family inner)]
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem _ after-predicate)
+      (match (fmt-cst-list-step after-predicate)
+        [(FmtCstListStepItem inner _) (format-rules-top-form-family inner)]
         [_ ""])]
     [_ ""]))
 
 (define (format-rules-top-form-family-list [items : FormatCstList]) : String
-  (match items
-    [(FmtCstCons head rest-box)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepItem head rest)
       (let
         [head-name : String (format-rules-node-symbol-name head)]
-        [rest : FormatCstList (box-get rest-box)]
         (cond
           [(string-eq head-name "import") "import"]
           [(string-eq head-name "extern") "extern"]
@@ -127,48 +126,43 @@
     (doc-append (doc-soft-line) (format-rules-colon-pair-doc colon typ))))
 
 (define (format-rules-inline-tail-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node rest)
       (doc-append
         (format-rules-space (format-rules-cst-doc node))
-        (format-rules-inline-tail-doc (box-get rest)))]))
+        (format-rules-inline-tail-doc rest))]))
 
 (define (format-rules-hard-tail-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
-      (let
-        [tail : FormatCstList (box-get rest)]
-        (if (format-rules-node-colon? node)
-          (match tail
-            [(FmtCstCons next after-next-box)
-              (if (format-rules-node-comment? next)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node tail)
+      (if (format-rules-node-colon? node)
+        (match (fmt-cst-list-step tail)
+          [(FmtCstListStepItem next after-next)
+            (if (format-rules-node-comment? next)
+              (doc-append
+                (doc-hard-line)
                 (doc-append
-                  (doc-hard-line)
-                  (doc-append
-                    (format-rules-cst-doc node)
-                    (format-rules-hard-tail-doc tail)))
-                (let
-                  [after-next : FormatCstList (box-get after-next-box)]
-                  (doc-append
-                    (doc-hard-line)
-                    (doc-append
-                      (format-rules-colon-pair-doc node next)
-                      (match after-next
-                        [(FmtCstNil) (doc-empty)]
-                        [_ (format-rules-hard-tail-doc after-next)])))))]
-            [_ (doc-append (doc-hard-line) (format-rules-cst-doc node))])
+                  (format-rules-cst-doc node)
+                  (format-rules-hard-tail-doc tail)))
+              (doc-append
+                (doc-hard-line)
+                (doc-append
+                  (format-rules-colon-pair-doc node next)
+                  (if (fmt-cst-list-empty? after-next)
+                    (doc-empty)
+                    (format-rules-hard-tail-doc after-next)))))]
+          [_ (doc-append (doc-hard-line) (format-rules-cst-doc node))])
+        (doc-append
+          (doc-hard-line)
           (doc-append
-            (doc-hard-line)
-            (doc-append
-              (format-rules-cst-doc node)
-              (match tail
-                [(FmtCstNil)
-                  (if (format-rules-node-comment? node)
-                    (doc-hard-line)
-                    (doc-empty))]
-                [_ (format-rules-hard-tail-doc tail)])))))]))
+            (format-rules-cst-doc node)
+            (if (fmt-cst-list-empty? tail)
+              (if (format-rules-node-comment? node)
+                (doc-hard-line)
+                (doc-empty))
+              (format-rules-hard-tail-doc tail)))))]))
 
 (define (format-rules-tail-separator
   [previous-comment : bool]
@@ -180,67 +174,54 @@
 (define (format-rules-list-tail-doc
   [previous-comment : bool]
   [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
-      (let
-        [tail : FormatCstList (box-get rest)]
-        (if (format-rules-node-colon? node)
-          (match tail
-            [(FmtCstCons next after-next-box)
-              (if (format-rules-node-comment? next)
-                (doc-append
-                  (format-rules-tail-separator previous-comment node)
-                  (doc-append
-                    (format-rules-cst-doc node)
-                    (format-rules-list-tail-doc false tail)))
-                (let
-                  [after-next : FormatCstList (box-get after-next-box)]
-                  (doc-append
-                    (format-rules-tail-separator previous-comment node)
-                    (doc-append
-                      (format-rules-colon-pair-doc node next)
-                      (match after-next
-                        [(FmtCstNil) (doc-empty)]
-                        [_
-                          (format-rules-list-tail-doc
-                            (format-rules-node-comment? next)
-                            after-next)])))))]
-            [_
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node tail)
+      (if (format-rules-node-colon? node)
+        (match (fmt-cst-list-step tail)
+          [(FmtCstListStepItem next after-next)
+            (if (format-rules-node-comment? next)
               (doc-append
                 (format-rules-tail-separator previous-comment node)
-                (format-rules-cst-doc node))])
-          (doc-append
-            (format-rules-tail-separator previous-comment node)
+                (doc-append
+                  (format-rules-cst-doc node)
+                  (format-rules-list-tail-doc false tail)))
+              (doc-append
+                (format-rules-tail-separator previous-comment node)
+                (doc-append
+                  (format-rules-colon-pair-doc node next)
+                  (if (fmt-cst-list-empty? after-next)
+                    (doc-empty)
+                    (format-rules-list-tail-doc
+                      (format-rules-node-comment? next)
+                      after-next)))))]
+          [_
             (doc-append
-              (format-rules-cst-doc node)
-              (match tail
-                [(FmtCstNil)
-                  (if (format-rules-node-comment? node)
-                    (doc-hard-line)
-                    (doc-empty))]
-                [_
-                  (format-rules-list-tail-doc
-                    (format-rules-node-comment? node)
-                    tail)])))))]))
-
-(define (format-rules-list-items-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
-      (let
-        [tail : FormatCstList (box-get rest)]
+              (format-rules-tail-separator previous-comment node)
+              (format-rules-cst-doc node))])
         (doc-append
-          (format-rules-cst-doc node)
-          (match tail
-            [(FmtCstNil)
+          (format-rules-tail-separator previous-comment node)
+          (doc-append
+            (format-rules-cst-doc node)
+            (if (fmt-cst-list-empty? tail)
               (if (format-rules-node-comment? node)
                 (doc-hard-line)
-                (doc-empty))]
-            [_
+                (doc-empty))
               (format-rules-list-tail-doc
                 (format-rules-node-comment? node)
-                tail)])))]))
+                tail)))))]))
+
+(define (format-rules-list-items-doc [items : FormatCstList]) : Doc
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node tail)
+      (doc-append
+        (format-rules-cst-doc node)
+        (if (fmt-cst-list-empty? tail)
+          (if (format-rules-node-comment? node)
+            (doc-hard-line)
+            (doc-empty))
+          (format-rules-list-tail-doc (format-rules-node-comment? node) tail)))]))
 
 (define (format-rules-delimited-doc
   [open : String]
@@ -285,42 +266,40 @@
 (define (format-rules-first-or-line-form-doc
   [head : String]
   [rest : FormatCstList]) : Doc
-  (match rest
-    [(FmtCstNil) (format-rules-inline-form-doc head FmtCstNil)]
-    [(FmtCstCons first tail)
-      (format-rules-first-line-form-doc head first (box-get tail))]))
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepEmpty) (format-rules-inline-form-doc head FmtCstNil)]
+    [(FmtCstListStepItem first tail)
+      (format-rules-first-line-form-doc head first tail)]))
 
 (define (format-rules-list-append
   [left : FormatCstList]
   [right : FormatCstList]) : FormatCstList
-  (match left
-    [(FmtCstNil) right]
-    [(FmtCstCons node rest)
-      (FmtCstCons node (box (format-rules-list-append (box-get rest) right)))]))
+  (match (fmt-cst-list-step left)
+    [(FmtCstListStepEmpty) right]
+    [(FmtCstListStepItem node rest)
+      (FmtCstCons node (box (format-rules-list-append rest right)))]))
 
 (define (format-rules-bracket-binding-items?
   [items : FormatCstList]
   [seen : bool]) : bool
-  (match items
-    [(FmtCstNil) seen]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) seen]
+    [(FmtCstListStepItem node rest)
       (match node
-        [(FmtCstComment _)
-          (format-rules-bracket-binding-items? (box-get rest) seen)]
-        [(FmtCstBracketList _)
-          (format-rules-bracket-binding-items? (box-get rest) true)]
+        [(FmtCstComment _) (format-rules-bracket-binding-items? rest seen)]
+        [(FmtCstBracketList _) (format-rules-bracket-binding-items? rest true)]
         [_ false])]))
 
 (define (format-rules-bracket-binding-list? [items : FormatCstList]) : bool
   (format-rules-bracket-binding-items? items false))
 
 (define (format-rules-let-rest [rest : FormatCstList]) : FormatCstList
-  (match rest
-    [(FmtCstCons first tail)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem first tail)
       (match first
         [(FmtCstList bindings)
           (if (format-rules-bracket-binding-list? (box-get bindings))
-            (format-rules-list-append (box-get bindings) (box-get tail))
+            (format-rules-list-append (box-get bindings) tail)
             rest)]
         [_ rest])]
     [_ rest]))
@@ -358,35 +337,28 @@
           (doc-text "]"))))))
 
 (define (format-rules-let-item-list-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstCons name after-name-box)
-      (let
-        [after-name : FormatCstList (box-get after-name-box)]
-        (match after-name
-          [(FmtCstCons second after-second-box)
-            (let
-              [after-second : FormatCstList (box-get after-second-box)]
-              (match after-second
-                [(FmtCstNil)
-                  (format-rules-let-binding-unannotated-doc name second)]
-                [(FmtCstCons typ after-typ-box)
-                  (let
-                    [after-typ : FormatCstList (box-get after-typ-box)]
-                    (match after-typ
-                      [(FmtCstCons init after-init-box)
-                        (match (box-get after-init-box)
-                          [(FmtCstNil)
-                            (if (format-rules-node-colon? second)
-                              (format-rules-let-binding-annotated-doc
-                                name
-                                second
-                                typ
-                                init)
-                              (format-rules-delimited-doc "[" items "]"))]
-                          [_ (format-rules-delimited-doc "[" items "]")])]
-                      [_ (format-rules-delimited-doc "[" items "]")]))]
-                [_ (format-rules-delimited-doc "[" items "]")]))]
-          [_ (format-rules-delimited-doc "[" items "]")]))]
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepItem name after-name)
+      (match (fmt-cst-list-step after-name)
+        [(FmtCstListStepItem second after-second)
+          (match (fmt-cst-list-step after-second)
+            [(FmtCstListStepEmpty)
+              (format-rules-let-binding-unannotated-doc name second)]
+            [(FmtCstListStepItem typ after-typ)
+              (match (fmt-cst-list-step after-typ)
+                [(FmtCstListStepItem init after-init)
+                  (if (fmt-cst-list-empty? after-init)
+                    (if (format-rules-node-colon? second)
+                      (format-rules-let-binding-annotated-doc
+                        name
+                        second
+                        typ
+                        init)
+                      (format-rules-delimited-doc "[" items "]"))
+                    (format-rules-delimited-doc "[" items "]"))]
+                [_ (format-rules-delimited-doc "[" items "]")])]
+            [_ (format-rules-delimited-doc "[" items "]")])]
+        [_ (format-rules-delimited-doc "[" items "]")])]
     [_ (format-rules-delimited-doc "[" items "]")]))
 
 (define (format-rules-let-item-doc [node : FormatCst]) : Doc
@@ -395,21 +367,18 @@
     [_ (format-rules-cst-doc node)]))
 
 (define (format-rules-let-tail-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
-      (let
-        [tail : FormatCstList (box-get rest)]
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node tail)
+      (doc-append
+        (doc-hard-line)
         (doc-append
-          (doc-hard-line)
-          (doc-append
-            (format-rules-let-item-doc node)
-            (match tail
-              [(FmtCstNil)
-                (if (format-rules-node-comment? node)
-                  (doc-hard-line)
-                  (doc-empty))]
-              [_ (format-rules-let-tail-doc tail)]))))]))
+          (format-rules-let-item-doc node)
+          (if (fmt-cst-list-empty? tail)
+            (if (format-rules-node-comment? node)
+              (doc-hard-line)
+              (doc-empty))
+            (format-rules-let-tail-doc tail))))]))
 
 (define (format-rules-let-doc [rest : FormatCstList]) : Doc
   (doc-append
@@ -476,95 +445,80 @@
           (doc-text ")"))))))
 
 (define (format-rules-define-doc [rest : FormatCstList]) : Doc
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (let
-        [after-target : FormatCstList (box-get after-target-box)]
-        (match after-target
-          [(FmtCstCons second after-second-box)
-            (let
-              [after-second : FormatCstList (box-get after-second-box)]
-              (if (format-rules-node-colon? second)
-                (match after-second
-                  [(FmtCstCons typ body-box)
-                    (match (box-get body-box)
-                      [(FmtCstNil)
-                        (format-rules-first-or-line-form-doc "define" rest)]
-                      [_
-                        (format-rules-signature-annotated-doc
-                          "define"
-                          target
-                          second
-                          typ
-                          (box-get body-box))])]
-                  [_ (format-rules-first-or-line-form-doc "define" rest)])
-                (if (format-rules-node-colon-list? second)
-                  (match after-second
-                    [(FmtCstCons colon after-colon-box)
-                      (if (format-rules-node-colon? colon)
-                        (match (box-get after-colon-box)
-                          [(FmtCstCons typ body-box)
-                            (match (box-get body-box)
-                              [(FmtCstNil)
-                                (format-rules-first-or-line-form-doc
-                                  "define"
-                                  rest)]
-                              [_
-                                (format-rules-define-metadata-annotated-doc
-                                  target
-                                  second
-                                  colon
-                                  typ
-                                  (box-get body-box))])]
-                          [_
-                            (format-rules-first-or-line-form-doc "define" rest)])
-                        (format-rules-first-or-line-form-doc "define" rest))]
-                    [_ (format-rules-first-or-line-form-doc "define" rest)])
-                  (format-rules-define-body-doc target after-target))))]
-          [_ (format-rules-first-or-line-form-doc "define" rest)]))]
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem second after-second)
+          (if (format-rules-node-colon? second)
+            (match (fmt-cst-list-step after-second)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-first-or-line-form-doc "define" rest)
+                  (format-rules-signature-annotated-doc
+                    "define"
+                    target
+                    second
+                    typ
+                    body))]
+              [_ (format-rules-first-or-line-form-doc "define" rest)])
+            (if (format-rules-node-colon-list? second)
+              (match (fmt-cst-list-step after-second)
+                [(FmtCstListStepItem colon after-colon)
+                  (if (format-rules-node-colon? colon)
+                    (match (fmt-cst-list-step after-colon)
+                      [(FmtCstListStepItem typ body)
+                        (if (fmt-cst-list-empty? body)
+                          (format-rules-first-or-line-form-doc "define" rest)
+                          (format-rules-define-metadata-annotated-doc
+                            target
+                            second
+                            colon
+                            typ
+                            body))]
+                      [_ (format-rules-first-or-line-form-doc "define" rest)])
+                    (format-rules-first-or-line-form-doc "define" rest))]
+                [_ (format-rules-first-or-line-form-doc "define" rest)])
+              (format-rules-define-body-doc target after-target)))]
+        [_ (format-rules-first-or-line-form-doc "define" rest)])]
     [_ (format-rules-first-or-line-form-doc "define" rest)]))
 
 (define (format-rules-defmacro-doc [rest : FormatCstList]) : Doc
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (match (box-get after-target-box)
-        [(FmtCstCons colon after-colon-box)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (box-get after-colon-box)
-              [(FmtCstCons typ body-box)
-                (match (box-get body-box)
-                  [(FmtCstNil)
-                    (format-rules-first-or-line-form-doc "defmacro" rest)]
-                  [_
-                    (format-rules-signature-annotated-doc
-                      "defmacro"
-                      target
-                      colon
-                      typ
-                      (box-get body-box))])]
+            (match (fmt-cst-list-step after-colon)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-first-or-line-form-doc "defmacro" rest)
+                  (format-rules-signature-annotated-doc
+                    "defmacro"
+                    target
+                    colon
+                    typ
+                    body))]
               [_ (format-rules-first-or-line-form-doc "defmacro" rest)])
             (format-rules-first-or-line-form-doc "defmacro" rest))]
         [_ (format-rules-first-or-line-form-doc "defmacro" rest)])]
     [_ (format-rules-first-or-line-form-doc "defmacro" rest)]))
 
 (define (format-rules-lambda-doc [rest : FormatCstList]) : Doc
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (match (box-get after-target-box)
-        [(FmtCstCons colon after-colon-box)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (box-get after-colon-box)
-              [(FmtCstCons typ body-box)
-                (match (box-get body-box)
-                  [(FmtCstNil)
-                    (format-rules-first-or-line-form-doc "lambda" rest)]
-                  [_
-                    (format-rules-signature-annotated-doc
-                      "lambda"
-                      target
-                      colon
-                      typ
-                      (box-get body-box))])]
+            (match (fmt-cst-list-step after-colon)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-first-or-line-form-doc "lambda" rest)
+                  (format-rules-signature-annotated-doc
+                    "lambda"
+                    target
+                    colon
+                    typ
+                    body))]
               [_ (format-rules-first-or-line-form-doc "lambda" rest)])
             (format-rules-first-or-line-form-doc "lambda" rest))]
         [_ (format-rules-first-or-line-form-doc "lambda" rest)])]
@@ -602,12 +556,12 @@
       [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")])))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
-  (match rest
-    [(FmtCstCons key tail)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
-          (format-rules-inline-form-doc (string-append ":" name) (box-get tail))
+          (format-rules-inline-form-doc (string-append ":" name) tail)
           (format-rules-delimited-doc
             "("
             (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
@@ -619,32 +573,32 @@
         ")")]))
 
 (define (format-rules-list-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (format-rules-delimited-doc "(" FmtCstNil ")")]
-    [(FmtCstCons head rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (format-rules-delimited-doc "(" FmtCstNil ")")]
+    [(FmtCstListStepItem head rest)
       (if (format-rules-node-colon? head)
-        (format-rules-colon-list-doc (box-get rest))
-        (format-rules-special-list-doc head (box-get rest)))]))
+        (format-rules-colon-list-doc rest)
+        (format-rules-special-list-doc head rest))]))
 
 (define (format-rules-forms-tail-doc
   [previous : FormatCst]
   [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node rest)
       (doc-append
         (format-rules-forms-separator previous node)
         (doc-append
           (format-rules-cst-doc node)
-          (format-rules-forms-tail-doc node (box-get rest))))]))
+          (format-rules-forms-tail-doc node rest)))]))
 
 (define (format-rules-forms-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstNil) (doc-empty)]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) (doc-empty)]
+    [(FmtCstListStepItem node rest)
       (doc-append
         (format-rules-cst-doc node)
-        (format-rules-forms-tail-doc node (box-get rest)))]))
+        (format-rules-forms-tail-doc node rest))]))
 
 (define (format-rules-cst-doc [node : FormatCst]) : Doc
   (match node
@@ -927,11 +881,11 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node rest)
       (format-rules-layout-inline-tail
-        (box-get rest)
+        rest
         emit
         width
         indent
@@ -957,126 +911,33 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
-      (let
-        [tail : FormatCstList (box-get rest)]
-        (if (format-rules-node-colon? node)
-          (match tail
-            [(FmtCstCons next after-next-box)
-              (if (format-rules-node-comment? next)
-                (let
-                  [after-line : i64
-                    (format-rules-layout-hard-line
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)]
-                  [after-node : i64
-                    (format-rules-layout-cst
-                      node
-                      emit
-                      width
-                      indent
-                      after-line
-                      flat
-                      limit
-                      buf)]
-                  (format-rules-layout-hard-tail
-                    tail
-                    emit
-                    width
-                    indent
-                    after-node
-                    flat
-                    limit
-                    buf))
-                (let
-                  [after-next : FormatCstList (box-get after-next-box)]
-                  [after-line : i64
-                    (format-rules-layout-hard-line
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)]
-                  [after-pair : i64
-                    (format-rules-layout-colon-pair
-                      node
-                      next
-                      emit
-                      width
-                      indent
-                      after-line
-                      flat
-                      limit
-                      buf)]
-                  (match after-next
-                    [(FmtCstNil) after-pair]
-                    [_
-                      (format-rules-layout-hard-tail
-                        after-next
-                        emit
-                        width
-                        indent
-                        after-pair
-                        flat
-                        limit
-                        buf)])))]
-            [_
-              (format-rules-layout-cst
-                node
-                emit
-                width
-                indent
-                (format-rules-layout-hard-line
-                  emit
-                  width
-                  indent
-                  col
-                  flat
-                  limit
-                  buf)
-                flat
-                limit
-                buf)])
-          (let
-            [after-node : i64
-              (format-rules-layout-cst
-                node
-                emit
-                width
-                indent
-                (format-rules-layout-hard-line
-                  emit
-                  width
-                  indent
-                  col
-                  flat
-                  limit
-                  buf)
-                flat
-                limit
-                buf)]
-            (match tail
-              [(FmtCstNil)
-                (if (format-rules-node-comment? node)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node tail)
+      (if (format-rules-node-colon? node)
+        (match (fmt-cst-list-step tail)
+          [(FmtCstListStepItem next after-next)
+            (if (format-rules-node-comment? next)
+              (let
+                [after-line : i64
                   (format-rules-layout-hard-line
                     emit
                     width
                     indent
-                    after-node
+                    col
                     flat
                     limit
-                    buf)
-                  after-node)]
-              [_
+                    buf)]
+                [after-node : i64
+                  (format-rules-layout-cst
+                    node
+                    emit
+                    width
+                    indent
+                    after-line
+                    flat
+                    limit
+                    buf)]
                 (format-rules-layout-hard-tail
                   tail
                   emit
@@ -1085,7 +946,94 @@
                   after-node
                   flat
                   limit
-                  buf)]))))]))
+                  buf))
+              (let
+                [after-line : i64
+                  (format-rules-layout-hard-line
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)]
+                [after-pair : i64
+                  (format-rules-layout-colon-pair
+                    node
+                    next
+                    emit
+                    width
+                    indent
+                    after-line
+                    flat
+                    limit
+                    buf)]
+                (if (fmt-cst-list-empty? after-next)
+                  after-pair
+                  (format-rules-layout-hard-tail
+                    after-next
+                    emit
+                    width
+                    indent
+                    after-pair
+                    flat
+                    limit
+                    buf))))]
+          [_
+            (format-rules-layout-cst
+              node
+              emit
+              width
+              indent
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)])
+        (let
+          [after-node : i64
+            (format-rules-layout-cst
+              node
+              emit
+              width
+              indent
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)
+              flat
+              limit
+              buf)]
+          (if (fmt-cst-list-empty? tail)
+            (if (format-rules-node-comment? node)
+              (format-rules-layout-hard-line
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)
+              after-node)
+            (format-rules-layout-hard-tail
+              tail
+              emit
+              width
+              indent
+              after-node
+              flat
+              limit
+              buf))))]))
 
 (define (format-rules-layout-tail-separator
   [previous-comment : bool]
@@ -1111,11 +1059,10 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node tail)
       (let
-        [tail : FormatCstList (box-get rest)]
         [after-separator : i64
           (format-rules-layout-tail-separator
             previous-comment
@@ -1128,8 +1075,8 @@
             limit
             buf)]
         (if (format-rules-node-colon? node)
-          (match tail
-            [(FmtCstCons next after-next-box)
+          (match (fmt-cst-list-step tail)
+            [(FmtCstListStepItem next after-next)
               (if (format-rules-node-comment? next)
                 (format-rules-layout-list-tail
                   false
@@ -1150,7 +1097,6 @@
                   limit
                   buf)
                 (let
-                  [after-next : FormatCstList (box-get after-next-box)]
                   [after-pair : i64
                     (format-rules-layout-colon-pair
                       node
@@ -1162,19 +1108,18 @@
                       flat
                       limit
                       buf)]
-                  (match after-next
-                    [(FmtCstNil) after-pair]
-                    [_
-                      (format-rules-layout-list-tail
-                        (format-rules-node-comment? next)
-                        after-next
-                        emit
-                        width
-                        indent
-                        after-pair
-                        flat
-                        limit
-                        buf)])))]
+                  (if (fmt-cst-list-empty? after-next)
+                    after-pair
+                    (format-rules-layout-list-tail
+                      (format-rules-node-comment? next)
+                      after-next
+                      emit
+                      width
+                      indent
+                      after-pair
+                      flat
+                      limit
+                      buf))))]
             [_
               (format-rules-layout-cst
                 node
@@ -1196,29 +1141,27 @@
                 flat
                 limit
                 buf)]
-            (match tail
-              [(FmtCstNil)
-                (if (format-rules-node-comment? node)
-                  (format-rules-layout-hard-line
-                    emit
-                    width
-                    indent
-                    after-node
-                    flat
-                    limit
-                    buf)
-                  after-node)]
-              [_
-                (format-rules-layout-list-tail
-                  (format-rules-node-comment? node)
-                  tail
+            (if (fmt-cst-list-empty? tail)
+              (if (format-rules-node-comment? node)
+                (format-rules-layout-hard-line
                   emit
                   width
                   indent
                   after-node
                   flat
                   limit
-                  buf)]))))]))
+                  buf)
+                after-node)
+              (format-rules-layout-list-tail
+                (format-rules-node-comment? node)
+                tail
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)))))]))
 
 (define (format-rules-layout-list-items
   [items : FormatCstList]
@@ -1229,36 +1172,33 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node tail)
       (let
-        [tail : FormatCstList (box-get rest)]
         [after-node : i64
           (format-rules-layout-cst node emit width indent col flat limit buf)]
-        (match tail
-          [(FmtCstNil)
-            (if (format-rules-node-comment? node)
-              (format-rules-layout-hard-line
-                emit
-                width
-                indent
-                after-node
-                flat
-                limit
-                buf)
-              after-node)]
-          [_
-            (format-rules-layout-list-tail
-              (format-rules-node-comment? node)
-              tail
+        (if (fmt-cst-list-empty? tail)
+          (if (format-rules-node-comment? node)
+            (format-rules-layout-hard-line
               emit
               width
               indent
               after-node
               flat
               limit
-              buf)]))]))
+              buf)
+            after-node)
+          (format-rules-layout-list-tail
+            (format-rules-node-comment? node)
+            tail
+            emit
+            width
+            indent
+            after-node
+            flat
+            limit
+            buf)))]))
 
 (define (format-rules-layout-delimited-inner
   [open : String]
@@ -1510,8 +1450,8 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match rest
-    [(FmtCstNil)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepEmpty)
       (format-rules-layout-inline-form
         head
         FmtCstNil
@@ -1522,11 +1462,11 @@
         flat
         limit
         buf)]
-    [(FmtCstCons first tail)
+    [(FmtCstListStepItem first tail)
       (format-rules-layout-first-line-form
         head
         first
-        (box-get tail)
+        tail
         emit
         width
         indent
@@ -1754,81 +1694,61 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstCons name after-name-box)
-      (let
-        [after-name : FormatCstList (box-get after-name-box)]
-        (match after-name
-          [(FmtCstCons second after-second-box)
-            (let
-              [after-second : FormatCstList (box-get after-second-box)]
-              (match after-second
-                [(FmtCstNil)
-                  (format-rules-layout-let-binding-unannotated
-                    name
-                    second
-                    emit
-                    width
-                    indent
-                    col
-                    flat
-                    limit
-                    buf)]
-                [(FmtCstCons typ after-typ-box)
-                  (let
-                    [after-typ : FormatCstList (box-get after-typ-box)]
-                    (match after-typ
-                      [(FmtCstCons init after-init-box)
-                        (match (box-get after-init-box)
-                          [(FmtCstNil)
-                            (if (format-rules-node-colon? second)
-                              (format-rules-layout-let-binding-annotated
-                                name
-                                second
-                                typ
-                                init
-                                emit
-                                width
-                                indent
-                                col
-                                flat
-                                limit
-                                buf)
-                              (format-rules-layout-delimited
-                                "["
-                                items
-                                "]"
-                                emit
-                                width
-                                indent
-                                col
-                                flat
-                                limit
-                                buf))]
-                          [_
-                            (format-rules-layout-delimited
-                              "["
-                              items
-                              "]"
-                              emit
-                              width
-                              indent
-                              col
-                              flat
-                              limit
-                              buf)])]
-                      [_
-                        (format-rules-layout-delimited
-                          "["
-                          items
-                          "]"
-                          emit
-                          width
-                          indent
-                          col
-                          flat
-                          limit
-                          buf)]))]
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepItem name after-name)
+      (match (fmt-cst-list-step after-name)
+        [(FmtCstListStepItem second after-second)
+          (match (fmt-cst-list-step after-second)
+            [(FmtCstListStepEmpty)
+              (format-rules-layout-let-binding-unannotated
+                name
+                second
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)]
+            [(FmtCstListStepItem typ after-typ)
+              (match (fmt-cst-list-step after-typ)
+                [(FmtCstListStepItem init after-init)
+                  (if (fmt-cst-list-empty? after-init)
+                    (if (format-rules-node-colon? second)
+                      (format-rules-layout-let-binding-annotated
+                        name
+                        second
+                        typ
+                        init
+                        emit
+                        width
+                        indent
+                        col
+                        flat
+                        limit
+                        buf)
+                      (format-rules-layout-delimited
+                        "["
+                        items
+                        "]"
+                        emit
+                        width
+                        indent
+                        col
+                        flat
+                        limit
+                        buf))
+                    (format-rules-layout-delimited
+                      "["
+                      items
+                      "]"
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf))]
                 [_
                   (format-rules-layout-delimited
                     "["
@@ -1840,19 +1760,31 @@
                     col
                     flat
                     limit
-                    buf)]))]
-          [_
-            (format-rules-layout-delimited
-              "["
-              items
-              "]"
-              emit
-              width
-              indent
-              col
-              flat
-              limit
-              buf)]))]
+                    buf)])]
+            [_
+              (format-rules-layout-delimited
+                "["
+                items
+                "]"
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)])]
+        [_
+          (format-rules-layout-delimited
+            "["
+            items
+            "]"
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)])]
     [_
       (format-rules-layout-delimited
         "["
@@ -1897,11 +1829,10 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node tail)
       (let
-        [tail : FormatCstList (box-get rest)]
         [after-node : i64
           (format-rules-layout-let-item
             node
@@ -1912,28 +1843,26 @@
             flat
             limit
             buf)]
-        (match tail
-          [(FmtCstNil)
-            (if (format-rules-node-comment? node)
-              (format-rules-layout-hard-line
-                emit
-                width
-                indent
-                after-node
-                flat
-                limit
-                buf)
-              after-node)]
-          [_
-            (format-rules-layout-let-tail
-              tail
+        (if (fmt-cst-list-empty? tail)
+          (if (format-rules-node-comment? node)
+            (format-rules-layout-hard-line
               emit
               width
               indent
               after-node
               flat
               limit
-              buf)]))]))
+              buf)
+            after-node)
+          (format-rules-layout-let-tail
+            tail
+            emit
+            width
+            indent
+            after-node
+            flat
+            limit
+            buf)))]))
 
 (define (format-rules-layout-let
   [rest : FormatCstList]
@@ -2158,19 +2087,79 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (let
-        [after-target : FormatCstList (box-get after-target-box)]
-        (match after-target
-          [(FmtCstCons second after-second-box)
-            (let
-              [after-second : FormatCstList (box-get after-second-box)]
-              (if (format-rules-node-colon? second)
-                (match after-second
-                  [(FmtCstCons typ body-box)
-                    (match (box-get body-box)
-                      [(FmtCstNil)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem second after-second)
+          (if (format-rules-node-colon? second)
+            (match (fmt-cst-list-step after-second)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-layout-first-or-line-form
+                    "define"
+                    rest
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)
+                  (format-rules-layout-signature-annotated
+                    "define"
+                    target
+                    second
+                    typ
+                    body
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf))]
+              [_
+                (format-rules-layout-first-or-line-form
+                  "define"
+                  rest
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)])
+            (if (format-rules-node-colon-list? second)
+              (match (fmt-cst-list-step after-second)
+                [(FmtCstListStepItem colon after-colon)
+                  (if (format-rules-node-colon? colon)
+                    (match (fmt-cst-list-step after-colon)
+                      [(FmtCstListStepItem typ body)
+                        (if (fmt-cst-list-empty? body)
+                          (format-rules-layout-first-or-line-form
+                            "define"
+                            rest
+                            emit
+                            width
+                            indent
+                            col
+                            flat
+                            limit
+                            buf)
+                          (format-rules-layout-define-metadata-annotated
+                            target
+                            second
+                            colon
+                            typ
+                            body
+                            emit
+                            width
+                            indent
+                            col
+                            flat
+                            limit
+                            buf))]
+                      [_
                         (format-rules-layout-first-or-line-form
                           "define"
                           rest
@@ -2180,22 +2169,7 @@
                           col
                           flat
                           limit
-                          buf)]
-                      [_
-                        (format-rules-layout-signature-annotated
-                          "define"
-                          target
-                          second
-                          typ
-                          (box-get body-box)
-                          emit
-                          width
-                          indent
-                          col
-                          flat
-                          limit
-                          buf)])]
-                  [_
+                          buf)])
                     (format-rules-layout-first-or-line-form
                       "define"
                       rest
@@ -2205,92 +2179,39 @@
                       col
                       flat
                       limit
-                      buf)])
-                (if (format-rules-node-colon-list? second)
-                  (match after-second
-                    [(FmtCstCons colon after-colon-box)
-                      (if (format-rules-node-colon? colon)
-                        (match (box-get after-colon-box)
-                          [(FmtCstCons typ body-box)
-                            (match (box-get body-box)
-                              [(FmtCstNil)
-                                (format-rules-layout-first-or-line-form
-                                  "define"
-                                  rest
-                                  emit
-                                  width
-                                  indent
-                                  col
-                                  flat
-                                  limit
-                                  buf)]
-                              [_
-                                (format-rules-layout-define-metadata-annotated
-                                  target
-                                  second
-                                  colon
-                                  typ
-                                  (box-get body-box)
-                                  emit
-                                  width
-                                  indent
-                                  col
-                                  flat
-                                  limit
-                                  buf)])]
-                          [_
-                            (format-rules-layout-first-or-line-form
-                              "define"
-                              rest
-                              emit
-                              width
-                              indent
-                              col
-                              flat
-                              limit
-                              buf)])
-                        (format-rules-layout-first-or-line-form
-                          "define"
-                          rest
-                          emit
-                          width
-                          indent
-                          col
-                          flat
-                          limit
-                          buf))]
-                    [_
-                      (format-rules-layout-first-or-line-form
-                        "define"
-                        rest
-                        emit
-                        width
-                        indent
-                        col
-                        flat
-                        limit
-                        buf)])
-                  (format-rules-layout-define-body
-                    target
-                    after-target
+                      buf))]
+                [_
+                  (format-rules-layout-first-or-line-form
+                    "define"
+                    rest
                     emit
                     width
                     indent
                     col
                     flat
                     limit
-                    buf))))]
-          [_
-            (format-rules-layout-first-or-line-form
-              "define"
-              rest
-              emit
-              width
-              indent
-              col
-              flat
-              limit
-              buf)]))]
+                    buf)])
+              (format-rules-layout-define-body
+                target
+                after-target
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)))]
+        [_
+          (format-rules-layout-first-or-line-form
+            "define"
+            rest
+            emit
+            width
+            indent
+            col
+            flat
+            limit
+            buf)])]
     [_
       (format-rules-layout-first-or-line-form
         "define"
@@ -2312,39 +2233,37 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (match (box-get after-target-box)
-        [(FmtCstCons colon after-colon-box)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (box-get after-colon-box)
-              [(FmtCstCons typ body-box)
-                (match (box-get body-box)
-                  [(FmtCstNil)
-                    (format-rules-layout-first-or-line-form
-                      "defmacro"
-                      rest
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)]
-                  [_
-                    (format-rules-layout-signature-annotated
-                      "defmacro"
-                      target
-                      colon
-                      typ
-                      (box-get body-box)
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)])]
+            (match (fmt-cst-list-step after-colon)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-layout-first-or-line-form
+                    "defmacro"
+                    rest
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)
+                  (format-rules-layout-signature-annotated
+                    "defmacro"
+                    target
+                    colon
+                    typ
+                    body
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf))]
               [_
                 (format-rules-layout-first-or-line-form
                   "defmacro"
@@ -2398,39 +2317,37 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match rest
-    [(FmtCstCons target after-target-box)
-      (match (box-get after-target-box)
-        [(FmtCstCons colon after-colon-box)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem target after-target)
+      (match (fmt-cst-list-step after-target)
+        [(FmtCstListStepItem colon after-colon)
           (if (format-rules-node-colon? colon)
-            (match (box-get after-colon-box)
-              [(FmtCstCons typ body-box)
-                (match (box-get body-box)
-                  [(FmtCstNil)
-                    (format-rules-layout-first-or-line-form
-                      "lambda"
-                      rest
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)]
-                  [_
-                    (format-rules-layout-signature-annotated
-                      "lambda"
-                      target
-                      colon
-                      typ
-                      (box-get body-box)
-                      emit
-                      width
-                      indent
-                      col
-                      flat
-                      limit
-                      buf)])]
+            (match (fmt-cst-list-step after-colon)
+              [(FmtCstListStepItem typ body)
+                (if (fmt-cst-list-empty? body)
+                  (format-rules-layout-first-or-line-form
+                    "lambda"
+                    rest
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf)
+                  (format-rules-layout-signature-annotated
+                    "lambda"
+                    target
+                    colon
+                    typ
+                    body
+                    emit
+                    width
+                    indent
+                    col
+                    flat
+                    limit
+                    buf))]
               [_
                 (format-rules-layout-first-or-line-form
                   "lambda"
@@ -2628,14 +2545,14 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match rest
-    [(FmtCstCons key tail)
+  (match (fmt-cst-list-step rest)
+    [(FmtCstListStepItem key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
           (format-rules-layout-inline-form
             (string-append ":" name)
-            (box-get tail)
+            tail
             emit
             width
             indent
@@ -2676,8 +2593,8 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty)
       (format-rules-layout-delimited
         "("
         FmtCstNil
@@ -2689,10 +2606,10 @@
         flat
         limit
         buf)]
-    [(FmtCstCons head rest)
+    [(FmtCstListStepItem head rest)
       (if (format-rules-node-colon? head)
         (format-rules-layout-colon-list
-          (box-get rest)
+          rest
           emit
           width
           indent
@@ -2702,7 +2619,7 @@
           buf)
         (format-rules-layout-special-list
           head
-          (box-get rest)
+          rest
           emit
           width
           indent
@@ -2721,12 +2638,12 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node rest)
       (format-rules-layout-forms-tail
         node
-        (box-get rest)
+        rest
         emit
         width
         indent
@@ -2777,12 +2694,12 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node rest)
       (format-rules-layout-forms-tail
         node
-        (box-get rest)
+        rest
         emit
         width
         indent
@@ -2827,9 +2744,9 @@
   [indent : i64]
   [col : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node rest)
       (let
         [after-separator : i64
           (format-rules-render-forms-separator-into previous node indent buf)]
@@ -2842,7 +2759,7 @@
             buf)]
         (format-rules-render-forms-tail-into
           node
-          (box-get rest)
+          rest
           width
           indent
           after-node
@@ -2854,12 +2771,12 @@
   [indent : i64]
   [col : i64]
   [buf : FmtRenderBuf]) : i64
-  (match items
-    [(FmtCstNil) col]
-    [(FmtCstCons node rest)
+  (match (fmt-cst-list-step items)
+    [(FmtCstListStepEmpty) col]
+    [(FmtCstListStepItem node rest)
       (format-rules-render-forms-tail-into
         node
-        (box-get rest)
+        rest
         width
         indent
         (format-rules-render-node-fragment-into node width indent col buf)

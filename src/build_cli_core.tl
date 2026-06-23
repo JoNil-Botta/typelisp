@@ -68,30 +68,14 @@
   (manifest-path String)
   (manifest CompilerPkgManifest))
 
-(defenum BuildPackageArtifactRole
-  (BuildPackageRuntimeArtifact CompilerBackendTarget)
-  (BuildPackageHostTlciArtifact))
-
-(defstruct BuildPackageArtifactPath
-  (role BuildPackageArtifactRole)
-  (path String))
-
 (defstruct BuildPackageArtifactPaths
-  (runtime BuildPackageArtifactPath)
-  (tlci BuildPackageArtifactPath))
+  (runtime String)
+  (tlci String))
 
 (defenum BuildPackageArtifactState
   (BuildPackageArtifactClean)
   (BuildPackageArtifactMissing)
   (BuildPackageArtifactStale String))
-
-(defstruct BuildPackageArtifactStatus
-  (artifact BuildPackageArtifactPath)
-  (state BuildPackageArtifactState))
-
-(defstruct BuildPackageArtifactStatuses
-  (runtime BuildPackageArtifactStatus)
-  (tlci BuildPackageArtifactStatus))
 
 (defstruct BuildPackageGraphNodeVec
   (slots (Array BuildPackageGraphNode))
@@ -1101,25 +1085,16 @@
   [profile : BuildProfile]
   [target : CompilerBackendTarget]) : BuildPackageArtifactPaths
   (BuildPackageArtifactPaths
-    (BuildPackageArtifactPath
-      (BuildPackageRuntimeArtifact target)
-      (build-package-artifact-path-profile
-        manifest-dir
-        name
-        kind
-        profile
-        target))
-    (BuildPackageArtifactPath
-      (BuildPackageHostTlciArtifact)
-      (build-package-tlci-path-profile manifest-dir name profile))))
+    (build-package-artifact-path-profile manifest-dir name kind profile target)
+    (build-package-tlci-path-profile manifest-dir name profile)))
 
 (define (build-package-runtime-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
-  (struct-get (struct-get artifacts runtime) path))
+  (struct-get artifacts runtime))
 
 (define (build-package-host-tlci-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
-  (struct-get (struct-get artifacts tlci) path))
+  (struct-get artifacts tlci))
 
 (define (build-package-path-layout-smoke-ok?) : bool
   (and
@@ -1162,11 +1137,6 @@
     (build-package-path-layout-smoke-ok?)
     (panic "build package path layout smoke failed")))
 
-(define (build-package-artifact-role-name [role : BuildPackageArtifactRole]) : String
-  (match role
-    [(BuildPackageRuntimeArtifact _) "target runtime"]
-    [(BuildPackageHostTlciArtifact) "host tlci"]))
-
 (define (build-package-artifact-state-dirty?
   [state : BuildPackageArtifactState]) : bool
   (match state
@@ -1180,105 +1150,51 @@
     [(BuildPackageArtifactMissing) "missing"]
     [(BuildPackageArtifactStale reason) reason]))
 
-(define (build-package-artifact-status-dirty?
-  [status : BuildPackageArtifactStatus]) : bool
-  (build-package-artifact-state-dirty? (struct-get status state)))
-
-(define (build-package-artifact-file-status
-  [artifact : BuildPackageArtifactPath]) : BuildPackageArtifactStatus
+(define (build-package-artifact-file-state [path : String]) : BuildPackageArtifactState
   (let
-    [path : String (struct-get artifact path)]
-    (match (try-file-metadata (& path))
+    [path-text : String path]
+    (match (try-file-metadata (& path-text))
       [(OkFsMetadata metadata)
         (if (fs-file-kind-regular? (fs-metadata-kind metadata))
-          (BuildPackageArtifactStatus artifact (BuildPackageArtifactClean))
-          (BuildPackageArtifactStatus
-            artifact
-            (BuildPackageArtifactStale "not a regular file")))]
-      [(ErrFsMetadata _)
-        (BuildPackageArtifactStatus artifact (BuildPackageArtifactMissing))])))
-
-(define (build-package-artifact-paths-file-status
-  [artifacts : BuildPackageArtifactPaths]) : BuildPackageArtifactStatuses
-  (BuildPackageArtifactStatuses
-    (build-package-artifact-file-status (struct-get artifacts runtime))
-    (build-package-artifact-file-status (struct-get artifacts tlci))))
-
-(define (build-package-artifact-statuses-runtime-dirty?
-  [statuses : BuildPackageArtifactStatuses]) : bool
-  (build-package-artifact-status-dirty? (struct-get statuses runtime)))
-
-(define (build-package-artifact-statuses-tlci-dirty?
-  [statuses : BuildPackageArtifactStatuses]) : bool
-  (build-package-artifact-status-dirty? (struct-get statuses tlci)))
-
-(define (build-package-artifact-statuses-dirty?
-  [statuses : BuildPackageArtifactStatuses]) : bool
-  (or
-    (build-package-artifact-statuses-runtime-dirty? statuses)
-    (build-package-artifact-statuses-tlci-dirty? statuses)))
+          (BuildPackageArtifactClean)
+          (BuildPackageArtifactStale "not a regular file"))]
+      [(ErrFsMetadata _) (BuildPackageArtifactMissing)])))
 
 (define (build-package-artifact-status-error-message
   [package-name : String]
-  [status : BuildPackageArtifactStatus]) : String
-  (let
-    [artifact : BuildPackageArtifactPath (struct-get status artifact)]
-    (str-cat
-      "build: package dependency `"
-      package-name
-      "` did not produce "
-      (build-package-artifact-role-name (struct-get artifact role))
-      " artifact "
-      (struct-get artifact path)
-      ": "
-      (build-package-artifact-state-render (struct-get status state)))))
+  [role-name : String]
+  [path : String]
+  [state : BuildPackageArtifactState]) : String
+  (str-cat
+    "build: package dependency `"
+    package-name
+    "` did not produce "
+    role-name
+    " artifact "
+    path
+    ": "
+    (build-package-artifact-state-render state)))
 
-(define (build-package-artifact-statuses-error-message
-  [package-name : String]
-  [statuses : BuildPackageArtifactStatuses]) : String
-  (if (build-package-artifact-statuses-runtime-dirty? statuses)
-    (build-package-artifact-status-error-message
-      package-name
-      (struct-get statuses runtime))
-    (build-package-artifact-status-error-message
-      package-name
-      (struct-get statuses tlci))))
-
-(define (build-package-artifact-status-smoke-ok?) : bool
-  (let
-    [runtime : BuildPackageArtifactPath
-      (BuildPackageArtifactPath
-        (BuildPackageRuntimeArtifact (BackendTargetLinux))
-        "root/app/target/release/libapp.a")]
-    [tlci : BuildPackageArtifactPath
-      (BuildPackageArtifactPath
-        (BuildPackageHostTlciArtifact)
-        "root/app/target/release/app.tlci")]
-    [runtime-clean : BuildPackageArtifactStatus
-      (BuildPackageArtifactStatus runtime (BuildPackageArtifactClean))]
-    [runtime-missing : BuildPackageArtifactStatus
-      (BuildPackageArtifactStatus runtime (BuildPackageArtifactMissing))]
-    [tlci-clean : BuildPackageArtifactStatus
-      (BuildPackageArtifactStatus tlci (BuildPackageArtifactClean))]
-    [tlci-stale : BuildPackageArtifactStatus
-      (BuildPackageArtifactStatus
-        tlci
-        (BuildPackageArtifactStale "metadata changed"))]
-    [tlci-dirty-only : BuildPackageArtifactStatuses
-      (BuildPackageArtifactStatuses runtime-clean tlci-stale)]
-    [runtime-dirty-only : BuildPackageArtifactStatuses
-      (BuildPackageArtifactStatuses runtime-missing tlci-clean)]
+(cfg
+  test
+  (define (build-package-artifact-status-smoke-ok?) : bool
     (and
-      (not (build-package-artifact-statuses-runtime-dirty? tlci-dirty-only))
-      (build-package-artifact-statuses-tlci-dirty? tlci-dirty-only)
-      (build-package-artifact-statuses-runtime-dirty? runtime-dirty-only)
-      (not (build-package-artifact-statuses-tlci-dirty? runtime-dirty-only)))))
+      (not (build-package-artifact-state-dirty? (BuildPackageArtifactClean)))
+      (build-package-artifact-state-dirty? (BuildPackageArtifactMissing))
+      (build-package-artifact-state-dirty?
+        (BuildPackageArtifactStale "metadata changed"))
+      (string-eq
+        (build-package-artifact-state-render
+          (BuildPackageArtifactStale "metadata changed"))
+        "metadata changed"))))
 
-(test
-  build-package-artifact-status-smoke
-  (unless
-    (build-package-artifact-status-smoke-ok?)
-    (panic "build package artifact status smoke failed")))
+(cfg
+  test
+  (test
+    build-package-artifact-status-smoke
+    (unless
+      (build-package-artifact-status-smoke-ok?)
+      (panic "build package artifact status smoke failed"))))
 
 (define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
   (match kind
@@ -2882,43 +2798,45 @@
       (source-tool-string-list-eq? libs expected)
       (source-tool-string-list-eq? tlcis expected-tlcis))))
 
-(define (build-package-graph-artifact-paths-smoke-ok?) : bool
-  (let
-    [bin-manifest : CompilerPkgManifest
-      (CompilerPkgManifest
-        "app"
-        "0.1.0"
-        (CompilerPkgKindBin)
-        "src/main.tl"
-        (compiler-pkg-deps-empty)
-        (compiler-pkg-link-empty))]
-    [bin-node : BuildPackageGraphNode
-      (BuildPackageGraphNode "root/app/typelisp.pkg" bin-manifest)]
-    [dep-node : BuildPackageGraphNode
-      (build-package-graph-test-node "root/dep/typelisp.pkg" "dep")]
-    [bin-artifacts : BuildPackageArtifactPaths
-      (build-package-graph-node-artifact-paths
-        bin-node
-        (BuildProfileDev)
-        (BackendTargetWindows))]
-    [dep-artifacts : BuildPackageArtifactPaths
-      (build-package-graph-node-artifact-paths
-        dep-node
-        (BuildProfileRelease)
-        (BackendTargetLinux))]
-    (and
-      (string-eq
-        (build-package-runtime-artifact-path bin-artifacts)
-        "root/app/target/dev/app.exe")
-      (string-eq
-        (build-package-host-tlci-artifact-path bin-artifacts)
-        "root/app/target/dev/app.tlci")
-      (string-eq
-        (build-package-runtime-artifact-path dep-artifacts)
-        "root/dep/target/release/libdep.a")
-      (string-eq
-        (build-package-host-tlci-artifact-path dep-artifacts)
-        "root/dep/target/release/dep.tlci"))))
+(cfg
+  test
+  (define (build-package-graph-artifact-paths-smoke-ok?) : bool
+    (let
+      [bin-manifest : CompilerPkgManifest
+        (CompilerPkgManifest
+          "app"
+          "0.1.0"
+          (CompilerPkgKindBin)
+          "src/main.tl"
+          (compiler-pkg-deps-empty)
+          (compiler-pkg-link-empty))]
+      [bin-node : BuildPackageGraphNode
+        (BuildPackageGraphNode "root/app/typelisp.pkg" bin-manifest)]
+      [dep-node : BuildPackageGraphNode
+        (build-package-graph-test-node "root/dep/typelisp.pkg" "dep")]
+      [bin-artifacts : BuildPackageArtifactPaths
+        (build-package-graph-node-artifact-paths
+          bin-node
+          (BuildProfileDev)
+          (BackendTargetWindows))]
+      [dep-artifacts : BuildPackageArtifactPaths
+        (build-package-graph-node-artifact-paths
+          dep-node
+          (BuildProfileRelease)
+          (BackendTargetLinux))]
+      (and
+        (string-eq
+          (build-package-runtime-artifact-path bin-artifacts)
+          "root/app/target/dev/app.exe")
+        (string-eq
+          (build-package-host-tlci-artifact-path bin-artifacts)
+          "root/app/target/dev/app.tlci")
+        (string-eq
+          (build-package-runtime-artifact-path dep-artifacts)
+          "root/dep/target/release/libdep.a")
+        (string-eq
+          (build-package-host-tlci-artifact-path dep-artifacts)
+          "root/dep/target/release/dep.tlci")))))
 
 (define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
   (let
@@ -2960,11 +2878,13 @@
       (build-package-graph-scheduler-no-progress-smoke-ok?))
     (panic "build package graph vector smoke failed")))
 
-(test
-  build-package-graph-artifact-paths-smoke
-  (unless
-    (build-package-graph-artifact-paths-smoke-ok?)
-    (panic "build package graph artifact paths smoke failed")))
+(cfg
+  test
+  (test
+    build-package-graph-artifact-paths-smoke
+    (unless
+      (build-package-graph-artifact-paths-smoke-ok?)
+      (panic "build package graph artifact paths smoke failed"))))
 
 (define build-package-tlci-compiler-build-hash : String
   "typelisp-selfhost-v1")
@@ -4331,21 +4251,40 @@
                   (source-tool-forward-output output)
                   (if (process-success? output)
                     (let
-                      [artifact-statuses : BuildPackageArtifactStatuses
-                        (build-package-artifact-paths-file-status artifacts)]
-                      (if (build-package-artifact-statuses-dirty?
-                        artifact-statuses)
+                      [runtime-path : String (struct-get artifacts runtime)]
+                      [runtime-state : BuildPackageArtifactState
+                        (build-package-artifact-file-state runtime-path)]
+                      (if (build-package-artifact-state-dirty? runtime-state)
                         (begin
                           (print-error
-                            (build-package-artifact-statuses-error-message
+                            (build-package-artifact-status-error-message
                               name
-                              artifact-statuses))
+                              "target runtime"
+                              runtime-path
+                              runtime-state))
                           (set!
                             next-failed-status
                             (build-package-failure-status next-failed-status 1)))
-                        (set!
-                          next-built
-                          (string-i64-map-put next-built manifest-path 1))))
+                        (let
+                          [tlci-path : String (struct-get artifacts tlci)]
+                          [tlci-state : BuildPackageArtifactState
+                            (build-package-artifact-file-state tlci-path)]
+                          (if (build-package-artifact-state-dirty? tlci-state)
+                            (begin
+                              (print-error
+                                (build-package-artifact-status-error-message
+                                  name
+                                  "host tlci"
+                                  tlci-path
+                                  tlci-state))
+                              (set!
+                                next-failed-status
+                                (build-package-failure-status
+                                  next-failed-status
+                                  1)))
+                            (set!
+                              next-built
+                              (string-i64-map-put next-built manifest-path 1))))))
                     (let
                       [status : i64 (process-output-status output)]
                       (begin

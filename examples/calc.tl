@@ -156,38 +156,37 @@
 ;;
 ;; `*`/`/` bind tighter than `+`/`-` because `term` sits one level below `expr`
 ;; in the descent, so the tree shape encodes precedence. The cursor is a
-;; single-cell `(Array i64)` (`cur`) holding the index of the token under it; the
-;; helpers read and bump that cell, and because arrays are heap references the
-;; mutation is visible across the recursive calls. The parser reads tokens
-;; STRAIGHT out of the lexer's token vector - there is no separate token
-;; representation to keep in sync.
+;; single-cell fixed array holding the index of the token under it; the helpers
+;; read and bump that cell, and the mutation is visible across the recursive
+;; calls. The parser reads tokens STRAIGHT out of the lexer's token vector -
+;; there is no separate token representation to keep in sync.
 ;; Current cursor position.
-(define (cur-pos [cur : (Array i64)]) : i64
+(define (cur-pos [cur : (Array i64 1)]) : i64
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
-(define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64)]) : i64
+(define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
   (token-tag (tokvec.get toks (cur-pos cur) TEnd)))
 
 ;; Integer value of the token under the cursor (meaningful only for TInt).
-(define (current-val [toks : (& toks tokvec.Vec)] [cur : (Array i64)]) : i64
+(define (current-val [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
   (token-int (tokvec.get toks (cur-pos cur) TEnd)))
 
 ;; Consume the current token: advance the cursor by one.
-(define (advance [cur : (Array i64)]) : unit
+(define (advance [cur : (Array i64 1)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
 ;; consume the matched token.
-(define (expect [toks : (& toks tokvec.Vec)] [cur : (Array i64)] [want : i64]) : unit
+(define (expect [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)] [want : i64]) : unit
   (if (= (current-tag toks cur) want)
     (advance cur)
     (panic "parser: unexpected token")))
 
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
-(define (parse-factor [toks : (& toks tokvec.Vec)] [cur : (Array i64)]) : Expr
+(define (parse-factor [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [t : i64 (current-tag toks cur)]
     (if (= t (tag-int))
@@ -215,7 +214,7 @@
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `EMul`/`EDiv` nodes over the
 ;; following `*`/`/` factors, giving them higher precedence than `+`/`-`.
-(define (parse-term [toks : (& toks tokvec.Vec)] [cur : (Array i64)]) : Expr
+(define (parse-term [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-factor toks cur)]
     (begin
@@ -235,7 +234,7 @@
 ;; Parse a term, then fold left-associative `EAdd`/`ESub` nodes over the
 ;; following `+`/`-` terms. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
-(define (parse-expr [toks : (& toks tokvec.Vec)] [cur : (Array i64)]) : Expr
+(define (parse-expr [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-term toks cur)]
     (begin
@@ -251,15 +250,13 @@
             (set! acc (ESub (box acc) (box (parse-term toks cur)))))))
       acc)))
 
-;; Parse a whole token array starting at index 0: thread a fresh cursor cell
+;; Parse a whole token vector starting at index 0: thread a fresh cursor cell
 ;; through `parse-expr` and return the resulting `Expr` tree. This is the
 ;; Token-vector -> Expr step of the pipeline.
 (define (parse [toks : (& toks tokvec.Vec)]) : Expr
   (let
-    [cur : (Array i64) (make-array i64 1)]
-    (begin
-      (array-set! cur 0 0)
-      (parse-expr toks cur))))
+    [cur : (Array i64 1) (array 0)]
+    (parse-expr toks cur)))
 
 ;; ============================ Evaluator ===================================
 ;; A recursive tree walk over the real `Expr` AST. `ENum` yields its literal;

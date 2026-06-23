@@ -1,6 +1,9 @@
 (import "stdlib/arena.tl")
 (import "stdlib/thread.tl")
 
+;; Compatibility dynamic-array thread wrapper coverage kept until public
+;; unsized `(Array T)` removal in #3581. User-facing examples should prefer
+;; non-array thread results or vector-backed APIs.
 (define (thread-safe-array-i64-build [base : i64]) : (Array i64)
   (let
     [items : (Array i64) (make-array i64 5)]

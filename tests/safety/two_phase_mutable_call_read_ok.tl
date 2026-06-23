@@ -1,4 +1,5 @@
-;: SPEC safe-code contract: call-argument mutable borrows reserve before activation.
+;: SPEC safe-code contract: compatibility dynamic-array mutable borrows reserve
+;: before activation (#3581 keeps this surface staged).
 (define (read-len [items : (& items (Array i64))]) : i64
   (array-length items))
 

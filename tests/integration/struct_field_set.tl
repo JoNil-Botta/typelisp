@@ -1,6 +1,6 @@
 ;; #1521: `(set! (struct-get place field) value)` mutates the field in place,
-;; including register-resident locals, dynamic/fixed array elements, tuple
-;; projections, mutable references, and nested fields.
+;; including register-resident locals, compatibility dynamic-array elements,
+;; fixed-array elements, tuple projections, mutable references, and nested fields.
 (defstruct Pair
   (x i64)
   (y i64))
@@ -17,7 +17,9 @@
       (set! (struct-get p y) 25)
       (+ (struct-get p x) (struct-get p y)))))
 
-(define (array-element-field-set) : i64
+;; Compatibility dynamic-array regression coverage kept until public unsized
+;; `(Array T)` removal in #3581.
+(define (compat-dynamic-array-element-field-set) : i64
   (let
     [items : (Array Pair) (make-array Pair 0)]
     (begin
@@ -46,9 +48,8 @@
 
 (define (mut-ref-field-set-score) : i64
   (let
-    [items : (Array Pair) (make-array Pair 0)]
+    [items : (Array Pair 1) (array (Pair 1 2))]
     (begin
-      (array-push! items (Pair 1 2))
       (mut-ref-field-set! (&mut (array-ref items 0)))
       (struct-get (array-ref items 0) x))))
 
@@ -64,7 +65,7 @@
     (+
       (local-field-set)
       (+
-        (array-element-field-set)
+        (compat-dynamic-array-element-field-set)
         (+
           (fixed-array-element-field-set)
           (+ (nested-field-set) (+ (mut-ref-field-set-score) (tuple-field-set))))))

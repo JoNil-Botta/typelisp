@@ -1,4 +1,5 @@
-;: SPEC borrow contract: owner mutation during a call-argument reservation is rejected.
+;: SPEC borrow contract: compatibility dynamic-array owner mutation during a
+;: call-argument reservation is rejected (#3581 keeps this surface staged).
 (define (take-mut-and-value [items : (&mut items (Array i64))] [value : i64]) : unit
   unit)
 

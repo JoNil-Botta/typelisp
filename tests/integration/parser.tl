@@ -32,17 +32,19 @@
 ;;
 ;; Cursor threading: a TypeLisp function returns a single value, and the parse
 ;; routines must both *return an `Expr`* and *advance the input position*. The
-;; position is therefore an out-param: a single-cell `(Array i64)` (`cur`) whose
-;; element is the index of the token under the cursor. `current`/`advance`/
-;; `expect` read and bump that cell, and because arrays are heap references the
-;; mutation is visible to the caller across the recursive calls. This is the
-;; standard "parser threads a mutable cursor while returning a node" pattern.
+;; position is therefore a single-cell fixed array (`cur`) whose element is the
+;; index of the token under the cursor. `current`/`advance`/`expect` read and
+;; bump that cell, and the mutation is visible to the caller across the
+;; recursive calls. This is the standard "parser threads a mutable cursor while
+;; returning a node" pattern.
 ;;
 ;; Token stream representation (mirrors `lexer.tl`): the tokens are stored as a
-;; parallel pair of `(Array i64)` - a tag array (the Token kind, via `token-tag`)
-;; and a value array (the integer payload of a `TInt`, else 0) - so the cursor is
-;; a plain `i64` index the helpers advance.
+;; parallel pair of generated `i64` vectors - a tag vector (the Token kind, via
+;; `token-tag`) and a value vector (the integer payload of a `TInt`, else 0) -
+;; so the cursor is a plain `i64` index the helpers advance.
 (import "stdlib/io.tl")
+(import stdlib.vector as vector)
+(import (vector.vector i64) as i64vec)
 
 (defenum Token
   (TInt i64)
@@ -114,29 +116,29 @@
 (define (tag-end) : i64
   8)
 
-;; ---- Token cursor helpers over the parallel (tags, vals) arrays. ----
-;; The cursor position lives in `cur` (a single-cell out-param array); `current-*`
-;; peek the token under it without consuming, `advance` bumps it.
+;; ---- Token cursor helpers over the parallel (tags, vals) vectors. ----
+;; The cursor position lives in `cur`; `current-*` peek the token under it
+;; without consuming, `advance` bumps it.
 ;; Current cursor position.
-(define (cur-pos [cur : (Array i64)]) : i64
+(define (cur-pos [cur : (Array i64 1)]) : i64
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
-(define (current-tag [tags : (Array i64)] [cur : (Array i64)]) : i64
-  (array-ref tags (cur-pos cur)))
+(define (current-tag [tags : (& tags i64vec.Vec)] [cur : (Array i64 1)]) : i64
+  (i64vec.get tags (cur-pos cur) (tag-end)))
 
 ;; Integer value of the token under the cursor (meaningful only for TInt).
-(define (current-val [vals : (Array i64)] [cur : (Array i64)]) : i64
-  (array-ref vals (cur-pos cur)))
+(define (current-val [vals : (& vals i64vec.Vec)] [cur : (Array i64 1)]) : i64
+  (i64vec.get vals (cur-pos cur) 0))
 
 ;; Consume the current token: advance the cursor by one.
-(define (advance [cur : (Array i64)]) : unit
+(define (advance [cur : (Array i64 1)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
 ;; consume the matched token.
-(define (expect [tags : (Array i64)] [cur : (Array i64)] [want : i64]) : unit
+(define (expect [tags : (& tags i64vec.Vec)] [cur : (Array i64 1)] [want : i64]) : unit
   (if (= (current-tag tags cur) want)
     (advance cur)
     (panic "parser: unexpected token")))
@@ -151,9 +153,9 @@
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
 (define (parse-factor
-  [tags : (Array i64)]
-  [vals : (Array i64)]
-  [cur : (Array i64)]) : Expr
+  [tags : (& tags i64vec.Vec)]
+  [vals : (& vals i64vec.Vec)]
+  [cur : (Array i64 1)]) : Expr
   (let
     [t : i64 (current-tag tags cur)]
     (if (= t (tag-int))
@@ -185,9 +187,9 @@
 ;; `(EDiv acc rhs)` node - giving left-associative, higher-precedence `*`/`/`:
 ;; `2 * 3 * 4` parses to `(EMul (EMul 2 3) 4)`.
 (define (parse-term
-  [tags : (Array i64)]
-  [vals : (Array i64)]
-  [cur : (Array i64)]) : Expr
+  [tags : (& tags i64vec.Vec)]
+  [vals : (& vals i64vec.Vec)]
+  [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-factor tags vals cur)]
     (begin
@@ -210,9 +212,9 @@
 ;; `(EAdd (EAdd 1 2) 3)`. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
 (define (parse-expr
-  [tags : (Array i64)]
-  [vals : (Array i64)]
-  [cur : (Array i64)]) : Expr
+  [tags : (& tags i64vec.Vec)]
+  [vals : (& vals i64vec.Vec)]
+  [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-term tags vals cur)]
     (begin
@@ -242,27 +244,27 @@
     [(EDiv a b) (/ (eval (box-get a)) (eval (box-get b)))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
-;; (A lexer would produce this; here we construct the parallel arrays directly so
-;; the parser is exercised in isolation.) Tokens: TInt(2) TPlus TInt(3) TStar
+;; (A lexer would produce this; here we construct the parallel vectors directly
+;; so the parser is exercised in isolation.) Tokens: TInt(2) TPlus TInt(3) TStar
 ;; TInt(4) TEnd.
-(define (build-sample-tags [tags : (Array i64)]) : i64
+(define (build-sample-tags [tags : (&mut tags i64vec.Vec)]) : i64
   (begin
-    (array-set! tags 0 (token-tag (TInt 2)))
-    (array-set! tags 1 (token-tag TPlus))
-    (array-set! tags 2 (token-tag (TInt 3)))
-    (array-set! tags 3 (token-tag TStar))
-    (array-set! tags 4 (token-tag (TInt 4)))
-    (array-set! tags 5 (token-tag TEnd))
+    (i64vec.push tags (token-tag (TInt 2)))
+    (i64vec.push tags (token-tag TPlus))
+    (i64vec.push tags (token-tag (TInt 3)))
+    (i64vec.push tags (token-tag TStar))
+    (i64vec.push tags (token-tag (TInt 4)))
+    (i64vec.push tags (token-tag TEnd))
     6))
 
-(define (build-sample-vals [vals : (Array i64)]) : i64
+(define (build-sample-vals [vals : (&mut vals i64vec.Vec)]) : i64
   (begin
-    (array-set! vals 0 (token-int (TInt 2)))
-    (array-set! vals 1 0)
-    (array-set! vals 2 (token-int (TInt 3)))
-    (array-set! vals 3 0)
-    (array-set! vals 4 (token-int (TInt 4)))
-    (array-set! vals 5 0)
+    (i64vec.push vals (token-int (TInt 2)))
+    (i64vec.push vals 0)
+    (i64vec.push vals (token-int (TInt 3)))
+    (i64vec.push vals 0)
+    (i64vec.push vals (token-int (TInt 4)))
+    (i64vec.push vals 0)
     6))
 
 ;; Parse and evaluate "2 + 3 * 4":
@@ -275,11 +277,10 @@
 ;; process exit code.
 (define (main) : i64
   (let
-    [tags : (Array i64) (make-array i64 16)]
-    [vals : (Array i64) (make-array i64 16)]
-    [cur : (Array i64) (make-array i64 1)]
+    [tags : i64vec.Vec (i64vec.with-capacity 6)]
+    [vals : i64vec.Vec (i64vec.with-capacity 6)]
+    [cur : (Array i64 1) (array 0)]
     (begin
-      (build-sample-tags tags)
-      (build-sample-vals vals)
-      (array-set! cur 0 0)
-      (eval (parse-expr tags vals cur)))))
+      (build-sample-tags (&mut tags))
+      (build-sample-vals (&mut vals))
+      (eval (parse-expr (& tags) (& vals) cur)))))

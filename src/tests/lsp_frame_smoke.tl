@@ -138,7 +138,7 @@
             (tc-inlay-hints-disable!)
             (if (= found-idx -1)
               false
-              (string-eq (tc-inlay-hint-type-at found-idx) "i32")))))))
+              (string-eq (tc-inlay-hint-type-at found-idx) "i32"))))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let

@@ -19,7 +19,7 @@
 ;#
 ;# `RandomState`, draw results, and compatibility weight-list cons nodes are
 ;# ordinary aggregates allocated in the active arena when constructed. Array and
-;# `I64Vec` weighted-index helpers scan caller-owned storage directly. The
+;# `(vector i64)` weighted-index helpers scan caller-owned storage directly. The
 ;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
 ;# `i64` overflow and remains portable across current TypeLisp targets.
 (module stdlib.random)
@@ -27,6 +27,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector i64) as i64v)
 
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
 (defstruct RandomState
@@ -191,7 +192,7 @@
 ;: Accumulate and validate non-negative array weights in the prefix
 ;: `[0, count)`.
 (define (random-weight-array-total-from
-  [weights : (Array i64)]
+  [weights : (& weights (Array i64))]
   [count : i64]
   [index : i64]
   [acc : i64]) : RandomWeightTotalResult
@@ -210,7 +211,7 @@
 ;: Return the total weight for an array prefix, rejecting empty prefixes and
 ;: negative weights.
 (define (random-weight-array-total-prefix
-  [weights : (Array i64)]
+  [weights : (& weights (Array i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightTotalResult
   (if (<= count 0)
@@ -220,7 +221,7 @@
 ;: Pick the first array-prefix index whose cumulative positive weight contains
 ;: `target`.
 (define (random-weight-array-scan-from
-  [weights : (Array i64)]
+  [weights : (& weights (Array i64))]
   [count : i64]
   [target : i64]
   [index : i64]) : i64
@@ -243,7 +244,7 @@
 ;: diagnostics while sharing the array-backed implementation.
 (define (random-weighted-index-array-prefix
   [state : RandomState]
-  [weights : (Array i64)]
+  [weights : (& weights (Array i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightedIndexResult
   (match (random-weight-array-total-prefix weights count empty-message)
@@ -267,7 +268,7 @@
   [weights : (Array i64)]) : RandomWeightedIndexResult
   (random-weighted-index-array-prefix
     state
-    weights
+    (& weights)
     (array-length weights)
     "random: weight array must not be empty"))
 
@@ -275,13 +276,11 @@
 ;:
 ;: The result index is zero-based in vector order. Empty vectors, negative
 ;: weights, and vectors whose total weight is zero return structured errors.
-(define (random-weighted-index-vec
-  [state : RandomState]
-  [weights : vector.I64Vec]) : RandomWeightedIndexResult
+(define (random-weighted-index-vec [state : RandomState] [weights : i64v.Vec]) : RandomWeightedIndexResult
   (random-weighted-index-array-prefix
     state
-    (vector.i64-vec-slots weights)
-    (vector.i64-vec-len weights)
+    (i64v.slots (& weights))
+    (i64v.len (& weights))
     "random: weight vector must not be empty"))
 
 ;: Count weight-list entries.
@@ -586,20 +585,33 @@
       weights)))
 
 ;: Weighted-vector fixture with zeros around positive buckets.
-(define (random-test-weighted-vector-fixture) : vector.I64Vec
-  (vector.i64-vec-push
-    (vector.i64-vec-push
-      (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 10)
-      0)
-    5))
+(define (random-test-weighted-vector-fixture) : i64v.Vec
+  (let
+    [weights : i64v.Vec (i64v.new)]
+    (begin
+      (i64v.push (&mut weights) 0)
+      (i64v.push (&mut weights) 10)
+      (i64v.push (&mut weights) 0)
+      (i64v.push (&mut weights) 5)
+      weights)))
 
 ;: Weighted-vector fixture whose total is zero.
-(define (random-test-weighted-zero-vector) : vector.I64Vec
-  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 0) 0))
+(define (random-test-weighted-zero-vector) : i64v.Vec
+  (let
+    [weights : i64v.Vec (i64v.new)]
+    (begin
+      (i64v.push (&mut weights) 0)
+      (i64v.push (&mut weights) 0)
+      weights)))
 
 ;: Weighted-vector fixture with a negative weight.
-(define (random-test-weighted-negative-vector) : vector.I64Vec
-  (vector.i64-vec-push (vector.i64-vec-push (vector.i64-vec-new) 1) -1))
+(define (random-test-weighted-negative-vector) : i64v.Vec
+  (let
+    [weights : i64v.Vec (i64v.new)]
+    (begin
+      (i64v.push (&mut weights) 1)
+      (i64v.push (&mut weights) -1)
+      weights)))
 
 (test
   random-api
@@ -661,7 +673,7 @@
         (random-test-weighted-negative-array))
       "random: weight must not be negative")
     (random-test-assert-weighted-error
-      (random-weighted-index-vec (random-seed 1) (vector.i64-vec-new))
+      (random-weighted-index-vec (random-seed 1) (i64v.new))
       "random: weight vector must not be empty")
     (random-test-assert-weighted-error
       (random-weighted-index-vec

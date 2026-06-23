@@ -1,6 +1,6 @@
 [
   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 x)\n"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 x)\n(define (baz) : i64 (foo))\n"}}},
   {"jsonrpc":"2.0","id":2,"method":"tl/findReferences","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl"},"name":"foo"}},
   {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}

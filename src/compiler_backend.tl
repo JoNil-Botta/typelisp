@@ -1040,6 +1040,39 @@
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
+    [(IrBinBitAnd)
+      (match elem-ty
+        [(AstTyI64) "vpand"]
+        [(AstTyU64) "vpand"]
+        [(AstTyI32) "vpand"]
+        [(AstTyU32) "vpand"]
+        [(AstTyI16) "vpand"]
+        [(AstTyU16) "vpand"]
+        [(AstTyI8) "vpand"]
+        [(AstTyU8) "vpand"]
+        [_ ""])]
+    [(IrBinBitOr)
+      (match elem-ty
+        [(AstTyI64) "vpor"]
+        [(AstTyU64) "vpor"]
+        [(AstTyI32) "vpor"]
+        [(AstTyU32) "vpor"]
+        [(AstTyI16) "vpor"]
+        [(AstTyU16) "vpor"]
+        [(AstTyI8) "vpor"]
+        [(AstTyU8) "vpor"]
+        [_ ""])]
+    [(IrBinBitXor)
+      (match elem-ty
+        [(AstTyI64) "vpxor"]
+        [(AstTyU64) "vpxor"]
+        [(AstTyI32) "vpxor"]
+        [(AstTyU32) "vpxor"]
+        [(AstTyI16) "vpxor"]
+        [(AstTyU16) "vpxor"]
+        [(AstTyI8) "vpxor"]
+        [(AstTyU8) "vpxor"]
+        [_ ""])]
     [_ ""]))
 
 (define (compiler-backend-avx2-i64-vector-mul?
@@ -1550,6 +1583,32 @@
         [(AstTyU64) "vpandq"]
         [(AstTyI32) "vpandd"]
         [(AstTyU32) "vpandd"]
+        [(AstTyI16) "vpandd"]
+        [(AstTyU16) "vpandd"]
+        [(AstTyI8) "vpandd"]
+        [(AstTyU8) "vpandd"]
+        [_ ""])]
+    [(IrBinBitOr)
+      (match elem-ty
+        [(AstTyI64) "vporq"]
+        [(AstTyU64) "vporq"]
+        [(AstTyI32) "vpord"]
+        [(AstTyU32) "vpord"]
+        [(AstTyI16) "vpord"]
+        [(AstTyU16) "vpord"]
+        [(AstTyI8) "vpord"]
+        [(AstTyU8) "vpord"]
+        [_ ""])]
+    [(IrBinBitXor)
+      (match elem-ty
+        [(AstTyI64) "vpxorq"]
+        [(AstTyU64) "vpxorq"]
+        [(AstTyI32) "vpxord"]
+        [(AstTyU32) "vpxord"]
+        [(AstTyI16) "vpxord"]
+        [(AstTyU16) "vpxord"]
+        [(AstTyI8) "vpxord"]
+        [(AstTyU8) "vpxord"]
         [_ ""])]
     [_ ""]))
 

@@ -40,20 +40,24 @@
                       expanded-paths
                       (tc-decl-path-list-last expanded-paths ""))
                       [(OkSpecProgramWithPaths specialized specialized-paths)
-                        (typecheck-compiler-specialized-program-with-paths-cache
-                          specialized
-                          specialized-paths
-                          stdlib-roots
-                          cache-scope)]
+                        (begin
+                          (tc-type-env-stack-reset!)
+                          (typecheck-compiler-specialized-program-with-paths-cache
+                            specialized
+                            specialized-paths
+                            stdlib-roots
+                            cache-scope))]
                       [(ErrSpecProgramWithPaths diag)
                         (ErrCompilerTypecheck diag)])]
                   [(ErrCompilerSymbols message)
                     (ErrCompilerTypecheck (tc-diag-at-start message))])
-                (typecheck-compiler-specialized-program-with-paths-cache
-                  expanded
-                  expanded-paths
-                  stdlib-roots
-                  cache-scope))]
+                (begin
+                  (tc-type-env-stack-reset!)
+                  (typecheck-compiler-specialized-program-with-paths-cache
+                    expanded
+                    expanded-paths
+                    stdlib-roots
+                    cache-scope)))]
             [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
         [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))
 
@@ -85,20 +89,24 @@
                     expanded-paths
                     (tc-decl-path-list-last expanded-paths ""))
                     [(OkSpecProgramWithPaths specialized specialized-paths)
-                      (typecheck-compiler-specialized-program-with-paths-checked-cache
-                        specialized
-                        specialized-paths
-                        stdlib-roots
-                        cache-scope)]
+                      (begin
+                        (tc-type-env-stack-reset!)
+                        (typecheck-compiler-specialized-program-with-paths-checked-cache
+                          specialized
+                          specialized-paths
+                          stdlib-roots
+                          cache-scope))]
                     [(ErrSpecProgramWithPaths diag)
                       (ErrCompilerTypecheckChecked diag)])]
                 [(ErrCompilerSymbols message)
                   (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
-              (typecheck-compiler-specialized-program-with-paths-checked-cache
-                expanded
-                expanded-paths
-                stdlib-roots
-                cache-scope))]
+              (begin
+                (tc-type-env-stack-reset!)
+                (typecheck-compiler-specialized-program-with-paths-checked-cache
+                  expanded
+                  expanded-paths
+                  stdlib-roots
+                  cache-scope)))]
           [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
       [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))
 

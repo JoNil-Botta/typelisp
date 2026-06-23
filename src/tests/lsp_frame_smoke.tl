@@ -122,9 +122,9 @@
         (let
           [size : i64 (tc-inlay-hints-size)]
           [i : i64 0]
-          [found-idx : i64 -1]
+          [found-type : String ""]
           (begin
-            (while (and (< i size) (= found-idx -1))
+            (while (and (< i size) (string-eq found-type ""))
               (let
                 [hint-line : i64 (tc-inlay-hint-line-at i)]
                 [hint-col : i64 (tc-inlay-hint-col-at i)]
@@ -132,13 +132,11 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set! found-idx i)
+                    (set! found-type (tc-inlay-hint-type-at i))
                     unit)
                   (set! i (+ i 1)))))
             (tc-inlay-hints-disable!)
-            (if (= found-idx -1)
-              false
-              (string-eq (tc-inlay-hint-type-at found-idx) "i32"))))))))
+            (string-eq found-type "i32")))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let

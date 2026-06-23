@@ -12101,6 +12101,11 @@
 (defenum OptLicmBlocksResult
   (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList I64I64Map bool))
 
+(defstruct OptLicmStoreSummary
+  (call-or-unknown? bool)
+  (header-or-unknown-store? bool)
+  (element-only-store? bool))
+
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
 
@@ -12173,39 +12178,102 @@
     (opt-licm-value-invariant? loop-defs hoisted a)
     (opt-licm-value-invariant? loop-defs hoisted b)))
 
-(define (opt-licm-memory-blocker-instr? [instr : CompilerIrInstr]) : bool
-  (opt-alias-instr-clears-all? instr))
+(define (opt-licm-store-summary-empty) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false false))
 
-(define (opt-licm-memory-safe-instr-seq-from?
+(define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
+  (OptLicmStoreSummary true false false))
+
+(define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
+  (OptLicmStoreSummary false true false))
+
+(define (opt-licm-store-summary-element-only-store) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false true))
+
+(define (opt-licm-store-summary-merge
+  [left : OptLicmStoreSummary]
+  [right : OptLicmStoreSummary]) : OptLicmStoreSummary
+  (OptLicmStoreSummary
+    (or (struct-get left call-or-unknown?) (struct-get right call-or-unknown?))
+    (or
+      (struct-get left header-or-unknown-store?)
+      (struct-get right header-or-unknown-store?))
+    (or
+      (struct-get left element-only-store?)
+      (struct-get right element-only-store?))))
+
+(define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
+  (and
+    (not (struct-get summary call-or-unknown?))
+    (not (struct-get summary header-or-unknown-store?))
+    (not (struct-get summary element-only-store?))))
+
+(define (opt-licm-store-summary-from-effect [effect : CompilerIrEffect]) : OptLicmStoreSummary
+  (match effect
+    [(IrEffectMemoryWrite) (opt-licm-store-summary-header-or-unknown-store)]
+    [(IrEffectCpuProbe) (opt-licm-store-summary-call-or-unknown)]
+    [(IrEffectUnknown) (opt-licm-store-summary-call-or-unknown)]
+    [_ (opt-licm-store-summary-empty)]))
+
+(define (opt-licm-store-summary-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
+  (match instr
+    [(IrInstrAlloc _ _) (opt-licm-store-summary-empty)]
+    [(IrInstrCall _ _ _ _) (opt-licm-store-summary-call-or-unknown)]
+    [(IrInstrCallIndirect _ _ _ _) (opt-licm-store-summary-call-or-unknown)]
+    [(IrInstrCallIndirectC _ _ _ _) (opt-licm-store-summary-call-or-unknown)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+          (opt-licm-store-summary-call-or-unknown)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+          (opt-licm-store-summary-call-or-unknown)])]
+    [(IrInstrTailCall _ _ _) (opt-licm-store-summary-call-or-unknown)]
+    [(IrInstrTailCallIndirect _ _ _) (opt-licm-store-summary-call-or-unknown)]
+    [(IrInstrStorePtr _ _ _) (opt-licm-store-summary-header-or-unknown-store)]
+    [(IrInstrCopyBytes _ _ _) (opt-licm-store-summary-header-or-unknown-store)]
+    [_ (opt-licm-store-summary-from-effect (compiler-ir-instr-effect instr))]))
+
+(define (opt-licm-store-summary-instr-seq-from
   [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
+  [index : i64]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    true
-    (if (opt-licm-memory-blocker-instr?
-      (compiler-ir-instr-seq-ref instrs index))
-      false
-      (opt-licm-memory-safe-instr-seq-from? instrs (+ index 1)))))
+    summary
+    (opt-licm-store-summary-instr-seq-from
+      instrs
+      (+ index 1)
+      (opt-licm-store-summary-merge
+        summary
+        (opt-licm-store-summary-instr (compiler-ir-instr-seq-ref instrs index))))))
 
-(define (opt-licm-memory-safe-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
-  (opt-licm-memory-safe-instr-seq-from? instrs 0))
+(define (opt-licm-store-summary-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
+  (opt-licm-store-summary-instr-seq-from instrs 0 summary))
 
-(define (opt-licm-memory-safe-blocks? [blocks : CompilerIrBlockList]) : bool
+(define (opt-licm-store-summary-blocks
+  [blocks : CompilerIrBlockList]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
   (match blocks
-    [(IrBlockNil) true]
+    [(IrBlockNil) summary]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (and
-            (opt-licm-memory-safe-instr-seq? instrs)
-            (opt-licm-memory-safe-blocks? (box-get rest)))])]
+          (opt-licm-store-summary-blocks
+            (box-get rest)
+            (opt-licm-store-summary-instr-seq instrs summary))])]
     [(IrBlockArray seq)
-      (opt-licm-memory-safe-blocks? (compiler-ir-block-seq-to-list seq))]))
+      (opt-licm-store-summary-blocks
+        (compiler-ir-block-seq-to-list seq)
+        summary)]))
 
 (define (opt-licm-candidate?
   [loop-defs : I64I64Map]
   [hoisted : I64I64Map]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [store-summary : OptLicmStoreSummary]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrBinOp _ op lhs rhs _)
@@ -12215,12 +12283,12 @@
     [(IrInstrUnOp _ _ src _) (opt-licm-value-invariant? loop-defs hoisted src)]
     [(IrInstrGep dst base offset _)
       (and
-        memory-safe?
+        (opt-licm-store-summary-clean? store-summary)
         (opt-gvn-stable-var? sources dst)
         (opt-licm-values-invariant? loop-defs hoisted base offset))]
     [(IrInstrLoad dst src _)
       (and
-        memory-safe?
+        (opt-licm-store-summary-clean? store-summary)
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
         (opt-licm-value-invariant? loop-defs hoisted src))]
@@ -12237,17 +12305,17 @@
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrList]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [store-summary : OptLicmStoreSummary]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (match instrs
     [(IrInstrNil) (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)]
     [(IrInstrCons instr rest)
-      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
+      (if (opt-licm-candidate? loop-defs hoisted sources store-summary instr)
         (match (opt-licm-filter-instrs
           loop-defs
           (box-get rest)
           sources
-          memory-safe?
+          store-summary
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -12259,7 +12327,7 @@
           loop-defs
           (box-get rest)
           sources
-          memory-safe?
+          store-summary
           hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
@@ -12273,19 +12341,19 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [store-summary : OptLicmStoreSummary]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
+      (if (opt-licm-candidate? loop-defs hoisted sources store-summary instr)
         (match (opt-licm-filter-instr-seq-from
           loop-defs
           instrs
           (+ index 1)
           sources
-          memory-safe?
+          store-summary
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -12298,7 +12366,7 @@
           instrs
           (+ index 1)
           sources
-          memory-safe?
+          store-summary
           hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
@@ -12311,21 +12379,21 @@
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrSeq]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [store-summary : OptLicmStoreSummary]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     loop-defs
     instrs
     0
     sources
-    memory-safe?
+    store-summary
     hoisted))
 
 (define (opt-licm-filter-body-blocks
   [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [store-summary : OptLicmStoreSummary]
   [hoisted : I64I64Map]) : OptLicmBlocksResult
   (match blocks
     [(IrBlockNil) (OptLicmBlocksResult (IrBlockNil) (IrInstrNil) hoisted false)]
@@ -12336,14 +12404,14 @@
             loop-defs
             instrs
             sources
-            memory-safe?
+            store-summary
             hoisted)
             [(OptLicmInstrsResult kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
                 loop-defs
                 (box-get rest)
                 sources
-                memory-safe?
+                store-summary
                 next-hoisted)
                 [(OptLicmBlocksResult
                     rest-blocks
@@ -12362,7 +12430,7 @@
         loop-defs
         (compiler-ir-block-seq-to-list seq)
         sources
-        memory-safe?
+        store-summary
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -12473,12 +12541,15 @@
           (opt-licm-collect-defs-blocks
             body-blocks
             (i64-i64-map-with-capacity map-capacity))]
-        [memory-safe? : bool (opt-licm-memory-safe-blocks? body-blocks)]
+        [store-summary : OptLicmStoreSummary
+          (opt-licm-store-summary-blocks
+            body-blocks
+            (opt-licm-store-summary-empty))]
         (match (opt-licm-filter-body-blocks
           loop-defs
           body-blocks
           sources
-          memory-safe?
+          store-summary
           (i64-i64-map-with-capacity map-capacity))
           [(OptLicmBlocksResult filtered-body hoisted _ changed)
             (if changed
@@ -33331,6 +33402,13 @@
 (define (opt-licm-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (opt-licm-function (opt-licm-test-function blocks)))
 
+(define (opt-licm-summary-for-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
+  (opt-licm-store-summary-blocks
+    (compiler-ir-block-cons
+      (compiler-ir-block "summary" (compiler-ir-instr-cons instr (IrInstrNil)))
+      (IrBlockNil))
+    (opt-licm-store-summary-empty)))
+
 (define (opt-licm-arithmetic-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -33742,6 +33820,17 @@
     [load-varying-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-load-varying-address-blocks))]
     [load-varying : CompilerIrBlockList (opt-function-blocks load-varying-func)]
+    [clean-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrBinOp 80 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64)))]
+    [store-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrStorePtr (IrValueVar 6) (IrValueI64 100) (AstTyI64)))]
+    [call-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrCall 81 "touch" (IrCallArgsNil) (AstTyI64)))]
+    [element-summary : OptLicmStoreSummary
+      (opt-licm-store-summary-element-only-store)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
       [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
@@ -33773,6 +33862,15 @@
           (i64-i64-map-with-capacity 4)
           (IrValueGlobal "g"))
         26]
+      [(not (opt-licm-store-summary-clean? clean-summary)) 27]
+      [(opt-licm-store-summary-clean? store-summary) 28]
+      [(not (struct-get store-summary header-or-unknown-store?)) 29]
+      [(struct-get store-summary call-or-unknown?) 30]
+      [(opt-licm-store-summary-clean? call-summary) 31]
+      [(not (struct-get call-summary call-or-unknown?)) 32]
+      [(struct-get call-summary header-or-unknown-store?) 33]
+      [(opt-licm-store-summary-clean? element-summary) 34]
+      [(not (struct-get element-summary element-only-store?)) 35]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList

@@ -68,6 +68,15 @@
   (manifest-path String)
   (manifest CompilerPkgManifest))
 
+(defstruct BuildPackageArtifactPaths
+  (runtime String)
+  (tlci String))
+
+(defenum BuildPackageArtifactState
+  (BuildPackageArtifactClean)
+  (BuildPackageArtifactMissing)
+  (BuildPackageArtifactStale String))
+
 (defstruct BuildPackageGraphNodeVec
   (slots (Array BuildPackageGraphNode))
   (len i64))
@@ -170,6 +179,7 @@
 
 (defstruct BuildPackageGraphWorker
   (node BuildPackageGraphNode)
+  (artifacts BuildPackageArtifactPaths)
   (child ProcessChild))
 
 (defenum ResultBuildPackageGraphWorker
@@ -1065,6 +1075,27 @@
     [(CompilerPkgKindLib)
       (build-package-lib-path-profile manifest-dir name profile target)]))
 
+;; The v1 tlci path is target-independent because package images are
+;; metadata-only host compile-time interfaces today. Runtime artifacts still
+;; carry the selected target through their filename/extension.
+(define (build-package-artifact-paths
+  [manifest-dir : String]
+  [name : String]
+  [kind : CompilerPkgKind]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : BuildPackageArtifactPaths
+  (BuildPackageArtifactPaths
+    (build-package-artifact-path-profile manifest-dir name kind profile target)
+    (build-package-tlci-path-profile manifest-dir name profile)))
+
+(define (build-package-runtime-artifact-path
+  [artifacts : BuildPackageArtifactPaths]) : String
+  (struct-get artifacts runtime))
+
+(define (build-package-host-tlci-artifact-path
+  [artifacts : BuildPackageArtifactPaths]) : String
+  (struct-get artifacts tlci))
+
 (define (build-package-path-layout-smoke-ok?) : bool
   (and
     (string-eq
@@ -1089,6 +1120,15 @@
       "root/app/target/release/libpkg.a")
     (string-eq
       (build-package-tlci-path-profile "root/app" "pkg" (BuildProfileDev))
+      "root/app/target/dev/pkg.tlci")
+    (string-eq
+      (build-package-host-tlci-artifact-path
+        (build-package-artifact-paths
+          "root/app"
+          "pkg"
+          (CompilerPkgKindBin)
+          (BuildProfileDev)
+          (BackendTargetWindows)))
       "root/app/target/dev/pkg.tlci")))
 
 (test
@@ -1096,6 +1136,65 @@
   (unless
     (build-package-path-layout-smoke-ok?)
     (panic "build package path layout smoke failed")))
+
+(define (build-package-artifact-state-dirty?
+  [state : BuildPackageArtifactState]) : bool
+  (match state
+    [(BuildPackageArtifactClean) false]
+    [_ true]))
+
+(define (build-package-artifact-state-render
+  [state : BuildPackageArtifactState]) : String
+  (match state
+    [(BuildPackageArtifactClean) "clean"]
+    [(BuildPackageArtifactMissing) "missing"]
+    [(BuildPackageArtifactStale reason) reason]))
+
+(define (build-package-artifact-file-state [path : String]) : BuildPackageArtifactState
+  (let
+    [path-text : String path]
+    (match (try-file-metadata (& path-text))
+      [(OkFsMetadata metadata)
+        (if (fs-file-kind-regular? (fs-metadata-kind metadata))
+          (BuildPackageArtifactClean)
+          (BuildPackageArtifactStale "not a regular file"))]
+      [(ErrFsMetadata _) (BuildPackageArtifactMissing)])))
+
+(define (build-package-artifact-status-error-message
+  [package-name : String]
+  [role-name : String]
+  [path : String]
+  [state : BuildPackageArtifactState]) : String
+  (str-cat
+    "build: package dependency `"
+    package-name
+    "` did not produce "
+    role-name
+    " artifact "
+    path
+    ": "
+    (build-package-artifact-state-render state)))
+
+(cfg
+  test
+  (define (build-package-artifact-status-smoke-ok?) : bool
+    (and
+      (not (build-package-artifact-state-dirty? (BuildPackageArtifactClean)))
+      (build-package-artifact-state-dirty? (BuildPackageArtifactMissing))
+      (build-package-artifact-state-dirty?
+        (BuildPackageArtifactStale "metadata changed"))
+      (string-eq
+        (build-package-artifact-state-render
+          (BuildPackageArtifactStale "metadata changed"))
+        "metadata changed"))))
+
+(cfg
+  test
+  (test
+    build-package-artifact-status-smoke
+    (unless
+      (build-package-artifact-status-smoke-ok?)
+      (panic "build package artifact status smoke failed"))))
 
 (define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
   (match kind
@@ -2545,20 +2644,39 @@
         (ErrSourceToolString (compiler-diagnostic-render diag))])
     (ErrSourceToolString "linux direct object disabled")))
 
-(define (build-package-graph-node-artifact-path
+(define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
-  [target : CompilerBackendTarget]) : String
+  [target : CompilerBackendTarget]) : BuildPackageArtifactPaths
   (let
     [manifest-path : String (struct-get node manifest-path)]
     [manifest : CompilerPkgManifest (struct-get node manifest)]
     [manifest-dir : String (compiler-load-dirname manifest-path)]
-    (build-package-artifact-path-profile
+    (build-package-artifact-paths
       manifest-dir
       (struct-get manifest name)
       (struct-get manifest kind)
       profile
       target)))
+
+(define (build-package-graph-node-artifact-path
+  [node : BuildPackageGraphNode]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
+  (build-package-runtime-artifact-path
+    (build-package-graph-node-artifact-paths node profile target)))
+
+(define (build-package-graph-node-tlci-path
+  [node : BuildPackageGraphNode]
+  [profile : BuildProfile]) : String
+  (let
+    [manifest-path : String (struct-get node manifest-path)]
+    [manifest : CompilerPkgManifest (struct-get node manifest)]
+    [manifest-dir : String (compiler-load-dirname manifest-path)]
+    (build-package-tlci-path-profile
+      manifest-dir
+      (struct-get manifest name)
+      profile)))
 
 (define (build-package-graph-link-libs
   [nodes : BuildPackageGraphNodeVec]
@@ -2581,6 +2699,27 @@
                   target))))
           (set! index (- index 1))))
       libs)))
+
+(define (build-package-graph-tlci-paths
+  [nodes : BuildPackageGraphNodeVec]
+  [profile : BuildProfile]) : ProcessStringList
+  (let
+    [index : i64 0]
+    [count : i64 (build-package-graph-node-vec-len nodes)]
+    [paths : ProcessStringList (process-args-empty)]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            paths
+            (process-args-append
+              paths
+              (process-args-single
+                (build-package-graph-node-tlci-path
+                  (build-package-graph-node-vec-at nodes index)
+                  profile))))
+          (set! index (+ index 1))))
+      paths)))
 
 (define (build-package-graph-test-manifest [name : String]) : CompilerPkgManifest
   (CompilerPkgManifest
@@ -2612,6 +2751,10 @@
       (BuildProfileRelease)
       (BackendTargetLinux))))
 
+(define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : ProcessStringList
+  (process-args-single
+    (build-package-graph-node-tlci-path node (BuildProfileRelease))))
+
 (define (build-package-graph-vector-smoke-ok?) : bool
   (let
     [first : BuildPackageGraphNode
@@ -2633,18 +2776,67 @@
         nodes
         (BuildProfileRelease)
         (BackendTargetLinux))]
+    [tlcis : ProcessStringList
+      (build-package-graph-tlci-paths nodes (BuildProfileRelease))]
     [expected : ProcessStringList
       (process-args-append
         (process-args-append
           (build-package-graph-test-link-arg third)
           (build-package-graph-test-link-arg second))
         (build-package-graph-test-link-arg first))]
+    [expected-tlcis : ProcessStringList
+      (process-args-append
+        (process-args-append
+          (build-package-graph-test-tlci-arg first)
+          (build-package-graph-test-tlci-arg second))
+        (build-package-graph-test-tlci-arg third))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string-eq
         (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
         "root/first/typelisp.pkg")
-      (source-tool-string-list-eq? libs expected))))
+      (source-tool-string-list-eq? libs expected)
+      (source-tool-string-list-eq? tlcis expected-tlcis))))
+
+(cfg
+  test
+  (define (build-package-graph-artifact-paths-smoke-ok?) : bool
+    (let
+      [bin-manifest : CompilerPkgManifest
+        (CompilerPkgManifest
+          "app"
+          "0.1.0"
+          (CompilerPkgKindBin)
+          "src/main.tl"
+          (compiler-pkg-deps-empty)
+          (compiler-pkg-link-empty))]
+      [bin-node : BuildPackageGraphNode
+        (BuildPackageGraphNode "root/app/typelisp.pkg" bin-manifest)]
+      [dep-node : BuildPackageGraphNode
+        (build-package-graph-test-node "root/dep/typelisp.pkg" "dep")]
+      [bin-artifacts : BuildPackageArtifactPaths
+        (build-package-graph-node-artifact-paths
+          bin-node
+          (BuildProfileDev)
+          (BackendTargetWindows))]
+      [dep-artifacts : BuildPackageArtifactPaths
+        (build-package-graph-node-artifact-paths
+          dep-node
+          (BuildProfileRelease)
+          (BackendTargetLinux))]
+      (and
+        (string-eq
+          (build-package-runtime-artifact-path bin-artifacts)
+          "root/app/target/dev/app.exe")
+        (string-eq
+          (build-package-host-tlci-artifact-path bin-artifacts)
+          "root/app/target/dev/app.tlci")
+        (string-eq
+          (build-package-runtime-artifact-path dep-artifacts)
+          "root/dep/target/release/libdep.a")
+        (string-eq
+          (build-package-host-tlci-artifact-path dep-artifacts)
+          "root/dep/target/release/dep.tlci")))))
 
 (define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
   (let
@@ -2685,6 +2877,14 @@
       (build-package-graph-vector-smoke-ok?)
       (build-package-graph-scheduler-no-progress-smoke-ok?))
     (panic "build package graph vector smoke failed")))
+
+(cfg
+  test
+  (test
+    build-package-graph-artifact-paths-smoke
+    (unless
+      (build-package-graph-artifact-paths-smoke-ok?)
+      (panic "build package graph artifact paths smoke failed"))))
 
 (define build-package-tlci-compiler-build-hash : String
   "typelisp-selfhost-v1")
@@ -3510,15 +3710,11 @@
       (build-package-asm-path-profile manifest-dir name profile)]
     [obj-path : String
       (build-package-obj-path-profile manifest-dir name profile target)]
+    [artifact-paths : BuildPackageArtifactPaths
+      (build-package-artifact-paths manifest-dir name kind profile target)]
     [artifact-path : String
-      (build-package-artifact-path-profile
-        manifest-dir
-        name
-        kind
-        profile
-        target)]
-    [tlci-path : String
-      (build-package-tlci-path-profile manifest-dir name profile)]
+      (build-package-runtime-artifact-path artifact-paths)]
+    [tlci-path : String (build-package-host-tlci-artifact-path artifact-paths)]
     [_reset-file-state : unit (compiler-driver-reset-file-state!)]
     (if (not (build-ensure-package-output-dirs manifest-dir name profile))
       (begin
@@ -3922,6 +4118,8 @@
     [manifest-path : String (struct-get node manifest-path)]
     [manifest : CompilerPkgManifest (struct-get node manifest)]
     [name : String (struct-get manifest name)]
+    [artifacts : BuildPackageArtifactPaths
+      (build-package-graph-node-artifact-paths node profile target)]
     [command : ProcessCommand
       (build-package-worker-command
         manifest-path
@@ -3933,7 +4131,8 @@
         stdlib-roots)]
     (match (process-start command)
       [(OkProcessChild child)
-        (OkBuildPackageGraphWorker (BuildPackageGraphWorker node child))]
+        (OkBuildPackageGraphWorker
+          (BuildPackageGraphWorker node artifacts child))]
       [(ErrProcessChild error)
         (ErrBuildPackageGraphWorker
           (string-append
@@ -4039,6 +4238,7 @@
           [worker : BuildPackageGraphWorker
             (build-package-graph-worker-vec-at workers index)]
           [node : BuildPackageGraphNode (struct-get worker node)]
+          [artifacts : BuildPackageArtifactPaths (struct-get worker artifacts)]
           [manifest-path : String (struct-get node manifest-path)]
           [manifest : CompilerPkgManifest (struct-get node manifest)]
           [name : String (struct-get manifest name)]
@@ -4050,9 +4250,41 @@
                 (begin
                   (source-tool-forward-output output)
                   (if (process-success? output)
-                    (set!
-                      next-built
-                      (string-i64-map-put next-built manifest-path 1))
+                    (let
+                      [runtime-path : String (struct-get artifacts runtime)]
+                      [runtime-state : BuildPackageArtifactState
+                        (build-package-artifact-file-state runtime-path)]
+                      (if (build-package-artifact-state-dirty? runtime-state)
+                        (begin
+                          (print-error
+                            (build-package-artifact-status-error-message
+                              name
+                              "target runtime"
+                              runtime-path
+                              runtime-state))
+                          (set!
+                            next-failed-status
+                            (build-package-failure-status next-failed-status 1)))
+                        (let
+                          [tlci-path : String (struct-get artifacts tlci)]
+                          [tlci-state : BuildPackageArtifactState
+                            (build-package-artifact-file-state tlci-path)]
+                          (if (build-package-artifact-state-dirty? tlci-state)
+                            (begin
+                              (print-error
+                                (build-package-artifact-status-error-message
+                                  name
+                                  "host tlci"
+                                  tlci-path
+                                  tlci-state))
+                              (set!
+                                next-failed-status
+                                (build-package-failure-status
+                                  next-failed-status
+                                  1)))
+                            (set!
+                              next-built
+                              (string-i64-map-put next-built manifest-path 1))))))
                     (let
                       [status : i64 (process-output-status output)]
                       (begin

@@ -2762,7 +2762,10 @@ Example:
   Package builds also produce a metadata-only comptime image named
   `<package-name>.tlci` in the same profile directory. Dependency package DAG
   builds produce the dependency package's tlci file next to its static archive
-  without changing runtime link behavior.
+  without changing runtime link behavior. The tlci path is target-independent
+  in v1 because metadata-only images carry host compile-time metadata rather
+  than target runtime object code; cross-target package builds keep target
+  runtime artifacts separate while sharing the same host comptime image path.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`

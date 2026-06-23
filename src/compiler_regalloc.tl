@@ -3913,6 +3913,65 @@
                     var
                     (CompilerRegRegister spill-reg))))])])]))
 
+;; Does `var` already hold a hard register (single or pair) in the table? Used to
+;; let the primary callee-saved pass skip values a prior pass already homed.
+(define (compiler-reg-assignment-table-register-assigned?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : bool
+  (match (compiler-reg-assignment-table-lookup assignments var)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister _) true]
+        [(CompilerRegRegisterPair _ _) true]
+        [_ false])]
+    [(CompilerRegNoLocation) false]))
+
+;; Drop candidates whose var already holds a register in `assignments`, preserving
+;; order. The call-spanning-aware pre-pass (#perf) homes non-call-spanning values
+;; in the caller-saved zero-call pool first; filtering them out keeps the primary
+;; callee-saved pass from re-homing them, so the callee-saved registers stay free
+;; for the call-spanning values that genuinely need them.
+(define (compiler-reg-filter-unassigned-candidates
+  [candidates : CompilerRegIntervalList]
+  [assignments : CompilerRegAssignmentTable]) : CompilerRegIntervalList
+  (match candidates
+    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var _ _)
+          (let
+            [tail : CompilerRegIntervalList
+              (compiler-reg-filter-unassigned-candidates
+                (box-get rest)
+                assignments)]
+            (if (compiler-reg-assignment-table-register-assigned?
+              assignments
+              var)
+              tail
+              (compiler-reg-interval-cons interval tail)))])]))
+
+;; Count candidates whose live range crosses a caller-clobber point, i.e. values
+;; that MUST be homed in the callee-saved pool (they cannot live in a caller-saved
+;; register a call/shift/div would clobber). When this exceeds the callee-saved
+;; register count the pool is oversubscribed and the call-spanning-aware pre-pass
+;; pays off; below it, the callee-saved pool has slack and forcing scratch into
+;; the small caller-saved pool would only add scratch-register churn.
+(define (compiler-reg-count-clobber-spanning-candidates
+  [candidates : CompilerRegIntervalList]
+  [clobber-points : CompilerLiveI64Set]) : i64
+  (match candidates
+    [(CompilerRegIntervalNil) 0]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval _ start end)
+          (+
+            (if (compiler-reg-call-set-in-range? clobber-points start end)
+              1
+              0)
+            (compiler-reg-count-clobber-spanning-candidates
+              (box-get rest)
+              clobber-points))])]))
+
 (define (compiler-reg-assign-candidates
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
@@ -7214,12 +7273,74 @@
             (array-length (struct-get interval-index starts)))
           (make-array i64 0))
         (make-array i64 0))]
+    ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
+    ;; registers). Hoisted so the call-spanning-aware pre-pass and the existing
+    ;; caller-saved overflow pass share one computation.
+    [clobber-points : CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (compiler-reg-backend-caller-clobber-points func)
+        (compiler-live-set-empty))]
+    ;; #perf call-spanning-aware register partitioning: home non-call-spanning
+    ;; values in the caller-saved zero-call pool (%r9/%rcx/%rdx) FIRST, so short-
+    ;; lived scratch never grabs a callee-saved register that a value living across
+    ;; a call needs. The primary callee-saved pass below then sees only the
+    ;; call-spanning values (plus any caller-saved overflow), which relieves the
+    ;; 5-register pressure that otherwise spills hot call-spanning values such as a
+    ;; hashmap handle threaded through put/get/remove. The pass is the same one
+    ;; that ran as an overflow step after the primary pass; running it first (and
+    ;; filtering its picks out of the primary candidate list) only changes WHICH
+    ;; pool each value prefers, never soundness -- it still homes solely values
+    ;; whose live range crosses no clobber point.
+    ;;
+    ;; Gated on genuine callee-saved pressure: only when the count of values that
+    ;; MUST be callee-saved (clobber-spanning) meets or exceeds the callee-saved
+    ;; register count is the pool oversubscribed enough for displacing scratch to
+    ;; pay off. Below that the callee-saved pool has slack, and pushing scratch
+    ;; into the tiny %rcx/%rdx pool (the backend's shift/mul scratch) only adds
+    ;; churn -- e.g. tight numeric loops with a few live values. SIMD/AVX
+    ;; (allow-caller-saved-zero-call = false) skips this and stays byte-identical.
+    [use-partition : bool
+      (and
+        allow-caller-saved-zero-call
+        ;; Only when fewer values than the callee-saved register count MUST be
+        ;; callee-saved (i.e. cross a clobber point) does displacing scratch into
+        ;; the caller-saved zero-call pool pay off -- it frees the callee-saved
+        ;; pool for the values that genuinely need it. When the function already
+        ;; has >= 5 clobber-spanning values the callee-saved pool is committed and
+        ;; the existing primary+eviction passes handle the pressure; partitioning
+        ;; there only pushes scratch into the backend's %rcx/%rdx scratch and
+        ;; regresses tight numeric loops (crc32).
+        (<
+          (compiler-reg-count-clobber-spanning-candidates
+            integer-candidates
+            clobber-points)
+          (compiler-reg-sysv-integer-register-count)))]
+    [prepass-state : CompilerRegAssignState
+      (if use-partition
+        (compiler-reg-assign-caller-saved-zero-call-candidates
+          integer-candidates
+          (compiler-reg-zero-call-caller-saved-integer-registers)
+          CompilerRegActiveNil
+          assignment-table
+          eff-index
+          group-vars
+          clobber-points)
+        (CompilerRegAssignState CompilerRegActiveNil assignment-table))]
+    [prepass-assignments : CompilerRegAssignmentTable
+      (match prepass-state
+        [(CompilerRegAssignState _ assignments) assignments])]
+    [primary-candidates : CompilerRegIntervalList
+      (if use-partition
+        (compiler-reg-filter-unassigned-candidates
+          integer-candidates
+          prepass-assignments)
+        integer-candidates)]
     [integer-state : CompilerRegAssignState
       (compiler-reg-assign-candidates
-        integer-candidates
+        primary-candidates
         integer-registers
         CompilerRegActiveNil
-        assignment-table
+        prepass-assignments
         moves
         eff-coalesce
         allow-caller-saved-zero-call
@@ -7242,7 +7363,7 @@
           integer-assignments
           eff-index
           group-vars
-          (compiler-reg-backend-caller-clobber-points func))
+          clobber-points)
         (CompilerRegAssignState CompilerRegActiveNil integer-assignments))]
     [integer-with-caller-assignments : CompilerRegAssignmentTable
       (match integer-with-caller-state
@@ -11374,12 +11495,19 @@
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 0)
+        ;; #perf call-spanning-aware partitioning homes the non-call-spanning
+        ;; values in the caller-saved zero-call pool (%r9/%rcx/%rdx) FIRST, in
+        ;; candidate order, so they now land on the leading vars rather than as a
+        ;; trailing overflow. Every value still gets a register (0 spills).
         (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 5)
+          (compiler-reg-assignment-lookup assignments 0)
           "%r9")
         (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 6)
-          "%rcx"))]))
+          (compiler-reg-assignment-lookup assignments 1)
+          "%rcx")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%rdx"))]))
 
 (cfg
   test
@@ -11390,14 +11518,18 @@
       [(CompilerRegPlan assignments _ _ _ _)
         (and
           (= (compiler-reg-spill-count assignments) 0)
+          ;; #perf call-spanning-aware partitioning fills the caller-saved
+          ;; zero-call pool (%r9/%rcx/%rdx) in candidate order, so the first three
+          ;; zero-call values (5,6,7) take it and the rest fall to callee-saved;
+          ;; every value still gets a register past the pinned-param conflicts.
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 5)
             "%r9")
           (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 11)
+            (compiler-reg-assignment-lookup assignments 6)
             "%rcx")
           (compiler-reg-location-register?
-            (compiler-reg-assignment-lookup assignments 12)
+            (compiler-reg-assignment-lookup assignments 7)
             "%rdx"))])))
 
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
@@ -11552,11 +11684,6 @@
         (set!
           instrs
           (compiler-ir-instr-cons
-            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
             (IrInstrStore "use5" (IrValueVar 5) (compiler-reg-i64-ty))
             instrs))
         (set!
@@ -11573,6 +11700,16 @@
           instrs
           (compiler-ir-instr-cons
             (IrInstrStore "use2" (IrValueVar 2) (compiler-reg-i64-ty))
+            instrs))
+        ;; #perf: syscall after the uses so every value crosses it (call-spanning)
+        ;; -- the partition gates off and the 6 candidates oversubscribe the 5
+        ;; callee-saved registers. var0 is the rematerialisable constant, so the
+        ;; remat spill-weight discount makes it the eviction victim despite its
+        ;; extra use.
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
             instrs))
         (set!
           instrs
@@ -11643,6 +11780,11 @@
 (cfg
   test
   (define (compiler-reg-spill-weight-eviction-function) : CompilerIrFunction
+    ;; #perf: every value crosses the syscall (call-spanning), so the call-
+    ;; spanning-aware partition is gated off and the 6 candidates genuinely
+    ;; oversubscribe the 5 callee-saved registers. var0 is hot (3 uses), vars 2-5
+    ;; are medium (2 uses), var1 is the unique coldest (1 use) and is the
+    ;; spill-weight eviction victim.
     (let
       [instrs : CompilerIrInstrList IrInstrNil]
       (begin
@@ -11670,27 +11812,47 @@
         (set!
           instrs
           (compiler-ir-instr-cons
+            (IrInstrStore "use5b" (IrValueVar 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use5a" (IrValueVar 5) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use4b" (IrValueVar 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use4a" (IrValueVar 4) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use3b" (IrValueVar 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use3a" (IrValueVar 3) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use2b" (IrValueVar 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (IrInstrStore "use2a" (IrValueVar 2) (compiler-reg-i64-ty))
+            instrs))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
             (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrStore "use5" (IrValueVar 5) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrStore "use4" (IrValueVar 4) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrStore "use3" (IrValueVar 3) (compiler-reg-i64-ty))
-            instrs))
-        (set!
-          instrs
-          (compiler-ir-instr-cons
-            (IrInstrStore "use2" (IrValueVar 2) (compiler-reg-i64-ty))
             instrs))
         (set!
           instrs
@@ -11747,6 +11909,10 @@
 (cfg
   test
   (define (compiler-reg-loop-spill-weight-eviction-function) : CompilerIrFunction
+    ;; #perf: all six values cross the entry syscall (call-spanning) so the
+    ;; partition gates off. var0 and vars 2-5 are used inside the loop (loop-depth
+    ;; weighted) while var1 is the single cold exit value -- the unique
+    ;; spill-weight eviction victim despite var0/var1 sharing one static use each.
     (IrFunction
       "loop_spill_weight_eviction"
       IrParamNil
@@ -11768,40 +11934,24 @@
                     (compiler-ir-instr-cons
                       (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
-                        (IrInstrStore
-                          "use2"
-                          (IrValueVar 2)
-                          (compiler-reg-i64-ty))
-                        (compiler-ir-instr-cons
-                          (IrInstrStore
-                            "use3"
-                            (IrValueVar 3)
-                            (compiler-reg-i64-ty))
-                          (compiler-ir-instr-cons
-                            (IrInstrStore
-                              "use4"
-                              (IrValueVar 4)
-                              (compiler-reg-i64-ty))
-                            (compiler-ir-instr-cons
-                              (IrInstrStore
-                                "use5"
-                                (IrValueVar 5)
-                                (compiler-reg-i64-ty))
-                              (compiler-ir-instr-cons
-                                (IrInstrSyscall
-                                  6
-                                  (IrCallArgsOne (IrValueI64 39)))
-                                (compiler-ir-instr-cons
-                                  (IrInstrJump "loop")
-                                  IrInstrNil)))))))))))))
+                        (IrInstrSyscall 6 (IrCallArgsOne (IrValueI64 39)))
+                        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "loop"
             (compiler-ir-instr-cons
               (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (IrInstrBranch (IrValueBool false) "body" "exit")
-                IrInstrNil)))
+                (IrInstrStore "hot2" (IrValueVar 2) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "hot3" (IrValueVar 3) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrStore "hot4" (IrValueVar 4) (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (IrInstrStore "hot5" (IrValueVar 5) (compiler-reg-i64-ty))
+                      (compiler-ir-instr-cons
+                        (IrInstrBranch (IrValueBool false) "body" "exit")
+                        IrInstrNil)))))))
           (compiler-ir-block-cons
             (compiler-ir-block
               "body"

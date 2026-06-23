@@ -9851,7 +9851,10 @@
 (define (compiler-reg-remat-use-site-ok? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrPhi _ _ _) false]
-    [_ true]))
+    ;; Remat temps are assigned to caller-clobbered homes for a single expanded
+    ;; instruction. Avoid instructions whose backend expansion may clobber those
+    ;; homes before every operand has been consumed.
+    [_ (not (compiler-reg-backend-caller-clobber-instr? instr))]))
 
 (define (compiler-reg-remat-instr-list-onto
   [items : CompilerIrInstrList]
@@ -11899,6 +11902,32 @@
 
 (cfg
   test
+  (define (compiler-reg-instr-list-has-call-indirect-var?
+    [instrs : CompilerIrInstrList]
+    [callee : i64]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrCallIndirect _ found-callee _ _)
+            (match found-callee
+              [(IrValueVar found)
+                (if (= found callee)
+                  true
+                  (compiler-reg-instr-list-has-call-indirect-var?
+                    (box-get rest)
+                    callee))]
+              [_
+                (compiler-reg-instr-list-has-call-indirect-var?
+                  (box-get rest)
+                  callee)])]
+          [_
+            (compiler-reg-instr-list-has-call-indirect-var?
+              (box-get rest)
+              callee)])])))
+
+(cfg
+  test
   (define (compiler-reg-first-block-instr-list [blocks : CompilerIrBlockList]) : CompilerIrInstrList
     (match blocks
       [(IrBlockCons block _)
@@ -11967,6 +11996,24 @@
                 (compiler-ir-instr-cons
                   (IrInstrStore "keep1" (IrValueVar 1) (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-caller-clobber-function) : CompilerIrFunction
+    (IrFunction
+      "remat_caller_clobber"
+      IrParamNil
+      (AstTyUnit)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueGlobalAddr "callee") (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrCallIndirect 1 (IrValueVar 0) IrCallArgsNil (AstTyUnit))
+              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))
         IrBlockNil))))
 
 (cfg
@@ -12097,6 +12144,34 @@
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
                   (compiler-reg-instr-list-has-store-var? items "use0" 0)))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-caller-clobber-refusal-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-caller-clobber-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars vars)
+                  (= (compiler-reg-assignment-count extra-assignments) 0)
+                  (compiler-reg-instr-list-has-call-indirect-var? items 0)))])]))))
 
 (cfg
   test
@@ -13755,6 +13830,7 @@
     (cfg test (compiler-reg-remat-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-remat-rewrite-shape-ok?) true)
     (cfg test (compiler-reg-remat-register-conflict-ok?) true)
+    (cfg test (compiler-reg-remat-caller-clobber-refusal-ok?) true)
     (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-call-span-counts-ok?) true)

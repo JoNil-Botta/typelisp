@@ -43,48 +43,6 @@ Summary:
     (int->string (* count record-size))
     "\n"))
 
-(define (tlci-inspect-export-line [entry : TlciExport]) : String
-  (match (struct-get entry kind)
-    [(TlciExportValue)
-      (str-cat
-        "  value "
-        (struct-get entry name)
-        " signature="
-        (struct-get entry signature)
-        "\n")]
-    [(TlciExportType)
-      (str-cat
-        "  type "
-        (struct-get entry name)
-        " layout="
-        (struct-get entry layout)
-        "\n")]
-    [(TlciExportMacro)
-      (str-cat
-        "  macro "
-        (struct-get entry name)
-        " signature="
-        (struct-get entry signature)
-        "\n")]))
-
-(define (tlci-inspect-export-list-empty? [exports : TlciExportList]) : bool
-  (match exports
-    [(TlciExportNil) true]
-    [_ false]))
-
-(define (tlci-inspect-export-lines [exports : TlciExportList]) : String
-  (match exports
-    [(TlciExportNil) ""]
-    [(TlciExportCons entry rest)
-      (str-cat
-        (tlci-inspect-export-line entry)
-        (tlci-inspect-export-lines (box-get rest)))]))
-
-(define (tlci-inspect-exports [exports : TlciExportList]) : String
-  (if (tlci-inspect-export-list-empty? exports)
-    "  (none)\n"
-    (tlci-inspect-export-lines exports)))
-
 (define (tlci-inspect-render [bytes : (Array u8)] [image : TlciImage]) : String
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
@@ -151,9 +109,7 @@ Summary:
         "symbols"
         (tlci-read-u64 bytes 136)
         (tlci-read-u64 bytes 144)
-        tlci-section-symbol-record-size)
-      "exports:\n"
-      (tlci-inspect-exports (struct-get metadata exports)))))
+        tlci-section-symbol-record-size))))
 
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))

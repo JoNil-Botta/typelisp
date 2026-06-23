@@ -269,9 +269,9 @@ generic/type-constructor work in #483 is superseded by that chain.
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
 `extern`, and `import`. The selfhost module/macro path also supports `module`
 and `defmacro` for typed expression macro workflows; every top-level item is
-exported by default, so the legacy `export` form is deprecated (still parsed but
-inert). The final stdlib-macro migration of parser-owned core forms remains
-separate.
+exported by default, and the legacy `export` form has been removed (it is no
+longer a recognized declaration). The final stdlib-macro migration of
+parser-owned core forms remains separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion

@@ -2377,13 +2377,12 @@ is still a source-located error; there is no separate private/exported check.
 ;; module that imports `geometry`.
 ```
 
-> **Deprecation (transitional).** Earlier revisions gated visibility with an
-> explicit top-level `(export (value ...) (type ...) (macro ...)
-> (constructor ...) (field ...) (variant ...))` form, and modules were private
-> by default. That form is deprecated: it is still parsed and accepted for
-> source compatibility, but it no longer affects visibility (everything is
-> exported by default) and is scheduled for removal together with its
-> module-metadata and reflection surfaces. New code must not use it.
+> **Removed.** Earlier revisions gated visibility with an explicit top-level
+> `(export (value ...) (type ...) (macro ...) (constructor ...) (field ...)
+> (variant ...))` form, and modules were private by default. That form has been
+> removed: it is no longer a recognized declaration, and there is no
+> private/public distinction. Its module-metadata and compile-time reflection
+> surfaces were removed with it.
 
 #### 4.4.3 Qualified lookup
 
@@ -4376,30 +4375,6 @@ V1 primitive names and signatures are fixed as follows:
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
 
-Module export reflection is also compile-time-only metadata. It deliberately
-uses canonical module identity strings, such as the result of
-`type-nominal-module`, and does not introduce runtime `Module` handles.
-
-> **Deprecation (transitional).** These `module-export-*` queries are tied to the
-> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
-> item is exported by default they are redundant, and they are scheduled for
-> removal together with the export form. New code must not rely on them.
-
-| Primitive | Result | Notes |
-| --- | --- | --- |
-| `(module-export-value? module-expr name-expr)` | `bool` | True when `module-expr` exports a value named `name-expr`. Constructors, variants, and fields remain separate export kinds and are not reported as ordinary values. |
-| `(module-export-type? module-expr name-expr)` | `bool` | True when the module exports a nominal type with that name. |
-| `(module-export-macro? module-expr name-expr)` | `bool` | True when the module exports a macro with that name. |
-| `(module-export-value-type module-expr name-expr)` | `type` | Exported value type; function values reflect as function types that can be inspected with `function-param-*` and `function-return-type`. Missing exports are diagnostics. |
-| `(module-export-type module-expr name-expr)` | `type` | Exported nominal type. Missing exports are diagnostics. |
-| `(module-export-macro-type module-expr name-expr)` | `type` | Exported macro signature represented as a function type over macro operand types and produced type. Missing exports are diagnostics. |
-
-`module-expr` and `name-expr` must evaluate to compile-time `String` values.
-Missing-export diagnostics name the queried module, export kind, and export
-name. The boolean query forms are the non-panicking path for probing optional
-APIs; the `*-type` forms are assertion-style queries for code generators that
-need to validate a required shape.
-
 Selfhost v1 implements this surface in CTFE for explicit `(comptime ...)` folds
 and comptime parameter evaluation. `String` and `type` metadata remain
 compile-time-only; programs may compare or compose them in CTFE, but direct
@@ -4745,28 +4720,15 @@ The metadata section is UTF-8/ASCII S-expression text with stable field order:
 ```lisp test=ignore name=tlci-metadata-schema reason="tlci metadata S-expression, not TypeLisp source"
 (typelisp-tlci-metadata
   (version "v1")
-  (package (name "pkg-name") (version "0.1.0"))
-  (exports
-    (value (name "answer") (signature "(-> i64)"))
-    (type (name "Point") (layout "size=16 align=8"))
-    (macro (name "with-temp") (signature "(Expr)->Expr"))))
+  (package (name "pkg-name") (version "0.1.0")))
 ```
 
 `version` gates the schema. `package` gives the package identity as it appears
-in `typelisp.pkg`. `exports` is sorted deterministically by kind
-(`value`, `type`, `macro`) and then by name. Value and macro exports require a
-`signature` string; type exports require a `layout` string. The strings are
-compiler-owned schema payloads: consumers compare them for equality and use
-future schema versions to understand richer structure, but v1 helpers do not
-interpret the signature/layout languages. Duplicate `(kind, name)` exports,
-unknown fields, unsupported versions, malformed S-expressions, empty required
-sections, bad magic/version/arch/ABI/hash, and truncated section ranges are
-diagnostics.
-
-> **Deprecation (transitional).** The `exports` section currently mirrors the
-> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
-> item is exported by default, the section's contents and its role in the image
-> schema are scheduled to be reworked or removed alongside the export form.
+in `typelisp.pkg`. Unknown fields, unsupported versions, malformed
+S-expressions, empty required sections, bad magic/version/arch/ABI/hash, and
+truncated section ranges are diagnostics. (Earlier revisions also carried an
+`exports` section mirroring the removed `(export ...)` form; it no longer
+exists.)
 
 Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
 are all empty. Code-bearing tlci files are valid with synthetic payload bytes

@@ -102,16 +102,3 @@
       (io-caller-result-test-string-eq
         (read-file-or-result-string manual-owned)
         "contents"))))
-
-(export
-  (value read-file-or-result-borrowed?)
-  (value read-file-or-result-owned?)
-  (value read-file-or-borrowed-result)
-  (value read-file-or-owned-result-like)
-  (value read-file-or-result-string)
-  (value read-file-or-result)
-  (type ReadFileOrResult)
-  (constructor ReadFileOrResult)
-  (field ReadFileOrResult fallback)
-  (field ReadFileOrResult owned)
-  (field ReadFileOrResult is-owned))

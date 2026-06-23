@@ -200,14 +200,6 @@
   (OkAstDeclName String)
   (ErrAstDeclName String))
 
-(defenum ResultAstExportItem
-  (OkAstExportItem AstExportItem)
-  (ErrAstExportItem String))
-
-(defenum ResultAstExportItemList
-  (OkAstExportItemList AstExportItemList)
-  (ErrAstExportItemList String))
-
 (defenum ResultAstDecl
   (OkAstDecl AstDecl)
   (ErrAstDecl String))
@@ -762,9 +754,6 @@
 (define (compiler-parse-tag-decl-defmacro) : i64
   408)
 
-(define (compiler-parse-tag-decl-export) : i64
-  409)
-
 (define (compiler-parse-tag-decl-include-str) : i64
   410)
 
@@ -1045,10 +1034,8 @@
     [e9 : SymI64Env (sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
     [e10 : SymI64Env
       (sym-i64-bind e9 "defmacro" (compiler-parse-tag-decl-defmacro))]
-    [e11 : SymI64Env
-      (sym-i64-bind e10 "export" (compiler-parse-tag-decl-export))]
     [e12 : SymI64Env
-      (sym-i64-bind e11 "include-str" (compiler-parse-tag-decl-include-str))]
+      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
     [e13 : SymI64Env
       (sym-i64-bind e12 "include-bin" (compiler-parse-tag-decl-include-bin))]
     (sym-i64-bind e13 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
@@ -6175,112 +6162,6 @@
         [_ (ErrAstDecl "parse: include-bin name must be a symbol")])]
     [_ (ErrAstDecl "parse: malformed include-bin")]))
 
-(define (parse-ast-export-item [item : SpannedSexpr]) : ResultAstExportItem
-  (match item
-    [(SpSCons kind-node rest _)
-      (match (sp-node-get kind-node)
-        [(SpSSym kind _)
-          (cond
-            [(string-eq kind "value")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportValue name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "type")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _) (OkAstExportItem (AstExportType name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "macro")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportMacro name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "constructor")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportConstructor name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "field")
-              (match (sp-node-get rest)
-                [(SpSCons type-node field-tail _)
-                  (match (sp-node-get field-tail)
-                    [(SpSCons field-node end _)
-                      (match (sp-node-get end)
-                        [(SpSNil _)
-                          (match (sp-node-get type-node)
-                            [(SpSSym type-name _)
-                              (match (sp-node-get field-node)
-                                [(SpSSym field-name _)
-                                  (OkAstExportItem
-                                    (AstExportField type-name field-name))]
-                                [_
-                                  (ErrAstExportItem
-                                    "parse: malformed export item")])]
-                            [_
-                              (ErrAstExportItem "parse: malformed export item")])]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "variant")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportVariant name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [else (ErrAstExportItem "parse: unknown export item kind")])]
-        [_ (ErrAstExportItem "parse: malformed export item")])]
-    [_ (ErrAstExportItem "parse: malformed export item")]))
-
-(define (parse-ast-export-item-list [items : SpannedSexpr]) : ResultAstExportItemList
-  (match items
-    [(SpSNil _) (OkAstExportItemList AstExportItemNil)]
-    [(SpSCons item rest _)
-      (match (parse-ast-export-item (sp-node-get item))
-        [(OkAstExportItem parsed)
-          (match (parse-ast-export-item-list (sp-node-get rest))
-            [(OkAstExportItemList parsed-rest)
-              (OkAstExportItemList (ast-export-item-cons parsed parsed-rest))]
-            [(ErrAstExportItemList message) (ErrAstExportItemList message)])]
-        [(ErrAstExportItem message) (ErrAstExportItemList message)])]
-    [_ (ErrAstExportItemList "parse: malformed export item")]))
-
-(define (parse-ast-export [rest : SpannedSexpr]) : ResultAstDecl
-  (match rest
-    [(SpSNil _) (ErrAstDecl "parse: export needs at least one item")]
-    [_
-      (match (parse-ast-export-item-list rest)
-        [(OkAstExportItemList items) (OkAstDecl (AstDeclExport items))]
-        [(ErrAstExportItemList message) (ErrAstDecl message)])]))
-
 (define (parse-ast-test-body [pools : AstNodePoolContext] [exprs : AstExprList]) : i64
   (match exprs
     [(AstExprCons only rest)
@@ -6636,8 +6517,6 @@
                 (parse-ast-include-bin (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-module))
                 (parse-ast-module (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-export))
-                (parse-ast-export (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-comptime-decl))
                 (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
               [(= tag (compiler-parse-tag-expr-unsafe))
@@ -7290,78 +7169,6 @@
     (compiler-parse-error-ok?
       "(include-bin payload)"
       "parse: include-bin expects name and string path")))
-
-(define (compiler-parse-export-items-shape-ok? [items : AstExportItemList]) : bool
-  (match items
-    [(AstExportItemCons (AstExportValue value-name) rest0)
-      (let
-        [rest0 : AstExportItemList (box-get rest0)]
-        (match rest0
-          [(AstExportItemCons (AstExportType type-name) rest1)
-            (let
-              [rest1 : AstExportItemList (box-get rest1)]
-              (match rest1
-                [(AstExportItemCons (AstExportMacro macro-name) rest2)
-                  (let
-                    [rest2 : AstExportItemList (box-get rest2)]
-                    (match rest2
-                      [(AstExportItemCons
-                          (AstExportConstructor ctor-name)
-                          rest3)
-                        (let
-                          [rest3 : AstExportItemList (box-get rest3)]
-                          (match rest3
-                            [(AstExportItemCons
-                                (AstExportField field-type field-name)
-                                rest4)
-                              (let
-                                [rest4 : AstExportItemList (box-get rest4)]
-                                (match rest4
-                                  [(AstExportItemCons
-                                      (AstExportVariant variant-name)
-                                      rest5)
-                                    (let
-                                      [rest5 : AstExportItemList
-                                        (box-get rest5)]
-                                      (match rest5
-                                        [(AstExportItemNil)
-                                          (and
-                                            (string-eq value-name "make-point")
-                                            (string-eq type-name "Point")
-                                            (string-eq macro-name "and2")
-                                            (string-eq ctor-name "Point")
-                                            (string-eq field-type "Point")
-                                            (string-eq field-name "x")
-                                            (string-eq variant-name "Some"))]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-export-decl-ok?) : bool
-  (match (parse-ast-source
-    "(export
-  (value make-point)
-  (type Point)
-  (macro and2)
-  (constructor Point)
-  (field Point x)
-  (variant Some))")
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclExport items) rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil) (compiler-parse-export-items-shape-ok? items)]
-                [_ false]))]
-          [_ false]))]
-    [(ErrAstProgram _) false]))
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : AstDispatchVariantList]) : bool
@@ -9077,8 +8884,6 @@
     (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (import \"x.tl\"))")
     (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (export (value x)))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (cfg feature (define x : i64 1)))")
     (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (test t 1))")
@@ -9087,15 +8892,6 @@
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
-
-(define (compiler-parse-empty-export-source) : String
-  "(export)")
-
-(define (compiler-parse-malformed-export-item-source) : String
-  "(export (field Point))")
-
-(define (compiler-parse-unknown-export-kind-source) : String
-  "(export (namespace x))")
 
 (define (compiler-parse-malformed-import-source) : String
   "(import \"stdlib/io.tl\" as)")
@@ -9223,18 +9019,6 @@
     (compiler-parse-error-ok?
       "(unsafe (extern (a) : i64) (extern (b) : i64))"
       "parse: unsafe declaration expects exactly one declaration")))
-
-(define (compiler-parse-export-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      (compiler-parse-empty-export-source)
-      "parse: export needs at least one item")
-    (compiler-parse-error-ok?
-      (compiler-parse-malformed-export-item-source)
-      "parse: malformed export item")
-    (compiler-parse-error-ok?
-      (compiler-parse-unknown-export-kind-source)
-      "parse: unknown export item kind")))
 
 (define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
   (and
@@ -10180,7 +9964,6 @@
     (compiler-parse-import-metadata-ok?)
     (compiler-parse-dotted-import-metadata-ok?)
     (compiler-parse-module-macro-surface-ok?)
-    (compiler-parse-export-decl-ok?)
     (compiler-parse-defdispatch-tests-ok?)
     (compiler-parse-flat-let-call-body-ok?)
     (compiler-parse-inline-test-ok?)
@@ -10212,7 +9995,6 @@
     (compiler-parse-with-scratch-tests-ok?)
     (compiler-parse-in-arena-tests-ok?)
     (compiler-parse-quote-syntax-tests-ok?)
-    (compiler-parse-export-error-tests-ok?)
     (compiler-parse-define-export-metadata-error-tests-ok?)
     (compiler-parse-dotted-import-errors-ok?)))
 
@@ -10313,7 +10095,6 @@
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)
-        (compiler-parse-export-decl-ok?)
         (compiler-parse-defdispatch-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
         (compiler-parse-inline-test-ok?)
@@ -10353,7 +10134,6 @@
           (compiler-parse-defmacro-tests-ok?)
           (compiler-parse-resource-with-tests-ok?)
           (compiler-parse-quote-syntax-tests-ok?)
-          (compiler-parse-export-error-tests-ok?)
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42

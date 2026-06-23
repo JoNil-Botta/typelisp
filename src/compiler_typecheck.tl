@@ -214,37 +214,32 @@
         [(OkCompilerSymbols symbols)
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
-              (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports exports)
-                  (let
-                    [ctx : TcContext
-                      (TcContext
-                        program
-                        symbols
-                        registries
-                        exports
-                        ""
-                        (ast-node-pool-context-capture-active))]
-                    (match (tc-program-source-types-policy-ok ctx program)
+              (let
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
+                (match (tc-program-source-types-policy-ok ctx program)
+                  [(OkTcUnit)
+                    (match (tc-source-expr-policy-ok ctx expr)
                       [(OkTcUnit)
-                        (match (tc-source-expr-policy-ok ctx expr)
-                          [(OkTcUnit)
-                            (match (tc-build-top-env ctx program)
-                              [(OkTcEnv top-env)
-                                (match (tc-check-decls
-                                  ctx
-                                  top-env
-                                  decls
-                                  (CompilerTypecheckSummary 0 0 0))
-                                  [(OkCompilerTypecheck _)
-                                    (tc-expr ctx top-env expr)]
-                                  [(ErrCompilerTypecheck diag)
-                                    (ErrTcType
-                                      (compiler-diagnostic-message diag))])]
-                              [(ErrTcEnv message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)]))]
-                [(ErrCompilerExports message) (ErrTcType message)])]
+                        (match (tc-build-top-env ctx program)
+                          [(OkTcEnv top-env)
+                            (match (tc-check-decls
+                              ctx
+                              top-env
+                              decls
+                              (CompilerTypecheckSummary 0 0 0))
+                              [(OkCompilerTypecheck _)
+                                (tc-expr ctx top-env expr)]
+                              [(ErrCompilerTypecheck diag)
+                                (ErrTcType (compiler-diagnostic-message diag))])]
+                          [(ErrTcEnv message) (ErrTcType message)])]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcUnit message) (ErrTcType message)]))]
             [(ErrCompilerRegistries message) (ErrTcType message)])]
         [(ErrCompilerSymbols message) (ErrTcType message)]))))
 
@@ -1222,20 +1217,11 @@
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export (value get))
 (module right)
 (define same : i64 22)
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import left)
 (import right)
@@ -1262,14 +1248,6 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
@@ -1287,14 +1265,6 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import pkg.data)
 (define (main) : i64
@@ -1320,7 +1290,6 @@
 (define (compiler-typecheck-dot-field-local-shadows-alias-source) : String
   "(module pkg.data)
 (define (value) : i64 99)
-(export (value value))
 (module main)
 (import pkg.data)
 (defstruct Pair (value i64))
@@ -1337,7 +1306,6 @@
 (define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module pkg.macros)
 (defmacro (identity [x : Expr]) : Expr x)
 (module main)
@@ -1347,7 +1315,6 @@
 (define (compiler-typecheck-dotted-import-full-path-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import pkg.data)
 (define (main) : i64 (pkg.data.get))")
@@ -1355,17 +1322,14 @@
 (define (compiler-typecheck-dotted-import-full-path-unimported-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (define (main) : i64 (pkg.data.get))")
 
 (define (compiler-typecheck-dotted-import-explicit-alias-collision-source) : String
   "(module left.same)
 (define (get) : i64 20)
-(export (value get))
 (module right.same)
 (define (get) : i64 22)
-(export (value get))
 (module main)
 (import left.same as l)
 (import right.same as r)
@@ -1374,7 +1338,6 @@
 (define (compiler-typecheck-dotted-import-unqualified-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import pkg.data)
 (define (main) : i64 (get))")
@@ -1396,199 +1359,9 @@
 (define (compiler-typecheck-slash-qualified-rejected-source) : String
   "(module data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64 (d/get))")
-
-(define (compiler-typecheck-export-unknown-source) : String
-  "(module data)
-(export (value missing))
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-export-visibility-allowed-source) : String
-  "(module data)
-(define (get) : i64 20)
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64) (hidden i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (+
-    (d.get)
-    (+
-      (let ([p : d.Point (d.Point 7 9)])
-        (struct-get p x))
-      (match (d.Maybe.Some 3)
-        [(d.Maybe.Some v) v]
-        [d.Maybe.None 0]))))")
-
-(define (compiler-typecheck-export-private-alias-value-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64 d.private)")
-
-(define (compiler-typecheck-export-private-canonical-value-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import data)
-(define (main) : i64 data.private)")
-
-(define (compiler-typecheck-export-type-only-opaque-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(export (type Opaque))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (id [x : d.Opaque]) : d.Opaque x)
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-export-type-only-constructor-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(export (type Opaque))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : d.Opaque (d.Opaque 1))")
-
-(define (compiler-typecheck-export-type-only-field-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(define (make) : Opaque (Opaque 1))
-(export (type Opaque) (value make))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (let ([x : d.Opaque (d.make)])
-    (struct-get x value)))")
-
-(define (compiler-typecheck-export-generated-decl-source) : String
-  "(module data)
-(comptime-decl (:generated generated-family Generated \"i64\")
-  (defstruct Generated (value i64)))
-(export (type Generated) (constructor Generated) (field Generated value))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (let ([x : d.Generated (d.Generated 7)])
-    (struct-get x value)))")
-
-(define (compiler-typecheck-export-generated-cleanup-source) : String
-  "(module data)
-(define (close-fd [fd : i64]) : unit unit)
-(defstruct Guard
-  (:cleanup cleanup-guard)
-  (fd i64 (:cleanup close-fd)))
-(export
-  (type Guard)
-  (constructor Guard)
-  (field Guard fd)
-  (value cleanup-guard))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (with ([guard (d.Guard 42) d.cleanup-guard])
-    (struct-get guard fd)))")
-
-(define (compiler-typecheck-export-private-type-source) : String
-  "(module data)
-(defstruct Hidden (value i64))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main [x : d.Hidden]) : i64 0)")
-
-(define (compiler-typecheck-export-private-variant-pattern-source) : String
-  "(module data)
-(defenum Choice (Hidden i64) (Visible i64))
-(define (make) : Choice (Hidden 1))
-(export (type Choice) (variant Visible) (value make))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (match (d.make)
-    [(d.Hidden v) v]
-    [(d.Visible v) v]))")
-
-(define (compiler-typecheck-export-same-module-private-source) : String
-  "(module data)
-(define private : i64 2)
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64))
-(define (main) : i64
-  (+
-    data.private
-    (+
-      (let ([p : data.Point (data.Point 1)])
-        (struct-get p x))
-      (match (data.Maybe.Some 2)
-        [(data.Maybe.Some v) v]
-        [data.Maybe.None 0]))))")
-
-;; Everything is exported by default: items that are not named in a legacy
-;; `(export ...)` list are now reachable across modules, so the cases that used
-;; to be rejected as private must now type-check. These sources keep their
-;; "private" names because they describe the source shape (an item omitted from
-;; the export list), but the expectation is now success.
-(define (compiler-typecheck-export-visibility-tests-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-visibility-allowed-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-alias-value-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-canonical-value-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-opaque-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-constructor-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-field-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-generated-decl-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-generated-cleanup-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-type-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-variant-pattern-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-same-module-private-source))
-        unit
-        (set! ok false))
-      ok)))
 
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
@@ -1632,7 +1405,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
@@ -1690,7 +1462,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
@@ -1782,7 +1553,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
@@ -1807,7 +1577,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
@@ -1872,7 +1641,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
@@ -1901,7 +1669,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
@@ -1951,7 +1718,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
@@ -2180,13 +1946,8 @@
 (defstruct CtfeReflectInfoList
   (slots (Array CtfeReflectInfo))
   (len i64))
-(defenum CtfeModuleExportInfo
-  (CtfeModuleExportInfo String String String AstType))
-(defstruct CtfeModuleExportInfoList
-  (slots (Array CtfeModuleExportInfo))
-  (len i64))
 (defenum CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList CtfeModuleExportInfoList)
+  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
   (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
@@ -2198,8 +1959,7 @@
       (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
-      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList")
-      (compiler-typecheck-inline-layout-ok? src "CtfeModuleExportInfoList"))))
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList"))))
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
@@ -2545,14 +2305,6 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-slash-qualified-rejected-source)
         "typecheck: slash-qualified name d/get is no longer supported; use d.get")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-unknown-source)
-        "symbols: cannot export unknown value data/missing")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-export-visibility-tests-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-repr-c-tests-ok?)
@@ -3239,7 +2991,6 @@
 (define (compiler-typecheck-cleanup-struct-imported-cleanup-source) : String
   "(module cleanup)
 (define (close-fd [fd : i64]) : unit unit)
-(export (value close-fd))
 (module main)
 (import \"cleanup.tl\" module cleanup :as c)
 (defstruct FileHandle
@@ -6535,7 +6286,6 @@
 (define (compiler-typecheck-unsafe-import-safe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
-(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (f.danger 42))")
@@ -6543,7 +6293,6 @@
 (define (compiler-typecheck-unsafe-import-unsafe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
-(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (unsafe (f.danger 42)))")
@@ -6856,74 +6605,9 @@
 (define (compiler-typecheck-reflection-kind-mismatch-source) : String
   "(define (main) : i64 (comptime (struct-field-count (type i64))))")
 
-(define (compiler-typecheck-module-export-reflection-source) : String
-  "(module tc.module.export.reflection)
-(defstruct PublicBox (value i64))
-(define (iterator [box : PublicBox]) : PublicBox box)
-(defstruct PrivateBox (value i64))
-(defmacro (probe [x : Expr]) : i64 x)
-(export
-  (type PublicBox)
-  (constructor PublicBox)
-  (value iterator)
-  (macro probe))
-(define (main) : i64
-  (+ (comptime (if (module-export-value? \"tc.module.export.reflection\" \"iterator\") 1 0))
-     (+ (comptime (if (module-export-type? \"tc.module.export.reflection\" \"PublicBox\") 2 0))
-        (+ (comptime (if (module-export-macro? \"tc.module.export.reflection\" \"probe\") 4 0))
-           (+ (comptime
-                (if (string-eq
-                  (type-nominal-name
-                    (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
-                  \"PublicBox\")
-                  8
-                  0))
-              (+ (comptime
-                   (function-param-count
-                     (module-export-value-type \"tc.module.export.reflection\" \"iterator\")))
-                 (+ (comptime
-                      (if (not
-                        (module-export-type? \"tc.module.export.reflection\" \"PrivateBox\"))
-                        32
-                        0))
-                    (comptime
-                      (if (string-eq
-                        (type-nominal-module
-                          (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
-                        \"tc.module.export.reflection\")
-                        64
-                        0)))))))))")
-
-(define (compiler-typecheck-module-export-generated-source) : String
-  "(defmacro (gen) : Module
-  `(begin
-    (module generated.tc_export_reflection)
-    (defstruct GenBox (value i64))
-    (define (score [box : GenBox]) : i64 (struct-get box value))
-    (export
-      (type GenBox)
-      (constructor GenBox)
-      (value score))))
-(import (gen) as gen)
-(define (main) : bool
-  (comptime
-    (if (module-export-type? \"generated.tc_export_reflection\" \"GenBox\")
-      (module-export-value? \"generated.tc_export_reflection\" \"score\")
-      false)))")
-
-(define (compiler-typecheck-module-export-missing-source) : String
-  "(module tc.module.export.reflection)
-(define (main) : i64
-  (comptime
-    (function-param-count
-      (module-export-value-type \"tc.module.export.reflection\" \"missing\"))))")
-
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-module-export-reflection-source))
-    (compiler-typecheck-ok? (compiler-typecheck-module-export-generated-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-runtime-source)
       "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
@@ -6932,10 +6616,7 @@
       "String value is compile-time only")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-kind-mismatch-source)
-      "struct-field-count requires struct type")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-export-missing-source)
-      "module-export-value-type: module tc.module.export.reflection does not export value missing")))
+      "struct-field-count requires struct type")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -7207,7 +6888,6 @@
   "(module bool)
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
-(export (macro and2))
 (module main)
 (import \"bool.tl\" module bool :as b)
 (define (main) : i64
@@ -7219,27 +6899,8 @@
 (define (main) : i64
   (if (b.and-later true true) 42 0))
 (module bool)
-(export (macro and-later))
 (defmacro (and-later [lhs : bool] [rhs : bool]) : bool
   `(if ,lhs ,rhs false))")
-
-(define (compiler-typecheck-macro-private-source) : String
-  "(module hidden)
-(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
-  (expr-if lhs rhs (expr-bool false)))
-(module main)
-(import \"hidden.tl\" module hidden :as hidden)
-(define (main) : i64
-  (if (hidden.private-and true true) 0 1))")
-
-(define (compiler-typecheck-macro-missing-export-source) : String
-  "(module hidden)
-(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
-  (expr-if lhs rhs (expr-bool false)))
-(module main)
-(import \"hidden.tl\" module hidden :as hidden)
-(define (main) : i64
-  (if (hidden.missing true true) 0 1))")
 
 (define (compiler-typecheck-macro-forward-local-source) : String
   "(define eager : bool (late true))
@@ -7262,8 +6923,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen))
 (define (main) : i64 (answer))")
 
@@ -7271,8 +6931,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen) as generated)
 (define (main) : i64 (generated.answer))")
 
@@ -7280,8 +6939,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen))
 (import (gen))
 (define (main) : i64 (answer))")
@@ -7290,13 +6948,11 @@
   "(defmacro (gen-a) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (defmacro (gen-b) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 99)
-    (export (value answer))))
+    (define (answer) : i64 99)))
 (import (gen-a))
 (import (gen-b))
 (define (main) : i64 (answer))")
@@ -7337,7 +6993,6 @@
 (define (compiler-typecheck-decls-macro-import-followup-source) : String
   "(module generated)
 (define (answer) : i64 42)
-(export (value answer))
 (module main)
 (defmacro (gen) : Decls
   `(import generated))
@@ -7379,10 +7034,6 @@
   `(if ,condition ,body unit))
 (defmacro (unless [condition : bool] [body : unit]) : unit
   `(if ,condition unit ,body))
-(export (macro and))
-(export (macro or))
-(export (macro when))
-(export (macro unless))
 (module main)
 (define (main) : i64
       (let [value : i64 0]
@@ -7405,8 +7056,6 @@
     `(if ,(expr-list-head args)
        true
        (or ,@(expr-list-tail args)))))
-(export (macro and))
-(export (macro or))
 (module main)
 ")
 
@@ -7468,7 +7117,6 @@
   `(if (macro-helper ,condition)
      ,body
      0))
-(export (macro choose-helper))
 (module main)
 (import \"macros.tl\" module macros as m)
 (define (macro-helper [x : bool]) : i64 7)
@@ -7482,7 +7130,6 @@
   `(if (macro-helper ,condition)
      ,body
      0))
-(export (macro choose-helper))
 (module main)
 (import pkg.macros)
 (define (macro-helper [x : bool]) : i64 7)
@@ -7492,7 +7139,6 @@
 (define (compiler-typecheck-macro-qualified-local-alias-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module main)
 (import pkg.data)
 (defmacro (call-get) : i64 `(data.get))
@@ -7501,7 +7147,6 @@
 (define (compiler-typecheck-macro-qualified-local-full-path-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module main)
 (import pkg.data)
 (defmacro (call-get) : i64 `(pkg.data.get))
@@ -7511,8 +7156,6 @@
   "(module pkg.macros)
 (define (helper) : i64 41)
 (defmacro (call-helper) : i64 `(pkg.macros.helper))
-(export (value helper))
-(export (macro call-helper))
 (module main)
 (import pkg.macros)
 (define (main) : i64 (+ (macros.call-helper) 1))")
@@ -7521,8 +7164,6 @@
   "(module pkg.macros)
 (defmacro (helper [x : i64]) : i64 `(+ ,x 1))
 (defmacro (call-helper [x : i64]) : i64 `(pkg.macros.helper ,x))
-(export (macro helper))
-(export (macro call-helper))
 (module main)
 (import pkg.macros)
 (define (main) : i64 (macros.call-helper 41))")
@@ -7530,29 +7171,18 @@
 (define (compiler-typecheck-macro-qualified-imported-other-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module pkg.macros)
 (import pkg.data)
 (defmacro (call-data) : i64 `(data.get))
-(export (macro call-data))
 (module main)
 (import pkg.data)
 (import pkg.macros)
 (define (main) : i64 (+ (macros.call-data) 1))")
 
-(define (compiler-typecheck-macro-qualified-private-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import data)
-(defmacro (call-private) : i64 `data.private)
-(define (main) : i64 (call-private))")
-
 (define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
   "(module macros)
 (defmacro (dyn-len [items : Expr]) : i64
   `(array-length ,items))
-(export (macro dyn-len))
 (module main)
 (import \"macros.tl\" module macros as m)
 (define (main [items : (Array i64)]) : i64
@@ -7574,8 +7204,6 @@
 (defmacro (with-temp [value : i64]) : i64
   `(let ([tmp : i64 ,value])
      (id-expr tmp)))
-(export (macro id-expr))
-(export (macro with-temp))
 (module main)
 (import m)
 (define (main) : i64 (m.with-temp 42))")
@@ -7664,13 +7292,6 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-forward-qualified-export-source))
-    ;; Everything is exported by default: a macro that exists in the imported
-    ;; module now resolves even without a legacy export list. A name that does
-    ;; not exist at all is still a missing-export error.
-    (compiler-typecheck-ok? (compiler-typecheck-macro-private-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-missing-export-source)
-      "typecheck: missing macro export hidden/missing")
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-local-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-chain-source))
     (compiler-typecheck-error-ok?
@@ -7681,9 +7302,13 @@
       (compiler-typecheck-module-macro-import-alias-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-duplicate-source))
+    ;; Two generated modules sharing the `generated.module` identity that both
+    ;; declare `answer` are a duplicate declaration. There is no special
+    ;; import-time collision pre-check anymore; collisions surface through
+    ;; ordinary resolution/usage.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
-      "typecheck: generated import collision for value answer between generated identities :gen-a() and :gen-b(); use an explicit alias or full generated-module access")
+      "symbols: duplicate value declaration generated.module/answer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-missing-module-source)
       "typecheck: Module macro output must include a module declaration")
@@ -7780,7 +7405,6 @@
       (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
-    (compiler-typecheck-ok? (compiler-typecheck-macro-qualified-private-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))
@@ -9427,7 +9051,6 @@
   "(module kernels)
 (define (dot-scalar [x : i64]) : i64 x)
 (defdispatch dot (scalar dot-scalar))
-(export (value dot))
 (module app)
 (import \"kernels.tl\" module kernels :as k)
 (define (main [x : i64]) : i64 (k.dot x))")
@@ -9519,7 +9142,6 @@
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)
 (define (helper [x : i64]) : i64 x)
-(export (value helper))
 (module main)
 (import left)
 (define (main) : i64 (left.helper true))")

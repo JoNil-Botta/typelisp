@@ -1050,28 +1050,6 @@
           0)
         body-span))))
 
-(define (selfhost-lint-dead-export-refs
-  [items : AstExportItemList]
-  [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (match items
-    [(AstExportItemNil) scan]
-    [(AstExportItemCons item rest)
-      (let
-        [next : SelfhostLintDeadScan
-          (match item
-            [(AstExportValue name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportType name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportMacro name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportConstructor name)
-              (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportField type-name field-name)
-              (selfhost-lint-dead-scan-add-root
-                (selfhost-lint-dead-scan-add-root scan type-name)
-                field-name)]
-            [(AstExportVariant name)
-              (selfhost-lint-dead-scan-add-root scan name)])]
-        (selfhost-lint-dead-export-refs (box-get rest) next))]))
-
 (define (selfhost-lint-dead-refs-to-roots-from
   [scan : SelfhostLintDeadScan]
   [refs : StringVec]
@@ -1344,7 +1322,6 @@
     [(AstDeclImport _) scan]
     [(AstDeclIncludeStr _ _) scan]
     [(AstDeclIncludeBin _ _) scan]
-    [(AstDeclExport items) (selfhost-lint-dead-export-refs items scan)]
     [(AstDeclDefDispatch name variants)
       (selfhost-lint-dead-add-node
         scan
@@ -1957,10 +1934,6 @@
     [(data.Maybe.Some y) y]
     [_ 0]))")
 
-(define (selfhost-lint-used-import-export-source) : String
-  "(import pkg.data)
-(export (value data.value))")
-
 (define (selfhost-lint-used-import-macro-call-source) : String
   "(import pkg.macros)
 (pkg.macros.emit i64)")
@@ -1975,7 +1948,7 @@
 (define (main) : i64 42)")
 
 (define (selfhost-lint-package-dead-source-a) : String
-  "(export (value public-api))
+  "(define (main) : i64 (public-api 1))
 (define (public-api [x : i64]) : i64 (helper x))
 (define (helper [x : i64]) : i64 (cross-file-helper x))
 (define (unused-private) : i64 1)
@@ -2232,12 +2205,6 @@
               (selfhost-lint-used-import-pattern-source))
             0))
         38]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-export-source))
-            0))
-        39]
       [(not
           (=
             (selfhost-lint-source-finding-count

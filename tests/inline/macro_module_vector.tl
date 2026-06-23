@@ -64,17 +64,7 @@
       (match value
         [0 10]
         [1 20]
-        [_ 30]))
-    (export (type IntVec))
-    (export (constructor IntVec))
-    (export (value int-vec-new))
-    (export (value int-vec-len))
-    (export (value int-vec-capacity))
-    (export (value int-vec-get))
-    (export (value int-vec-set))
-    (export (value int-vec-push))
-    (export (value int-vec-fixed-array-probe))
-    (export (value int-vec-scalar-probe-score))))
+        [_ 30]))))
 
 (import (int-vector-module) as iv)
 

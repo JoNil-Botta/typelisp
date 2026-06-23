@@ -394,13 +394,7 @@
   (match selected [(AstTyI64) 42] [_ 0]))")
 
 (define (compiler-check-export-source) : String
-  "(export
-  (value answer)
-  (type Pair)
-  (constructor Pair)
-  (field Pair left)
-  (variant Present))
-(defstruct Pair (left i64))
+  "(defstruct Pair (left i64))
 (defenum Maybe (Present i64))
 (define answer : i64 42)
 (define (main) : i64 answer)")
@@ -442,7 +436,6 @@
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
-(export (value x))
 (define x : i64 1)
 (module b)
 (import a)
@@ -529,37 +522,23 @@
           [(OkCompilerSymbols symbols)
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
-                (match (build-compiler-exports-with program symbols registries)
-                  [(OkCompilerExports exports)
-                    (let
-                      [ctx : TcContext
-                        (TcContext
-                          program
-                          symbols
-                          registries
-                          exports
-                          ""
-                          (ast-node-pool-context-capture-active))]
-                      (and
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstTypeList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstExprList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstPatternList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstDeclList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstParamList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstVariantDefList")))]
-                  [(ErrCompilerExports _) false])]
+                (let
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
+                  (and
+                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
+                    (compiler-check-inline-layout-name-ok?
+                      ctx
+                      "AstVariantDefList")))]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false]))]
     [(ErrCompilerLoadWithPaths _) false]))
@@ -576,9 +555,8 @@
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_exported.tl"
       (compiler-check-qualified-export-cache-exported-source))
-    ;; Everything is exported by default: a value omitted from a legacy export
-    ;; list is now reachable across modules, so this previously-private access
-    ;; type-checks.
+    ;; There is no export list: values are reachable across modules through the
+    ;; module symbol table, so this previously-private access type-checks.
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_private.tl"
       (compiler-check-qualified-export-cache-private-source))))

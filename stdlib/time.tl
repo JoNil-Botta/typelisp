@@ -207,39 +207,3 @@
         (stdlib.time.time-test-assert-i64-eq
           (stdlib.time.time-ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
           7)))))
-
-(cfg (not windows) (export (value time-array-addr) (value time-linux-clock-ms)))
-
-(cfg
-  windows
-  (export
-    (value time-windows-get-system-time-as-file-time)
-    (value time-windows-query-performance-counter)
-    (value time-windows-query-performance-frequency)
-    (value time-windows-filetime-unix-epoch-ms)
-    (value time-windows-unix-ms)
-    (value time-windows-monotonic-ms)))
-
-(cfg
-  test
-  (export
-    (value time-test-fail)
-    (value time-test-assert)
-    (value time-test-assert-i64-eq)
-    (value time-test-assert-string-eq)
-    (value time-test-assert-result-error-shape)
-    (value time-test-assert-unix-range)
-    (value time-test-assert-monotonic-nonnegative)))
-
-(export
-  (value time-error-message)
-  (value time-ms-or)
-  (value time-unavailable)
-  (value time-timespec-ms)
-  (value time-unix-ms)
-  (value time-monotonic-ms)
-  (type TimeError)
-  (type ResultTimeMs)
-  (variant TimeUnavailable)
-  (variant OkTimeMs)
-  (variant ErrTimeMs))

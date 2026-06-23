@@ -18,26 +18,10 @@
     (__tl_string_ref text index)
     (string-ref text index)))
 
-(defenum TlciExportKind
-  (TlciExportValue)
-  (TlciExportType)
-  (TlciExportMacro))
-
-(defstruct TlciExport
-  (kind TlciExportKind)
-  (name String)
-  (signature String)
-  (layout String))
-
-(defenum TlciExportList
-  (TlciExportNil)
-  (TlciExportCons TlciExport (Box TlciExportList)))
-
 (defstruct TlciMetadata
   (version String)
   (package-name String)
-  (package-version String)
-  (exports TlciExportList))
+  (package-version String))
 
 (defstruct TlciImage
   (host-arch i64)
@@ -53,18 +37,6 @@
 (defenum ResultTlciString
   (OkTlciString String)
   (ErrTlciString String))
-
-(defenum ResultTlciExportKind
-  (OkTlciExportKind TlciExportKind)
-  (ErrTlciExportKind String))
-
-(defenum ResultTlciExport
-  (OkTlciExport TlciExport)
-  (ErrTlciExport String))
-
-(defenum ResultTlciExportList
-  (OkTlciExportList TlciExportList)
-  (ErrTlciExportList String))
 
 (defenum ResultTlciMetadata
   (OkTlciMetadata TlciMetadata)
@@ -534,81 +506,6 @@
 (define (tlci-char-code-at [text : String] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
 
-(define (tlci-string-less? [left : String] [right : String]) : bool
-  (let
-    [left-len : i64 (tlci-string-length left)]
-    [right-len : i64 (tlci-string-length right)]
-    [limit : i64
-      (if (< left-len right-len)
-        left-len
-        right-len)]
-    [idx : i64 0]
-    [done : bool false]
-    [less : bool false]
-    (begin
-      (while (and (not done) (< idx limit))
-        (let
-          [lc : i64 (tlci-char-code-at left idx)]
-          [rc : i64 (tlci-char-code-at right idx)]
-          (if (= lc rc)
-            (set! idx (+ idx 1))
-            (begin
-              (set! less (< lc rc))
-              (set! done true)))))
-      (if done
-        less
-        (< left-len right-len)))))
-
-(define (tlci-export-kind-name [kind : TlciExportKind]) : String
-  (match kind
-    [(TlciExportValue) "value"]
-    [(TlciExportType) "type"]
-    [(TlciExportMacro) "macro"]))
-
-(define (tlci-export-kind-rank [kind : TlciExportKind]) : i64
-  (match kind
-    [(TlciExportValue) 0]
-    [(TlciExportType) 1]
-    [(TlciExportMacro) 2]))
-
-(define (tlci-export-kind-eq? [left : TlciExportKind] [right : TlciExportKind]) : bool
-  (= (tlci-export-kind-rank left) (tlci-export-kind-rank right)))
-
-(define (tlci-export-less? [left : TlciExport] [right : TlciExport]) : bool
-  (let
-    [lk : i64 (tlci-export-kind-rank (struct-get left kind))]
-    [rk : i64 (tlci-export-kind-rank (struct-get right kind))]
-    (if (= lk rk)
-      (tlci-string-less? (struct-get left name) (struct-get right name))
-      (< lk rk))))
-
-(define (tlci-export-same-key? [left : TlciExport] [right : TlciExport]) : bool
-  (and
-    (tlci-export-kind-eq? (struct-get left kind) (struct-get right kind))
-    (string-eq (struct-get left name) (struct-get right name))))
-
-(define (tlci-export-list-insert
-  [exports : TlciExportList]
-  [entry : TlciExport]) : ResultTlciExportList
-  (match exports
-    [(TlciExportNil)
-      (OkTlciExportList (TlciExportCons entry (box TlciExportNil)))]
-    [(TlciExportCons head rest)
-      (if (tlci-export-same-key? head entry)
-        (ErrTlciExportList
-          (str-cat
-            "tlci metadata: duplicate export `"
-            (tlci-export-kind-name (struct-get entry kind))
-            ":"
-            (struct-get entry name)
-            "`"))
-        (if (tlci-export-less? entry head)
-          (OkTlciExportList (TlciExportCons entry (box exports)))
-          (match (tlci-export-list-insert (box-get rest) entry)
-            [(ErrTlciExportList message) (ErrTlciExportList message)]
-            [(OkTlciExportList next)
-              (OkTlciExportList (TlciExportCons head (box next)))])))]))
-
 (define (tlci-field-string-value [ftail : Sexpr] [fname : String]) : ResultTlciString
   (match ftail
     [(SCons vhead vrest)
@@ -628,148 +525,6 @@
     [_
       (ErrTlciString
         (str-cat "tlci metadata: field `" fname "` must be a string"))]))
-
-(define (tlci-parse-export-kind [name : String]) : ResultTlciExportKind
-  (cond
-    [(string-eq name "value") (OkTlciExportKind (TlciExportValue))]
-    [(string-eq name "type") (OkTlciExportKind (TlciExportType))]
-    [(string-eq name "macro") (OkTlciExportKind (TlciExportMacro))]
-    [else
-      (ErrTlciExportKind
-        "tlci metadata: export must start with `value`, `type`, or `macro`")]))
-
-(define (tlci-export-fields
-  [fields : Sexpr]
-  [kind : TlciExportKind]
-  [name : String]
-  [has-name : bool]
-  [signature : String]
-  [has-signature : bool]
-  [layout : String]
-  [has-layout : bool]) : ResultTlciExport
-  (match fields
-    [(SNil)
-      (cond
-        [(not has-name)
-          (ErrTlciExport "tlci metadata: export missing required field `name`")]
-        [(string-eq name "")
-          (ErrTlciExport "tlci metadata: export name must not be empty")]
-        [(or
-            (tlci-export-kind-eq? kind (TlciExportValue))
-            (tlci-export-kind-eq? kind (TlciExportMacro)))
-          (cond
-            [has-layout
-              (ErrTlciExport
-                "tlci metadata: value and macro exports must not include `layout`")]
-            [(not has-signature)
-              (ErrTlciExport
-                "tlci metadata: value and macro exports require `signature`")]
-            [(string-eq signature "")
-              (ErrTlciExport
-                "tlci metadata: export signature must not be empty")]
-            [else (OkTlciExport (TlciExport kind name signature ""))])]
-        [has-signature
-          (ErrTlciExport
-            "tlci metadata: type exports must not include `signature`")]
-        [(not has-layout)
-          (ErrTlciExport "tlci metadata: type exports require `layout`")]
-        [(string-eq layout "")
-          (ErrTlciExport "tlci metadata: export layout must not be empty")]
-        [else (OkTlciExport (TlciExport kind name "" layout))])]
-    [(SCons field rest)
-      (match (box-get field)
-        [(SCons fhead ftail)
-          (match (box-get fhead)
-            [(SSym fname)
-              (cond
-                [(string-eq fname "name")
-                  (if has-name
-                    (ErrTlciExport
-                      "tlci metadata: duplicate export field `name`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
-                      [(ErrTlciString message) (ErrTlciExport message)]
-                      [(OkTlciString value)
-                        (tlci-export-fields
-                          (box-get rest)
-                          kind
-                          value
-                          true
-                          signature
-                          has-signature
-                          layout
-                          has-layout)]))]
-                [(string-eq fname "signature")
-                  (if has-signature
-                    (ErrTlciExport
-                      "tlci metadata: duplicate export field `signature`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
-                      [(ErrTlciString message) (ErrTlciExport message)]
-                      [(OkTlciString value)
-                        (tlci-export-fields
-                          (box-get rest)
-                          kind
-                          name
-                          has-name
-                          value
-                          true
-                          layout
-                          has-layout)]))]
-                [(string-eq fname "layout")
-                  (if has-layout
-                    (ErrTlciExport
-                      "tlci metadata: duplicate export field `layout`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
-                      [(ErrTlciString message) (ErrTlciExport message)]
-                      [(OkTlciString value)
-                        (tlci-export-fields
-                          (box-get rest)
-                          kind
-                          name
-                          has-name
-                          signature
-                          has-signature
-                          value
-                          true)]))]
-                [else
-                  (ErrTlciExport
-                    (str-cat "tlci metadata: unknown export field `" fname "`"))])]
-            [_
-              (ErrTlciExport
-                "tlci metadata: export fields must start with a name")])]
-        [_ (ErrTlciExport "tlci metadata: export fields must be lists")])]
-    [_ (ErrTlciExport "tlci metadata: export fields must be lists")]))
-
-(define (tlci-export-from-form [form : Sexpr]) : ResultTlciExport
-  (match form
-    [(SCons head rest)
-      (match (box-get head)
-        [(SSym kind-name)
-          (match (tlci-parse-export-kind kind-name)
-            [(ErrTlciExportKind message) (ErrTlciExport message)]
-            [(OkTlciExportKind kind)
-              (tlci-export-fields
-                (box-get rest)
-                kind
-                ""
-                false
-                ""
-                false
-                ""
-                false)])]
-        [_ (ErrTlciExport "tlci metadata: export must start with a kind")])]
-    [_ (ErrTlciExport "tlci metadata: export entries must be lists")]))
-
-(define (tlci-export-forms [forms : Sexpr] [acc : TlciExportList]) : ResultTlciExportList
-  (match forms
-    [(SNil) (OkTlciExportList acc)]
-    [(SCons head rest)
-      (match (tlci-export-from-form (box-get head))
-        [(ErrTlciExport message) (ErrTlciExportList message)]
-        [(OkTlciExport entry)
-          (match (tlci-export-list-insert acc entry)
-            [(ErrTlciExportList message) (ErrTlciExportList message)]
-            [(OkTlciExportList next) (tlci-export-forms (box-get rest) next)])])]
-    [_ (ErrTlciExportList "tlci metadata: `exports` must contain export lists")]))
 
 (define (tlci-package-fields
   [fields : Sexpr]
@@ -791,8 +546,7 @@
         [(string-eq version "")
           (ErrTlciMetadata "tlci metadata: package version must not be empty")]
         [else
-          (OkTlciMetadata
-            (TlciMetadata tlci-metadata-version name version TlciExportNil))])]
+          (OkTlciMetadata (TlciMetadata tlci-metadata-version name version))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -841,9 +595,7 @@
   [has-version : bool]
   [package-name : String]
   [package-version : String]
-  [has-package : bool]
-  [exports : TlciExportList]
-  [has-exports : bool]) : ResultTlciMetadata
+  [has-package : bool]) : ResultTlciMetadata
   (match fields
     [(SNil)
       (cond
@@ -854,11 +606,8 @@
             (str-cat "tlci metadata: unsupported version `" version "`"))]
         [(not has-package)
           (ErrTlciMetadata "tlci metadata: missing required field `package`")]
-        [(not has-exports)
-          (ErrTlciMetadata "tlci metadata: missing required field `exports`")]
         [else
-          (OkTlciMetadata
-            (TlciMetadata version package-name package-version exports))])]
+          (OkTlciMetadata (TlciMetadata version package-name package-version))])]
     [(SCons field rest)
       (match (box-get field)
         [(SCons fhead ftail)
@@ -877,9 +626,7 @@
                           true
                           package-name
                           package-version
-                          has-package
-                          exports
-                          has-exports)]))]
+                          has-package)]))]
                 [(string-eq fname "package")
                   (if has-package
                     (ErrTlciMetadata "tlci metadata: duplicate field `package`")
@@ -892,23 +639,6 @@
                           has-version
                           (struct-get parsed package-name)
                           (struct-get parsed package-version)
-                          true
-                          exports
-                          has-exports)]))]
-                [(string-eq fname "exports")
-                  (if has-exports
-                    (ErrTlciMetadata "tlci metadata: duplicate field `exports`")
-                    (match (tlci-export-forms (box-get ftail) TlciExportNil)
-                      [(ErrTlciExportList message) (ErrTlciMetadata message)]
-                      [(OkTlciExportList parsed)
-                        (tlci-metadata-fields
-                          (box-get rest)
-                          version
-                          has-version
-                          package-name
-                          package-version
-                          has-package
-                          parsed
                           true)]))]
                 [else
                   (ErrTlciMetadata
@@ -925,15 +655,7 @@
       (match (box-get head)
         [(SSym name)
           (if (string-eq name "typelisp-tlci-metadata")
-            (tlci-metadata-fields
-              (box-get rest)
-              ""
-              false
-              ""
-              ""
-              false
-              TlciExportNil
-              false)
+            (tlci-metadata-fields (box-get rest) "" false "" "" false)
             (ErrTlciMetadata
               (str-cat "expected `typelisp-tlci-metadata` form, got `" name "`")))]
         [_
@@ -979,36 +701,6 @@
 (define (tlci-quote-string [text : String]) : String
   (str-cat (tlci-quote-text) (tlci-escape-string text) (tlci-quote-text)))
 
-(define (tlci-emit-export [entry : TlciExport]) : String
-  (match (struct-get entry kind)
-    [(TlciExportValue)
-      (str-cat
-        "    (value (name "
-        (tlci-quote-string (struct-get entry name))
-        ") (signature "
-        (tlci-quote-string (struct-get entry signature))
-        "))\n")]
-    [(TlciExportType)
-      (str-cat
-        "    (type (name "
-        (tlci-quote-string (struct-get entry name))
-        ") (layout "
-        (tlci-quote-string (struct-get entry layout))
-        "))\n")]
-    [(TlciExportMacro)
-      (str-cat
-        "    (macro (name "
-        (tlci-quote-string (struct-get entry name))
-        ") (signature "
-        (tlci-quote-string (struct-get entry signature))
-        "))\n")]))
-
-(define (tlci-emit-exports [exports : TlciExportList]) : String
-  (match exports
-    [(TlciExportNil) ""]
-    [(TlciExportCons entry rest)
-      (str-cat (tlci-emit-export entry) (tlci-emit-exports (box-get rest)))]))
-
 (define (tlci-metadata-emit [metadata : TlciMetadata]) : String
   (str-cat
     "(typelisp-tlci-metadata\n"
@@ -1019,10 +711,7 @@
     (tlci-quote-string (struct-get metadata package-name))
     ") (version "
     (tlci-quote-string (struct-get metadata package-version))
-    "))\n"
-    "  (exports\n"
-    (tlci-emit-exports (struct-get metadata exports))
-    "  ))\n"))
+    ")))\n"))
 
 (define (tlci-section-offset [cursor : i64] [len : i64] [align : i64]) : i64
   (if (= len 0)
@@ -1306,25 +995,8 @@
                         (tlci-slice-bytes bytes entries-offset entries-len)
                         (tlci-slice-bytes bytes symbols-offset symbols-len)))]))]))))))
 
-(define (tlci-test-export-list) : TlciExportList
-  (match (tlci-export-list-insert
-    TlciExportNil
-    (TlciExport (TlciExportMacro) "m" "(Expr)->Expr" ""))
-    [(ErrTlciExportList _) TlciExportNil]
-    [(OkTlciExportList one)
-      (match (tlci-export-list-insert
-        one
-        (TlciExport (TlciExportValue) "answer" "(-> i64)" ""))
-        [(ErrTlciExportList _) one]
-        [(OkTlciExportList two)
-          (match (tlci-export-list-insert
-            two
-            (TlciExport (TlciExportType) "Point" "" "size=16 align=8"))
-            [(ErrTlciExportList _) two]
-            [(OkTlciExportList three) three])])]))
-
 (define (tlci-test-metadata) : TlciMetadata
-  (TlciMetadata "v1" "demo" "0.1.0" (tlci-test-export-list)))
+  (TlciMetadata "v1" "demo" "0.1.0"))
 
 (define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (Array u8)
   (let
@@ -1703,31 +1375,24 @@
     (tlci-test-metadata-rejects?
       (str-cat
         "(typelisp-tlci-metadata "
-        "(version \"v1\") "
         "(package (name \"demo\") (version \"0.1.0\")))")
-      "tlci metadata: missing required field `exports`")
+      "tlci metadata: missing required field `version`")
+    (tlci-test-metadata-rejects?
+      (str-cat "(typelisp-tlci-metadata " "(version \"v1\"))")
+      "tlci metadata: missing required field `package`")
+    (tlci-test-metadata-rejects?
+      (str-cat
+        "(typelisp-tlci-metadata "
+        "(version \"v9\") "
+        "(package (name \"demo\") (version \"0.1.0\")))")
+      "tlci metadata: unsupported version `v9`")
     (tlci-test-metadata-rejects?
       (str-cat
         "(typelisp-tlci-metadata "
         "(version \"v1\") "
         "(package (name \"demo\") (version \"0.1.0\")) "
-        "(exports (value (name \"answer\") (signature \"\"))))")
-      "tlci metadata: export signature must not be empty")
-    (tlci-test-metadata-rejects?
-      (str-cat
-        "(typelisp-tlci-metadata "
-        "(version \"v1\") "
-        "(package (name \"demo\") (version \"0.1.0\")) "
-        "(exports (type (name \"Point\") (layout \"\"))))")
-      "tlci metadata: export layout must not be empty")
-    (tlci-test-metadata-rejects?
-      (str-cat
-        "(typelisp-tlci-metadata "
-        "(version \"v1\") "
-        "(package (name \"demo\") (version \"0.1.0\")) "
-        "(exports (type (name \"Point\") "
-        "(signature \"sig\") (layout \"size=16\"))))")
-      "tlci metadata: type exports must not include `signature`")))
+        "(exports (value (name \"answer\") (signature \"x\"))))")
+      "tlci metadata: unknown field `exports`")))
 
 (define (tlci-test-emit-rejections-ok?) : bool
   (tlci-test-emit-rejects?

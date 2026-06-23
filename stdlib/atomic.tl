@@ -46,13 +46,3 @@
   [items : (Array i32)]
   [index : i64]
   [delta : i32]) : i32 (:symbol "tl_atomic_i32_fetch_add"))
-
-(export
-  (value atomic-i64-load)
-  (value atomic-i64-store!)
-  (value atomic-i64-add!)
-  (value atomic-i64-fetch-add!)
-  (value atomic-i32-load)
-  (value atomic-i32-store!)
-  (value atomic-i32-add!)
-  (value atomic-i32-fetch-add!))

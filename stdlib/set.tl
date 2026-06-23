@@ -300,25 +300,7 @@
           (define (entry-key-or [entry : Entry] [fallback : String]) : String
             (match entry
               [(Entry.Some key) key]
-              [Entry.None fallback]))
-          (export
-            (type Set)
-            (constructor Set)
-            (type Entry)
-            (variant None)
-            (variant Some)
-            (value with-capacity)
-            (value new)
-            (value len)
-            (value capacity)
-            (value contains-borrowed?)
-            (value contains?)
-            (value insert)
-            (value remove-borrowed)
-            (value remove)
-            (value next-occupied)
-            (value entry-at)
-            (value entry-key-or)))]
+              [Entry.None fallback])))]
       ["i64"
         `(begin
           (module ,module-name)
@@ -550,28 +532,10 @@
           (define (entry-key-or [entry : Entry] [fallback : i64]) : i64
             (match entry
               [(Entry.Some key) key]
-              [Entry.None fallback]))
-          (export
-            (type Set)
-            (constructor Set)
-            (type Entry)
-            (variant None)
-            (variant Some)
-            (value with-capacity)
-            (value new)
-            (value len)
-            (value capacity)
-            (value contains?)
-            (value insert)
-            (value remove)
-            (value next-occupied)
-            (value entry-at)
-            (value entry-key-or)))]
+              [Entry.None fallback])))]
       [_
         `(begin
           (module ,module-name))])))
-
-(export (macro set))
 
 ;; Inline coverage migrated from stdlib/tests/set_api.tl (#3083) and from the
 ;; removed compiler-side set generator path (#3199).

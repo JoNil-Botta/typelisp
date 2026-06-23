@@ -5934,6 +5934,17 @@
           (CompilerRegAssignment 3 (CompilerRegRegister "%vec7"))
           CompilerRegAssignmentNil)))))
 
+(define (compiler-backend-avx512-select-false-alias-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec7"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k1"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%vec6"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%vec7"))
+          CompilerRegAssignmentNil)))))
+
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
   (match (compiler-backend-emit-avx512-select
     (compiler-backend-avx512-select-alias-assignments)
@@ -5951,6 +5962,20 @@
         (compiler-backend-string-contains?
           asm
           "    vmovdqu64 %zmm15, %zmm6{%k1}\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-select-false-alias-ok?) : bool
+  (match (compiler-backend-emit-avx512-select
+    (compiler-backend-avx512-select-false-alias-assignments)
+    0
+    (IrValueVar 1)
+    (IrValueVar 2)
+    (IrValueVar 3)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (string-eq asm "    vmovdqu64 %zmm6, %zmm7{%k1}\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-map-asm-contains?
@@ -6110,7 +6135,9 @@
     (compiler-backend-avx512-masked-if-index-value-ok?)
     (compiler-backend-avx512-masked-if-index-mod-ok?)
     (compiler-backend-avx512-masked-if-value-ok?)
-    (compiler-backend-avx512-select-true-alias-ok?)))
+    (compiler-backend-avx512-select-true-alias-ok?)
+    (compiler-backend-avx512-select-false-alias-ok?)
+    (compiler-backend-avx512-select-false-home-asm-ok?)))
 
 (define (compiler-backend-avx512-vector-map-ok?) : bool
   (and
@@ -6461,6 +6488,25 @@
         (compiler-backend-string-contains?
           asm
           "    vpaddq %ymm7, %ymm6, %ymm6\n")
+        (not
+          (compiler-backend-string-contains? asm "register home unavailable")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program
+      (compiler-reg-vector-select-false-home-function))
+    (BackendTargetLinux)
+    (BackendModeAvx512)
+    (compiler-source-spans-empty)
+    true)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu64 %zmm8, %zmm7{%k1}\n")
+        (not
+          (compiler-backend-string-contains? asm "    vmovdqu64 %zmm7, %zmm7\n"))
         (not
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))

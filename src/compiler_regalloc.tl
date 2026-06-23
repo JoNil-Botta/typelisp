@@ -933,6 +933,67 @@
           (set! index (+ index 1))))
       unit)))
 
+(define (compiler-reg-select-false-preference-instr!
+  [instr : CompilerIrInstr]
+  [preferences : (Array i64)]) : unit
+  (match instr
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ false-value _ _)
+          (match false-value
+            [(IrValueVar false-var)
+              (if (and (>= dst 0) (< dst (array-length preferences)))
+                (array-set! preferences dst false-var)
+                unit)]
+            [_ unit])])]
+    [_ unit]))
+
+(define (compiler-reg-select-false-preference-seq!
+  [instrs : CompilerIrInstrSeq]
+  [preferences : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-select-false-preference-instr!
+            (array-ref slots index)
+            preferences)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-select-false-preference-blocks!
+  [blocks : CompilerIrBlockList]
+  [preferences : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-select-false-preference-seq! instrs preferences)])
+        (compiler-reg-select-false-preference-blocks!
+          (box-get rest)
+          preferences))]
+    [(IrBlockArray seq)
+      (compiler-reg-select-false-preference-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        preferences)]))
+
+(define (compiler-reg-function-select-false-preferences
+  [func : CompilerIrFunction]
+  [vars : i64]) : (Array i64)
+  (let
+    [preferences : (Array i64) (make-array i64 vars)]
+    (begin
+      (compiler-reg-fill-i64-array preferences -1)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-reg-select-false-preference-blocks! blocks preferences)])
+      preferences)))
+
 (define (compiler-reg-fill-location-array
   [items : (Array CompilerRegLocation)]
   [value : CompilerRegLocation]) : unit
@@ -2752,6 +2813,22 @@
             true
             (compiler-reg-active-contains-register? (box-get rest) reg))])]))
 
+(define (compiler-reg-active-register-conflicts-except?
+  [active : CompilerRegActiveList]
+  [reg : String]
+  [except-var : i64]) : bool
+  (match active
+    [(CompilerRegActiveNil) false]
+    [(CompilerRegActiveCons item rest)
+      (match item
+        [(CompilerRegActive active-var _ active-reg)
+          (if (and (string-eq reg active-reg) (not (= active-var except-var)))
+            true
+            (compiler-reg-active-register-conflicts-except?
+              (box-get rest)
+              reg
+              except-var))])]))
+
 (define (compiler-reg-active-before?
   [left : CompilerRegActive]
   [right : CompilerRegActive]) : bool
@@ -4064,11 +4141,43 @@
                             group-vars
                             ref-counts)])]))]))])]))
 
+(define (compiler-reg-fixed-preferred-register
+  [assignments : CompilerRegAssignmentTable]
+  [active : CompilerRegActiveList]
+  [preferences : (Array i64)]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]
+  [start : i64]) : CompilerRegMaybeString
+  (if (or (< var 0) (>= var (array-length preferences)))
+    (CompilerRegNoString)
+    (let
+      [preferred : i64 (array-ref preferences var)]
+      [ends : (Array i64) (struct-get interval-index ends)]
+      (if (or
+        (< preferred 0)
+        (>= preferred (array-length ends))
+        (> (array-ref ends preferred) start))
+        (CompilerRegNoString)
+        (match (compiler-reg-assignment-table-lookup assignments preferred)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister reg)
+                (if (compiler-reg-active-register-conflicts-except?
+                  active
+                  reg
+                  preferred)
+                  (CompilerRegNoString)
+                  (CompilerRegSomeString reg))]
+              [_ (CompilerRegNoString)])]
+          [(CompilerRegNoLocation) (CompilerRegNoString)])))))
+
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignState
+  [assignments : CompilerRegAssignmentTable]
+  [preferences : (Array i64)]
+  [interval-index : CompilerRegIntervalIndex]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -4077,16 +4186,16 @@
           (let
             [expired : CompilerRegActiveList
               (compiler-reg-expire-active active start)]
-            (if (=
-              (compiler-reg-active-count expired)
-              (compiler-reg-string-list-count regs))
-              (compiler-reg-assign-fixed-candidates
-                (box-get rest)
-                regs
+            [preferred : CompilerRegMaybeString
+              (compiler-reg-fixed-preferred-register
+                assignments
                 expired
-                assignments)
-              (let
-                [reg : String (compiler-reg-first-free-register regs expired)]
+                preferences
+                interval-index
+                var
+                start)]
+            (match preferred
+              [(CompilerRegSomeString reg)
                 (compiler-reg-assign-fixed-candidates
                   (box-get rest)
                   regs
@@ -4096,7 +4205,35 @@
                   (compiler-reg-assignment-table-insert
                     assignments
                     var
-                    (CompilerRegRegister reg))))))])]))
+                    (CompilerRegRegister reg))
+                  preferences
+                  interval-index)]
+              [(CompilerRegNoString)
+                (if (=
+                  (compiler-reg-active-count expired)
+                  (compiler-reg-string-list-count regs))
+                  (compiler-reg-assign-fixed-candidates
+                    (box-get rest)
+                    regs
+                    expired
+                    assignments
+                    preferences
+                    interval-index)
+                  (let
+                    [reg : String
+                      (compiler-reg-first-free-register regs expired)]
+                    (compiler-reg-assign-fixed-candidates
+                      (box-get rest)
+                      regs
+                      (compiler-reg-active-insert
+                        expired
+                        (CompilerRegActive var end reg))
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        (CompilerRegRegister reg))
+                      preferences
+                      interval-index)))]))])]))
 
 ;; Call points (#perf/correctness): the primary integer pool admits only
 ;; callee-saved registers, so a value live across a call keeps its home safely.
@@ -7147,12 +7284,18 @@
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef _ vars) vars])]
+    [vector-preferences : (Array i64)
+      (compiler-reg-function-select-false-preferences
+        func
+        (array-length (struct-get interval-index starts)))]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
         (compiler-reg-special-candidates intervals vector-vars blocked)
         (compiler-reg-vector-registers)
         CompilerRegActiveNil
-        scalar-assignments)]
+        scalar-assignments
+        vector-preferences
+        interval-index)]
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -7161,7 +7304,9 @@
         (compiler-reg-special-candidates intervals mask-vars blocked)
         (compiler-reg-mask-registers)
         CompilerRegActiveNil
-        vector-assignments)]
+        vector-assignments
+        (make-array i64 0)
+        interval-index)]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState _ found) found])]
@@ -7822,9 +7967,11 @@
           (let
             [left : i64 (compiler-reg-color-value-root roots true-value)]
             [right : i64 (compiler-reg-color-value-root roots false-value)]
-            (if (and (>= left 0) (= left right))
-              (compiler-reg-color-set-root! roots invalid dst left)
-              false))])]
+            (if (>= right 0)
+              (compiler-reg-color-set-root! roots invalid dst right)
+              (if (and (>= left 0) (= left right))
+                (compiler-reg-color-set-root! roots invalid dst left)
+                false)))])]
     [_ false]))
 
 (define (compiler-reg-color-propagate-root-seq
@@ -10225,6 +10372,56 @@
                   (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))))
       IrBlockNil)))
 
+(define (compiler-reg-vector-select-false-home-function) : CompilerIrFunction
+  (IrFunction
+    "vector_select_false_home"
+    IrParamNil
+    (AstTyUnit)
+    5
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrSplat 0 (IrValueI64 0) 8 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrSplat 1 (IrValueI64 1) 8 (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrSplat 2 (IrValueI64 2) 8 (AstTyI64))
+              (compiler-ir-instr-cons
+                (ir-instr-vector-store
+                  (IrValueI64 0)
+                  (IrValueI64 0)
+                  (IrValueVar 0)
+                  8
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (ir-instr-vector-compare
+                    3
+                    (IrBinLt)
+                    (IrValueVar 2)
+                    (IrValueVar 1)
+                    8
+                    (AstTyI64))
+                  (compiler-ir-instr-cons
+                    (ir-instr-select
+                      4
+                      (IrValueVar 3)
+                      (IrValueVar 2)
+                      (IrValueVar 1)
+                      8
+                      (AstTyI64))
+                    (compiler-ir-instr-cons
+                      (ir-instr-vector-store
+                        (IrValueI64 0)
+                        (IrValueI64 8)
+                        (IrValueVar 4)
+                        8
+                        (AstTyI64))
+                      (compiler-ir-instr-cons
+                        (IrInstrReturn IrNoValue)
+                        IrInstrNil)))))))))
+      IrBlockNil)))
+
 (define (compiler-reg-mask-home-function) : CompilerIrFunction
   (IrFunction
     "mask_home"
@@ -12485,35 +12682,49 @@
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
     [(CompilerRegPlan vector-assignments _ _ _ _)
-      (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
-        [(CompilerRegPlan mask-assignments _ _ _ _)
-          (let
-            [vector-ok : bool
-              (and
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup vector-assignments 0)
-                  "%vec6")
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup vector-assignments 1)
-                  "%vec7")
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup vector-assignments 2)
-                  "%vec7")
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup vector-assignments 3)
-                  "%vec6"))]
-            [mask-ok : bool
-              (and
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup mask-assignments 0)
-                  "%k1")
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup mask-assignments 1)
-                  "%k2")
-                (compiler-reg-location-register?
-                  (compiler-reg-assignment-lookup mask-assignments 3)
-                  "%k1"))]
-            (and vector-ok mask-ok))])]))
+      (match (compiler-reg-plan-function
+        (compiler-reg-vector-select-false-home-function))
+        [(CompilerRegPlan select-assignments _ _ _ _)
+          (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
+            [(CompilerRegPlan mask-assignments _ _ _ _)
+              (let
+                [vector-ok : bool
+                  (and
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 0)
+                      "%vec6")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 1)
+                      "%vec7")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 2)
+                      "%vec7")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 3)
+                      "%vec6"))]
+                [select-ok : bool
+                  (and
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup select-assignments 1)
+                      "%vec7")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup select-assignments 2)
+                      "%vec8")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup select-assignments 4)
+                      "%vec7"))]
+                [mask-ok : bool
+                  (and
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup mask-assignments 0)
+                      "%k1")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup mask-assignments 1)
+                      "%k2")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup mask-assignments 3)
+                      "%k1"))]
+                (and vector-ok select-ok mask-ok))])])]))
 
 (define (compiler-reg-target-clobbers-ok?) : bool
   (let

@@ -90,6 +90,71 @@
             (string-contains (& rendered) (& range-key))))]
       [(ErrFormatString _) false])))
 
+(define (lsp-check-smoke-ok?) : bool
+  (let
+    [ok-src : String "(define (main) : i64 42)"]
+    [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
+    [ok-result : bool
+      (match (compiler-check-source-with-roots "ok.tl" ok-src (string-vec-new))
+        [(OkCompilerCheck _) true]
+        [(ErrCompilerCheck _) false])]
+    [bad-result : bool
+      (match (compiler-check-source-with-roots
+        "bad.tl"
+        bad-src
+        (string-vec-new))
+        [(OkCompilerCheck _) false]
+        [(ErrCompilerCheck _) true])]
+    (and ok-result bad-result)))
+
+(define (lsp-get-type-smoke-ok?) : bool
+  (let
+    [src : String
+      "(define (main) : i32 (let [total 41] [next (+ total 1)] next))"]
+    [total-off : i64 (lsp-smoke-index-of src "41")]
+    (if (< total-off 0)
+      false
+      (begin
+        (tc-inlay-hints-enable!)
+        (match (compiler-check-source-with-roots "test.tl" src (string-vec-new))
+          [(OkCompilerCheck _) unit]
+          [(ErrCompilerCheck _) unit])
+        (let
+          [size : i64 (tc-inlay-hints-size)]
+          [i : i64 0]
+          [found-type : String ""]
+          (begin
+            (while (and (< i size) (string-eq found-type ""))
+              (let
+                [hint-line : i64 (tc-inlay-hint-line-at i)]
+                [hint-col : i64 (tc-inlay-hint-col-at i)]
+                [target-line : i64 1]
+                [target-col : i64 (+ total-off 1)]
+                (begin
+                  (if (and (= hint-line target-line) (= hint-col target-col))
+                    (set! found-type (tc-inlay-hint-type-at i))
+                    unit)
+                  (set! i (+ i 1)))))
+            (tc-inlay-hints-disable!)
+            (string-eq found-type "i32")))))))
+
+(define (lsp-find-references-smoke-ok?) : bool
+  (let
+    [src : String
+      "(define (foo [x : i64]) : i64 x) (define (bar) : i64 (foo 1))"]
+    [refs : json.JsonList
+      (lsp-find-references-in-text
+        src
+        "foo"
+        0
+        (string-length src)
+        json.JsonListNil)]
+    [rendered : String (json.json-stringify (lsp-json-array refs))]
+    [count-ok : bool (= (json.json-list-count refs) 2)]
+    [needle0 : String "\"line\":0"]
+    [line0-ok : bool (string-contains (& rendered) (& needle0))]
+    (and count-ok line0-ok)))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -99,4 +164,7 @@
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
         (unless (lsp-formatting-smoke-ok?) (return 8))
+        (unless (lsp-check-smoke-ok?) (return 9))
+        (unless (lsp-get-type-smoke-ok?) (return 10))
+        (unless (lsp-find-references-smoke-ok?) (return 11))
         42))))

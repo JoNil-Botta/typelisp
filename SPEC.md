@@ -6204,7 +6204,7 @@ Selected Command Forms:
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
   typelisp inspect <file.tlci>
-  typelisp run <file.tl> [-- <args>...]
+  typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
   typelisp test [<file.tl>] [--check]

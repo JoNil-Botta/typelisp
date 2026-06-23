@@ -1353,6 +1353,18 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
     fi
+    PLANNER_RUN_CFG_SOURCE="$SELFHOST_PLANNER_DIR/with space/run cfg file.tl"
+    cat > "$PLANNER_RUN_CFG_SOURCE" <<'EOF'
+(define (main) : i64 (cfg feature 11 3))
+EOF
+    run_cmd selfhost-run-tool-cfg "$COMPILER" run --direct "$PLANNER_RUN_CFG_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --cfg feature
+    assert_code 11
+    assert_stdout_empty
+    assert_stderr_empty
+    run_cmd public-run-tool-cfg "$COMPILER" run "$PLANNER_RUN_CFG_SOURCE" --target "$SELFHOST_TOOL_TARGET" --cfg feature
+    assert_code 11
+    assert_stdout_empty
+    assert_stderr_empty
 
     if [ "$HOST_OS" = linux ]; then
         run_cmd selfhost-run-tool-avx512 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"

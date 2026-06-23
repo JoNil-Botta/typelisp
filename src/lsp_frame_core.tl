@@ -3839,19 +3839,19 @@
                 (let
                   [size : i64 (tc-inlay-hints-size)]
                   [i : i64 0]
-                  [found-type : String ""]
+                  [found-idx : i64 -1]
                   (begin
-                    (while (and (< i size) (string-eq found-type ""))
+                    (while (and (< i size) (= found-idx -1))
                       (let
                         [hint-line : i64 (tc-inlay-hint-line-at i)]
                         [hint-col : i64 (tc-inlay-hint-col-at i)]
                         (begin
                           (if (and (= hint-line line1) (= hint-col col1))
-                            (set! found-type (tc-inlay-hint-type-at i))
+                            (set! found-idx i)
                             unit)
                           (set! i (+ i 1)))))
                     (tc-inlay-hints-disable!)
-                    (if (string-eq found-type "")
+                    (if (= found-idx -1)
                       (begin
                         (lsp-write-response
                           id
@@ -3862,15 +3862,17 @@
                             (json.JsonString
                               "No type information at this position")))
                         (LspContinue docs))
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool true)
-                            "type"
-                            (json.JsonString found-type)))
-                        (LspContinue docs)))))))]
+                      (let
+                        [found-type : String (tc-inlay-hint-type-at found-idx)]
+                        (begin
+                          (lsp-write-response
+                            id
+                            (lsp-json-object2
+                              "success"
+                              (json.JsonBool true)
+                              "type"
+                              (json.JsonString found-type)))
+                          (LspContinue docs))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")

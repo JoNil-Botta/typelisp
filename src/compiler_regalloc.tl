@@ -136,6 +136,40 @@
   (CompilerRegNoCallSaveActive)
   (CompilerRegSomeCallSaveActive i64 i64 AstType))
 
+(defenum CompilerRegEdgeCopyDirection
+  (CompilerRegEdgeCopyIntoRegion)
+  (CompilerRegEdgeCopyOutOfRegion))
+
+(defenum CompilerRegEdgeCopyPlacement
+  (CompilerRegEdgeCopyPredEnd)
+  (CompilerRegEdgeCopySuccEntry))
+
+(defenum CompilerRegEdgeCopy
+  (CompilerRegEdgeCopy
+    String
+    String
+    i64
+    i64
+    AstType
+    CompilerRegEdgeCopyDirection
+    CompilerRegEdgeCopyPlacement))
+
+(defenum CompilerRegEdgeCopyList
+  (CompilerRegEdgeCopyNil)
+  (CompilerRegEdgeCopyCons CompilerRegEdgeCopy (Box CompilerRegEdgeCopyList)))
+
+(defenum CompilerRegEdgeCopyPlacementResult
+  (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopyPlacement)
+  (CompilerRegEdgeCopyPlacementRefused String))
+
+(defenum CompilerRegEdgeCopyPlan
+  (CompilerRegEdgeCopyPlan CompilerRegEdgeCopyList)
+  (CompilerRegEdgeCopyRefused String))
+
+(defenum CompilerRegEdgeCopyRewrite
+  (CompilerRegEdgeCopyRewrite CompilerIrBlockList)
+  (CompilerRegEdgeCopyRewriteRefused String))
+
 (defenum CompilerRegParamAssignPlan
   (CompilerRegParamAssignPlan
     CompilerRegAssignmentTable
@@ -178,6 +212,11 @@
   [head : CompilerRegVarType]
   [rest : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (CompilerRegVarTypeCons head (box rest)))
+
+(define (compiler-reg-edge-copy-cons
+  [head : CompilerRegEdgeCopy]
+  [rest : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
+  (CompilerRegEdgeCopyCons head (box rest)))
 
 (define (compiler-reg-active-cons
   [head : CompilerRegActive]
@@ -5093,6 +5132,407 @@
   (compiler-reg-call-split-boundary-vars-blocks
     (compiler-live-function-blocks (compiler-live-analyze-function func))
     (compiler-live-set-empty)))
+
+(define (compiler-reg-edge-copy-list-reverse-onto
+  [copies : CompilerRegEdgeCopyList]
+  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
+  (match copies
+    [(CompilerRegEdgeCopyNil) acc]
+    [(CompilerRegEdgeCopyCons copy rest)
+      (compiler-reg-edge-copy-list-reverse-onto
+        (box-get rest)
+        (compiler-reg-edge-copy-cons copy acc))]))
+
+(define (compiler-reg-edge-copy-list-count [copies : CompilerRegEdgeCopyList]) : i64
+  (match copies
+    [(CompilerRegEdgeCopyNil) 0]
+    [(CompilerRegEdgeCopyCons _ rest)
+      (+ 1 (compiler-reg-edge-copy-list-count (box-get rest)))]))
+
+(define (compiler-reg-region-label-map-from
+  [labels : CompilerRegStringList]
+  [out : StringI64Map]) : StringI64Map
+  (match labels
+    [(CompilerRegStringNil) out]
+    [(CompilerRegStringCons label rest)
+      (compiler-reg-region-label-map-from
+        (box-get rest)
+        (string-i64-map-put out label 1))]))
+
+(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : StringI64Map
+  (compiler-reg-region-label-map-from
+    labels
+    (string-i64-map-with-capacity
+      (compiler-reg-bits-map-capacity (compiler-reg-string-list-count labels)))))
+
+(define (compiler-reg-region-label? [region : StringI64Map] [label : String]) : bool
+  (match (string-i64-map-get region label)
+    [(StringI64MapFound _) true]
+    [(StringI64MapMissing) false]))
+
+(define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : String
+  (match block
+    [(CompilerLiveBlock label _ _ _ _ _ _) label]))
+
+(define (compiler-reg-edge-copy-increment-pred!
+  [ids : StringI64Map]
+  [pred-counts : (Array i64)]
+  [label : String]) : unit
+  (match (string-i64-map-get ids label)
+    [(StringI64MapFound index)
+      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))]
+    [(StringI64MapMissing) unit]))
+
+(define (compiler-reg-edge-copy-count-preds-succs!
+  [ids : StringI64Map]
+  [pred-counts : (Array i64)]
+  [succs : CompilerLiveLabelSet]) : unit
+  (match succs
+    [(CompilerLiveLabelNil) unit]
+    [(CompilerLiveLabelCons label rest)
+      (begin
+        (compiler-reg-edge-copy-increment-pred! ids pred-counts label)
+        (compiler-reg-edge-copy-count-preds-succs!
+          ids
+          pred-counts
+          (box-get rest)))]))
+
+(define (compiler-reg-edge-copy-count-preds-blocks!
+  [ids : StringI64Map]
+  [blocks : (Array CompilerLiveBlock)]
+  [pred-counts : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length blocks))
+    unit
+    (begin
+      (compiler-reg-edge-copy-count-preds-succs!
+        ids
+        pred-counts
+        (compiler-reg-live-block-succs (array-ref blocks index)))
+      (compiler-reg-edge-copy-count-preds-blocks!
+        ids
+        blocks
+        pred-counts
+        (+ index 1)))))
+
+(define (compiler-reg-edge-copy-pred-counts
+  [ids : StringI64Map]
+  [blocks : (Array CompilerLiveBlock)]) : (Array i64)
+  (let
+    [pred-counts : (Array i64) (make-array i64 (array-length blocks))]
+    (begin
+      (compiler-reg-fill-i64-array pred-counts 0)
+      (compiler-reg-edge-copy-count-preds-blocks! ids blocks pred-counts 0)
+      pred-counts)))
+
+(define (compiler-reg-edge-copy-refusal
+  [from-label : String]
+  [to-label : String]) : String
+  (str-cat
+    "regalloc: edge copy from "
+    from-label
+    " to "
+    to-label
+    " needs critical-edge splitting"))
+
+(define (compiler-reg-edge-copy-placement-for
+  [from-label : String]
+  [to-label : String]
+  [from-succs : i64]
+  [to-preds : i64]) : CompilerRegEdgeCopyPlacementResult
+  (cond
+    [(= from-succs 1)
+      (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopyPredEnd)]
+    [(= to-preds 1)
+      (CompilerRegEdgeCopyPlacementOk CompilerRegEdgeCopySuccEntry)]
+    [else
+      (CompilerRegEdgeCopyPlacementRefused
+        (compiler-reg-edge-copy-refusal from-label to-label))]))
+
+(define (compiler-reg-edge-copy-live-on-edge?
+  [from-block : CompilerLiveBlock]
+  [to-block : CompilerLiveBlock]
+  [var : i64]) : bool
+  (and
+    (compiler-live-set-contains? (compiler-live-block-live-out from-block) var)
+    (compiler-live-set-contains? (compiler-live-block-live-in to-block) var)))
+
+(define (compiler-reg-edge-copy-boundary-one
+  [ids : StringI64Map]
+  [blocks : (Array CompilerLiveBlock)]
+  [pred-counts : (Array i64)]
+  [region : StringI64Map]
+  [from-block : CompilerLiveBlock]
+  [from-label : String]
+  [from-inside : bool]
+  [from-succs : i64]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [to-label : String]
+  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  (match (string-i64-map-get ids to-label)
+    [(StringI64MapFound to-index)
+      (let
+        [to-block : CompilerLiveBlock (array-ref blocks to-index)]
+        [to-inside : bool (compiler-reg-region-label? region to-label)]
+        (if (or
+          (= from-inside to-inside)
+          (not
+            (compiler-reg-edge-copy-live-on-edge? from-block to-block stack-var)))
+          (CompilerRegEdgeCopyPlan acc)
+          (match (compiler-reg-edge-copy-placement-for
+            from-label
+            to-label
+            from-succs
+            (array-ref pred-counts to-index))
+            [(CompilerRegEdgeCopyPlacementOk placement)
+              (if to-inside
+                (CompilerRegEdgeCopyPlan
+                  (compiler-reg-edge-copy-cons
+                    (CompilerRegEdgeCopy
+                      from-label
+                      to-label
+                      stack-var
+                      region-var
+                      ty
+                      CompilerRegEdgeCopyIntoRegion
+                      placement)
+                    acc))
+                (CompilerRegEdgeCopyPlan
+                  (compiler-reg-edge-copy-cons
+                    (CompilerRegEdgeCopy
+                      from-label
+                      to-label
+                      region-var
+                      stack-var
+                      ty
+                      CompilerRegEdgeCopyOutOfRegion
+                      placement)
+                    acc)))]
+            [(CompilerRegEdgeCopyPlacementRefused message)
+              (CompilerRegEdgeCopyRefused message)])))]
+    [(StringI64MapMissing)
+      (CompilerRegEdgeCopyRefused
+        (str-cat "regalloc: edge copy target block not found: " to-label))]))
+
+(define (compiler-reg-edge-copy-boundary-succs
+  [ids : StringI64Map]
+  [blocks : (Array CompilerLiveBlock)]
+  [pred-counts : (Array i64)]
+  [region : StringI64Map]
+  [from-block : CompilerLiveBlock]
+  [from-label : String]
+  [from-inside : bool]
+  [from-succs : i64]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [succs : CompilerLiveLabelSet]
+  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  (match succs
+    [(CompilerLiveLabelNil) (CompilerRegEdgeCopyPlan acc)]
+    [(CompilerLiveLabelCons to-label rest)
+      (match (compiler-reg-edge-copy-boundary-one
+        ids
+        blocks
+        pred-counts
+        region
+        from-block
+        from-label
+        from-inside
+        from-succs
+        stack-var
+        region-var
+        ty
+        to-label
+        acc)
+        [(CompilerRegEdgeCopyPlan next)
+          (compiler-reg-edge-copy-boundary-succs
+            ids
+            blocks
+            pred-counts
+            region
+            from-block
+            from-label
+            from-inside
+            from-succs
+            stack-var
+            region-var
+            ty
+            (box-get rest)
+            next)]
+        [(CompilerRegEdgeCopyRefused message)
+          (CompilerRegEdgeCopyRefused message)])]))
+
+(define (compiler-reg-edge-copy-boundary-blocks
+  [ids : StringI64Map]
+  [blocks : (Array CompilerLiveBlock)]
+  [pred-counts : (Array i64)]
+  [region : StringI64Map]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [index : i64]
+  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  (if (>= index (array-length blocks))
+    (CompilerRegEdgeCopyPlan
+      (compiler-reg-edge-copy-list-reverse-onto acc CompilerRegEdgeCopyNil))
+    (let
+      [block : CompilerLiveBlock (array-ref blocks index)]
+      [label : String (compiler-reg-edge-copy-live-block-label block)]
+      [succs : CompilerLiveLabelSet (compiler-reg-live-block-succs block)]
+      (match (compiler-reg-edge-copy-boundary-succs
+        ids
+        blocks
+        pred-counts
+        region
+        block
+        label
+        (compiler-reg-region-label? region label)
+        (compiler-live-label-set-count succs)
+        stack-var
+        region-var
+        ty
+        succs
+        acc)
+        [(CompilerRegEdgeCopyPlan next)
+          (compiler-reg-edge-copy-boundary-blocks
+            ids
+            blocks
+            pred-counts
+            region
+            stack-var
+            region-var
+            ty
+            (+ index 1)
+            next)]
+        [(CompilerRegEdgeCopyRefused message)
+          (CompilerRegEdgeCopyRefused message)]))))
+
+(define (compiler-reg-edge-copy-plan-for-region
+  [func : CompilerIrFunction]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]) : CompilerRegEdgeCopyPlan
+  (match (compiler-live-analyze-function func)
+    [(CompilerFunctionLiveness ids blocks)
+      (let
+        [pred-counts : (Array i64)
+          (compiler-reg-edge-copy-pred-counts ids blocks)]
+        (compiler-reg-edge-copy-boundary-blocks
+          ids
+          blocks
+          pred-counts
+          (compiler-reg-region-label-map region-labels)
+          stack-var
+          region-var
+          ty
+          0
+          CompilerRegEdgeCopyNil))]))
+
+(define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : CompilerIrInstr
+  (match copy
+    [(CompilerRegEdgeCopy _ _ src dst ty _ _)
+      (IrInstrMov dst (IrValueVar src) ty)]))
+
+(define (compiler-reg-edge-copy-target-label [copy : CompilerRegEdgeCopy]) : String
+  (match copy
+    [(CompilerRegEdgeCopy from-label to-label _ _ _ _ placement)
+      (match placement
+        [(CompilerRegEdgeCopyPredEnd) from-label]
+        [(CompilerRegEdgeCopySuccEntry) to-label])]))
+
+(define (compiler-reg-edge-copy-placement [copy : CompilerRegEdgeCopy]) : CompilerRegEdgeCopyPlacement
+  (match copy
+    [(CompilerRegEdgeCopy _ _ _ _ _ _ placement) placement]))
+
+(define (compiler-reg-edge-copy-insert-before-last
+  [instrs : CompilerIrInstrList]
+  [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (compiler-ir-instr-cons copy-instr IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil)
+          (compiler-ir-instr-cons
+            copy-instr
+            (compiler-ir-instr-cons instr IrInstrNil))]
+        [_
+          (compiler-ir-instr-cons
+            instr
+            (compiler-reg-edge-copy-insert-before-last
+              (box-get rest)
+              copy-instr))])]))
+
+(define (compiler-reg-edge-copy-insert-after-phis
+  [instrs : CompilerIrInstrList]
+  [copy-instr : CompilerIrInstr]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (compiler-ir-instr-cons copy-instr IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi _ _ _)
+          (compiler-ir-instr-cons
+            instr
+            (compiler-reg-edge-copy-insert-after-phis (box-get rest) copy-instr))]
+        [_ (compiler-ir-instr-cons copy-instr instrs)])]))
+
+(define (compiler-reg-edge-copy-insert-in-block
+  [block : CompilerIrBlock]
+  [copy : CompilerRegEdgeCopy]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (let
+        [copy-instr : CompilerIrInstr (compiler-reg-edge-copy-instr copy)]
+        [items : CompilerIrInstrList (compiler-ir-instr-seq-to-list instrs)]
+        [rewritten : CompilerIrInstrList
+          (match (compiler-reg-edge-copy-placement copy)
+            [(CompilerRegEdgeCopyPredEnd)
+              (compiler-reg-edge-copy-insert-before-last items copy-instr)]
+            [(CompilerRegEdgeCopySuccEntry)
+              (compiler-reg-edge-copy-insert-after-phis items copy-instr)])]
+        (IrBlock label (compiler-ir-instr-seq-from-list rewritten)))]))
+
+(define (compiler-reg-edge-copy-insert-one
+  [blocks : CompilerIrBlockList]
+  [copy : CompilerRegEdgeCopy]) : CompilerRegEdgeCopyRewrite
+  (match blocks
+    [(IrBlockNil)
+      (CompilerRegEdgeCopyRewriteRefused
+        (str-cat
+          "regalloc: edge copy insertion block not found: "
+          (compiler-reg-edge-copy-target-label copy)))]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (string-eq label (compiler-reg-edge-copy-target-label copy))
+            (CompilerRegEdgeCopyRewrite
+              (compiler-ir-block-cons
+                (compiler-reg-edge-copy-insert-in-block block copy)
+                (box-get rest)))
+            (match (compiler-reg-edge-copy-insert-one (box-get rest) copy)
+              [(CompilerRegEdgeCopyRewrite tail)
+                (CompilerRegEdgeCopyRewrite (compiler-ir-block-cons block tail))]
+              [(CompilerRegEdgeCopyRewriteRefused message)
+                (CompilerRegEdgeCopyRewriteRefused message)]))])]
+    [(IrBlockArray seq)
+      (compiler-reg-edge-copy-insert-one
+        (compiler-ir-block-seq-to-list seq)
+        copy)]))
+
+(define (compiler-reg-edge-copy-apply
+  [blocks : CompilerIrBlockList]
+  [copies : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyRewrite
+  (match copies
+    [(CompilerRegEdgeCopyNil) (CompilerRegEdgeCopyRewrite blocks)]
+    [(CompilerRegEdgeCopyCons copy rest)
+      (match (compiler-reg-edge-copy-insert-one blocks copy)
+        [(CompilerRegEdgeCopyRewrite rewritten)
+          (compiler-reg-edge-copy-apply rewritten (box-get rest))]
+        [(CompilerRegEdgeCopyRewriteRefused message)
+          (CompilerRegEdgeCopyRewriteRefused message)])]))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]
@@ -10429,6 +10869,208 @@
 
 (cfg
   test
+  (define (compiler-reg-edge-copy-list-has?
+    [copies : CompilerRegEdgeCopyList]
+    [from-label : String]
+    [to-label : String]
+    [src : i64]
+    [dst : i64]
+    [want-pred-end : bool]) : bool
+    (match copies
+      [(CompilerRegEdgeCopyNil) false]
+      [(CompilerRegEdgeCopyCons copy rest)
+        (match copy
+          [(CompilerRegEdgeCopy
+              found-from
+              found-to
+              found-src
+              found-dst
+              _
+              _
+              placement)
+            (if (and
+              (string-eq found-from from-label)
+              (string-eq found-to to-label)
+              (= found-src src)
+              (= found-dst dst)
+              (match placement
+                [(CompilerRegEdgeCopyPredEnd) want-pred-end]
+                [(CompilerRegEdgeCopySuccEntry) (not want-pred-end)]))
+              true
+              (compiler-reg-edge-copy-list-has?
+                (box-get rest)
+                from-label
+                to-label
+                src
+                dst
+                want-pred-end))])])))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-linear-function) : CompilerIrFunction
+    (IrFunction
+      "edge_copy_linear"
+      IrParamNil
+      (AstTyI64)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons (IrInstrJump "hot") IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "hot"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-linear-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
+      [region : CompilerRegStringList
+        (compiler-reg-string-cons "hot" CompilerRegStringNil)]
+      (match (compiler-reg-edge-copy-plan-for-region
+        func
+        region
+        0
+        10
+        (compiler-reg-i64-ty))
+        [(CompilerRegEdgeCopyPlan copies)
+          (and
+            (= (compiler-reg-edge-copy-list-count copies) 1)
+            (compiler-reg-edge-copy-list-has? copies "entry" "hot" 0 10 true)
+            (match func
+              [(IrFunction _ _ _ _ blocks)
+                (match (compiler-reg-edge-copy-apply blocks copies)
+                  [(CompilerRegEdgeCopyRewrite rewritten)
+                    (compiler-reg-instr-list-has-mov-var?
+                      (compiler-reg-block-instr-list rewritten "entry")
+                      10
+                      0)]
+                  [(CompilerRegEdgeCopyRewriteRefused _) false])]))]
+        [(CompilerRegEdgeCopyRefused _) false]))))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-backedge-function) : CompilerIrFunction
+    (IrFunction
+      "edge_copy_backedge"
+      IrParamNil
+      (AstTyI64)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "body" "exit")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrStore "sink" (IrValueVar 0) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-backedge-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-edge-copy-backedge-function)]
+      [region : CompilerRegStringList
+        (compiler-reg-string-cons "body" CompilerRegStringNil)]
+      (match (compiler-reg-edge-copy-plan-for-region
+        func
+        region
+        0
+        10
+        (compiler-reg-i64-ty))
+        [(CompilerRegEdgeCopyPlan copies)
+          (and
+            (= (compiler-reg-edge-copy-list-count copies) 2)
+            (compiler-reg-edge-copy-list-has? copies "loop" "body" 0 10 false)
+            (compiler-reg-edge-copy-list-has? copies "body" "loop" 10 0 true)
+            (match func
+              [(IrFunction _ _ _ _ blocks)
+                (match (compiler-reg-edge-copy-apply blocks copies)
+                  [(CompilerRegEdgeCopyRewrite rewritten)
+                    (let
+                      [body : CompilerIrInstrList
+                        (compiler-reg-block-instr-list rewritten "body")]
+                      (and
+                        (compiler-reg-instr-list-has-mov-var? body 10 0)
+                        (compiler-reg-instr-list-has-mov-var? body 0 10)))]
+                  [(CompilerRegEdgeCopyRewriteRefused _) false])]))]
+        [(CompilerRegEdgeCopyRefused _) false]))))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-critical-function) : CompilerIrFunction
+    (IrFunction
+      "edge_copy_critical"
+      IrParamNil
+      (AstTyI64)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "hot" "cold")
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "other"
+            (compiler-ir-instr-cons (IrInstrJump "hot") IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "hot"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "cold"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-edge-copy-critical-refusal-ok?) : bool
+    (let
+      [region : CompilerRegStringList
+        (compiler-reg-string-cons "hot" CompilerRegStringNil)]
+      (match (compiler-reg-edge-copy-plan-for-region
+        (compiler-reg-edge-copy-critical-function)
+        region
+        0
+        10
+        (compiler-reg-i64-ty))
+        [(CompilerRegEdgeCopyPlan _) false]
+        [(CompilerRegEdgeCopyRefused _) true]))))
+
+(cfg
+  test
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
     (IrFunction
       "many_call_live"
@@ -11436,7 +12078,10 @@
     (compiler-reg-scalar-caller-saved-clobber-ok?)
     (compiler-reg-scalar-call-spanning-caller-saved-ok?)
     (cfg test (compiler-reg-scalar-call-spanning-multiblock-local-ok?) true)
-    (cfg test (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?) true)))
+    (cfg test (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?) true)
+    (cfg test (compiler-reg-edge-copy-linear-ok?) true)
+    (cfg test (compiler-reg-edge-copy-backedge-ok?) true)
+    (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)))
 
 (define (compiler-regalloc-storage-self-test?) : bool
   (and

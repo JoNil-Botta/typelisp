@@ -3959,6 +3959,9 @@ Syntax:
 - `(spmd-broadcast value lane)` evaluates `value` for the selected source lane
   in the current SPMD gang and makes that scalar value available to every
   active lane in the gang.
+- `(spmd-shuffle value lane)` evaluates `value` in the current SPMD gang and,
+  for each active destination lane, returns the value from the selected active
+  source lane in that same gang.
 - `op` is a fixed operator symbol, not an expression. The first supported
   operators are `sum`, `min`, `max`, `all`, and `any`.
 - The range clause has the same half-open `[start, end)` meaning as `foreach`.
@@ -4016,8 +4019,8 @@ Purity and varying rules for the first slice:
 - The `value` expression may use the varying index, `(program-index)`,
   `(program-count)`, compatibility dynamic-array reads,
   arithmetic/comparison/boolean
-  operators over supported types, `spmd-broadcast`, and local `let` bindings
-  whose values satisfy the same rules.
+  operators over supported types, `spmd-broadcast`, `spmd-shuffle`, and local
+  `let` bindings whose values satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular, `set!`,
   `array-set!`, `print*`, file I/O, `panic`/`error`, nested `foreach`, nested
   `spmd-reduce`, nested `spmd-scan`, and user-defined calls with varying
@@ -4031,12 +4034,13 @@ Purity and varying rules for the first slice:
 
 Cross-lane operations:
 
-- `spmd-reduce`, `spmd-scan`, and `spmd-broadcast` are the public cross-lane source
-  operations in this slice.
-- `spmd-broadcast` is valid only inside a `foreach` body or inside the `value`
-  expression of `spmd-reduce`, or inside a `spmd-scan` body. It is invalid in
-  ordinary expressions, type positions, `foreach` bounds, `spmd-reduce`
-  start/end/init expressions, and `spmd-scan` start/end/init/value expressions.
+- `spmd-reduce`, `spmd-scan`, `spmd-broadcast`, and `spmd-shuffle` are the
+  public cross-lane source operations in this slice.
+- `spmd-broadcast` and `spmd-shuffle` are valid only inside a `foreach` body or
+  inside the `value` expression of `spmd-reduce`, or inside a `spmd-scan` body.
+  They are invalid in ordinary expressions, type positions, `foreach` bounds,
+  `spmd-reduce` start/end/init expressions, and `spmd-scan`
+  start/end/init/value expressions.
 - The first broadcast slice supports `i32`, `u32`, `i64`, `u64`, `f32`, and
   `f64` values. `lane` must be a uniform `i64` source-lane slot. The result
   type is the value type. If `value` is varying, the result is varying; if
@@ -4056,9 +4060,17 @@ Cross-lane operations:
   explicit SIMD backend modes until a vector pattern accepts them. Bool
   `spmd-broadcast` remains deferred even though bool compatibility
   dynamic-array lanes are supported in the AVX-512 `foreach` subset.
-- General shuffles, lane extraction/insertion, gathers/scatters, atomics, task
-  parallelism, vectorized scans, floating-point scans, and public vector/mask
-  values remain deferred.
+- The first `spmd-shuffle` slice supports the same value types as
+  `spmd-broadcast`: `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`. `lane` must
+  have type `i64` and may be uniform or varying. The result type is the value
+  type, and the result SPMD class follows `value`; a varying selector does not
+  make a uniform `value` varying. In scalar backend modes, lane `0` returns
+  `value` and any other lane traps through the standard out-of-bounds abort
+  path. Explicit AVX2/AVX-512 modes reject `spmd-shuffle` until vector
+  shuffle/permute IR and backend lowering are implemented.
+- Lane extraction/insertion, scatter writes beyond the explicit atomic helper
+  slice, task parallelism, vectorized scans, vectorized shuffles,
+  floating-point scans, and public vector/mask values remain deferred.
 - IR and backend work may add private horizontal-reduction primitives as needed
   to implement `spmd-reduce`; those primitives are not user-denotable source
   operations.
@@ -5922,8 +5934,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented, including value-producing scalar lane selects |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`, lane identities, masked-if subset, and explicit atomic helpers | Vectorized/floating-point scans, general shuffles, remaining control-flow forms beyond masked `if`, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented, including value-producing scalar lane selects |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked `if`, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -6522,6 +6534,7 @@ expr          ::= literal
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "spmd-scan" reduce-op scan-clause expr expr ")"
                 | "(" "spmd-broadcast" expr expr ")"
+                | "(" "spmd-shuffle" expr expr ")"
                 | "(" spmd-lane-form ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "return" expr ")"

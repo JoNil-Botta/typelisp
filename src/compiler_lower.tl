@@ -3085,6 +3085,21 @@
                       (ast-node-push rewritten-lane))))]
               [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
           [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (lower-spmd-inline-expr ctx env type-env value subst shadowed)
+          [(OkLowerAstExpr rewritten-value)
+            (match (lower-spmd-inline-expr ctx env type-env lane subst shadowed)
+              [(OkLowerAstExpr rewritten-lane)
+                (OkLowerAstExpr
+                  (ast-node-get
+                    (ast-expr-spmd-shuffle
+                      (ast-node-push rewritten-value)
+                      (ast-node-push rewritten-lane))))]
+              [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)])]
+          [(ErrLowerAstExpr diag) (ErrLowerAstExpr diag)]))]
     [_ (OkLowerAstExpr expr)]))
 
 (define (lower-function-logical-name-from-decl
@@ -4045,6 +4060,17 @@
           able
           (lower-clone-roots-expr ctx env decls able roots value)
           lane))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (lower-clone-roots-expr
+          ctx
+          env
+          decls
+          able
+          (lower-clone-roots-expr ctx env decls able roots value)
+          lane))]
     [(AstExprStructGet value-box _)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -4694,6 +4720,15 @@
                 value)
               body))])]
     [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (lower-reach-expr
+          all-functions
+          names
+          (lower-reach-expr all-functions names state value)
+          lane))]
+    [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
@@ -16249,6 +16284,11 @@
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (lower-spmd-broadcast ctx state env type-env value lane))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (lower-spmd-shuffle ctx state env type-env value lane))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
@@ -25760,6 +25800,33 @@
             value)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-spmd-shuffle-diagnostic) : String
+  "lower: SPMD spmd-shuffle requires scalar backend until SIMD shuffle lowering lands")
+
+(define (lower-spmd-shuffle
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : AstExpr]
+  [lane : AstExpr]) : ResultLowerExpr
+  (if (lower-mode-simd? (lower-state-mode state))
+    (ErrLowerExpr (lower-diagnostic (lower-spmd-shuffle-diagnostic)))
+    (match (lower-expr-expected ctx state env type-env lane (AstTyI64) lane)
+      [(OkLowerExpr lane-lowered)
+        (match lane-lowered
+          [(LowerExpr lane-state lane-value _)
+            (lower-expr
+              ctx
+              (lower-emit-spmd-broadcast-lane-check
+                lane-state
+                lane-value
+                (IrValueI64 1))
+              env
+              type-env
+              value)])]
+      [(ErrLowerExpr message) (ErrLowerExpr message)])))
+
 (define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx2) true]
@@ -27328,6 +27395,114 @@
               (or
                 (lower-vector-body-has-array-read? init)
                 (lower-vector-let-bindings-have-array-read? next)))]))]))
+
+(define (lower-vector-body-has-spmd-shuffle? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-spmd-shuffle? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-spmd-shuffle? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-spmd-shuffle? inner))]
+    [(AstExprSpmdShuffle _ _) true]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? value)
+          (lower-vector-body-has-spmd-shuffle? lane)))]
+    [(AstExprArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? arr)
+          (lower-vector-body-has-spmd-shuffle? idx)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lower-vector-body-has-spmd-shuffle? inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? left)
+          (lower-vector-body-has-spmd-shuffle? right)))]
+    [(AstExprIf cond-box then-box else-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-box)]
+        [else-branch : AstExpr (ast-node-get else-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? cond)
+          (lower-vector-body-has-spmd-shuffle? then-branch)
+          (lower-vector-body-has-spmd-shuffle? else-branch)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (or
+              (lower-vector-let-bindings-have-spmd-shuffle? bindings)
+              (lower-vector-body-has-spmd-shuffle? body)))])]
+    [(AstExprBegin exprs) (lower-vector-expr-list-has-spmd-shuffle? exprs)]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? func)
+          (lower-vector-expr-list-has-spmd-shuffle? args)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (let
+        [arr : AstExpr (ast-node-get arr-box)]
+        [idx : AstExpr (ast-node-get idx-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? arr)
+          (lower-vector-body-has-spmd-shuffle? idx)
+          (lower-vector-body-has-spmd-shuffle? value)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? receiver)
+          (lower-vector-body-has-spmd-shuffle? value)))]
+    [_ false]))
+
+(define (lower-vector-expr-list-has-spmd-shuffle? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [inner : AstExpr (ast-node-get expr)]
+        [next : AstExprList (box-get rest)]
+        (or
+          (lower-vector-body-has-spmd-shuffle? inner)
+          (lower-vector-expr-list-has-spmd-shuffle? next)))]))
+
+(define (lower-vector-let-bindings-have-spmd-shuffle?
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [next : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              (or
+                (lower-vector-body-has-spmd-shuffle? init)
+                (lower-vector-let-bindings-have-spmd-shuffle? next)))]))]))
 
 (define (lower-vector-body-has-atomic-call?
   [ctx : TcContext]
@@ -31383,6 +31558,11 @@
                     (lower-diagnostic-at-expr
                       body
                       (lower-spmd-bool-lane-diagnostic)))]
+                [(lower-vector-body-has-spmd-shuffle? body)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (lower-spmd-shuffle-diagnostic)))]
                 [(lower-vector-body-has-array-read? body)
                   (if (lower-simple-vector-map-has-unsupported-byte-mul?
                     (lower-state-mode state)
@@ -44317,6 +44497,12 @@
     ([i : i64 0 n])
     (array-set! out i (spmd-broadcast (array-ref a i) lane))))")
 
+(define (compiler-lower-spmd-shuffle-source) : String
+  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (spmd-shuffle (array-ref a i) i))))")
+
 (define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -45118,6 +45304,18 @@
       (CompilerLowerAvx512)
       (lower-simd-foreach-fallback-diagnostic))))
 
+(define (compiler-lower-spmd-shuffle-lowering-ok?) : bool
+  (and
+    (compiler-lower-ok? (compiler-lower-spmd-shuffle-source))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-spmd-shuffle-source)
+      (CompilerLowerAvx2)
+      (lower-spmd-shuffle-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-spmd-shuffle-source)
+      (CompilerLowerAvx512)
+      (lower-spmd-shuffle-diagnostic))))
+
 (define (compiler-lower-foreach-tests-ok?) : bool
   (and
     (compiler-lower-and8
@@ -45139,6 +45337,7 @@
     (compiler-lower-spmd-broadcast-avx512-shape-ok?)
     (compiler-lower-scalar-foreach-stays-scalar-ok?)
     (compiler-lower-simd-foreach-fallback-diagnostic-ok?)
+    (compiler-lower-spmd-shuffle-lowering-ok?)
     (compiler-lower-avx512-masked-if-shape-ok?)
     (compiler-lower-avx512-masked-if-offset-shape-ok?)
     (compiler-lower-avx512-masked-if-index-value-shape-ok?)

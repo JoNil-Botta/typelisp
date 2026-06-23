@@ -612,6 +612,9 @@
 (define (compiler-parse-tag-expr-spmd-broadcast) : i64
   290)
 
+(define (compiler-parse-tag-expr-spmd-shuffle) : i64
+  297)
+
 (define (compiler-parse-tag-expr-spmd-program-index) : i64
   295)
 
@@ -893,6 +896,9 @@
           out
           "spmd-broadcast"
           (compiler-parse-tag-expr-spmd-broadcast)))
+      (set!
+        out
+        (sym-i64-bind out "spmd-shuffle" (compiler-parse-tag-expr-spmd-shuffle)))
       (set!
         out
         (sym-i64-bind
@@ -3640,6 +3646,34 @@
         [_ (ErrAstExpr "parse: malformed spmd-broadcast")])]
     [_ (ErrAstExpr "parse: malformed spmd-broadcast")]))
 
+(define (parse-ast-spmd-shuffle
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons value-node lane-tail _)
+      (match (sp-node-get lane-tail)
+        [(SpSCons lane-node end _)
+          (match (sp-node-get end)
+            [(SpSNil _)
+              (match (parse-ast-expr-with-pools
+                dispatch
+                pools
+                (sp-node-get value-node))
+                [(OkAstExpr value)
+                  (match (parse-ast-expr-with-pools
+                    dispatch
+                    pools
+                    (sp-node-get lane-node))
+                    [(OkAstExpr lane)
+                      (OkAstExpr
+                        (ast-expr-spmd-shuffle-with-pools pools value lane))]
+                    [(ErrAstExpr message) (ErrAstExpr message)])]
+                [(ErrAstExpr message) (ErrAstExpr message)])]
+            [_ (ErrAstExpr "parse: malformed spmd-shuffle")])]
+        [_ (ErrAstExpr "parse: malformed spmd-shuffle")])]
+    [_ (ErrAstExpr "parse: malformed spmd-shuffle")]))
+
 (define (parse-ast-try
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
@@ -4568,6 +4602,8 @@
       (parse-ast-spmd-scan dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-broadcast))
       (parse-ast-spmd-broadcast dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-spmd-shuffle))
+      (parse-ast-spmd-shuffle dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-program-index))
       (parse-ast-no-arg-low-level
         rest
@@ -9600,6 +9636,8 @@
     (compiler-parse-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-parse-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+    (compiler-parse-ok?
       "(define (main [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (+ (program-index) (program-count)))) 0))")
     ;; #1073: an empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
@@ -9628,6 +9666,9 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-broadcast 1))"
       "parse: malformed spmd-broadcast")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-shuffle 1))"
+      "parse: malformed spmd-shuffle")
     (compiler-parse-error-ok?
       "(define (main) : i64 (program-index 0))"
       "parse: program-index expects no arguments")

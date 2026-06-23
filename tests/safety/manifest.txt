@@ -120,6 +120,11 @@ spmd_program_index_scan_body_reject|check-fail|tests/safety/spmd_program_index_s
 spmd_broadcast_varying_lane_reject|check-fail|tests/safety/spmd_broadcast_varying_lane_reject.tl|-|spmd-broadcast lane must be uniform
 spmd_broadcast_bool_reject|check-fail|tests/safety/spmd_broadcast_bool_reject.tl|-|spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred
 spmd_broadcast_masked_if_reject|check-fail|tests/safety/spmd_broadcast_masked_if_reject.tl|-|SPMD masked if does not support spmd-broadcast inside masked branches
+spmd_shuffle_outside_reject|check-fail|tests/safety/spmd_shuffle_outside_reject.tl|-|spmd-shuffle is only
+spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_reject.tl|-|spmd-scan body
+spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
+spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
+spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred

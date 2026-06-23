@@ -5899,12 +5899,24 @@
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-broadcast (array-ref xs i) 0)))")
     (compiler-typecheck-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-broadcast prefix 0))))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) i))) 0))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (spmd-shuffle (array-ref xs i) i)))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (array-set! out i (spmd-shuffle prefix 0))))")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (spmd-broadcast 1 0))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
+      "(define (main) : i64 (spmd-shuffle 1 0))"
+      "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+    (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-broadcast (array-ref xs i) 0) unit))"
       "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (spmd-shuffle (array-ref xs i) 0) unit))"
+      "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) i))) 0))"
       "typecheck: spmd-broadcast lane must be uniform")
@@ -5912,8 +5924,14 @@
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
       "typecheck: spmd-broadcast lane must have type i64")
     (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) true))) 0))"
+      "typecheck: spmd-shuffle lane must have type i64")
+    (compiler-typecheck-error-ok?
       "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
-      "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")))
+      "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
+    (compiler-typecheck-error-ok?
+      "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref bs i) 0))) true))"
+      "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, array-set! value-type agreement, and array-push! dynamic-array

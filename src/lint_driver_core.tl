@@ -863,6 +863,10 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get lane)
         (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
+    [(AstExprSpmdShuffle value lane)
+      (selfhost-lint-dead-expr-refs
+        (ast-node-get lane)
+        (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
     [(AstExprStructGet receiver _)
       (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)]
     [(AstExprStructSet receiver _ value)

@@ -691,7 +691,8 @@
     (string-eq name "while")
     (string-eq name "foreach")
     (string-eq name "spmd-reduce")
-    (string-eq name "spmd-scan")))
+    (string-eq name "spmd-scan")
+    (string-eq name "spmd-shuffle")))
 
 (define (lint-token-name [tok : Token]) : String
   (if (= (token-tag tok) (tag-sym))
@@ -1462,6 +1463,10 @@
             [else
               (lint-expr-uses-import? (ast-node-get body) alias module-name)])])]
     [(AstExprSpmdBroadcast value lane)
+      (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
+        true
+        (lint-expr-uses-import? (ast-node-get lane) alias module-name))]
+    [(AstExprSpmdShuffle value lane)
       (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get lane) alias module-name))]
@@ -2247,6 +2252,10 @@
                       (ast-node-get start)
                       state))))))])]
     [(AstExprSpmdBroadcast value lane)
+      (lint-unused-assignment-note-reads
+        (ast-node-get lane)
+        (lint-unused-assignment-note-reads (ast-node-get value) state))]
+    [(AstExprSpmdShuffle value lane)
       (lint-unused-assignment-note-reads
         (ast-node-get lane)
         (lint-unused-assignment-note-reads (ast-node-get value) state))]
@@ -3260,6 +3269,10 @@
       (lint-unused-variable-quasiquote-expr
         (ast-node-get lane)
         (lint-unused-variable-quasiquote-expr (ast-node-get value) state))]
+    [(AstExprSpmdShuffle value lane)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get lane)
+        (lint-unused-variable-quasiquote-expr (ast-node-get value) state))]
     [(AstExprStructGet receiver _)
       (lint-unused-variable-quasiquote-expr (ast-node-get receiver) state)]
     [(AstExprStructSet receiver _ value)
@@ -3690,6 +3703,11 @@
               value-state
               span))])]
     [(AstExprSpmdBroadcast value lane)
+      (lint-unused-variable-expr
+        (ast-node-get lane)
+        (lint-unused-variable-expr (ast-node-get value) state span)
+        span)]
+    [(AstExprSpmdShuffle value lane)
       (lint-unused-variable-expr
         (ast-node-get lane)
         (lint-unused-variable-expr (ast-node-get value) state span)
@@ -4833,6 +4851,11 @@
                     threshold
                     (lint-walk-expr start threshold acc))))))])]
     [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (lint-walk-expr lane threshold (lint-walk-expr value threshold acc)))]
+    [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]

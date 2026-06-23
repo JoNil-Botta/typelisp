@@ -7084,6 +7084,19 @@
                   lane-state)]
               [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
           [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (spec-rewrite-expr value templates state)
+          [(OkSpecExpr rewritten-value value-state)
+            (match (spec-rewrite-expr lane templates value-state)
+              [(OkSpecExpr rewritten-lane lane-state)
+                (OkSpecExpr
+                  (ast-expr-spmd-shuffle rewritten-value rewritten-lane)
+                  lane-state)]
+              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -7757,6 +7770,18 @@
                   (ast-expr-spmd-broadcast rewritten-value rewritten-lane))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (spec-substitute-values-expr value subs)
+          [(OkSpecSubExpr rewritten-value)
+            (match (spec-substitute-values-expr lane subs)
+              [(OkSpecSubExpr rewritten-lane)
+                (OkSpecSubExpr
+                  (ast-expr-spmd-shuffle rewritten-value rewritten-lane))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -8321,6 +8346,18 @@
               [(OkSpecSubExpr rewritten-lane)
                 (OkSpecSubExpr
                   (ast-expr-spmd-broadcast rewritten-value rewritten-lane))]
+              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (spec-substitute-types-expr value subs)
+          [(OkSpecSubExpr rewritten-value)
+            (match (spec-substitute-types-expr lane subs)
+              [(OkSpecSubExpr rewritten-lane)
+                (OkSpecSubExpr
+                  (ast-expr-spmd-shuffle rewritten-value rewritten-lane))]
               [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
           [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
     [(AstExprBinary op left-box right-box)

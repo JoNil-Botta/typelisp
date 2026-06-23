@@ -997,6 +997,7 @@
     [(AstExprSpmdReduce _) "spmd-reduce"]
     [(AstExprSpmdScan _) "spmd-scan"]
     [(AstExprSpmdBroadcast _ _) "spmd-broadcast"]
+    [(AstExprSpmdShuffle _ _) "spmd-shuffle"]
     [(AstExprSpmdProgramIndex) "program-index"]
     [(AstExprSpmdProgramCount) "program-count"]
     [(AstExprStructGet _ _) "struct-get"]
@@ -6014,6 +6015,20 @@
                   lane-fuel)]
               [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
           [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (ctfe-quote-expr value env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+            (match (ctfe-quote-expr lane env value-fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-lane _ lane-fuel)
+                (OkCtfeQuoteExpr
+                  (ast-expr-spmd-shuffle quoted-value quoted-lane)
+                  (AstTyExpr)
+                  lane-fuel)]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
     [(AstExprSpmdProgramIndex)
       (OkCtfeQuoteExpr (ast-expr-spmd-program-index) (AstTyExpr) fuel)]
     [(AstExprSpmdProgramCount)
@@ -7120,6 +7135,17 @@
         [a-lane : AstExpr (ast-node-get a-lane-box)]
         (match b
           [(AstExprSpmdBroadcast b-value-box b-lane-box)
+            (let
+              [b-value : AstExpr (ast-node-get b-value-box)]
+              [b-lane : AstExpr (ast-node-get b-lane-box)]
+              (and (ctfe-expr-eq a-value b-value) (ctfe-expr-eq a-lane b-lane)))]
+          [_ false]))]
+    [(AstExprSpmdShuffle a-value-box a-lane-box)
+      (let
+        [a-value : AstExpr (ast-node-get a-value-box)]
+        [a-lane : AstExpr (ast-node-get a-lane-box)]
+        (match b
+          [(AstExprSpmdShuffle b-value-box b-lane-box)
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
               [b-lane : AstExpr (ast-node-get b-lane-box)]

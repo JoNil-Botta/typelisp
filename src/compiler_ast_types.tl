@@ -450,6 +450,7 @@
   (AstExprSpmdReduce (Box AstSpmdReduce))
   (AstExprSpmdScan (Box AstSpmdScan))
   (AstExprSpmdBroadcast i64 i64)
+  (AstExprSpmdShuffle i64 i64)
   (AstExprSpmdProgramIndex)
   (AstExprSpmdProgramCount)
   (AstExprStructGet i64 i64)
@@ -2188,6 +2189,9 @@
 (define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
   (ast-node-push (AstExprSpmdBroadcast value lane)))
 
+(define (ast-expr-spmd-shuffle [value : i64] [lane : i64]) : i64
+  (ast-node-push (AstExprSpmdShuffle value lane)))
+
 (define (ast-expr-spmd-program-index) : i64
   (ast-node-push (AstExprSpmdProgramIndex)))
 
@@ -2558,6 +2562,12 @@
   [value : i64]
   [lane : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExprSpmdBroadcast value lane)))
+
+(define (ast-expr-spmd-shuffle-with-pools
+  [pools : AstNodePoolContext]
+  [value : i64]
+  [lane : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExprSpmdShuffle value lane)))
 
 (define (ast-expr-spmd-program-index-with-pools [pools : AstNodePoolContext]) : i64
   (ast-node-pool-context-expr-push pools (AstExprSpmdProgramIndex)))
@@ -3013,6 +3023,7 @@
     [(AstExprSpmdReduce _) 28]
     [(AstExprSpmdScan _) 68]
     [(AstExprSpmdBroadcast _ _) 64]
+    [(AstExprSpmdShuffle _ _) 71]
     [(AstExprSpmdProgramIndex) 69]
     [(AstExprSpmdProgramCount) 70]
     [(AstExprTry _) 29]

@@ -7611,6 +7611,9 @@
 (define (tc-spmd-broadcast-scope-message) : String
   "typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
 
+(define (tc-spmd-shuffle-scope-message) : String
+  "typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body")
+
 (define (tc-spmd-lane-scope-message [name : String]) : String
   (string-append
     (string-append "typecheck: " name)
@@ -7871,6 +7874,13 @@
           [lane : AstExpr (ast-node-get lane-box)]
           (tc-source-expr-pair-spmd-broadcast-scope-ok value lane true))
         (ErrTcUnit (tc-spmd-broadcast-scope-message)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (if allow
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          [lane : AstExpr (ast-node-get lane-box)]
+          (tc-source-expr-pair-spmd-broadcast-scope-ok value lane true))
+        (ErrTcUnit (tc-spmd-shuffle-scope-message)))]
     [(AstExprSpmdProgramIndex)
       (if allow
         OkTcUnit
@@ -8229,6 +8239,11 @@
                   [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (tc-source-expr-pair-policy-ok ctx value lane))]
+    [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
@@ -9333,6 +9348,9 @@
 (define (tc-spmd-broadcast-type-message) : String
   "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
 
+(define (tc-spmd-shuffle-type-message) : String
+  "typecheck: spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred")
+
 (define (tc-spmd-broadcast-finish
   [ctx : TcContext]
   [expr-ty : AstType]
@@ -9353,6 +9371,21 @@
           [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
       [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])
     (ErrTcSpmdExprInfo (tc-spmd-broadcast-type-message))))
+
+(define (tc-spmd-shuffle-finish
+  [ctx : TcContext]
+  [expr-ty : AstType]
+  [value-class : TcSpmdClass]
+  [lane-ty : AstType]
+  [lane-env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (if (tc-spmd-broadcast-type-supported? (tc-resolve-type ctx expr-ty))
+    (match (tc-expect
+      (tc-resolve-type ctx lane-ty)
+      (AstTyI64)
+      "typecheck: spmd-shuffle lane must have type i64")
+      [(OkTcUnit) (tc-spmd-finish expr-ty value-class lane-env)]
+      [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])
+    (ErrTcSpmdExprInfo (tc-spmd-shuffle-type-message))))
 
 (define (tc-spmd-finish [ty : AstType] [class : TcSpmdClass] [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
   (if (and
@@ -15436,6 +15469,13 @@
         (and
           (tc-ref-closure-local-uses-ok? value name bound)
           (tc-ref-closure-local-uses-ok? lane name bound)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? value name bound)
+          (tc-ref-closure-local-uses-ok? lane name bound)))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -16829,6 +16869,8 @@
       (tc-spmd-masked-if-unsupported "nested spmd-scan inside masked branches")]
     [(AstExprSpmdBroadcast _ _)
       (tc-spmd-masked-if-unsupported "spmd-broadcast inside masked branches")]
+    [(AstExprSpmdShuffle _ _)
+      (tc-spmd-masked-if-unsupported "spmd-shuffle inside masked branches")]
     [(AstExprSpmdProgramIndex) OkTcUnit]
     [(AstExprSpmdProgramCount) OkTcUnit]
     [(AstExprSet _ _)
@@ -17224,6 +17266,10 @@
       (tc-spmd-scan-body-no-nested-pair
         (ast-node-get value-box)
         (ast-node-get lane-box))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (tc-spmd-scan-body-no-nested-pair
+        (ast-node-get value-box)
+        (ast-node-get lane-box))]
     [(AstExprSpmdProgramIndex)
       (ErrTcUnit
         "typecheck: program-index is not supported inside spmd-scan body")]
@@ -17367,7 +17413,7 @@
 ;; `spmd-reduce` allows varying bool values for `all`/`any`, so it cannot reuse
 ;; the full foreach body checker: that checker applies foreach array-lane
 ;; restrictions to the entire expression. This path only classifies the reduce
-;; value enough to enforce nested `spmd-broadcast` value/lane rules.
+;; value enough to enforce nested cross-lane value/lane rules.
 (define (tc-spmd-reduce-class-finish
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -17579,6 +17625,34 @@
                               value-class
                               lane-ty
                               lane-class
+                              lane-env)]
+                          [(ErrTcType message) (ErrTcSpmdExprInfo message)])])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (tc-spmd-reduce-class ctx env spmd-env value)
+          [(OkTcSpmdExprInfo value-info)
+            (match value-info
+              [(TcSpmdExprInfo _ value-class value-env)
+                (match (tc-spmd-reduce-class-with-expected-or-actual
+                  ctx
+                  env
+                  value-env
+                  lane
+                  (AstTyI64))
+                  [(OkTcSpmdExprInfo lane-info)
+                    (match lane-info
+                      [(TcSpmdExprInfo lane-ty _ lane-env)
+                        (match (tc-expr ctx env expr)
+                          [(OkTcType expr-ty)
+                            (tc-spmd-shuffle-finish
+                              ctx
+                              expr-ty
+                              value-class
+                              lane-ty
                               lane-env)]
                           [(ErrTcType message) (ErrTcSpmdExprInfo message)])])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
@@ -18156,6 +18230,31 @@
                           value-class
                           lane-ty
                           lane-class
+                          lane-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (tc-spmd-expr ctx env spmd-env value)
+          [(OkTcSpmdExprInfo value-info)
+            (match value-info
+              [(TcSpmdExprInfo _ value-class value-env)
+                (match (tc-spmd-expr-with-expected-or-actual
+                  ctx
+                  env
+                  value-env
+                  lane
+                  (AstTyI64))
+                  [(OkTcSpmdExprInfo lane-info)
+                    (match lane-info
+                      [(TcSpmdExprInfo lane-ty _ lane-env)
+                        (tc-spmd-shuffle-finish
+                          ctx
+                          expr-ty
+                          value-class
+                          lane-ty
                           lane-env)])]
                   [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
@@ -18801,6 +18900,13 @@
         (or
           (tc-expr-uses-free-name? value name bound)
           (tc-expr-uses-free-name? lane name bound)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (or
+          (tc-expr-uses-free-name? value name bound)
+          (tc-expr-uses-free-name? lane name bound)))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -19260,6 +19366,13 @@
         (or
           (tc-expr-sets-free-name? value name bound)
           (tc-expr-sets-free-name? lane name bound)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (or
+          (tc-expr-sets-free-name? value name bound)
+          (tc-expr-sets-free-name? lane name bound)))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -19534,6 +19647,10 @@
               (tc-expr-result-uses-cleanup-owner? value owners value-bound)
               (tc-expr-result-uses-cleanup-owner? body owners body-bound)))])]
     [(AstExprSpmdBroadcast value-box _)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        (tc-expr-result-uses-cleanup-owner? value owners bound))]
+    [(AstExprSpmdShuffle value-box _)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (tc-expr-result-uses-cleanup-owner? value owners bound))]
@@ -24301,6 +24418,16 @@
           (match (tc-spmd-value-pure-at value false)
             [(OkTcUnit) (tc-spmd-value-pure-at lane false)]
             [(ErrTcUnit message) (ErrTcUnit message)])))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (if in-index
+        (ErrTcUnit
+          "spmd-shuffle is not allowed inside an array index in a spmd-reduce value expression (SPEC.md 5.15)")
+        (let
+          [value : AstExpr (ast-node-get value-box)]
+          [lane : AstExpr (ast-node-get lane-box)]
+          (match (tc-spmd-value-pure-at value false)
+            [(OkTcUnit) (tc-spmd-value-pure-at lane false)]
+            [(ErrTcUnit message) (ErrTcUnit message)])))]
     [(AstExprIf _ _ _)
       (ErrTcUnit
         "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")]
@@ -26165,6 +26292,26 @@
                   [(ErrTcType message) (ErrTcType message)])]
               [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (tc-expr-with-expected-or-actual ctx env lane (AstTyI64))
+          [(OkTcType lane-ty)
+            (match (tc-expect
+              (tc-resolve-type ctx lane-ty)
+              (AstTyI64)
+              "typecheck: spmd-shuffle lane must have type i64")
+              [(OkTcUnit)
+                (match (tc-expr ctx env value)
+                  [(OkTcType value-ty)
+                    (if (tc-spmd-broadcast-type-supported?
+                      (tc-resolve-type ctx value-ty))
+                      (OkTcType value-ty)
+                      (ErrTcType (tc-spmd-shuffle-type-message)))]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprSpmdProgramIndex) (OkTcType (AstTyI64))]
     [(AstExprSpmdProgramCount) (OkTcType (AstTyI64))]
     [(AstExprMatch match-box)
@@ -27239,6 +27386,16 @@
                   [(ErrTcUnit message) (ErrTcUnit message)]))]
             [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstExprSpmdBroadcast value lane)
+      (tc-comptime-purity-node2-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        value
+        lane)]
+    [(AstExprSpmdShuffle value lane)
       (tc-comptime-purity-node2-mode
         ctx
         env
@@ -29975,6 +30132,14 @@
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (tc-move-check-expr ctx env locals loop-carried moved value)
+          [(OkTcMove moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 lane)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
@@ -33027,6 +33192,14 @@
           [(OkTcBorrowCheck borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 lane)]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed value)
+          [(OkTcBorrowCheck borrowed1)
+            (tc-borrow-check-expr ctx env locals borrowed1 lane)]
+          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprStructGet inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35233,6 +35406,13 @@
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (ast-expr-spmd-broadcast
+          (macro-hygiene-expr value env macro-name depth)
+          (macro-hygiene-expr lane env macro-name depth)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (ast-expr-spmd-shuffle
           (macro-hygiene-expr value env macro-name depth)
           (macro-hygiene-expr lane env macro-name depth)))]
     [(AstExprStructGet inner-box field)

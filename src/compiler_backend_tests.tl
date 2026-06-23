@@ -6457,7 +6457,7 @@
         (compiler-backend-string-contains? asm "    vmovdqu ")
         (compiler-backend-string-contains?
           asm
-          "    vpaddq %ymm7, %ymm6, %ymm7\n")
+          "    vpaddq (%rax,%rcx,8), %ymm6, %ymm7\n")
         (compiler-backend-string-contains?
           asm
           "    vpaddq %ymm7, %ymm6, %ymm6\n")
@@ -6608,6 +6608,89 @@
         "backend: vector register home unavailable for load dst; unsupported spill, call, or ABI lifetime")]
     [(OkCompilerBackend _) false]))
 
+(define (compiler-backend-vector-load-binop-fold-function
+  [name : String]
+  [op : CompilerIrBinOp]
+  [load-on-lhs : bool]) : CompilerIrFunction
+  (let
+    [lhs : CompilerIrValue
+      (if load-on-lhs
+        (IrValueVar 1)
+        (IrValueVar 0))]
+    [rhs : CompilerIrValue
+      (if load-on-lhs
+        (IrValueVar 0)
+        (IrValueVar 1))]
+    (IrFunction
+      name
+      IrParamNil
+      (AstTyUnit)
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrSplat 0 (IrValueI64 7) 4 (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrVectorLoad 1 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
+              (compiler-ir-instr-cons
+                (ir-instr-vector-bin-op 2 op lhs rhs 4 (AstTyI64))
+                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
+        IrBlockNil))))
+
+(define (compiler-backend-vector-load-binop-fold-program
+  [op : CompilerIrBinOp]
+  [load-on-lhs : bool]) : CompilerIrProgram
+  (compiler-backend-vector-home-program
+    (compiler-backend-vector-load-binop-fold-function
+      "vector_load_binop_fold"
+      op
+      load-on-lhs)))
+
+(define (compiler-backend-vector-load-binop-folds?
+  [op : CompilerIrBinOp]
+  [load-on-lhs : bool]
+  [mnemonic : String]) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-load-binop-fold-program op load-on-lhs)
+    (BackendTargetLinux)
+    (BackendModeAvx2)
+    (compiler-source-spans-empty)
+    true)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          (str-cat "    " mnemonic " (%rax,%rcx,8), "))
+        (not
+          (compiler-backend-string-contains? asm "    vmovdqu (%rax,%rcx,8), ")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-vector-load-binop-does-not-fold?
+  [op : CompilerIrBinOp]
+  [load-on-lhs : bool]
+  [mnemonic : String]) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-load-binop-fold-program op load-on-lhs)
+    (BackendTargetLinux)
+    (BackendModeAvx2)
+    (compiler-source-spans-empty)
+    true)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    vmovdqu (%rax,%rcx,8), ")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            (str-cat "    " mnemonic " (%rax,%rcx,8), "))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-vector-load-binop-folding-ok?) : bool
+  (and
+    (compiler-backend-vector-load-binop-folds? (IrBinAdd) true "vpaddq")
+    (compiler-backend-vector-load-binop-folds? (IrBinSub) false "vpsubq")
+    (compiler-backend-vector-load-binop-does-not-fold? (IrBinSub) true "vpsubq")))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -6622,6 +6705,7 @@
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
+    (compiler-backend-vector-load-binop-folding-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool

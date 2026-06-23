@@ -112,6 +112,10 @@
   (OkBackendValue CompilerIrValue)
   (ErrBackendValue String))
 
+(defenum CompilerBackendVectorMemFold
+  (CompilerBackendNoVectorMemFold)
+  (CompilerBackendSomeVectorMemFold CompilerIrValue))
+
 (defenum CompilerBackendPhiSource
   (BackendPhiSourceValue CompilerIrValue)
   (BackendPhiSourceTemp))
@@ -1014,6 +1018,19 @@
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
         [_ ""])]
+    [(IrBinSub)
+      (match elem-ty
+        [(AstTyI64) "vpsubq"]
+        [(AstTyU64) "vpsubq"]
+        [(AstTyI32) "vpsubd"]
+        [(AstTyU32) "vpsubd"]
+        [(AstTyI16) "vpsubw"]
+        [(AstTyU16) "vpsubw"]
+        [(AstTyI8) "vpsubb"]
+        [(AstTyU8) "vpsubb"]
+        [(AstTyF64) "vsubpd"]
+        [(AstTyF32) "vsubps"]
+        [_ ""])]
     [(IrBinMul)
       (match elem-ty
         [(AstTyI32) "vpmulld"]
@@ -1329,6 +1346,67 @@
                 (compiler-diagnostic-with-message instr-diag message))]))))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
+(define (compiler-backend-emit-avx2-vector-binop-memory-source
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [reg-value : CompilerIrValue]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX2 vector binary op"))
+        (match (compiler-backend-avx2-vector-value-reg
+          assignments
+          reg-value
+          "memory binop register operand")
+          [(OkBackendReg reg)
+            (match (compiler-backend-vector-var-reg
+              assignments
+              dst
+              "binop dst"
+              "ymm")
+              [(OkBackendReg dst-reg)
+                (match (compiler-backend-emit-avx2-base-index
+                  assignments
+                  base
+                  index)
+                  [(OkCompilerBackend addr-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        addr-asm
+                        (str-cat
+                          "    "
+                          mnemonic
+                          " "
+                          (compiler-backend-avx2-indexed-addr elem-ty)
+                          ", "
+                          reg
+                          ", "
+                          dst-reg
+                          "\n")))]
+                  [(ErrCompilerBackend message)
+                    (ErrCompilerBackend
+                      (compiler-backend-apply-instr-diagnostic
+                        message
+                        instr-diag))])]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+
 (define (compiler-backend-emit-avx2-vector-store
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
@@ -1441,6 +1519,19 @@
         [(AstTyU8) "vpaddb"]
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
+        [_ ""])]
+    [(IrBinSub)
+      (match elem-ty
+        [(AstTyI64) "vpsubq"]
+        [(AstTyU64) "vpsubq"]
+        [(AstTyI32) "vpsubd"]
+        [(AstTyU32) "vpsubd"]
+        [(AstTyI16) "vpsubw"]
+        [(AstTyU16) "vpsubw"]
+        [(AstTyI8) "vpsubb"]
+        [(AstTyU8) "vpsubb"]
+        [(AstTyF64) "vsubpd"]
+        [(AstTyF32) "vsubps"]
         [_ ""])]
     [(IrBinMul)
       (match elem-ty
@@ -1875,6 +1966,67 @@
               (compiler-diagnostic-with-message instr-diag message))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
+(define (compiler-backend-emit-avx512-vector-binop-memory-source
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [reg-value : CompilerIrValue]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX-512 vector binary op"))
+        (match (compiler-backend-avx512-vector-value-reg
+          assignments
+          reg-value
+          "memory binop register operand")
+          [(OkBackendReg reg)
+            (match (compiler-backend-vector-var-reg
+              assignments
+              dst
+              "binop dst"
+              "zmm")
+              [(OkBackendReg dst-reg)
+                (match (compiler-backend-emit-avx2-base-index
+                  assignments
+                  base
+                  index)
+                  [(OkCompilerBackend addr-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        addr-asm
+                        (str-cat
+                          "    "
+                          mnemonic
+                          " "
+                          (compiler-backend-avx2-indexed-addr elem-ty)
+                          ", "
+                          reg
+                          ", "
+                          dst-reg
+                          "\n")))]
+                  [(ErrCompilerBackend message)
+                    (ErrCompilerBackend
+                      (compiler-backend-apply-instr-diagnostic
+                        message
+                        instr-diag))])]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
 (define (compiler-backend-emit-avx512-vector-compare
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -2017,6 +2169,87 @@
       lanes
       elem-ty
       instr-diag)))
+
+(define (compiler-backend-vector-binop-memory-source-supported?
+  [op : CompilerIrBinOp]
+  [lanes : i64]
+  [elem-ty : AstType]) : bool
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (>
+      (string-length (compiler-backend-avx512-vector-binop-mnemonic op elem-ty))
+      0)
+    (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+      (>
+        (string-length (compiler-backend-avx2-vector-binop-mnemonic op elem-ty))
+        0)
+      false)))
+
+(define (compiler-backend-emit-vector-binop-memory-source
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [reg-value : CompilerIrValue]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (compiler-backend-emit-avx512-vector-binop-memory-source
+      assignments
+      dst
+      op
+      reg-value
+      base
+      index
+      lanes
+      elem-ty
+      instr-diag)
+    (compiler-backend-emit-avx2-vector-binop-memory-source
+      assignments
+      dst
+      op
+      reg-value
+      base
+      index
+      lanes
+      elem-ty
+      instr-diag)))
+
+(define (compiler-backend-vector-load-binop-fold-value
+  [load-dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerBackendVectorMemFold
+  (if (compiler-backend-branch-uses-var? rhs load-dst)
+    (CompilerBackendSomeVectorMemFold lhs)
+    (if (and
+      (compiler-backend-branch-uses-var? lhs load-dst)
+      (compiler-backend-commutative-binop? op))
+      (CompilerBackendSomeVectorMemFold rhs)
+      (CompilerBackendNoVectorMemFold))))
+
+(define (compiler-backend-vector-load-binop-foldable?
+  [use-counts : (Array i64)]
+  [load-dst : i64]
+  [load-lanes : i64]
+  [load-elem-ty : AstType]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [bin-lanes : i64]
+  [bin-elem-ty : AstType]) : bool
+  (and
+    (compiler-backend-var-single-use? use-counts load-dst)
+    (= load-lanes bin-lanes)
+    (opt-type-eq load-elem-ty bin-elem-ty)
+    (compiler-backend-vector-binop-memory-source-supported?
+      op
+      bin-lanes
+      bin-elem-ty)
+    (match (compiler-backend-vector-load-binop-fold-value load-dst op lhs rhs)
+      [(CompilerBackendSomeVectorMemFold _) true]
+      [(CompilerBackendNoVectorMemFold) false])))
 
 (define (compiler-backend-emit-vector-reduce
   [assignments : CompilerRegAssignmentList]
@@ -19605,6 +19838,162 @@
               func-diag
               use-counts
               buf))]
+        [(IrInstrVectorLoad load-dst base index lanes elem-ty)
+          (match (box-get rest)
+            [(IrInstrCons next after-binop)
+              (match next
+                [(IrInstrVectorBinOp payload-box)
+                  (match (box-get payload-box)
+                    [(CompilerIrInstrVectorBinOpPayload
+                        bin-dst
+                        op
+                        lhs
+                        rhs
+                        bin-lanes
+                        bin-elem-ty)
+                      (if (compiler-backend-vector-load-binop-foldable?
+                        use-counts
+                        load-dst
+                        lanes
+                        elem-ty
+                        op
+                        lhs
+                        rhs
+                        bin-lanes
+                        bin-elem-ty)
+                        (match (compiler-backend-vector-load-binop-fold-value
+                          load-dst
+                          op
+                          lhs
+                          rhs)
+                          [(CompilerBackendSomeVectorMemFold reg-value)
+                            (compiler-backend-emit-fused-result-rest
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              (compiler-backend-emit-vector-binop-memory-source
+                                assignments
+                                bin-dst
+                                op
+                                reg-value
+                                base
+                                index
+                                bin-lanes
+                                bin-elem-ty
+                                (compiler-backend-instr-diagnostic
+                                  spans
+                                  source-function
+                                  next
+                                  func-diag
+                                  ""))
+                              (box-get after-binop)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf)]
+                          [(CompilerBackendNoVectorMemFold)
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              (box-get rest)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf)])
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          (box-get rest)
+                          assignments
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf))])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    instr
+                    (box-get rest)
+                    assignments
+                    vars
+                    types
+                    global-types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    program-index
+                    spans
+                    func-diag
+                    use-counts
+                    buf)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                instr
+                (box-get rest)
+                assignments
+                vars
+                types
+                global-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index
+                spans
+                func-diag
+                use-counts
+                buf)])]
         [(IrInstrLoad load-dst ptr load-ty)
           (if (and
             (compiler-backend-load-compare-type? load-ty)

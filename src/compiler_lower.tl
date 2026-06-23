@@ -20363,9 +20363,14 @@
 (define (lower-private-string-eq-helper-call-name?
   [type-env : TcTypeEnv]
   [name : String]) : bool
+  (lower-private-string-eq-helper-call-id? type-env (tc-builtin-name-id name)))
+
+(define (lower-private-string-eq-helper-call-id?
+  [type-env : TcTypeEnv]
+  [name-id : i64]) : bool
   (and
-    (compiler-builtin-typecheck-string-eq-id? (tc-builtin-name-id name))
-    (tc-default-builtin-unshadowed? type-env name)))
+    (compiler-builtin-typecheck-string-eq-id? name-id)
+    (tc-default-builtin-unshadowed-id? type-env name-id)))
 
 ;; Lower an unshadowed `(__tl_string_ref s i)` intrinsic call to the
 ;; bounds-checked String byte index, like the parser-owned `AstExprStringRef`
@@ -20909,218 +20914,232 @@
                 [(ErrTcType message)
                   (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
             [(NoneI64)
-              (match (if (tc-hygiene-global-name? raw-text)
-                (OkTcString (tc-hygiene-global-call-name raw-text))
-                (lower-source-name-lookup-key ctx type-env raw-text))
-                [(OkTcString name)
-                  ;; `array-length`/`length` on a dynamic array and private
-                  ;; string intrinsics load fat-value fields directly instead of
-                  ;; calling runtime symbols. Other `length` argument types keep
-                  ;; the ordinary direct-call path.
-                  (let
-                    [source-name : String
-                      (if (tc-hygiene-global-name? raw-text)
-                        (tc-hygiene-global-call-name raw-text)
-                        raw-text)]
-                    [name-id : i64 (intern name)]
-                    [builtin-available : bool
-                      (not (lower-top-level-value-defined? ctx name))]
-                    [atomic-symbol : String
-                      (lower-atomic-extern-symbol-for-name ctx name)]
-                    (cond
-                      [(> (string-length atomic-symbol) 0)
-                        (lower-atomic-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          atomic-symbol
-                          args
-                          result-ty
-                          origin)]
-                      [(and builtin-available (lower-atomic-pointer-name? name))
-                        (lower-atomic-pointer-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [(and builtin-available (tc-layout-query-name? name))
-                        (ErrLowerExpr
-                          (lower-diagnostic-at-expr
-                            origin
-                            (string-append
-                              "lower: "
+              (let
+                [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
+                (match (if hygiene-global
+                  (OkTcString (tc-hygiene-global-call-name raw-text))
+                  (lower-source-name-lookup-key ctx type-env raw-text))
+                  [(OkTcString name)
+                    ;; `array-length`/`length` on a dynamic array and private
+                    ;; string intrinsics load fat-value fields directly instead of
+                    ;; calling runtime symbols. Other `length` argument types keep
+                    ;; the ordinary direct-call path.
+                    (let
+                      [source-name : String
+                        (if hygiene-global
+                          (tc-hygiene-global-call-name raw-text)
+                          raw-text)]
+                      [source-id : i64
+                        (if hygiene-global
+                          (intern source-name)
+                          raw-name)]
+                      [name-id : i64 (intern name)]
+                      [builtin-available : bool
+                        (not (lower-top-level-value-defined? ctx name))]
+                      [atomic-symbol : String
+                        (lower-atomic-extern-symbol-for-name ctx name)]
+                      (cond
+                        [(> (string-length atomic-symbol) 0)
+                          (lower-atomic-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            atomic-symbol
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (lower-atomic-pointer-name? name))
+                          (lower-atomic-pointer-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [(and builtin-available (tc-layout-query-name? name))
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr
+                              origin
                               (string-append
-                                name
-                                " is compile-time only; wrap it in (comptime ...)"))))]
-                      [(tc-string-ref-helper-call-name?
-                          ctx
-                          type-env
-                          source-name
-                          name)
-                        (lower-string-ref-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [(tc-string-length-helper-call-name?
-                          ctx
-                          type-env
-                          source-name
-                          name)
-                        (lower-array-length
-                          ctx
-                          state
-                          env
-                          type-env
-                          "__tl_string_length"
-                          args
-                          result-ty
-                          origin)]
-                      [(lower-private-string-eq-helper-call-name? type-env name)
-                        (lower-string-eq-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          args
-                          result-ty
-                          origin)]
-                      [(tc-string-to-int-helper-call-name?
-                          ctx
-                          type-env
-                          source-name
-                          name)
-                        (lower-string-to-int-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          args
-                          result-ty
-                          origin)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-string-ref-call-id? name-id))
-                        (lower-string-ref-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-length-call-id? name-id))
-                        (lower-array-length
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [(and
-                          builtin-available
-                          (lower-string-runtime-builtin? name))
-                        (lower-string-runtime-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-cpuid-id? name-id))
-                        (lower-cpuid-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          args
-                          result-ty
-                          origin)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-xgetbv-id? name-id))
-                        (lower-xgetbv-call ctx state env type-env args origin)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-clone-id? name-id))
-                        (match args
-                          [(AstExprCons arg tail)
-                            (let
-                              [arg : AstExpr (ast-node-get arg)]
-                              [tail : AstExprList (box-get tail)]
-                              (match tail
-                                [(AstExprNil)
-                                  (lower-clone-call ctx state env type-env arg)]
-                                [_
-                                  (ErrLowerExpr
-                                    (lower-diagnostic
-                                      "lower: clone expects one argument"))]))]
-                          [_
-                            (ErrLowerExpr
-                              (lower-diagnostic
-                                "lower: clone expects one argument"))])]
-                      [(and builtin-available (lower-arena-builtin-id? name-id))
-                        (lower-arena-builtin-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty)]
-                      [(and
-                          builtin-available
-                          (compiler-builtin-lower-tls-current-arena-id? name-id))
-                        (lower-tls-current-arena-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name-id
-                          args
-                          result-ty)]
-                      [(and
-                          builtin-available
-                          (lower-bootstrap-runtime-builtin-id? name-id))
-                        (lower-bootstrap-runtime-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]
-                      [else
-                        (lower-call-non-builtin
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          args
-                          result-ty
-                          origin)]))]
-                [(ErrTcString message)
-                  (ErrLowerExpr (lower-diagnostic-at-expr origin message))])])))]
+                                "lower: "
+                                (string-append
+                                  name
+                                  " is compile-time only; wrap it in (comptime ...)"))))]
+                        [(tc-string-ref-helper-call-id?
+                            ctx
+                            type-env
+                            source-id
+                            name-id)
+                          (lower-string-ref-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [(tc-string-length-helper-call-id?
+                            ctx
+                            type-env
+                            source-id
+                            name-id)
+                          (lower-array-length
+                            ctx
+                            state
+                            env
+                            type-env
+                            "__tl_string_length"
+                            args
+                            result-ty
+                            origin)]
+                        [(lower-private-string-eq-helper-call-id?
+                            type-env
+                            name-id)
+                          (lower-string-eq-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
+                        [(tc-string-to-int-helper-call-id? type-env name-id)
+                          (lower-string-to-int-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-string-ref-call-id? name-id))
+                          (lower-string-ref-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-length-call-id? name-id))
+                          (lower-array-length
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (lower-string-runtime-builtin? name))
+                          (lower-string-runtime-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-cpuid-id? name-id))
+                          (lower-cpuid-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-xgetbv-id? name-id))
+                          (lower-xgetbv-call ctx state env type-env args origin)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-clone-id? name-id))
+                          (match args
+                            [(AstExprCons arg tail)
+                              (let
+                                [arg : AstExpr (ast-node-get arg)]
+                                [tail : AstExprList (box-get tail)]
+                                (match tail
+                                  [(AstExprNil)
+                                    (lower-clone-call
+                                      ctx
+                                      state
+                                      env
+                                      type-env
+                                      arg)]
+                                  [_
+                                    (ErrLowerExpr
+                                      (lower-diagnostic
+                                        "lower: clone expects one argument"))]))]
+                            [_
+                              (ErrLowerExpr
+                                (lower-diagnostic
+                                  "lower: clone expects one argument"))])]
+                        [(and
+                            builtin-available
+                            (lower-arena-builtin-id? name-id))
+                          (lower-arena-builtin-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty)]
+                        [(and
+                            builtin-available
+                            (compiler-builtin-lower-tls-current-arena-id?
+                              name-id))
+                          (lower-tls-current-arena-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name-id
+                            args
+                            result-ty)]
+                        [(and
+                            builtin-available
+                            (lower-bootstrap-runtime-builtin-id? name-id))
+                          (lower-bootstrap-runtime-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]
+                        [else
+                          (lower-call-non-builtin
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            args
+                            result-ty
+                            origin)]))]
+                  [(ErrTcString message)
+                    (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))])))]
     [_
       (match (lower-expr ctx state env type-env func)
         [(OkLowerExpr lowered-func)

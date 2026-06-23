@@ -6215,6 +6215,21 @@
         [(ErrTcString _) source-name])
       source-name)))
 
+(define (tc-call-builtin-lookup-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]
+  [source-id : i64]) : i64
+  (if (and
+    (not (tc-hygiene-local-name? source-name))
+    (intern-qualified? source-id))
+    source-id
+    (if (>= (intern-first-dot source-id) 0)
+      (match (tc-source-name-lookup-key ctx env source-name)
+        [(OkTcString lookup-name) (tc-builtin-name-id lookup-name)]
+        [(ErrTcString _) source-id])
+      source-id)))
+
 (define (tc-source-dotted-alias-key
   [ctx : TcContext]
   [name : String]
@@ -11957,10 +11972,13 @@
 (define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
 
-(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (tc-region-arg-builtin-name? name)
-    (tc-default-builtin-unshadowed-scan? env name)
+(define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (if (compiler-builtin-typecheck-region-arg-id? name-id)
+    (tc-default-builtin-unshadowed-scan-id? env name-id)
     false))
+
+(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
+  (tc-default-builtin-unshadowed-id? env (tc-name-id name)))
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
@@ -14157,9 +14175,8 @@
     [(AstExprVar raw-name)
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
@@ -14171,23 +14188,17 @@
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
-          [(tc-string-ref-helper-call-id?
-              ctx
-              env
-              name
-              name-id
-              lookup-name
-              lookup-id)
+          [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
           [(and
-              (tc-borrowed-string-builtin-name? name)
-              (tc-default-builtin-unshadowed? env name))
+              (tc-borrowed-string-builtin-id? name-id)
+              (tc-default-builtin-unshadowed-id? env name-id))
             (tc-borrowed-string-builtin-call ctx env name args)]
-          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
-          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+          [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
@@ -14506,22 +14517,18 @@
   (tc-string-ref-helper-call-id?
     ctx
     env
-    source-name
     (tc-builtin-name-id source-name)
-    lookup-name
     (tc-builtin-name-id lookup-name)))
 
 (define (tc-string-ref-helper-call-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [_source-name : String]
   [source-id : i64]
-  [lookup-name : String]
   [lookup-id : i64]) : bool
   (or
     (and
       (compiler-builtin-typecheck-string-ref-call-id? lookup-id)
-      (not (tc-name-bound? env lookup-name)))
+      (not (tc-name-bound-id? env lookup-id)))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -14546,19 +14553,17 @@
     ctx
     env
     (tc-builtin-name-id source-name)
-    lookup-name
     (tc-builtin-name-id lookup-name)))
 
 (define (tc-string-eq-helper-call-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [source-id : i64]
-  [lookup-name : String]
   [lookup-id : i64]) : bool
   (or
     (and
       (compiler-builtin-typecheck-string-eq-id? lookup-id)
-      (tc-default-builtin-unshadowed? env lookup-name))
+      (tc-default-builtin-unshadowed-id? env lookup-id))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
@@ -14580,21 +14585,15 @@
   [env : TcTypeEnv]
   [_source-name : String]
   [lookup-name : String]) : bool
-  (tc-string-to-int-helper-call-id?
-    env
-    lookup-name
-    (tc-builtin-name-id lookup-name)))
+  (tc-string-to-int-helper-call-id? env (tc-builtin-name-id lookup-name)))
 
-(define (tc-string-to-int-helper-call-id?
-  [env : TcTypeEnv]
-  [lookup-name : String]
-  [lookup-id : i64]) : bool
+(define (tc-string-to-int-helper-call-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (and
     (compiler-builtin-typecheck-string-to-int-id? lookup-id)
-    (tc-default-builtin-unshadowed? env lookup-name)))
+    (tc-default-builtin-unshadowed-id? env lookup-id)))
 
-(define (tc-borrowed-string-builtin-name? [name : String]) : bool
-  (compiler-builtin-typecheck-borrowed-string-id? (tc-builtin-name-id name)))
+(define (tc-borrowed-string-builtin-id? [name-id : i64]) : bool
+  (compiler-builtin-typecheck-borrowed-string-id? name-id))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
@@ -14945,9 +14944,8 @@
       ;; original name for the ordinary call/resolution paths.
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
           [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
             (tc-layout-query-runtime-call name args)]
@@ -14959,13 +14957,7 @@
               (compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
-          [(tc-string-ref-helper-call-id?
-              ctx
-              env
-              name
-              name-id
-              lookup-name
-              lookup-id)
+          [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
@@ -14974,12 +14966,12 @@
               (not (tc-name-bound? env name)))
             (tc-tls-current-arena-call ctx env name-id args)]
           [(and
-              (tc-borrowed-string-builtin-name? name)
-              (tc-default-builtin-unshadowed? env name))
+              (tc-borrowed-string-builtin-id? name-id)
+              (tc-default-builtin-unshadowed-id? env name-id))
             (tc-borrowed-string-builtin-call ctx env name args)]
-          [(tc-string-eq-helper-call-id? ctx env name-id lookup-name lookup-id)
+          [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
-          [(tc-string-to-int-helper-call-id? env lookup-name lookup-id)
+          [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
@@ -31565,18 +31557,11 @@
     [(AstExprVar raw-name)
       (let
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-        [lookup-name : String (tc-call-builtin-lookup-name ctx env name)]
         [name-id : i64 (tc-builtin-name-id name)]
-        [lookup-id : i64 (tc-builtin-name-id lookup-name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (or
           (tc-string-length-helper-call-id? ctx env name-id lookup-id)
-          (tc-string-ref-helper-call-id?
-            ctx
-            env
-            name
-            name-id
-            lookup-name
-            lookup-id)))]
+          (tc-string-ref-helper-call-id? ctx env name-id lookup-id)))]
     [_ false]))
 
 (define (tc-borrow-check-call-args-with-types

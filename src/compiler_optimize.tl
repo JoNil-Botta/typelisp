@@ -20568,6 +20568,12 @@
 (define (opt-inline-cost-block-fuel) : i64
   32)
 
+(define (opt-inline-tiny-predicate-max-blocks) : i64
+  4)
+
+(define (opt-inline-tiny-predicate-max-instrs) : i64
+  6)
+
 (define (opt-inline-param-count [params : CompilerIrParamList]) : i64
   (match params
     [(IrParamNil) 0]
@@ -20966,6 +20972,23 @@
   [absorbable : bool]
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
+  (opt-inline-cost-inline-with-block-weight?
+    callee-instrs
+    added-blocks
+    const-args
+    absorbable
+    caller-blocks
+    added-so-far
+    (opt-inline-cost-block-weight)))
+
+(define (opt-inline-cost-inline-with-block-weight?
+  [callee-instrs : i64]
+  [added-blocks : i64]
+  [const-args : i64]
+  [absorbable : bool]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [block-weight : i64]) : bool
   (if (opt-inline-cost-crosses-heavy-gate?
     caller-blocks
     added-so-far
@@ -20974,8 +20997,7 @@
     (if (> (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
       false
       (let
-        [raw : i64
-          (+ callee-instrs (* (opt-inline-cost-block-weight) added-blocks))]
+        [raw : i64 (+ callee-instrs (* block-weight added-blocks))]
         [const-savings : i64
           (opt-inline-cost-min
             raw
@@ -20987,6 +21009,129 @@
               (opt-inline-cost-absorb-bonus)
               0))]
         (<= net (opt-inline-cost-threshold))))))
+
+(define (opt-inline-bool-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyBool) true]
+    [_ false]))
+
+(define (opt-inline-tiny-predicate-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov _ _ _) true]
+    [(IrInstrGep _ _ _ _) true]
+    [(IrInstrLoad _ _ _) true]
+    [(IrInstrCast _ _ _ _) true]
+    [(IrInstrBitcast _ _ _ _) true]
+    [(IrInstrBinOp _ _ _ _ _) true]
+    [(IrInstrUnOp _ _ _ _) true]
+    [(IrInstrWord _ _ _ _) true]
+    [(IrInstrBranch _ _ _) true]
+    [(IrInstrReturn _) true]
+    [(IrInstrPhi dst _ _) (>= dst 0)]
+    [(IrInstrJump _) true]
+    [_ false]))
+
+(define (opt-inline-tiny-predicate-instrs-ok-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-inline-tiny-predicate-instr-ok?
+      (compiler-ir-instr-seq-ref instrs index))
+      (opt-inline-tiny-predicate-instrs-ok-from? instrs (+ index 1))
+      false)))
+
+(define (opt-inline-tiny-predicate-instrs-ok? [instrs : CompilerIrInstrSeq]) : bool
+  (opt-inline-tiny-predicate-instrs-ok-from? instrs 0))
+
+(define (opt-inline-tiny-predicate-blocks-ok? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (and
+            (opt-inline-tiny-predicate-instrs-ok? instrs)
+            (opt-inline-tiny-predicate-blocks-ok? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (opt-inline-tiny-predicate-blocks-ok? (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-inline-tiny-predicate-forward-successors?
+  [index : OptCfgIndex]
+  [source-id : i64]
+  [succs : OptLabelSet]) : bool
+  (match succs
+    [(OptLabelNil) true]
+    [(OptLabelCons label rest)
+      (match (opt-cfg-index-id index label)
+        [(OptSomeI64 target-id)
+          (and
+            (> target-id source-id)
+            (opt-inline-tiny-predicate-forward-successors?
+              index
+              source-id
+              (box-get rest)))]
+        [(OptNoI64) false])]))
+
+(define (opt-inline-tiny-predicate-forward-edges-from?
+  [index : OptCfgIndex]
+  [id : i64]
+  [count : i64]) : bool
+  (if (>= id count)
+    true
+    (if (opt-inline-tiny-predicate-forward-successors?
+      index
+      id
+      (opt-cfg-index-successors index (opt-cfg-index-label index id)))
+      (opt-inline-tiny-predicate-forward-edges-from? index (+ id 1) count)
+      false)))
+
+(define (opt-inline-tiny-predicate-acyclic? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (opt-inline-tiny-predicate-forward-edges-from?
+      index
+      0
+      (opt-cfg-index-block-count index))))
+
+(define (opt-inline-tiny-predicate-callee?
+  [callee : CompilerIrFunction]
+  [census : OptInlineCensus]) : bool
+  (match callee
+    [(IrFunction callee-name cparams ret cvars cblocks)
+      (let
+        [np : i64 (opt-inline-param-count cparams)]
+        [block-count : i64 (compiler-ir-block-list-count cblocks)]
+        [instr-count : i64 (opt-inline-multiblock-cost-instrs cblocks)]
+        (and
+          (opt-inline-bool-type? ret)
+          (not (opt-inline-census-address-taken? census callee-name))
+          (> (opt-inline-census-refcount census callee-name) 1)
+          (opt-inline-params-sequential? cparams 0)
+          (>= cvars np)
+          (> block-count 1)
+          (<= block-count (opt-inline-tiny-predicate-max-blocks))
+          (<= instr-count (opt-inline-tiny-predicate-max-instrs))
+          (> (opt-inline-return-count-blocks cblocks) 0)
+          (opt-inline-structure-ok? cblocks)
+          (opt-inline-tiny-predicate-acyclic? cblocks)
+          (not (opt-inline-param-mutating-blocks? cblocks np))
+          (opt-inline-tiny-predicate-blocks-ok? cblocks)))]))
+
+(define (opt-inline-tiny-predicate-cost-inline?
+  [callee-instrs : i64]
+  [added-blocks : i64]
+  [const-args : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (opt-inline-cost-inline-with-block-weight?
+    callee-instrs
+    added-blocks
+    const-args
+    false
+    caller-blocks
+    added-so-far
+    0))
 
 (define (opt-inline-rebase-var [id : i64] [np : i64] [base : i64]) : i64
   (+ base (- id np)))
@@ -21979,17 +22124,37 @@
                   (+ (compiler-ir-block-list-count cblocks) 1)]
                 [stage-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
-                (if (opt-inline-cost-inline?
+                [callee-instrs : i64
                   (+
                     (opt-inline-multiblock-cost-instrs cblocks)
                     (if stage-args?
                       np
-                      0))
-                  added-blocks
-                  (opt-inline-args-const-count cargs)
-                  (opt-inline-census-absorbable? census func-name callee-name)
-                  caller-blocks
-                  added-so-far)
+                      0))]
+                [const-args : i64 (opt-inline-args-const-count cargs)]
+                [absorbable : bool
+                  (opt-inline-census-absorbable? census func-name callee-name)]
+                [tiny-predicate? : bool
+                  (and
+                    (not stage-args?)
+                    (opt-inline-tiny-predicate-callee? callee census))]
+                [inline? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      absorbable
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far)))]
+                (if inline?
                   (match (opt-inline-walk-instrs
                     (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
                     index
@@ -22454,17 +22619,37 @@
                   (+ (compiler-ir-block-list-count cblocks) 1)]
                 [stage-args? : bool
                   (opt-inline-param-mutating-blocks? cblocks np)]
-                (if (opt-inline-cost-inline?
+                [callee-instrs : i64
                   (+
                     (opt-inline-multiblock-cost-instrs cblocks)
                     (if stage-args?
                       np
-                      0))
-                  added-blocks
-                  (opt-inline-args-const-count cargs)
-                  (opt-inline-census-absorbable? census func-name callee-name)
-                  caller-blocks
-                  added-so-far)
+                      0))]
+                [const-args : i64 (opt-inline-args-const-count cargs)]
+                [absorbable : bool
+                  (opt-inline-census-absorbable? census func-name callee-name)]
+                [tiny-predicate? : bool
+                  (and
+                    (not stage-args?)
+                    (opt-inline-tiny-predicate-callee? callee census))]
+                [inline? : bool
+                  (or
+                    (opt-inline-cost-inline?
+                      callee-instrs
+                      added-blocks
+                      const-args
+                      absorbable
+                      caller-blocks
+                      added-so-far)
+                    (and
+                      tiny-predicate?
+                      (opt-inline-tiny-predicate-cost-inline?
+                        callee-instrs
+                        added-blocks
+                        const-args
+                        caller-blocks
+                        added-so-far)))]
+                (if inline?
                   (match (opt-inline-walk-instrs-with-spans
                     (compiler-ir-instr-list-reverse-onto prefix-rev IrInstrNil)
                     index
@@ -29965,6 +30150,15 @@
         (compiler-ir-block-seq-to-list seq)
         name)]))
 
+(define (opt-count-direct-call-name-function-list
+  [functions : CompilerIrFunctionList]
+  [func-name : String]
+  [call-name : String]) : i64
+  (match (opt-function-list-find functions func-name)
+    [(OptSomeFunction func)
+      (opt-count-direct-call-name-blocks (opt-function-blocks func) call-name)]
+    [(OptNoFunction) (- 0 1)]))
+
 (define (opt-count-indirect-call-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -30279,6 +30473,110 @@
   (compiler-ir-function-cons
     (opt-inline-branch-caller)
     (compiler-ir-function-cons (opt-inline-branch-callee) IrFunctionNil)))
+
+(define (opt-inline-repeated-predicate-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_tiny_predicate"
+    (compiler-ir-param-cons (IrParam "value" (AstTyI64) 0) IrParamNil)
+    (AstTyBool)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp 1 (IrBinLt) (IrValueVar 0) (IrValueI64 10) (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 1) "yes" "no")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "yes"
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueBool true)))
+            IrInstrNil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "no"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueBool false)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-repeated-predicate-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyBool)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            0
+            "inline_tiny_predicate"
+            (IrCallArgsOne (IrValueI64 7))
+            (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "second" "done")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "second"
+          (compiler-ir-instr-cons
+            (IrInstrCall
+              1
+              "inline_tiny_predicate"
+              (IrCallArgsOne (IrValueI64 12))
+              (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "done"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueBool false)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-repeated-predicate-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-repeated-predicate-caller)
+    (compiler-ir-function-cons
+      (opt-inline-repeated-predicate-callee)
+      IrFunctionNil)))
+
+(define (compiler-optimize-inline-repeated-tiny-predicate-ok?) : bool
+  (let
+    [level0 : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 0)]
+    [level1 : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 1)]
+    [level2 : CompilerIrFunctionList
+      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 2)]
+    (match (opt-function-list-find level2 "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-direct-call-name-function-list
+                level0
+                "main"
+                "inline_tiny_predicate")
+              2)
+            (=
+              (opt-count-direct-call-name-function-list
+                level1
+                "main"
+                "inline_tiny_predicate")
+              2)
+            (=
+              (opt-count-direct-call-name-blocks blocks "inline_tiny_predicate")
+              0)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
 
 (define (compiler-optimize-inline-multiblock-ok?) : bool
   (let
@@ -30595,6 +30893,98 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptNoFunction) false])))
 
+(define (opt-inline-repeated-nonleaf-predicate-callee) : CompilerIrFunction
+  (IrFunction
+    "inline_tiny_nonleaf_predicate"
+    IrParamNil
+    (AstTyBool)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueBool true) "call" "ret")
+          IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "call"
+          (compiler-ir-instr-cons
+            (IrInstrCall 1 "external_predicate" IrCallArgsNil (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "ret"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueBool false)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-repeated-nonleaf-predicate-caller) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyBool)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            0
+            "inline_tiny_nonleaf_predicate"
+            IrCallArgsNil
+            (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "second" "done")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "second"
+          (compiler-ir-instr-cons
+            (IrInstrCall
+              1
+              "inline_tiny_nonleaf_predicate"
+              IrCallArgsNil
+              (AstTyBool))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "done"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueBool false)))
+              IrInstrNil))
+          IrBlockNil)))))
+
+(define (opt-inline-repeated-nonleaf-predicate-functions) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-repeated-nonleaf-predicate-caller)
+    (compiler-ir-function-cons
+      (opt-inline-repeated-nonleaf-predicate-callee)
+      IrFunctionNil)))
+
+(define (compiler-optimize-inline-repeated-nonleaf-predicate-refusal-ok?) : bool
+  (let
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-repeated-nonleaf-predicate-functions)
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptSomeFunction main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-direct-call-name-blocks
+                blocks
+                "inline_tiny_nonleaf_predicate")
+              2)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptNoFunction) false])))
+
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
     [functions : CompilerIrFunctionList (opt-inline-frame-functions)]
@@ -30814,6 +31204,12 @@
                     (unless
                       (compiler-optimize-inline-multiblock-nonleaf-ok?)
                       (return 40))
+                    (unless
+                      (compiler-optimize-inline-repeated-tiny-predicate-ok?)
+                      (return 46))
+                    (unless
+                      (compiler-optimize-inline-repeated-nonleaf-predicate-refusal-ok?)
+                      (return 47))
                     42))]
               [(OptNoFunction) 41])))]
       [(OptNoFunction) 43])))

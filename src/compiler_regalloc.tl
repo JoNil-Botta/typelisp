@@ -135,8 +135,20 @@
 (defstruct CompilerRegRematTable
   (def-counts (Array i64))
   (candidates (Array i64))
+  (kinds (Array i64))
   (values (Array CompilerIrValue))
+  (offsets (Array CompilerIrValue))
+  (op-types (Array AstType))
   (types (Array AstType)))
+
+(define (compiler-reg-remat-kind-mov) : i64
+  1)
+
+(define (compiler-reg-remat-kind-load) : i64
+  2)
+
+(define (compiler-reg-remat-kind-gep) : i64
+  3)
 
 (defenum CompilerRegMaybeCallSaveActive
   (CompilerRegNoCallSaveActive)
@@ -5060,20 +5072,53 @@
     [(IrValueGlobalAddr _) true]
     [_ false]))
 
-(define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(IrInstrMov _ value _) (compiler-reg-remat-value? value)]
+(define (compiler-reg-remat-mov-value?
+  [value : CompilerIrValue]
+  [allow-invariant-loads : bool]) : bool
+  (match value
+    [(IrValueGlobal _) allow-invariant-loads]
+    [_ (compiler-reg-remat-value? value)]))
+
+(define (compiler-reg-remat-gep?
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]) : bool
+  (match base
+    [(IrValueGlobalAddr _)
+      (match offset
+        [(IrValueI64 _) true]
+        [_ false])]
     [_ false]))
+
+(define (compiler-reg-remat-load?
+  [src : CompilerIrValue]
+  [allow-invariant-loads : bool]) : bool
+  (if allow-invariant-loads
+    (match src
+      [(IrValueGlobalAddr _) true]
+      [_ false])
+    false))
+
+(define (compiler-reg-remat-defn-with-invariant-loads?
+  [instr : CompilerIrInstr]
+  [allow-invariant-loads : bool]) : bool
+  (match instr
+    [(IrInstrMov _ value _)
+      (compiler-reg-remat-mov-value? value allow-invariant-loads)]
+    [(IrInstrGep _ base offset _) (compiler-reg-remat-gep? base offset)]
+    [(IrInstrLoad _ src _) (compiler-reg-remat-load? src allow-invariant-loads)]
+    [_ false]))
+
+(define (compiler-reg-remat-defn? [instr : CompilerIrInstr]) : bool
+  (compiler-reg-remat-defn-with-invariant-loads? instr false))
 
 (define (compiler-reg-remat-candidates-add-instr
   [candidates : CompilerLiveI64Set]
   [instr : CompilerIrInstr]) : CompilerLiveI64Set
-  (match instr
-    [(IrInstrMov dst _ _)
-      (if (compiler-reg-remat-defn? instr)
-        (compiler-live-set-insert candidates dst)
-        candidates)]
-    [_ candidates]))
+  (let
+    [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+    (if (compiler-reg-remat-defn? instr)
+      (compiler-live-set-union candidates defs)
+      candidates)))
 
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
@@ -5120,13 +5165,69 @@
             unit))
         (set! var (+ var 1))))))
 
+(define (compiler-reg-remat-instr-mutates-memory? [instr : CompilerIrInstr]) : bool
+  (match (compiler-ir-instr-effect instr)
+    [(IrEffectMemoryWrite) true]
+    [(IrEffectUnknown) true]
+    [_ false]))
+
+(define (compiler-reg-remat-instrs-mutates-memory?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (set!
+            found
+            (compiler-reg-remat-instr-mutates-memory? (array-ref slots index)))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-remat-blocks-mutates-memory?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (or
+            (compiler-reg-remat-instrs-mutates-memory? instrs)
+            (compiler-reg-remat-blocks-mutates-memory? (box-get rest)))])]
+    [(IrBlockArray seq)
+      (compiler-reg-remat-blocks-mutates-memory?
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (compiler-reg-remat-invariant-loads-ok? [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (not (compiler-reg-remat-blocks-mutates-memory? blocks))]))
+
 (define (compiler-reg-remat-status-candidate-add-instr!
   [def-status : (Array i64)]
-  [instr : CompilerIrInstr]) : unit
+  [instr : CompilerIrInstr]
+  [allow-invariant-loads : bool]) : unit
   (match instr
     [(IrInstrMov dst value _)
       (if (and
-        (compiler-reg-remat-value? value)
+        (compiler-reg-remat-mov-value? value allow-invariant-loads)
+        (>= dst 0)
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        unit)]
+    [(IrInstrGep dst base offset _)
+      (if (and
+        (compiler-reg-remat-gep? base offset)
+        (>= dst 0)
+        (< dst (array-length def-status)))
+        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        unit)]
+    [(IrInstrLoad dst src _)
+      (if (and
+        (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
         (< dst (array-length def-status)))
         (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
@@ -5137,7 +5238,8 @@
   [counts : (Array i64)]
   [def-status : (Array i64)]
   [instr : CompilerIrInstr]
-  [weight : i64]) : unit
+  [weight : i64]
+  [allow-invariant-loads : bool]) : unit
   (let
     [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
     [defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
@@ -5145,13 +5247,17 @@
       (compiler-reg-ref-counts-add-set-weighted! counts uses weight)
       (compiler-reg-ref-counts-add-set-weighted! counts defs weight)
       (compiler-reg-ref-counts-add-set-weighted! def-status defs 2)
-      (compiler-reg-remat-status-candidate-add-instr! def-status instr))))
+      (compiler-reg-remat-status-candidate-add-instr!
+        def-status
+        instr
+        allow-invariant-loads))))
 
 (define (compiler-reg-ref-counts-seq-weighted-remat!
   [counts : (Array i64)]
   [def-status : (Array i64)]
   [instrs : CompilerIrInstrSeq]
-  [weight : i64]) : unit
+  [weight : i64]
+  [allow-invariant-loads : bool]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -5163,7 +5269,8 @@
             counts
             def-status
             (array-ref slots index)
-            weight)
+            weight
+            allow-invariant-loads)
           (set! index (+ index 1))))
       unit)))
 
@@ -5172,7 +5279,8 @@
   [def-status : (Array i64)]
   [blocks : CompilerIrBlockList]
   [depths : (Array i64)]
-  [block-index : i64]) : unit
+  [block-index : i64]
+  [allow-invariant-loads : bool]) : unit
   (match blocks
     [(IrBlockNil) unit]
     [(IrBlockCons block rest)
@@ -5183,20 +5291,23 @@
               counts
               def-status
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (compiler-reg-loop-depth-weight (array-ref depths block-index))
+              allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
           (box-get rest)
           depths
-          (+ block-index 1)))]
+          (+ block-index 1)
+          allow-invariant-loads))]
     [(IrBlockArray seq)
       (compiler-reg-ref-counts-blocks-weighted-remat!
         counts
         def-status
         (compiler-ir-block-seq-to-list seq)
         depths
-        block-index)]))
+        block-index
+        allow-invariant-loads)]))
 
 (define (compiler-reg-function-ref-counts [func : CompilerIrFunction]) : (Array
     i64)
@@ -5230,6 +5341,8 @@
         [counts : (Array i64) (make-array i64 vars)]
         [def-status : (Array i64) (make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        [allow-invariant-loads : bool
+          (compiler-reg-remat-invariant-loads-ok? func)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-fill-i64-array def-status 0)
@@ -5238,7 +5351,8 @@
             def-status
             blocks
             depths
-            0)
+            0
+            allow-invariant-loads)
           (compiler-reg-remat-discount-single-def-spill-weights!
             counts
             def-status
@@ -9672,11 +9786,15 @@
 
 (define (compiler-reg-remat-table-record-def!
   [table : CompilerRegRematTable]
-  [instr : CompilerIrInstr]) : unit
+  [instr : CompilerIrInstr]
+  [allow-invariant-loads : bool]) : unit
   (let
     [def-counts : (Array i64) (struct-get table def-counts)]
     [candidates : (Array i64) (struct-get table candidates)]
+    [kinds : (Array i64) (struct-get table kinds)]
     [values : (Array CompilerIrValue) (struct-get table values)]
+    [offsets : (Array CompilerIrValue) (struct-get table offsets)]
+    [op-types : (Array AstType) (struct-get table op-types)]
     [types : (Array AstType) (struct-get table types)]
     (begin
       (compiler-reg-ref-counts-add-set-weighted!
@@ -9686,43 +9804,82 @@
       (match instr
         [(IrInstrMov dst value ty)
           (if (and
-            (compiler-reg-remat-value? value)
+            (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
             (< dst (array-length candidates)))
             (begin
               (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-mov))
               (array-set! values dst value)
+              (array-set! op-types dst ty)
+              (array-set! types dst ty))
+            unit)]
+        [(IrInstrGep dst base offset ty)
+          (if (and
+            (compiler-reg-remat-gep? base offset)
+            (>= dst 0)
+            (< dst (array-length candidates)))
+            (begin
+              (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-gep))
+              (array-set! values dst base)
+              (array-set! offsets dst offset)
+              (array-set! op-types dst ty)
+              (array-set! types dst (compiler-reg-addr-of-result-type)))
+            unit)]
+        [(IrInstrLoad dst src ty)
+          (if (and
+            (compiler-reg-remat-load? src allow-invariant-loads)
+            (>= dst 0)
+            (< dst (array-length candidates)))
+            (begin
+              (array-set! candidates dst 1)
+              (array-set! kinds dst (compiler-reg-remat-kind-load))
+              (array-set! values dst src)
+              (array-set! op-types dst ty)
               (array-set! types dst ty))
             unit)]
         [_ unit]))))
 
 (define (compiler-reg-remat-table-record-instrs!
   [table : CompilerRegRematTable]
-  [instrs : CompilerIrInstrSeq]) : unit
+  [instrs : CompilerIrInstrSeq]
+  [allow-invariant-loads : bool]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
     (while (< index count)
       (begin
-        (compiler-reg-remat-table-record-def! table (array-ref slots index))
+        (compiler-reg-remat-table-record-def!
+          table
+          (array-ref slots index)
+          allow-invariant-loads)
         (set! index (+ index 1))))))
 
 (define (compiler-reg-remat-table-record-blocks!
   [table : CompilerRegRematTable]
-  [blocks : CompilerIrBlockList]) : unit
+  [blocks : CompilerIrBlockList]
+  [allow-invariant-loads : bool]) : unit
   (match blocks
     [(IrBlockNil) unit]
     [(IrBlockCons block rest)
       (begin
         (match block
           [(IrBlock _ instrs)
-            (compiler-reg-remat-table-record-instrs! table instrs)])
-        (compiler-reg-remat-table-record-blocks! table (box-get rest)))]
+            (compiler-reg-remat-table-record-instrs!
+              table
+              instrs
+              allow-invariant-loads)])
+        (compiler-reg-remat-table-record-blocks!
+          table
+          (box-get rest)
+          allow-invariant-loads))]
     [(IrBlockArray seq)
       (compiler-reg-remat-table-record-blocks!
         table
-        (compiler-ir-block-seq-to-list seq))]))
+        (compiler-ir-block-seq-to-list seq)
+        allow-invariant-loads)]))
 
 (define (compiler-reg-remat-table-build [func : CompilerIrFunction]) : CompilerRegRematTable
   (match func
@@ -9730,14 +9887,30 @@
       (let
         [def-counts : (Array i64) (make-array i64 vars)]
         [candidates : (Array i64) (make-array i64 vars)]
+        [kinds : (Array i64) (make-array i64 vars)]
         [values : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
+        [offsets : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
+        [op-types : (Array AstType) (make-array AstType vars)]
         [types : (Array AstType) (make-array AstType vars)]
+        [allow-invariant-loads : bool
+          (compiler-reg-remat-invariant-loads-ok? func)]
         [table : CompilerRegRematTable
-          (CompilerRegRematTable def-counts candidates values types)]
+          (CompilerRegRematTable
+            def-counts
+            candidates
+            kinds
+            values
+            offsets
+            op-types
+            types)]
         (begin
           (compiler-reg-fill-i64-array def-counts 0)
           (compiler-reg-fill-i64-array candidates 0)
-          (compiler-reg-remat-table-record-blocks! table blocks)
+          (compiler-reg-fill-i64-array kinds 0)
+          (compiler-reg-remat-table-record-blocks!
+            table
+            blocks
+            allow-invariant-loads)
           table))]))
 
 (define (compiler-reg-remat-var-spilled?
@@ -9748,7 +9921,7 @@
       (match location
         [(CompilerRegSpill _) true]
         [_ false])]
-    [(CompilerRegNoLocation) false]))
+    [(CompilerRegNoLocation) true]))
 
 (define (compiler-reg-remat-table-eligible?
   [table : CompilerRegRematTable]
@@ -9848,6 +10021,25 @@
         point
         chosen))))
 
+(define (compiler-reg-remat-instr
+  [table : CompilerRegRematTable]
+  [temp : i64]
+  [var : i64]) : CompilerIrInstr
+  (let
+    [kinds : (Array i64) (struct-get table kinds)]
+    [values : (Array CompilerIrValue) (struct-get table values)]
+    [offsets : (Array CompilerIrValue) (struct-get table offsets)]
+    [op-types : (Array AstType) (struct-get table op-types)]
+    [types : (Array AstType) (struct-get table types)]
+    [ty : AstType (array-ref types var)]
+    [value : CompilerIrValue (array-ref values var)]
+    (cond
+      [(= (array-ref kinds var) (compiler-reg-remat-kind-load))
+        (IrInstrLoad temp value ty)]
+      [(= (array-ref kinds var) (compiler-reg-remat-kind-gep))
+        (IrInstrGep temp value (array-ref offsets var) (array-ref op-types var))]
+      [else (IrInstrMov temp value ty)])))
+
 (define (compiler-reg-remat-use-site-ok? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrPhi _ _ _) false]
@@ -9883,7 +10075,6 @@
     (let
       [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
       [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
-      [values : (Array CompilerIrValue) (struct-get table values)]
       [types : (Array AstType) (struct-get table types)]
       [prefix : CompilerIrInstrList IrInstrNil]
       [chosen : CompilerRegStringList CompilerRegStringNil]
@@ -9918,7 +10109,7 @@
                       (set!
                         prefix
                         (compiler-ir-instr-cons
-                          (IrInstrMov temp (array-ref values var) ty)
+                          (compiler-reg-remat-instr table temp var)
                           prefix))
                       (set! chosen (compiler-reg-string-cons reg chosen))
                       (set!
@@ -11478,14 +11669,46 @@
         (IrInstrMov 14 (IrValueGlobalAddr "global") (AstTyU64)))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrMov 15 (IrValueVar 0) (compiler-reg-i64-ty))))
+          (IrInstrMov 15 (IrValueGlobal "global") (compiler-reg-i64-ty))))
+      (compiler-reg-remat-defn-with-invariant-loads?
+        (IrInstrMov 16 (IrValueGlobal "global") (compiler-reg-i64-ty))
+        true)
+      (compiler-reg-remat-defn?
+        (IrInstrGep
+          17
+          (IrValueGlobalAddr "global")
+          (IrValueI64 2)
+          (compiler-reg-i64-ty)))
       (not
         (compiler-reg-remat-defn?
-          (IrInstrMov 16 (IrValueString "heap") (AstTyString))))
+          (IrInstrGep
+            18
+            (IrValueGlobalAddr "global")
+            (IrValueVar 0)
+            (compiler-reg-i64-ty))))
+      (not
+        (compiler-reg-remat-defn?
+          (IrInstrGep 19 (IrValueVar 0) (IrValueI64 2) (compiler-reg-i64-ty))))
+      (not
+        (compiler-reg-remat-defn?
+          (IrInstrLoad 20 (IrValueGlobalAddr "global") (compiler-reg-i64-ty))))
+      (compiler-reg-remat-defn-with-invariant-loads?
+        (IrInstrLoad 21 (IrValueGlobalAddr "global") (compiler-reg-i64-ty))
+        true)
+      (not
+        (compiler-reg-remat-defn-with-invariant-loads?
+          (IrInstrLoad 22 (IrValueVar 0) (compiler-reg-i64-ty))
+          true))
+      (not
+        (compiler-reg-remat-defn?
+          (IrInstrMov 23 (IrValueVar 0) (compiler-reg-i64-ty))))
+      (not
+        (compiler-reg-remat-defn?
+          (IrInstrMov 24 (IrValueString "heap") (AstTyString))))
       (not
         (compiler-reg-remat-defn?
           (IrInstrBinOp
-            17
+            25
             (IrBinAdd)
             (IrValueI64 1)
             (IrValueI64 2)
@@ -11879,6 +12102,115 @@
 
 (cfg
   test
+  (define (compiler-reg-instr-list-has-mov-global?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [name : String]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrMov found-dst found-value _)
+            (match found-value
+              [(IrValueGlobal found-name)
+                (if (and (= found-dst dst) (string-eq found-name name))
+                  true
+                  (compiler-reg-instr-list-has-mov-global?
+                    (box-get rest)
+                    dst
+                    name))]
+              [_
+                (compiler-reg-instr-list-has-mov-global?
+                  (box-get rest)
+                  dst
+                  name)])]
+          [_ (compiler-reg-instr-list-has-mov-global? (box-get rest) dst name)])])))
+
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-load-global-addr?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [name : String]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrLoad found-dst found-src _)
+            (match found-src
+              [(IrValueGlobalAddr found-name)
+                (if (and (= found-dst dst) (string-eq found-name name))
+                  true
+                  (compiler-reg-instr-list-has-load-global-addr?
+                    (box-get rest)
+                    dst
+                    name))]
+              [_
+                (compiler-reg-instr-list-has-load-global-addr?
+                  (box-get rest)
+                  dst
+                  name)])]
+          [_
+            (compiler-reg-instr-list-has-load-global-addr?
+              (box-get rest)
+              dst
+              name)])])))
+
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-gep-global-i64?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [name : String]
+    [offset : i64]
+    [ty : AstType]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrGep found-dst found-base found-offset found-ty)
+            (match found-base
+              [(IrValueGlobalAddr found-name)
+                (match found-offset
+                  [(IrValueI64 found-offset-value)
+                    (if (and
+                      (= found-dst dst)
+                      (and
+                        (string-eq found-name name)
+                        (and
+                          (= found-offset-value offset)
+                          (ast-type-eq? found-ty ty))))
+                      true
+                      (compiler-reg-instr-list-has-gep-global-i64?
+                        (box-get rest)
+                        dst
+                        name
+                        offset
+                        ty))]
+                  [_
+                    (compiler-reg-instr-list-has-gep-global-i64?
+                      (box-get rest)
+                      dst
+                      name
+                      offset
+                      ty)])]
+              [_
+                (compiler-reg-instr-list-has-gep-global-i64?
+                  (box-get rest)
+                  dst
+                  name
+                  offset
+                  ty)])]
+          [_
+            (compiler-reg-instr-list-has-gep-global-i64?
+              (box-get rest)
+              dst
+              name
+              offset
+              ty)])])))
+
+(cfg
+  test
   (define (compiler-reg-instr-list-has-store-var?
     [instrs : CompilerIrInstrList]
     [name : String]
@@ -11925,6 +12257,30 @@
             (compiler-reg-instr-list-has-call-indirect-var?
               (box-get rest)
               callee)])])))
+
+(cfg
+  test
+  (define (compiler-reg-instr-list-has-return-var?
+    [instrs : CompilerIrInstrList]
+    [src : i64]) : bool
+    (match instrs
+      [(IrInstrNil) false]
+      [(IrInstrCons instr rest)
+        (match instr
+          [(IrInstrReturn maybe)
+            (match maybe
+              [(IrSomeValue value)
+                (match value
+                  [(IrValueVar found)
+                    (if (= found src)
+                      true
+                      (compiler-reg-instr-list-has-return-var?
+                        (box-get rest)
+                        src))]
+                  [_
+                    (compiler-reg-instr-list-has-return-var? (box-get rest) src)])]
+              [_ (compiler-reg-instr-list-has-return-var? (box-get rest) src)])]
+          [_ (compiler-reg-instr-list-has-return-var? (box-get rest) src)])])))
 
 (cfg
   test
@@ -12014,6 +12370,87 @@
             (compiler-ir-instr-cons
               (IrInstrCallIndirect 1 (IrValueVar 0) IrCallArgsNil (AstTyUnit))
               (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-mov-function) : CompilerIrFunction
+    (IrFunction
+      "remat_global_mov"
+      IrParamNil
+      (compiler-reg-i64-ty)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueGlobal "global_value") (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-load-function) : CompilerIrFunction
+    (IrFunction
+      "remat_global_load"
+      IrParamNil
+      (compiler-reg-i64-ty)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrLoad
+              0
+              (IrValueGlobalAddr "global_value")
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-gep-function) : CompilerIrFunction
+    (IrFunction
+      "remat_global_gep"
+      IrParamNil
+      (compiler-reg-addr-of-result-type)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrGep
+              0
+              (IrValueGlobalAddr "global_value")
+              (IrValueI64 3)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+              IrInstrNil)))
+        IrBlockNil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-mutating-function) : CompilerIrFunction
+    (IrFunction
+      "remat_global_mutating"
+      IrParamNil
+      (compiler-reg-i64-ty)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueGlobal "global_value") (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrStore "global_value" (IrValueI64 1) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                IrInstrNil))))
         IrBlockNil))))
 
 (cfg
@@ -12172,6 +12609,140 @@
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
                   (compiler-reg-instr-list-has-call-indirect-var? items 0)))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-mov-rewrite-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-global-mov-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars (+ vars 1))
+                  (= (compiler-reg-assignment-count extra-assignments) 1)
+                  (compiler-reg-instr-list-has-mov-global?
+                    items
+                    vars
+                    "global_value")
+                  (compiler-reg-instr-list-has-return-var? items vars)
+                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-load-rewrite-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-global-load-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars (+ vars 1))
+                  (= (compiler-reg-assignment-count extra-assignments) 1)
+                  (compiler-reg-instr-list-has-load-global-addr?
+                    items
+                    vars
+                    "global_value")
+                  (compiler-reg-instr-list-has-return-var? items vars)
+                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-gep-rewrite-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-global-gep-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars (+ vars 1))
+                  (= (compiler-reg-assignment-count extra-assignments) 1)
+                  (compiler-reg-instr-list-has-gep-global-i64?
+                    items
+                    vars
+                    "global_value"
+                    3
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-instr-list-has-return-var? items vars)
+                  (not (compiler-reg-instr-list-has-return-var? items 0))))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-global-mutation-refusal-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-global-mutating-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars vars)
+                  (= (compiler-reg-assignment-count extra-assignments) 0)
+                  (compiler-reg-instr-list-has-return-var? items 0)
+                  (not
+                    (compiler-reg-instr-list-has-mov-global?
+                      items
+                      vars
+                      "global_value"))))])]))))
 
 (cfg
   test
@@ -13831,6 +14402,10 @@
     (cfg test (compiler-reg-remat-rewrite-shape-ok?) true)
     (cfg test (compiler-reg-remat-register-conflict-ok?) true)
     (cfg test (compiler-reg-remat-caller-clobber-refusal-ok?) true)
+    (cfg test (compiler-reg-remat-global-mov-rewrite-ok?) true)
+    (cfg test (compiler-reg-remat-global-load-rewrite-ok?) true)
+    (cfg test (compiler-reg-remat-global-gep-rewrite-ok?) true)
+    (cfg test (compiler-reg-remat-global-mutation-refusal-ok?) true)
     (cfg test (compiler-reg-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-call-span-counts-ok?) true)

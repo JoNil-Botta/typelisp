@@ -2,6 +2,7 @@
 (import "../compiler_driver_core.tl")
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
+(import "../compiler_ctfe.tl")
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
@@ -262,6 +263,25 @@
   [id : i64]) : bool
   (match (ast-node-pool-context-type-get pools id)
     [(AstTyU8) true]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-context-bool-lit?
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [want : bool]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExprLiteral (AstLitBool value)) (= value want)]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-context-if-bool-lits?
+  [pools : AstNodePoolContext]
+  [id : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExprIf cond then-branch else-branch)
+      (and
+        (compiler-driver-state-smoke-context-bool-lit? pools cond true)
+        (compiler-driver-state-smoke-context-bool-lit? pools then-branch true)
+        (compiler-driver-state-smoke-context-bool-lit? pools else-branch false))]
     [_ false]))
 
 (define (compiler-driver-state-smoke-context-ptr-null-u8?
@@ -566,6 +586,95 @@
               (unless (= type-b-id 0) (set! ok false))
               ok)))))))
 
+(define (compiler-driver-state-smoke-ctfe-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [env-a : CtfeEnv (ctfe-env-empty-with-pools pools-a)]
+        [cond-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprLiteral (AstLitBool true)))]
+        [then-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprLiteral (ast-lit-int 7)))]
+        [else-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprLiteral (ast-lit-int 9)))]
+        [if-id : i64 (ast-expr-if-with-pools pools-a cond-id then-id else-id)]
+        [quote-cond-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprLiteral (AstLitBool true)))]
+        [quote-false-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprLiteral (AstLitBool false)))]
+        [quote-var-id : i64
+          (ast-node-pool-context-expr-push
+            pools-a
+            (AstExprVar (intern "replacement")))]
+        [quote-unquote-id : i64
+          (ast-expr-unquote-with-pools pools-a quote-var-id)]
+        [quote-if-id : i64
+          (ast-expr-if-with-pools
+            pools-a
+            quote-unquote-id
+            quote-cond-id
+            quote-false-id)]
+        [quasiquote-id : i64
+          (ast-expr-quasiquote-with-pools pools-a quote-if-id)]
+        [quote-env : CtfeEnv
+          (ctfe-env-extend
+            env-a
+            "replacement"
+            (CtfeExpr quote-cond-id (AstTyBool)))]
+        [quote-len-before : i64 (ast-node-pool-context-expr-len pools-a)]
+        (begin
+          (compiler-driver-state-install-pools! state-b)
+          (match (compiler-ctfe-eval
+            (ast-node-pool-context-expr-get pools-a if-id)
+            env-a
+            (ctfe-fuel-limit))
+            [(OkCtfe value _)
+              (match value
+                [(CtfeI64 n) (unless (= n 7) (set! ok false))]
+                [_ (set! ok false)])]
+            [(ErrCtfe _) (set! ok false)])
+          (match (compiler-ctfe-eval
+            (ast-node-pool-context-expr-get pools-a quasiquote-id)
+            quote-env
+            (ctfe-fuel-limit))
+            [(OkCtfe value _)
+              (match value
+                [(CtfeExpr node ty)
+                  (begin
+                    (unless
+                      (ctfe-type-eq-in-env quote-env ty (AstTyBool))
+                      (set! ok false))
+                    (unless (>= node quote-len-before) (set! ok false))
+                    (unless
+                      (< node (ast-node-pool-context-expr-len pools-a))
+                      (set! ok false))
+                    (compiler-driver-state-reset-file-state! state-b)
+                    (unless
+                      (compiler-driver-state-smoke-context-if-bool-lits?
+                        pools-a
+                        node)
+                      (set! ok false)))]
+                [_ (set! ok false)])]
+            [(ErrCtfe _) (set! ok false)])
+          ok)))))
+
 (define (compiler-driver-state-smoke-builtins-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -798,6 +907,7 @@
       (compiler-driver-state-smoke-specialize-pools-isolated?)
       (return 15))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
+    (unless (compiler-driver-state-smoke-ctfe-pools-isolated?) (return 15))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
     (unless
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)

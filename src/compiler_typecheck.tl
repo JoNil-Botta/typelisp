@@ -12,6 +12,46 @@
   [cfgs : SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
+(define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (begin
+    (ast-node-pool-context-install! pools)
+    (let
+      [result : ResultCompilerTypecheck
+        (typecheck-compiler-specialized-program-with-paths-cache
+          program
+          paths
+          stdlib-roots
+          cache-scope)]
+      (begin
+        (ast-node-pool-context-capture-active! pools)
+        (ast-node-pool-context-install! pools)
+        result))))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (begin
+    (ast-node-pool-context-install! pools)
+    (let
+      [result : ResultCompilerTypecheckChecked
+        (typecheck-compiler-specialized-program-with-paths-checked-cache
+          program
+          paths
+          stdlib-roots
+          cache-scope)]
+      (begin
+        (ast-node-pool-context-capture-active! pools)
+        (ast-node-pool-context-install! pools)
+        result))))
+
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -25,37 +65,55 @@
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
   (begin
     (tc-spmd-inline-helper-stack-reset!)
-    (tc-typecheck-result-with-pool-check
-      (match (gen-normalize-program-with-paths program paths "")
-        [(OkGenProgramWithPaths generated generated-paths)
-          (match (macro-expand-program-with-paths generated generated-paths)
-            [(OkMacroExpand expanded expanded-paths)
-              (if (compiler-specialize-needed? expanded)
-                (match (build-compiler-symbols-with-paths
-                  expanded
-                  expanded-paths)
-                  [(OkCompilerSymbols _)
-                    (match (compiler-specialize-program-with-paths
-                      expanded
-                      expanded-paths
-                      (tc-decl-path-list-last expanded-paths ""))
-                      [(OkSpecProgramWithPaths specialized specialized-paths)
-                        (typecheck-compiler-specialized-program-with-paths-cache
-                          specialized
-                          specialized-paths
+    (let
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      (tc-typecheck-result-with-pool-check
+        (let
+          [generated-result : ResultGenProgramWithPaths
+            (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+          (begin
+            (ast-node-pool-context-install! pools)
+            (match generated-result
+              [(OkGenProgramWithPaths generated generated-paths)
+                (match (macro-expand-program-with-paths
+                  generated
+                  generated-paths)
+                  [(OkMacroExpand expanded expanded-paths)
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (if (compiler-specialize-needed? expanded)
+                        (match (build-compiler-symbols-with-paths
+                          expanded
+                          expanded-paths)
+                          [(OkCompilerSymbols _)
+                            (begin
+                              (ast-node-pool-context-capture-active! pools)
+                              (match (compiler-specialize-program-with-paths-and-pools
+                                expanded
+                                expanded-paths
+                                (tc-decl-path-list-last expanded-paths "")
+                                pools)
+                                [(OkSpecProgramWithPaths
+                                    specialized
+                                    specialized-paths)
+                                  (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                    specialized
+                                    specialized-paths
+                                    stdlib-roots
+                                    cache-scope
+                                    pools)]
+                                [(ErrSpecProgramWithPaths diag)
+                                  (ErrCompilerTypecheck diag)]))]
+                          [(ErrCompilerSymbols message)
+                            (ErrCompilerTypecheck (tc-diag-at-start message))])
+                        (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                          expanded
+                          expanded-paths
                           stdlib-roots
-                          cache-scope)]
-                      [(ErrSpecProgramWithPaths diag)
-                        (ErrCompilerTypecheck diag)])]
-                  [(ErrCompilerSymbols message)
-                    (ErrCompilerTypecheck (tc-diag-at-start message))])
-                (typecheck-compiler-specialized-program-with-paths-cache
-                  expanded
-                  expanded-paths
-                  stdlib-roots
-                  cache-scope))]
-            [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
-        [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))
+                          cache-scope
+                          pools)))]
+                  [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+              [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)])))))))
 
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
@@ -73,34 +131,51 @@
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (begin
     (tc-spmd-inline-helper-stack-reset!)
-    (match (gen-normalize-program-with-paths program paths "")
-      [(OkGenProgramWithPaths generated generated-paths)
-        (match (macro-expand-program-with-paths generated generated-paths)
-          [(OkMacroExpand expanded expanded-paths)
-            (if (compiler-specialize-needed? expanded)
-              (match (build-compiler-symbols-with-paths expanded expanded-paths)
-                [(OkCompilerSymbols _)
-                  (match (compiler-specialize-program-with-paths
-                    expanded
-                    expanded-paths
-                    (tc-decl-path-list-last expanded-paths ""))
-                    [(OkSpecProgramWithPaths specialized specialized-paths)
-                      (typecheck-compiler-specialized-program-with-paths-checked-cache
-                        specialized
-                        specialized-paths
-                        stdlib-roots
-                        cache-scope)]
-                    [(ErrSpecProgramWithPaths diag)
-                      (ErrCompilerTypecheckChecked diag)])]
-                [(ErrCompilerSymbols message)
-                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
-              (typecheck-compiler-specialized-program-with-paths-checked-cache
-                expanded
-                expanded-paths
-                stdlib-roots
-                cache-scope))]
-          [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
-      [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))
+    (let
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      [generated-result : ResultGenProgramWithPaths
+        (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+      (begin
+        (ast-node-pool-context-install! pools)
+        (match generated-result
+          [(OkGenProgramWithPaths generated generated-paths)
+            (match (macro-expand-program-with-paths generated generated-paths)
+              [(OkMacroExpand expanded expanded-paths)
+                (begin
+                  (ast-node-pool-context-capture-active! pools)
+                  (if (compiler-specialize-needed? expanded)
+                    (match (build-compiler-symbols-with-paths
+                      expanded
+                      expanded-paths)
+                      [(OkCompilerSymbols _)
+                        (begin
+                          (ast-node-pool-context-capture-active! pools)
+                          (match (compiler-specialize-program-with-paths-and-pools
+                            expanded
+                            expanded-paths
+                            (tc-decl-path-list-last expanded-paths "")
+                            pools)
+                            [(OkSpecProgramWithPaths
+                                specialized
+                                specialized-paths)
+                              (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                specialized
+                                specialized-paths
+                                stdlib-roots
+                                cache-scope
+                                pools)]
+                            [(ErrSpecProgramWithPaths diag)
+                              (ErrCompilerTypecheckChecked diag)]))]
+                      [(ErrCompilerSymbols message)
+                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
+                    (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                      expanded
+                      expanded-paths
+                      stdlib-roots
+                      cache-scope
+                      pools)))]
+              [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
+          [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))))
 
 (define (typecheck-compiler-program-with-paths-checked
   [program : AstProgram]
@@ -159,9 +234,17 @@
         [(ErrCompilerSymbols message) (ErrTcType message)]))))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
-  (match (parse-ast-source-diagnostic "" src)
-    [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
-    [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)]))
+  (let
+    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
+    [_dedup-reset : unit (ty-node-dedup-clear!)]
+    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
+    [result : ResultCompilerTypecheck
+      (match (parse-ast-source-diagnostic "" src)
+        [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      result)))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string-append

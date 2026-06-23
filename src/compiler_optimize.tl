@@ -20480,16 +20480,16 @@
 ;; read-only param slots before shifting by the caller's var count.
 ;; ---------------------------------------------------------------------------
 (defenum OptInlineState
-  (OptInlineState CompilerIrInstrList i64 i64 i64))
+  (OptInlineState CompilerIrInstrList i64 i64))
 
 (defenum OptInlineBlocks
-  (OptInlineBlocks CompilerIrBlockList i64 i64 i64))
+  (OptInlineBlocks CompilerIrBlockList i64 i64))
 
 (defenum OptInlineSpanState
-  (OptInlineSpanState CompilerIrInstrList i64 i64 i64 CompilerSourceSpans))
+  (OptInlineSpanState CompilerIrInstrList i64 i64 CompilerSourceSpans))
 
 (defenum OptInlineSpanBlocks
-  (OptInlineSpanBlocks CompilerIrBlockList i64 i64 i64 CompilerSourceSpans))
+  (OptInlineSpanBlocks CompilerIrBlockList i64 i64 CompilerSourceSpans))
 
 (defenum OptInlineSpanProgram
   (OptInlineSpanProgram CompilerIrFunctionList CompilerSourceSpans))
@@ -20514,13 +20514,12 @@
 
 (defenum OptInlineMaybeBlockRewrite
   (OptInlineNoBlockRewrite)
-  (OptInlineSomeBlockRewrite CompilerIrBlockList i64 i64 i64))
+  (OptInlineSomeBlockRewrite CompilerIrBlockList i64 i64))
 
 (defenum OptInlineMaybeSpanBlockRewrite
   (OptInlineNoSpanBlockRewrite)
   (OptInlineSomeSpanBlockRewrite
     CompilerIrBlockList
-    i64
     i64
     i64
     CompilerSourceSpans))
@@ -21087,9 +21086,6 @@
         (opt-inline-remap-value value sa np base)
         (opt-inline-remap-value-list (box-get rest) sa np base))]))
 
-(define (opt-inline-single-splice-prefix [splice-ordinal : i64]) : String
-  (string-append "inl.single." (int->string splice-ordinal)))
-
 (define (opt-inline-maybe-prefix-label [prefix : String] [label : String]) : String
   (if (string-eq prefix "")
     (clone label)
@@ -21292,7 +21288,7 @@
   [call-instr : CompilerIrInstr]
   [callee : String]) : OptInlineSpanState
   (match instrs
-    [(IrInstrNil) (OptInlineSpanState IrInstrNil base 0 0 out-spans)]
+    [(IrInstrNil) (OptInlineSpanState IrInstrNil base 0 out-spans)]
     [(IrInstrCons instr rest)
       (match (box-get rest)
         [(IrInstrNil)
@@ -21311,7 +21307,6 @@
             (OptInlineSpanState
               (compiler-ir-instr-cons moved IrInstrNil)
               base
-              0
               0
               next-spans))]
         [_
@@ -21340,11 +21335,10 @@
               caller
               call-instr
               callee)
-              [(OptInlineSpanState rest-instrs next-vars _ _ final-spans)
+              [(OptInlineSpanState rest-instrs next-vars _ final-spans)
                 (OptInlineSpanState
                   (compiler-ir-instr-cons cloned rest-instrs)
                   next-vars
-                  0
                   0
                   final-spans)]))])]))
 
@@ -21614,10 +21608,11 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
+  [block-label : String]
+  [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineState
   (match instr
@@ -21667,48 +21662,48 @@
                           cargs
                           np
                           vars
-                          (opt-inline-single-splice-prefix splice-ordinal))
+                          (opt-inline-site-prefix
+                            func-name
+                            block-label
+                            site-pos
+                            callee-name))
                         (+ vars (opt-inline-frame-growth cvars np))
-                        (+ added-so-far added-blocks)
-                        (+ splice-ordinal 1))
+                        (+ added-so-far added-blocks))
                       (OptInlineState
                         (compiler-ir-instr-cons
                           (IrInstrCall dst cname cargs cret)
                           IrInstrNil)
                         vars
-                        added-so-far
-                        splice-ordinal)))
+                        added-so-far)))
                   (OptInlineState
                     (compiler-ir-instr-cons
                       (IrInstrCall dst cname cargs cret)
                       IrInstrNil)
                     vars
-                    added-so-far
-                    splice-ordinal)))])]
+                    added-so-far)))])]
         [(OptNoFunction)
           (OptInlineState
             (compiler-ir-instr-cons
               (IrInstrCall dst cname cargs cret)
               IrInstrNil)
             vars
-            added-so-far
-            splice-ordinal)])]
+            added-so-far)])]
     [_
       (OptInlineState
         (compiler-ir-instr-cons instr IrInstrNil)
         vars
-        added-so-far
-        splice-ordinal)]))
+        added-so-far)]))
 
 (define (opt-inline-try-with-spans
   [instr : CompilerIrInstr]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
+  [block-label : String]
+  [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
@@ -21759,18 +21754,21 @@
                         cargs
                         np
                         vars
-                        (opt-inline-single-splice-prefix splice-ordinal)
+                        (opt-inline-site-prefix
+                          func-name
+                          block-label
+                          site-pos
+                          callee-name)
                         source-spans
                         out-spans
                         func-name
                         instr
                         cname)
-                        [(OptInlineSpanState expanded _ _ _ next-spans)
+                        [(OptInlineSpanState expanded _ _ next-spans)
                           (OptInlineSpanState
                             expanded
                             (+ vars (opt-inline-frame-growth cvars np))
                             (+ added-so-far added-blocks)
-                            (+ splice-ordinal 1)
                             next-spans)])
                       (OptInlineSpanState
                         (compiler-ir-instr-cons
@@ -21778,7 +21776,6 @@
                           IrInstrNil)
                         vars
                         added-so-far
-                        splice-ordinal
                         out-spans)))
                   (OptInlineSpanState
                     (compiler-ir-instr-cons
@@ -21786,7 +21783,6 @@
                       IrInstrNil)
                     vars
                     added-so-far
-                    splice-ordinal
                     out-spans)))])]
         [(OptNoFunction)
           (OptInlineSpanState
@@ -21795,14 +21791,12 @@
               IrInstrNil)
             vars
             added-so-far
-            splice-ordinal
             out-spans)])]
     [_
       (OptInlineSpanState
         (compiler-ir-instr-cons instr IrInstrNil)
         vars
         added-so-far
-        splice-ordinal
         out-spans)]))
 
 (define (opt-inline-walk-instrs
@@ -21810,95 +21804,98 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
+  [block-label : String]
+  [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineState
   (match instrs
-    [(IrInstrNil) (OptInlineState IrInstrNil vars added-so-far splice-ordinal)]
+    [(IrInstrNil) (OptInlineState IrInstrNil vars added-so-far)]
     [(IrInstrCons instr rest)
       (match (opt-inline-try
         instr
         index
         census
         func-name
+        block-label
+        site-pos
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc)
-        [(OptInlineState expanded vars2 added2 splice2)
+        [(OptInlineState expanded vars2 added2)
           (match (opt-inline-walk-instrs
             (box-get rest)
             index
             census
             func-name
+            block-label
+            (+ site-pos 1)
             vars2
             caller-blocks
             added2
-            splice2
             scc-result
             caller-scc)
-            [(OptInlineState rest-list vars3 added3 splice3)
+            [(OptInlineState rest-list vars3 added3)
               (OptInlineState
                 (opt-inline-append expanded rest-list)
                 vars3
-                added3
-                splice3)])])]))
+                added3)])])]))
 
 (define (opt-inline-walk-instrs-with-spans
   [instrs : CompilerIrInstrList]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
+  [block-label : String]
+  [site-pos : i64]
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
   (match instrs
-    [(IrInstrNil)
-      (OptInlineSpanState IrInstrNil vars added-so-far splice-ordinal out-spans)]
+    [(IrInstrNil) (OptInlineSpanState IrInstrNil vars added-so-far out-spans)]
     [(IrInstrCons instr rest)
       (match (opt-inline-try-with-spans
         instr
         index
         census
         func-name
+        block-label
+        site-pos
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc
         source-spans
         out-spans)
-        [(OptInlineSpanState expanded vars2 added2 splice2 spans2)
+        [(OptInlineSpanState expanded vars2 added2 spans2)
           (match (opt-inline-walk-instrs-with-spans
             (box-get rest)
             index
             census
             func-name
+            block-label
+            (+ site-pos 1)
             vars2
             caller-blocks
             added2
-            splice2
             scc-result
             caller-scc
             source-spans
             spans2)
-            [(OptInlineSpanState rest-list vars3 added3 splice3 spans3)
+            [(OptInlineSpanState rest-list vars3 added3 spans3)
               (OptInlineSpanState
                 (opt-inline-append expanded rest-list)
                 vars3
                 added3
-                splice3
                 spans3)])])]))
 
 (define (opt-inline-rewrite-single-block
@@ -21910,7 +21907,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match (opt-inline-walk-instrs
@@ -21918,20 +21914,20 @@
     index
     census
     func-name
+    block-label
+    0
     vars
     caller-blocks
     added-so-far
-    splice-ordinal
     scc-result
     caller-scc)
-    [(OptInlineState new-instrs vars2 added2 splice2)
+    [(OptInlineState new-instrs vars2 added2)
       (OptInlineSomeBlockRewrite
         (compiler-ir-block-cons
           (compiler-ir-block block-label new-instrs)
           IrBlockNil)
         vars2
-        added2
-        splice2)]))
+        added2)]))
 
 (define (opt-inline-multiblock-build-rewrite
   [block-label : String]
@@ -21945,7 +21941,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [index : OptFunctionIndex]) : OptInlineMaybeBlockRewrite
@@ -21977,17 +21972,14 @@
                     index
                     census
                     func-name
+                    block-label
+                    0
                     vars
                     caller-blocks
                     added-so-far
-                    splice-ordinal
                     scc-result
                     caller-scc)
-                    [(OptInlineState
-                        prefix-instrs
-                        prefix-vars
-                        prefix-added
-                        prefix-splice)
+                    [(OptInlineState prefix-instrs prefix-vars prefix-added)
                       (let
                         [prefix : String
                           (opt-inline-site-prefix
@@ -22044,13 +22036,14 @@
                               index
                               census
                               func-name
+                              block-label
+                              (+ site-pos 1)
                               vars2
                               caller-blocks
                               added2
-                              prefix-splice
                               scc-result
                               caller-scc)
-                              [(OptInlineState suffix vars3 added3 splice3)
+                              [(OptInlineState suffix vars3 added3)
                                 (let
                                   [result-instr : CompilerIrInstr
                                     (opt-inline-cont-result-instr
@@ -22072,8 +22065,7 @@
                                             cont-instrs)
                                           IrBlockNil)))
                                     vars3
-                                    added3
-                                    splice3))])]))])
+                                    added3))])]))])
                   (OptInlineNoBlockRewrite)))
               (OptInlineNoBlockRewrite)))])]
     [_ (OptInlineNoBlockRewrite)]))
@@ -22090,7 +22082,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match instrs
@@ -22104,7 +22095,6 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc)]
     [(IrInstrCons instr rest)
@@ -22129,12 +22119,11 @@
                 vars
                 caller-blocks
                 added-so-far
-                splice-ordinal
                 scc-result
                 caller-scc
                 index)
-                [(OptInlineSomeBlockRewrite blocks2 vars2 added2 splice2)
-                  (OptInlineSomeBlockRewrite blocks2 vars2 added2 splice2)]
+                [(OptInlineSomeBlockRewrite blocks2 vars2 added2)
+                  (OptInlineSomeBlockRewrite blocks2 vars2 added2)]
                 [(OptInlineNoBlockRewrite)
                   (opt-inline-try-multiblock-rewrite-from
                     (box-get rest)
@@ -22148,7 +22137,6 @@
                     vars
                     caller-blocks
                     added-so-far
-                    splice-ordinal
                     scc-result
                     caller-scc)])]
             [(OptNoFunction)
@@ -22164,7 +22152,6 @@
                 vars
                 caller-blocks
                 added-so-far
-                splice-ordinal
                 scc-result
                 caller-scc)])]
         [_
@@ -22180,7 +22167,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc)])]))
 
@@ -22193,7 +22179,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match block
@@ -22210,7 +22195,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc)
           (opt-inline-try-multiblock-rewrite-from
@@ -22225,7 +22209,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc)))]))
 
@@ -22392,7 +22375,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
@@ -22402,22 +22384,22 @@
     index
     census
     func-name
+    block-label
+    0
     vars
     caller-blocks
     added-so-far
-    splice-ordinal
     scc-result
     caller-scc
     source-spans
     out-spans)
-    [(OptInlineSpanState new-instrs vars2 added2 splice2 spans2)
+    [(OptInlineSpanState new-instrs vars2 added2 spans2)
       (OptInlineSomeSpanBlockRewrite
         (compiler-ir-block-cons
           (compiler-ir-block block-label new-instrs)
           IrBlockNil)
         vars2
         added2
-        splice2
         spans2)]))
 
 (define (opt-inline-multiblock-build-span-rewrite
@@ -22432,7 +22414,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [index : OptFunctionIndex]
@@ -22466,10 +22447,11 @@
                     index
                     census
                     func-name
+                    block-label
+                    0
                     vars
                     caller-blocks
                     added-so-far
-                    splice-ordinal
                     scc-result
                     caller-scc
                     source-spans
@@ -22478,7 +22460,6 @@
                         prefix-instrs
                         prefix-vars
                         prefix-added
-                        prefix-splice
                         spans2)
                       (let
                         [prefix : String
@@ -22544,20 +22525,16 @@
                               index
                               census
                               func-name
+                              block-label
+                              (+ site-pos 1)
                               vars2
                               caller-blocks
                               added2
-                              prefix-splice
                               scc-result
                               caller-scc
                               source-spans
                               spans3)
-                              [(OptInlineSpanState
-                                  suffix
-                                  vars3
-                                  added3
-                                  splice3
-                                  spans4)
+                              [(OptInlineSpanState suffix vars3 added3 spans4)
                                 (let
                                   [result-instr : CompilerIrInstr
                                     (opt-inline-cont-result-instr
@@ -22587,7 +22564,6 @@
                                           IrBlockNil)))
                                     vars3
                                     added3
-                                    splice3
                                     spans5))])]))])
                   (OptInlineNoSpanBlockRewrite)))
               (OptInlineNoSpanBlockRewrite)))])]
@@ -22605,7 +22581,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
@@ -22621,7 +22596,6 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc
         source-spans
@@ -22648,24 +22622,13 @@
                 vars
                 caller-blocks
                 added-so-far
-                splice-ordinal
                 scc-result
                 caller-scc
                 index
                 source-spans
                 out-spans)
-                [(OptInlineSomeSpanBlockRewrite
-                    blocks2
-                    vars2
-                    added2
-                    splice2
-                    spans2)
-                  (OptInlineSomeSpanBlockRewrite
-                    blocks2
-                    vars2
-                    added2
-                    splice2
-                    spans2)]
+                [(OptInlineSomeSpanBlockRewrite blocks2 vars2 added2 spans2)
+                  (OptInlineSomeSpanBlockRewrite blocks2 vars2 added2 spans2)]
                 [(OptInlineNoSpanBlockRewrite)
                   (opt-inline-try-multiblock-span-rewrite-from
                     (box-get rest)
@@ -22679,7 +22642,6 @@
                     vars
                     caller-blocks
                     added-so-far
-                    splice-ordinal
                     scc-result
                     caller-scc
                     source-spans
@@ -22697,7 +22659,6 @@
                 vars
                 caller-blocks
                 added-so-far
-                splice-ordinal
                 scc-result
                 caller-scc
                 source-spans
@@ -22715,7 +22676,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc
             source-spans
@@ -22730,7 +22690,6 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
@@ -22749,7 +22708,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc
             source-spans
@@ -22766,7 +22724,6 @@
             vars
             caller-blocks
             added-so-far
-            splice-ordinal
             scc-result
             caller-scc
             source-spans
@@ -22780,11 +22737,10 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineBlocks
   (match blocks
-    [(IrBlockNil) (OptInlineBlocks IrBlockNil vars added-so-far splice-ordinal)]
+    [(IrBlockNil) (OptInlineBlocks IrBlockNil vars added-so-far)]
     [(IrBlockCons block rest)
       (match (opt-inline-rewrite-block
         block
@@ -22795,10 +22751,9 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc)
-        [(OptInlineSomeBlockRewrite rewritten vars2 added2 splice2)
+        [(OptInlineSomeBlockRewrite rewritten vars2 added2)
           (match (opt-inline-blocks
             (box-get rest)
             index
@@ -22807,21 +22762,18 @@
             vars2
             caller-blocks
             added2
-            splice2
             scc-result
             caller-scc)
-            [(OptInlineBlocks rest-blocks vars3 added3 splice3)
+            [(OptInlineBlocks rest-blocks vars3 added3)
               (OptInlineBlocks
                 (opt-inline-block-append rewritten rest-blocks)
                 vars3
-                added3
-                splice3)])]
+                added3)])]
         [(OptInlineNoBlockRewrite)
           (OptInlineBlocks
             (compiler-ir-block-cons block IrBlockNil)
             vars
-            added-so-far
-            splice-ordinal)])]
+            added-so-far)])]
     [(IrBlockArray seq)
       (opt-inline-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -22831,7 +22783,6 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc)]))
 
@@ -22843,19 +22794,12 @@
   [vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [splice-ordinal : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanBlocks
   (match blocks
-    [(IrBlockNil)
-      (OptInlineSpanBlocks
-        IrBlockNil
-        vars
-        added-so-far
-        splice-ordinal
-        out-spans)]
+    [(IrBlockNil) (OptInlineSpanBlocks IrBlockNil vars added-so-far out-spans)]
     [(IrBlockCons block rest)
       (match (opt-inline-rewrite-block-with-spans
         block
@@ -22866,12 +22810,11 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc
         source-spans
         out-spans)
-        [(OptInlineSomeSpanBlockRewrite rewritten vars2 added2 splice2 spans2)
+        [(OptInlineSomeSpanBlockRewrite rewritten vars2 added2 spans2)
           (match (opt-inline-blocks-with-spans
             (box-get rest)
             index
@@ -22880,24 +22823,21 @@
             vars2
             caller-blocks
             added2
-            splice2
             scc-result
             caller-scc
             source-spans
             spans2)
-            [(OptInlineSpanBlocks rest-blocks vars3 added3 splice3 spans3)
+            [(OptInlineSpanBlocks rest-blocks vars3 added3 spans3)
               (OptInlineSpanBlocks
                 (opt-inline-block-append rewritten rest-blocks)
                 vars3
                 added3
-                splice3
                 spans3)])]
         [(OptInlineNoSpanBlockRewrite)
           (OptInlineSpanBlocks
             (compiler-ir-block-cons block IrBlockNil)
             vars
             added-so-far
-            splice-ordinal
             out-spans)])]
     [(IrBlockArray seq)
       (opt-inline-blocks-with-spans
@@ -22908,7 +22848,6 @@
         vars
         caller-blocks
         added-so-far
-        splice-ordinal
         scc-result
         caller-scc
         source-spans
@@ -22962,10 +22901,9 @@
           vars
           caller-blocks
           0
-          0
           scc-result
           caller-scc)
-          [(OptInlineBlocks new-blocks new-vars added _)
+          [(OptInlineBlocks new-blocks new-vars added)
             (opt-inline-repair-or-keep
               func
               (IrFunction name params ret new-vars new-blocks)
@@ -22991,12 +22929,11 @@
           vars
           caller-blocks
           0
-          0
           scc-result
           caller-scc
           source-spans
           out-spans)
-          [(OptInlineSpanBlocks new-blocks new-vars added _ next-spans)
+          [(OptInlineSpanBlocks new-blocks new-vars added next-spans)
             (let
               [next : CompilerIrFunction
                 (IrFunction name params ret new-vars new-blocks)]

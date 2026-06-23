@@ -6691,6 +6691,170 @@
     (compiler-backend-vector-load-binop-folds? (IrBinSub) false "vpsubq")
     (compiler-backend-vector-load-binop-does-not-fold? (IrBinSub) true "vpsubq")))
 
+(define (compiler-backend-vector-binop-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%vec7"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%vec8"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-avx2-vector-binop-emits?
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx2-vector-binop
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    lanes
+    elem-ty
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-vector-binop-emits?
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx512-vector-binop
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    lanes
+    elem-ty
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx2-vector-binop-diagnostic?
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx2-vector-binop
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    lanes
+    elem-ty
+    (compiler-diagnostic-at-start "" ""))
+    [(ErrCompilerBackend diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-vector-binop-diagnostic?
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx512-vector-binop
+    (compiler-backend-vector-binop-test-assignments)
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    lanes
+    elem-ty
+    (compiler-diagnostic-at-start "" ""))
+    [(ErrCompilerBackend diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-vector-bitwise-binop-ok?) : bool
+  (and
+    (backend-and8
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinSub)
+        (AstTyF32)
+        8
+        "    vsubps %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitAnd)
+        (AstTyI64)
+        4
+        "    vpand %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitAnd)
+        (AstTyU8)
+        32
+        "    vpand %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitOr)
+        (AstTyI32)
+        8
+        "    vpor %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitOr)
+        (AstTyI16)
+        16
+        "    vpor %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitXor)
+        (AstTyU64)
+        4
+        "    vpxor %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (IrBinBitXor)
+        (AstTyI8)
+        32
+        "    vpxor %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-diagnostic?
+        (IrBinBitAnd)
+        (AstTyF64)
+        4
+        "backend: unsupported AVX2 vector binary op"))
+    (backend-and8
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinSub)
+        (AstTyF32)
+        16
+        "    vsubps %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitAnd)
+        (AstTyI64)
+        8
+        "    vpandq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitAnd)
+        (AstTyU8)
+        64
+        "    vpandd %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitOr)
+        (AstTyU64)
+        8
+        "    vporq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitOr)
+        (AstTyI16)
+        32
+        "    vpord %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitXor)
+        (AstTyI64)
+        8
+        "    vpxorq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (IrBinBitXor)
+        (AstTyI8)
+        64
+        "    vpxord %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-diagnostic?
+        (IrBinBitOr)
+        (AstTyF64)
+        8
+        "backend: unsupported AVX-512 vector binary op"))))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -6706,6 +6870,7 @@
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
+    (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool

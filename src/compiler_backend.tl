@@ -20927,17 +20927,45 @@
               vars
               CompilerRegAssignmentNil
               CompilerRegVarTypeNil))]
-        [rewrite-reg-plan : CompilerRegPlan
+        [call-save-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
               reg-plan
               call-save-rewrite)
             reg-plan)]
-        [rewritten-blocks : CompilerIrBlockList
+        [call-save-blocks : CompilerIrBlockList
           (match call-save-rewrite
             [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
-        [rewritten-vars : i64
+        [call-save-vars : i64
           (match call-save-rewrite
+            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+        [loop-split-func : CompilerIrFunction
+          (IrFunction name params ret-ty call-save-vars call-save-blocks)]
+        [loop-split-rewrite : CompilerRegCallSaveRewrite
+          (if call-save-enabled
+            (compiler-reg-loop-split-rewrite-blocks
+              loop-split-func
+              call-save-blocks
+              call-save-vars
+              (compiler-reg-function-var-types loop-split-func)
+              call-save-reg-plan)
+            (CompilerRegCallSaveRewrite
+              call-save-blocks
+              call-save-vars
+              call-save-vars
+              CompilerRegAssignmentNil
+              CompilerRegVarTypeNil))]
+        [rewrite-reg-plan : CompilerRegPlan
+          (if call-save-enabled
+            (compiler-reg-plan-with-call-save-rewrite
+              call-save-reg-plan
+              loop-split-rewrite)
+            reg-plan)]
+        [rewritten-blocks : CompilerIrBlockList
+          (match loop-split-rewrite
+            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+        [rewritten-vars : i64
+          (match loop-split-rewrite
             [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
         [_regalloc-census : unit
           (cfg

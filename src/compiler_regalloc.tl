@@ -170,6 +170,15 @@
   (CompilerRegEdgeCopyRewrite CompilerIrBlockList)
   (CompilerRegEdgeCopyRewriteRefused String))
 
+(defenum CompilerRegLoopSplitCandidate
+  (CompilerRegLoopSplitNoCandidate)
+  (CompilerRegLoopSplitCandidate
+    i64
+    String
+    AstType
+    String
+    CompilerRegEdgeCopyList))
+
 (defenum CompilerRegParamAssignPlan
   (CompilerRegParamAssignPlan
     CompilerRegAssignmentTable
@@ -5533,6 +5542,565 @@
           (compiler-reg-edge-copy-apply rewritten (box-get rest))]
         [(CompilerRegEdgeCopyRewriteRefused message)
           (CompilerRegEdgeCopyRewriteRefused message)])]))
+
+(define (compiler-reg-loop-split-noop
+  [blocks : CompilerIrBlockList]
+  [vars : i64]) : CompilerRegCallSaveRewrite
+  (CompilerRegCallSaveRewrite
+    blocks
+    vars
+    vars
+    CompilerRegAssignmentNil
+    CompilerRegVarTypeNil))
+
+(define (compiler-reg-loop-split-direction-present?
+  [copies : CompilerRegEdgeCopyList]
+  [want-into : bool]) : bool
+  (match copies
+    [(CompilerRegEdgeCopyNil) false]
+    [(CompilerRegEdgeCopyCons copy rest)
+      (match copy
+        [(CompilerRegEdgeCopy _ _ _ _ _ direction _)
+          (if (match direction
+            [(CompilerRegEdgeCopyIntoRegion) want-into]
+            [(CompilerRegEdgeCopyOutOfRegion) (not want-into)])
+            true
+            (compiler-reg-loop-split-direction-present?
+              (box-get rest)
+              want-into))])]))
+
+(define (compiler-reg-loop-split-copies-bidirectional?
+  [copies : CompilerRegEdgeCopyList]) : bool
+  (and
+    (compiler-reg-loop-split-direction-present? copies true)
+    (compiler-reg-loop-split-direction-present? copies false)))
+
+(define (compiler-reg-loop-split-instr-list-has-phi?
+  [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi _ _ _) true]
+        [_ (compiler-reg-loop-split-instr-list-has-phi? (box-get rest))])]))
+
+(define (compiler-reg-loop-split-instr-seq-has-phi?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (compiler-reg-loop-split-instr-list-has-phi?
+    (compiler-ir-instr-seq-to-list instrs)))
+
+(define (compiler-reg-loop-split-instr-mentions-var?
+  [instr : CompilerIrInstr]
+  [var : i64]) : bool
+  (or
+    (compiler-live-set-contains? (compiler-live-instr-uses instr) var)
+    (compiler-live-set-contains? (compiler-live-instr-defs instr) var)))
+
+(define (compiler-reg-loop-split-mention-count-list
+  [instrs : CompilerIrInstrList]
+  [var : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (if (compiler-reg-loop-split-instr-mentions-var? instr var)
+          1
+          0)
+        (compiler-reg-loop-split-mention-count-list (box-get rest) var))]))
+
+(define (compiler-reg-loop-split-mention-count
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]) : i64
+  (compiler-reg-loop-split-mention-count-list
+    (compiler-ir-instr-seq-to-list instrs)
+    var))
+
+(define (compiler-reg-loop-split-region-interval
+  [region-var : i64]
+  [start : i64]
+  [end : i64]) : CompilerRegIntervalList
+  (compiler-reg-interval-cons
+    (CompilerRegInterval region-var start end)
+    CompilerRegIntervalNil))
+
+(define (compiler-reg-loop-split-var-overlaps-region?
+  [intervals : CompilerRegIntervalIndex]
+  [var : i64]
+  [region-intervals : CompilerRegIntervalList]) : bool
+  (let
+    [segments : (Array CompilerRegIntervalList) (struct-get intervals segments)]
+    [var-segments : CompilerRegIntervalList
+      (if (or (< var 0) (>= var (array-length segments)))
+        CompilerRegIntervalNil
+        (array-ref segments var))]
+    (if (not (compiler-reg-interval-list-empty? var-segments))
+      (compiler-reg-interval-list-overlaps? var-segments region-intervals)
+      (match (compiler-reg-interval-index-lookup intervals var)
+        [(CompilerRegSomeInterval interval)
+          (compiler-reg-interval-list-overlaps-one? region-intervals interval)]
+        [(CompilerRegNoInterval) true]))))
+
+(define (compiler-reg-loop-split-location-conflicts-region?
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) false]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment assigned-var assigned-location)
+          (if (or
+            (= assigned-var ignore-var)
+            (not (compiler-reg-location-eq? assigned-location location)))
+            (compiler-reg-loop-split-location-conflicts-region?
+              (box-get rest)
+              intervals
+              region-intervals
+              ignore-var
+              location)
+            (if (compiler-reg-loop-split-var-overlaps-region?
+              intervals
+              assigned-var
+              region-intervals)
+              true
+              (compiler-reg-loop-split-location-conflicts-region?
+                (box-get rest)
+                intervals
+                region-intervals
+                ignore-var
+                location)))])]))
+
+(define (compiler-reg-loop-split-first-register
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringNil) CompilerRegNoString]
+    [(CompilerRegStringCons reg rest)
+      (if (compiler-reg-loop-split-location-conflicts-region?
+        assignments
+        intervals
+        region-intervals
+        ignore-var
+        (CompilerRegRegister reg))
+        (compiler-reg-loop-split-first-register
+          (box-get rest)
+          assignments
+          intervals
+          region-intervals
+          ignore-var)
+        (CompilerRegSomeString reg))]))
+
+(define (compiler-reg-loop-split-type-ok?
+  [type-info : CompilerRegVarTypes]
+  [group-vars : CompilerLiveI64Set]
+  [var : i64]) : CompilerRegMaybeType
+  (if (compiler-live-set-contains? group-vars var)
+    CompilerRegNoType
+    (match (compiler-reg-var-types-lookup type-info var)
+      [(CompilerRegSomeType ty)
+        (if (and
+          (compiler-reg-register-eligible-type? ty)
+          (not (compiler-reg-float-type? ty)))
+          (CompilerRegSomeType ty)
+          CompilerRegNoType)]
+      [(CompilerRegNoType) CompilerRegNoType])))
+
+(define (compiler-reg-loop-split-hot-benefit?
+  [mentions : i64]
+  [depth : i64]
+  [copy-count : i64]) : bool
+  (and
+    (> depth 0)
+    (> mentions 0)
+    (> (* mentions (compiler-reg-loop-depth-weight depth)) copy-count)))
+
+(define (compiler-reg-loop-split-succs-has-backedge?
+  [ids : StringI64Map]
+  [source-index : i64]
+  [succs : CompilerLiveLabelSet]) : bool
+  (match succs
+    [(CompilerLiveLabelNil) false]
+    [(CompilerLiveLabelCons label rest)
+      (match (string-i64-map-get ids label)
+        [(StringI64MapFound target-index)
+          (if (<= target-index source-index)
+            true
+            (compiler-reg-loop-split-succs-has-backedge?
+              ids
+              source-index
+              (box-get rest)))]
+        [(StringI64MapMissing)
+          (compiler-reg-loop-split-succs-has-backedge?
+            ids
+            source-index
+            (box-get rest))])]))
+
+(define (compiler-reg-loop-split-region-remap-blocks
+  [blocks : CompilerIrBlockList]
+  [region : StringI64Map]
+  [remap : (Array i64)]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) IrBlockNil]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [rewritten-block : CompilerIrBlock
+              (if (compiler-reg-region-label? region label)
+                (IrBlock
+                  label
+                  (compiler-ir-instr-seq-from-list
+                    (compiler-reg-remap-instr-list
+                      remap
+                      (compiler-ir-instr-seq-to-list instrs))))
+                block)]
+            (compiler-ir-block-cons
+              rewritten-block
+              (compiler-reg-loop-split-region-remap-blocks
+                (box-get rest)
+                region
+                remap)))])]
+    [(IrBlockArray seq)
+      (compiler-reg-loop-split-region-remap-blocks
+        (compiler-ir-block-seq-to-list seq)
+        region
+        remap)]))
+
+(define (compiler-reg-loop-split-try-var
+  [func : CompilerIrFunction]
+  [region-label : String]
+  [block : CompilerLiveBlock]
+  [instrs : CompilerIrInstrSeq]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  (if (and
+    (compiler-live-set-contains? (compiler-live-block-live-in block) var)
+    (compiler-live-set-contains? (compiler-live-block-live-out block) var)
+    (not (compiler-live-set-contains? (compiler-live-block-defs block) var))
+    (compiler-reg-interval-index-var-has-segments? intervals var)
+    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegSpill _)
+            (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+              [(CompilerRegSomeType ty)
+                (let
+                  [labels : CompilerRegStringList
+                    (compiler-reg-string-cons region-label CompilerRegStringNil)]
+                  [mentions : i64
+                    (compiler-reg-loop-split-mention-count instrs var)]
+                  [region-intervals : CompilerRegIntervalList
+                    (compiler-reg-loop-split-region-interval
+                      vars
+                      region-start
+                      region-end)]
+                  (match (compiler-reg-edge-copy-plan-for-region
+                    func
+                    labels
+                    var
+                    vars
+                    ty)
+                    [(CompilerRegEdgeCopyPlan copies)
+                      (let
+                        [copy-count : i64
+                          (compiler-reg-edge-copy-list-count copies)]
+                        (if (and
+                          (compiler-reg-loop-split-copies-bidirectional? copies)
+                          (compiler-reg-loop-split-hot-benefit?
+                            mentions
+                            depth
+                            copy-count))
+                          (match (compiler-reg-loop-split-first-register
+                            (compiler-reg-sysv-integer-registers)
+                            assignments
+                            intervals
+                            region-intervals
+                            var)
+                            [(CompilerRegSomeString reg)
+                              (CompilerRegLoopSplitCandidate
+                                var
+                                region-label
+                                ty
+                                reg
+                                copies)]
+                            [(CompilerRegNoString)
+                              (CompilerRegLoopSplitNoCandidate)])
+                          (CompilerRegLoopSplitNoCandidate)))]
+                    [(CompilerRegEdgeCopyRefused _)
+                      (CompilerRegLoopSplitNoCandidate)]))]
+              [(CompilerRegNoType) (CompilerRegLoopSplitNoCandidate)])]
+          [_ (CompilerRegLoopSplitNoCandidate)])]
+      [(CompilerRegNoLocation) (CompilerRegLoopSplitNoCandidate)])
+    (CompilerRegLoopSplitNoCandidate)))
+
+(define (compiler-reg-loop-split-select-var
+  [func : CompilerIrFunction]
+  [region-label : String]
+  [block : CompilerLiveBlock]
+  [instrs : CompilerIrInstrSeq]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  (if (>= var vars)
+    (CompilerRegLoopSplitNoCandidate)
+    (match (compiler-reg-loop-split-try-var
+      func
+      region-label
+      block
+      instrs
+      region-start
+      region-end
+      depth
+      vars
+      var
+      type-info
+      assignments
+      intervals
+      group-vars
+      parents
+      merged-roots)
+      [(CompilerRegLoopSplitNoCandidate)
+        (compiler-reg-loop-split-select-var
+          func
+          region-label
+          block
+          instrs
+          region-start
+          region-end
+          depth
+          vars
+          (+ var 1)
+          type-info
+          assignments
+          intervals
+          group-vars
+          parents
+          merged-roots)]
+      [(CompilerRegLoopSplitCandidate stack-var label ty reg copies)
+        (CompilerRegLoopSplitCandidate stack-var label ty reg copies)])))
+
+(define (compiler-reg-loop-split-select-blocks
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [ids : StringI64Map]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [depths : (Array i64)]
+  [point : i64]
+  [block-index : i64]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  (match blocks
+    [(IrBlockNil) (CompilerRegLoopSplitNoCandidate)]
+    [(IrBlockCons ir-block rest)
+      (match ir-block
+        [(IrBlock label instrs)
+          (let
+            [next-point : i64
+              (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
+            [depth : i64
+              (if (< block-index (array-length depths))
+                (array-ref depths block-index)
+                0)]
+            (if (and
+              (< block-index (array-length live-blocks))
+              (> depth 0)
+              (not (compiler-reg-loop-split-instr-seq-has-phi? instrs))
+              (compiler-reg-loop-split-succs-has-backedge?
+                ids
+                block-index
+                (compiler-reg-live-block-succs
+                  (array-ref live-blocks block-index))))
+              (match (compiler-reg-loop-split-select-var
+                func
+                label
+                (array-ref live-blocks block-index)
+                instrs
+                point
+                next-point
+                depth
+                vars
+                0
+                type-info
+                assignments
+                intervals
+                group-vars
+                parents
+                merged-roots)
+                [(CompilerRegLoopSplitNoCandidate)
+                  (compiler-reg-loop-split-select-blocks
+                    func
+                    (box-get rest)
+                    ids
+                    live-blocks
+                    depths
+                    next-point
+                    (+ block-index 1)
+                    vars
+                    type-info
+                    assignments
+                    intervals
+                    group-vars
+                    parents
+                    merged-roots)]
+                [(CompilerRegLoopSplitCandidate stack-var region ty reg copies)
+                  (CompilerRegLoopSplitCandidate stack-var region ty reg copies)])
+              (compiler-reg-loop-split-select-blocks
+                func
+                (box-get rest)
+                ids
+                live-blocks
+                depths
+                next-point
+                (+ block-index 1)
+                vars
+                type-info
+                assignments
+                intervals
+                group-vars
+                parents
+                merged-roots)))])]
+    [(IrBlockArray seq)
+      (compiler-reg-loop-split-select-blocks
+        func
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        live-blocks
+        depths
+        point
+        block-index
+        vars
+        type-info
+        assignments
+        intervals
+        group-vars
+        parents
+        merged-roots)]))
+
+(define (compiler-reg-loop-split-apply-candidate
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [stack-var : i64]
+  [region-label : String]
+  [ty : AstType]
+  [reg : String]
+  [copies : CompilerRegEdgeCopyList]) : CompilerRegCallSaveRewrite
+  (let
+    [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
+    [region-map : StringI64Map
+      (compiler-reg-region-label-map
+        (compiler-reg-string-cons region-label CompilerRegStringNil))]
+    (begin
+      (array-set! remap stack-var vars)
+      (match (compiler-reg-edge-copy-apply
+        (compiler-reg-loop-split-region-remap-blocks blocks region-map remap)
+        copies)
+        [(CompilerRegEdgeCopyRewrite rewritten-blocks)
+          (CompilerRegCallSaveRewrite
+            rewritten-blocks
+            vars
+            (+ vars 1)
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment vars (CompilerRegRegister reg))
+              CompilerRegAssignmentNil)
+            (compiler-reg-var-type-cons
+              (CompilerRegVarType vars ty)
+              CompilerRegVarTypeNil))]
+        [(CompilerRegEdgeCopyRewriteRefused _)
+          (compiler-reg-loop-split-noop blocks vars)]))))
+
+(define (compiler-reg-loop-split-rewrite-blocks
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (if (not (compiler-reg-scalar-full-intervals? func))
+    (compiler-reg-loop-split-noop blocks vars)
+    (let
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      [selection : CompilerRegIntervalSelection
+        (compiler-reg-live-interval-selection func liveness)]
+      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments plan)]
+      [group-vars : CompilerLiveI64Set
+        (compiler-reg-function-group-vars func types)]
+      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+      (match selection
+        [(CompilerRegIntervalSelection _ intervals)
+          (let
+            [coalesce : CompilerRegCoalesceMap
+              (compiler-reg-coalesce-map-build
+                (compiler-reg-function-moves func false)
+                intervals
+                type-info
+                group-vars
+                vars)]
+            [parents : (Array i64) (struct-get coalesce parents)]
+            [merged-roots : CompilerLiveI64Set
+              (compiler-reg-coalesce-merged-root-set coalesce)]
+            (match liveness
+              [(CompilerFunctionLiveness ids live-blocks)
+                (match (compiler-reg-loop-split-select-blocks
+                  func
+                  blocks
+                  ids
+                  live-blocks
+                  depths
+                  0
+                  0
+                  vars
+                  type-info
+                  assignments
+                  intervals
+                  group-vars
+                  parents
+                  merged-roots)
+                  [(CompilerRegLoopSplitNoCandidate)
+                    (compiler-reg-loop-split-noop blocks vars)]
+                  [(CompilerRegLoopSplitCandidate
+                      stack-var
+                      region-label
+                      ty
+                      reg
+                      copies)
+                    (compiler-reg-loop-split-apply-candidate
+                      blocks
+                      vars
+                      stack-var
+                      region-label
+                      ty
+                      reg
+                      copies)])]))]))))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]
@@ -11071,6 +11639,214 @@
 
 (cfg
   test
+  (define (compiler-reg-loop-split-plan [func : CompilerIrFunction]) : CompilerRegPlan
+    (let
+      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      (match (compiler-reg-live-interval-selection func liveness)
+        [(CompilerRegIntervalSelection intervals _)
+          (CompilerRegPlan
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment
+                0
+                (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+              CompilerRegAssignmentNil)
+            (compiler-live-set-empty)
+            intervals
+            (compiler-reg-var-types-list type-info)
+            (compiler-live-set-empty))]))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
+    (IrFunction
+      "loop_split_rewrite"
+      IrParamNil
+      (AstTyI64)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "body" "exit")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "hot1" (IrValueVar 0) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-low-benefit-function) : CompilerIrFunction
+    (IrFunction
+      "loop_split_low_benefit"
+      IrParamNil
+      (AstTyI64)
+      1
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "body" "exit")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-phi-region-function) : CompilerIrFunction
+    (IrFunction
+      "loop_split_phi_region"
+      IrParamNil
+      (AstTyI64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "body" "exit")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrPhi
+                  1
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 0)
+                    "loop"
+                    IrPhiInputNil)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrStore "hot1" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-rewrite-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-loop-split-rewrite-function)]
+      [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (let
+            [rewrite : CompilerRegCallSaveRewrite
+              (compiler-reg-loop-split-rewrite-blocks
+                func
+                blocks
+                vars
+                (compiler-reg-function-var-types func)
+                plan)]
+            (match rewrite
+              [(CompilerRegCallSaveRewrite
+                  rewritten
+                  _
+                  out-vars
+                  extra-assignments
+                  _)
+                (let
+                  [body : CompilerIrInstrList
+                    (compiler-reg-block-instr-list rewritten "body")]
+                  [rewritten-plan : CompilerRegPlan
+                    (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
+                  [rewritten-assignments : CompilerRegAssignmentList
+                    (compiler-reg-plan-assignments rewritten-plan)]
+                  (and
+                    (= out-vars (+ vars 1))
+                    (= (compiler-reg-assignment-count extra-assignments) 1)
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup
+                        rewritten-assignments
+                        vars)
+                      "%r12")
+                    (compiler-reg-instr-list-has-mov-var? body vars 0)
+                    (compiler-reg-instr-list-has-mov-var? body 0 vars)
+                    (compiler-reg-instr-list-has-store-var? body "hot0" vars)
+                    (compiler-reg-instr-list-has-store-var? body "hot1" vars)
+                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))))]))]))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-noop-for? [func : CompilerIrFunction]) : bool
+    (let
+      [plan : CompilerRegPlan (compiler-reg-loop-split-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (match (compiler-reg-loop-split-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite _ _ out-vars extra-assignments _)
+              (and
+                (= out-vars vars)
+                (= (compiler-reg-assignment-count extra-assignments) 0))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-low-benefit-ok?) : bool
+    (compiler-reg-loop-split-noop-for?
+      (compiler-reg-loop-split-low-benefit-function))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-phi-region-refusal-ok?) : bool
+    (compiler-reg-loop-split-noop-for?
+      (compiler-reg-loop-split-phi-region-function))))
+
+(cfg
+  test
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
     (IrFunction
       "many_call_live"
@@ -12081,7 +12857,10 @@
     (cfg test (compiler-reg-scalar-call-spanning-multiblock-boundary-ok?) true)
     (cfg test (compiler-reg-edge-copy-linear-ok?) true)
     (cfg test (compiler-reg-edge-copy-backedge-ok?) true)
-    (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)))
+    (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)
+    (cfg test (compiler-reg-loop-split-rewrite-ok?) true)
+    (cfg test (compiler-reg-loop-split-low-benefit-ok?) true)
+    (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)))
 
 (define (compiler-regalloc-storage-self-test?) : bool
   (and

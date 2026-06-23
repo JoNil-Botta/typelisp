@@ -7397,25 +7397,62 @@
                                           ty)))))]
                               [(ErrCompilerBackend message)
                                 (ErrCompilerBackend message)])])
-                        (match (compiler-backend-emit-load-value-with-plan
-                          assignments
-                          rhs
-                          "%r8")
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
-                              (string-append
-                                lhs-asm
+                        ;; #perf: rhs has no stack address, so it is register-
+                        ;; homed (or a non-addressable value). When it lives in a
+                        ;; register distinct from %rax (the temp holding lhs),
+                        ;; source the op straight from that register instead of
+                        ;; staging it through %r8 -- `movq %r15,%r8 ; addq
+                        ;; %r8,%rax` collapses to `addq %r15,%rax`. This mirrors
+                        ;; the stack-address fast path above and the register-dst
+                        ;; direct path (#2386); it is purely an emission change,
+                        ;; so register allocation is unaffected. Ops that have no
+                        ;; binop-source-asm form fall back to %r8 staging.
+                        (let
+                          [rhs-reg : String
+                            (compiler-backend-value-scalar-register
+                              assignments
+                              rhs)]
+                          (match (if (if (string-eq rhs-reg "")
+                            false
+                            (not (string-eq rhs-reg "%rax")))
+                            (compiler-backend-binop-source-asm
+                              op
+                              operand-ty
+                              (compiler-backend-sized-reg rhs-reg operand-ty))
+                            (CompilerBackendNoAsm))
+                            [(CompilerBackendSomeAsm op-asm)
+                              (OkCompilerBackend
                                 (string-append
-                                  rhs-asm
+                                  lhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm op operand-ty)
+                                    op-asm
                                     (compiler-backend-emit-store-typed-var-with-plan
                                       assignments
                                       dst
                                       "%rax"
-                                      ty)))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])))])])]
+                                      ty))))]
+                            [(CompilerBackendNoAsm)
+                              (match (compiler-backend-emit-load-value-with-plan
+                                assignments
+                                rhs
+                                "%r8")
+                                [(OkCompilerBackend rhs-asm)
+                                  (OkCompilerBackend
+                                    (string-append
+                                      lhs-asm
+                                      (string-append
+                                        rhs-asm
+                                        (string-append
+                                          (compiler-backend-binop-asm
+                                            op
+                                            operand-ty)
+                                          (compiler-backend-emit-store-typed-var-with-plan
+                                            assignments
+                                            dst
+                                            "%rax"
+                                            ty)))))]
+                                [(ErrCompilerBackend message)
+                                  (ErrCompilerBackend message)])]))))])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-empty-assignments?

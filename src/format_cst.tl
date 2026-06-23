@@ -5,7 +5,6 @@
 ;; and parenthesized/bracketed lists keep their delimiter kind.
 (import "../stdlib/io.tl")
 (import "../stdlib/string.tl")
-(import "../stdlib/vector_family.tl")
 (import "format_tokens.tl")
 
 (defenum FormatCst
@@ -21,7 +20,9 @@
   (FmtCstCons FormatCst (Box FormatCstList))
   (FmtCstDense (Array FormatCst) i64 i64))
 
-(vector-family FormatCst FormatCstVec format-cst-vec)
+(defstruct FormatCstVec
+  (slots (Array FormatCst))
+  (len i64))
 
 (defenum FormatCstListStep
   (FmtCstListStepEmpty)
@@ -48,6 +49,48 @@
 (defenum ResultFormatParseSeqEnd
   (OkFormatParseSeqEnd i64)
   (ErrFormatParseSeqEnd FormatSourceError))
+
+(define (format-cst-vec-new) : FormatCstVec
+  (FormatCstVec (make-array FormatCst 4) 0))
+
+(define (format-cst-vec-copy-range!
+  [dst : (&mut dst (Array FormatCst))]
+  [src : (& src (Array FormatCst))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (format-cst-vec-copy-range! dst src (+ index 1) count))))
+
+(define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
+  (let
+    [count : i64 (struct-get v len)]
+    [old-cap : i64 (array-length (struct-get v slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array FormatCst) (make-array FormatCst new-cap)]
+    (begin
+      (format-cst-vec-copy-range!
+        (&mut bigger)
+        (& (struct-get v slots))
+        0
+        count)
+      (set! (struct-get v slots) bigger))))
+
+(define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
+  (begin
+    (if (< (struct-get v len) (array-length (struct-get v slots)))
+      unit
+      (format-cst-vec-grow! v))
+    (let
+      [index : i64 (struct-get v len)]
+      (begin
+        (array-set! (struct-get v slots) index value)
+        (set! (struct-get v len) (+ index 1))))))
 
 (define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
   (let
@@ -163,7 +206,7 @@
             (match parsed
               [(FmtParsedCst node next)
                 (begin
-                  (format-cst-vec-push items node)
+                  (format-cst-vec-push! items node)
                   (fmt-parse-seq-into-result stream next stop-tag items))])]
           [(ErrFormatParsedCst err) (ErrFormatParseSeqEnd err)])])))
 
@@ -196,7 +239,7 @@
               (match parsed
                 [(FmtParsedCst node next)
                   (begin
-                    (format-cst-vec-push (&mut items) node)
+                    (format-cst-vec-push! (&mut items) node)
                     (match (fmt-parse-seq-into-result
                       stream
                       next

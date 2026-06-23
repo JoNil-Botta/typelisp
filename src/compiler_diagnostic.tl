@@ -64,22 +64,32 @@
   (struct-get span end-col))
 
 (define (compiler-diagnostic-path [diag : CompilerDiagnostic]) : String
-  (compiler-diagnostic-span-path (& (struct-get diag primary))))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-path (& primary))))
 
 (define (compiler-diagnostic-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-line (& (struct-get diag primary))))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-start-line (& primary))))
 
 (define (compiler-diagnostic-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-col (& (struct-get diag primary))))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-start-col (& primary))))
 
 (define (compiler-diagnostic-message [diag : CompilerDiagnostic]) : String
   (struct-get diag message))
 
 (define (compiler-diagnostic-end-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-line (& (struct-get diag primary))))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-end-line (& primary))))
 
 (define (compiler-diagnostic-end-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-col (& (struct-get diag primary))))
+  (let
+    [primary : CompilerDiagnosticSpan (struct-get diag primary)]
+    (compiler-diagnostic-span-end-col (& primary))))
 
 (define (compiler-diagnostic-level [diag : CompilerDiagnostic]) : CompilerDiagnosticLevel
   (struct-get diag level))

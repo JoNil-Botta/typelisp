@@ -6195,6 +6195,30 @@
         [_ false])]
     [_ false]))
 
+(define (tc-stdlib-string-copy-wrapper-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc args ret)
+      (match (box-get args)
+        [(AstTypeCons left rest1)
+          (let
+            [left : AstType (ty-node-get left)]
+            [rest1 : AstTypeList (box-get rest1)]
+            (match rest1
+              [(AstTypeCons right rest2)
+                (let
+                  [right : AstType (ty-node-get right)]
+                  [rest2 : AstTypeList (box-get rest2)]
+                  (match rest2
+                    [(AstTypeNil)
+                      (and
+                        (tc-str-ref-type? left)
+                        (tc-str-ref-type? right)
+                        (tc-type-eq (ty-node-get ret) (AstTyString)))]
+                    [_ false]))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (tc-stdlib-string-to-int-wrapper-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyFunc args ret)
@@ -6220,6 +6244,8 @@
     [(string-eq base "char-at") (tc-stdlib-string-ref-wrapper-type? ty)]
     [(string-eq base "string-eq") (tc-stdlib-string-eq-wrapper-type? ty)]
     [(string-eq base "string=?") (tc-stdlib-string-eq-wrapper-type? ty)]
+    [(string-eq base "string-append") (tc-stdlib-string-copy-wrapper-type? ty)]
+    [(string-eq base "string-concat") (tc-stdlib-string-copy-wrapper-type? ty)]
     [(string-eq base "string->int") (tc-stdlib-string-to-int-wrapper-type? ty)]
     [else false]))
 
@@ -6286,6 +6312,37 @@
           [_ false]))]
     [_ false]))
 
+(define (tc-stdlib-string-copy-wrapper-decl?
+  [ctx : TcContext]
+  [base : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefFn name params ret _ _)
+      (and
+        (string-eq (intern-str name) base)
+        (tc-type-eq (tc-resolve-type ctx ret) (AstTyString))
+        (match params
+          [(AstParamCons left-param rest1)
+            (let
+              [rest1 : AstParamList (box-get rest1)]
+              (match rest1
+                [(AstParamCons right-param rest2)
+                  (let
+                    [rest2 : AstParamList (box-get rest2)]
+                    (match left-param
+                      [(AstParam _ left _)
+                        (match right-param
+                          [(AstParam _ right _)
+                            (and
+                              (tc-str-ref-type? (tc-resolve-type ctx left))
+                              (tc-str-ref-type? (tc-resolve-type ctx right))
+                              (match rest2
+                                [(AstParamNil) true]
+                                [_ false]))])]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
 (define (tc-stdlib-string-helper-symbol-wrapper?
   [ctx : TcContext]
   [base : String]) : bool
@@ -6307,6 +6364,10 @@
                     (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
                   [(string-eq base "char-at")
                     (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
+                  [(string-eq base "string-append")
+                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
+                  [(string-eq base "string-concat")
+                    (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
                   [else false]))))]
         [(NoneI64) false])]))
 
@@ -14719,6 +14780,25 @@
       lookup-id
       "string=?")))
 
+(define (tc-string-copy-helper-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]
+  [lookup-id : i64]) : bool
+  (or
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (= source-id (tc-name-id "string-append"))
+      lookup-id
+      "string-append")
+    (tc-stdlib-string-helper-visible-or-wrapper-id?
+      ctx
+      env
+      (= source-id (tc-name-id "string-concat"))
+      lookup-id
+      "string-concat")))
+
 (define (tc-string-to-int-helper-call-name?
   [_ctx : TcContext]
   [env : TcTypeEnv]
@@ -15110,6 +15190,8 @@
             (tc-borrowed-string-builtin-call ctx env name args)]
           [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
+          [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
+            (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
           [(tc-string-to-int-helper-call-id? env lookup-id)
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and

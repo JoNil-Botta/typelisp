@@ -5608,8 +5608,7 @@
 (define (tc-current-module-source-lookup-key
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]) : TcMaybeString
+  [name : String]) : TcMaybeString
   (let
     [module : String (tc-context-module ctx)]
     (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -6414,7 +6413,7 @@
         (if (< first-dot 0)
           (if (tc-source-name-bound-exact-id? env name-id)
             (OkTcString name)
-            (match (tc-current-module-source-lookup-key ctx env name name-id)
+            (match (tc-current-module-source-lookup-key ctx env name)
               [(TcSomeString key) (OkTcString key)]
               [(TcNoString) (OkTcString name)]))
           (if (and

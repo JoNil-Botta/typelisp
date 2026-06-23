@@ -45,7 +45,7 @@
   (notes CompilerDiagnosticNoteList))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
-  (string-copy (struct-get span path)))
+  (string-copy (& (struct-get span path))))
 
 (define (compiler-diagnostic-span-start-line
   [span : (& span CompilerDiagnosticSpan)]) : i64
@@ -64,22 +64,22 @@
   (struct-get span end-col))
 
 (define (compiler-diagnostic-path [diag : CompilerDiagnostic]) : String
-  (compiler-diagnostic-span-path (struct-get diag primary)))
+  (compiler-diagnostic-span-path (& (struct-get diag primary))))
 
 (define (compiler-diagnostic-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-line (struct-get diag primary)))
+  (compiler-diagnostic-span-start-line (& (struct-get diag primary))))
 
 (define (compiler-diagnostic-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-start-col (struct-get diag primary)))
+  (compiler-diagnostic-span-start-col (& (struct-get diag primary))))
 
 (define (compiler-diagnostic-message [diag : CompilerDiagnostic]) : String
   (struct-get diag message))
 
 (define (compiler-diagnostic-end-line [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-line (struct-get diag primary)))
+  (compiler-diagnostic-span-end-line (& (struct-get diag primary))))
 
 (define (compiler-diagnostic-end-col [diag : CompilerDiagnostic]) : i64
-  (compiler-diagnostic-span-end-col (struct-get diag primary)))
+  (compiler-diagnostic-span-end-col (& (struct-get diag primary))))
 
 (define (compiler-diagnostic-level [diag : CompilerDiagnostic]) : CompilerDiagnosticLevel
   (struct-get diag level))
@@ -786,7 +786,8 @@
                 (match rest-labels
                   [(CompilerDiagnosticLabelCons _ _)
                     (string-eq
-                      (compiler-diagnostic-span-path (struct-get label span))
+                      (compiler-diagnostic-span-path
+                        (& (struct-get label span)))
                       "other.tl")]
                   [CompilerDiagnosticLabelNil false])
                 (match (compiler-diagnostic-code diag)

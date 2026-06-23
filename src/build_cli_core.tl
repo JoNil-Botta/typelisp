@@ -1278,7 +1278,7 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultPackageCachePinKind
   (let
-    [kind : String (string-copy (struct-get dep pin-kind))]
+    [kind : String (string-copy (& (struct-get dep pin-kind)))]
     (cond
       [(string-eq kind "rev") (OkPackageCachePinKind (PackageCachePinRev))]
       [(string-eq kind "tag") (OkPackageCachePinKind (PackageCachePinTag))]
@@ -1339,7 +1339,7 @@
     [(ErrPackageCachePinKind _) false]
     [(OkPackageCachePinKind kind)
       (and
-        (string-eq (struct-get entry alias) alias)
+        (string-eq (& (struct-get entry alias)) alias)
         (string-eq (& (struct-get entry url)) (& (struct-get dep remote)))
         (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
         (string-eq
@@ -1390,22 +1390,22 @@
       (OkPackageLockEntry
         (PackageLockEntry
           alias
-          (string-copy (struct-get dep remote))
+          (string-copy (& (struct-get dep remote)))
           kind
-          (string-copy (struct-get dep pin-value))
+          (string-copy (& (struct-get dep pin-value)))
           commit))]))
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
   [commit : String]) : BuildGitDependency
-  (BuildGitDependency (string-copy (struct-get dep remote)) "rev" commit))
+  (BuildGitDependency (string-copy (& (struct-get dep remote))) "rev" commit))
 
 (define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
   (let
-    [kind : String (string-copy (struct-get dep pin-kind))]
+    [kind : String (string-copy (& (struct-get dep pin-kind)))]
     (if (string-eq kind "branch")
-      (str-cat "origin/" (string-copy (struct-get dep pin-value)))
-      (string-copy (struct-get dep pin-value)))))
+      (str-cat "origin/" (string-copy (& (struct-get dep pin-value))))
+      (string-copy (& (struct-get dep pin-value))))))
 
 (define (build-git-executable) : String
   (source-tool-git-executable))
@@ -1505,7 +1505,7 @@
     (file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
 (define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
-  (string-eq (struct-get dep pin-kind) "rev"))
+  (string-eq (& (struct-get dep pin-kind)) "rev"))
 
 (define (build-package-cache-relative-root) : String
   "target/typelisp/cache/packages/v1")
@@ -1677,7 +1677,7 @@
           (match (build-run-captured
             (build-git-dep-error alias "git clone")
             (build-git-clone-command
-              (string-copy (struct-get dep remote))
+              (string-copy (& (struct-get dep remote)))
               staged-path))
             [(ErrBuildString message) (ErrBuildString message)]
             [(OkBuildString _)
@@ -1733,8 +1733,8 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
-    [remote : String (string-copy (struct-get dep remote))]
-    [pin-value : String (string-copy (struct-get dep pin-value))]
+    [remote : String (string-copy (& (struct-get dep remote)))]
+    [pin-value : String (string-copy (& (struct-get dep pin-value)))]
     [key : PackageCacheKey (PackageCacheKey remote pin-value)]
     [root : String (package-cache-default-root manifest-dir)]
     [entry-path : String (package-cache-entry-path root (& key))]
@@ -1793,7 +1793,7 @@
     (OkBuildString root)
     (build-run-captured
       (build-git-dep-error alias "git clone")
-      (build-git-clone-command (string-copy (struct-get dep remote)) root))))
+      (build-git-clone-command (string-copy (& (struct-get dep remote))) root))))
 
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
@@ -1866,7 +1866,7 @@
       (let
         [commit-result : ResultBuildString
           (if (build-git-dep-rev? (& dep))
-            (OkBuildString (string-copy (struct-get dep pin-value)))
+            (OkBuildString (string-copy (& (struct-get dep pin-value))))
             (build-resolve-git-head
               alias
               (build-absolute-dep-root manifest-dir dep-root)))]

@@ -12674,9 +12674,12 @@
           [(OkTcType got)
             (if (tc-call-actual-reference? ctx got)
               (OkTcType got)
-              (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                (OkTcType want)
-                (tc-call-auto-borrow-type ctx env arg)))]
+              (match (tc-call-auto-borrow-type ctx env arg)
+                [(OkTcType borrowed) (OkTcType borrowed)]
+                [(ErrTcType message)
+                  (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                    (OkTcType want)
+                    (ErrTcType message))]))]
           [(ErrTcType message) (ErrTcType message)])])
     (tc-expr-with-expected-or-actual-call-arg ctx env arg want)))
 
@@ -12721,11 +12724,12 @@
             [(OkTcType got)
               (if (tc-call-actual-reference? ctx got)
                 (OkTcExpr arg)
-                (if (tc-call-string-temporary-ref-compatible? ctx want got)
-                  (OkTcExpr arg)
-                  (match (tc-call-auto-borrow-type ctx env arg)
-                    [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
-                    [(ErrTcType message) (ErrTcExpr message)])))]
+                (match (tc-call-auto-borrow-type ctx env arg)
+                  [(OkTcType _) (OkTcExpr (tc-call-auto-borrow-expr arg))]
+                  [(ErrTcType message)
+                    (if (tc-call-string-temporary-ref-compatible? ctx want got)
+                      (OkTcExpr arg)
+                      (ErrTcExpr message))]))]
             [(ErrTcType message) (ErrTcExpr message)])]))
     (OkTcExpr arg)))
 

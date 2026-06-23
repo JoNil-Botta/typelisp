@@ -8694,9 +8694,14 @@
           (let
             [load-value-reference : bool
               (not
-                (and
-                  (lower-struct-repr-c? ctx struct-name)
-                  (lower-repr-c-inline-field? ctx field-ty)))]
+                (or
+                  (and
+                    (lower-struct-repr-c? ctx struct-name)
+                    (lower-repr-c-inline-field? ctx field-ty))
+                  (and
+                    (lower-mode-inline-aggregates? (lower-state-mode state))
+                    (lower-type-inline-struct-or-enum? ctx field-ty)
+                    (not (lower-type-register-resident? ctx field-ty)))))]
             (match (lower-gep-byte state base offset)
               [(LowerExpr ptr-state ptr _)
                 (OkLowerExpr
@@ -36879,6 +36884,14 @@
       (borrow-array items)
       42)))")
 
+(define (compiler-lower-reference-inline-struct-field-source) : String
+  "(defstruct Inner (name String) (line i64))
+(defstruct Outer (prefix i64) (inner Inner))
+(define (take-inner [inner : (& inner Inner)]) : i64
+  (struct-get inner line))
+(define (main [outer : Outer]) : i64
+  (take-inner (& (struct-get outer inner))))")
+
 (define (compiler-lower-reference-struct-result-source) : String
   "(defstruct RefBox
   (:lifetimes text)
@@ -43257,7 +43270,26 @@
                 0)
                 unit
                 (set! ok false))
+              (if (compiler-lower-reference-inline-struct-field-shape-ok?)
+                unit
+                (set! ok false))
               ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-reference-inline-struct-field-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-reference-inline-struct-field-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-direct-call-count
+                functions
+                "main"
+                "take-inner")
+              1)
+            (= (lower-test-function-load-count functions "main") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-reference-nominal-aggregate-ok?) : bool

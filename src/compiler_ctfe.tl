@@ -9111,6 +9111,33 @@
     (ast-node-push (AstExprVar (intern name)))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprNil)))))
 
+(define (compiler-ctfe-call1-in-env [env : CtfeEnv] [name : String] [arg : i64]) : i64
+  (ast-expr-call-with-pools
+    (ctfe-env-pools env)
+    (ctfe-ast-push env (AstExprVar (intern name)))
+    (ast-expr-cons arg AstExprNil)))
+
+(define (compiler-ctfe-call2-in-env
+  [env : CtfeEnv]
+  [name : String]
+  [a : i64]
+  [b : i64]) : i64
+  (ast-expr-call-with-pools
+    (ctfe-env-pools env)
+    (ctfe-ast-push env (AstExprVar (intern name)))
+    (ast-expr-cons a (ast-expr-cons b AstExprNil))))
+
+(define (compiler-ctfe-call3-in-env
+  [env : CtfeEnv]
+  [name : String]
+  [a : i64]
+  [b : i64]
+  [c : i64]) : i64
+  (ast-expr-call-with-pools
+    (ctfe-env-pools env)
+    (ctfe-ast-push env (AstExprVar (intern name)))
+    (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprNil)))))
+
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(OkCtfe value _)
@@ -9742,10 +9769,11 @@
 ;; compare it structurally, extract its parts, and verify list ops.
 ;; Flat-AST test helper: the #1137 self-tests build exprs with i64-returning
 ;; constructors; ctfe-expr-eq takes AstExpr, so wrap node ids for the tests.
+(define (ctfe-test-expr-eq-in-env [env : CtfeEnv] [a : i64] [b : i64]) : bool
+  (ctfe-expr-eq-in-env env (ctfe-ast-get env a) (ctfe-ast-get env b)))
+
 (define (ctfe-test-expr-eq [a : i64] [b : i64]) : bool
-  (let
-    [env : CtfeEnv (ctfe-env-empty)]
-    (ctfe-expr-eq-in-env env (ctfe-ast-get env a) (ctfe-ast-get env b))))
+  (ctfe-test-expr-eq-in-env (ctfe-env-empty) a b))
 
 (define (compiler-ctfe-expr-eq-ok?) : bool
   (let
@@ -9802,38 +9830,49 @@
 (define (compiler-ctfe-checked-expr-constructors-ok?) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
-    [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
-    [true-expr : i64 (compiler-ctfe-call1 "expr-bool" true-lit)]
-    [false-expr : i64 (compiler-ctfe-call1 "expr-bool" false-lit)]
-    [spliced-false : i64 (compiler-ctfe-call1 "expr-splice" false-expr)]
+    [true-lit : i64 (ctfe-ast-push env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64 (ctfe-ast-push env (AstExprLiteral (AstLitBool false)))]
+    [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
+    [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
+    [spliced-false : i64
+      (compiler-ctfe-call1-in-env env "expr-splice" false-expr)]
     [if-expr : i64
-      (compiler-ctfe-call3 "expr-if" true-expr spliced-false true-expr)]
+      (compiler-ctfe-call3-in-env
+        env
+        "expr-if"
+        true-expr
+        spliced-false
+        true-expr)]
+    [expected : i64
+      (ast-expr-if-with-pools (ctfe-env-pools env) true-lit false-lit true-lit)]
     (match (compiler-ctfe-eval (ctfe-ast-get env if-expr) env (ctfe-fuel-limit))
       [(OkCtfe value _)
         (match value
           [(CtfeExpr node checked-ty)
             (and
               (ctfe-type-eq checked-ty (AstTyBool))
-              (ctfe-test-expr-eq node (ast-expr-if true-lit false-lit true-lit)))]
+              (ctfe-test-expr-eq-in-env env node expected))]
           [_ false])]
       [(ErrCtfe _) false])))
 
 (define (compiler-ctfe-checked-expr-inspectors-ok?) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
-    [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
-    [true-expr : i64 (compiler-ctfe-call1 "expr-bool" true-lit)]
-    [false-expr : i64 (compiler-ctfe-call1 "expr-bool" false-lit)]
+    [true-lit : i64 (ctfe-ast-push env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64 (ctfe-ast-push env (AstExprLiteral (AstLitBool false)))]
+    [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
+    [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
     [if-expr : i64
-      (compiler-ctfe-call3 "expr-if" true-expr false-expr true-expr)]
-    [if-predicate : i64 (compiler-ctfe-call1 "expr-if?" if-expr)]
-    [bool-predicate : i64 (compiler-ctfe-call1 "expr-bool?" true-expr)]
-    [bool-value : i64 (compiler-ctfe-call1 "expr-bool-value" false-expr)]
-    [cond-expr : i64 (compiler-ctfe-call1 "expr-if-cond" if-expr)]
-    [then-expr : i64 (compiler-ctfe-call1 "expr-if-then" if-expr)]
-    [bad-cond-expr : i64 (compiler-ctfe-call1 "expr-if-cond" true-expr)]
+      (compiler-ctfe-call3-in-env env "expr-if" true-expr false-expr true-expr)]
+    [if-predicate : i64 (compiler-ctfe-call1-in-env env "expr-if?" if-expr)]
+    [bool-predicate : i64
+      (compiler-ctfe-call1-in-env env "expr-bool?" true-expr)]
+    [bool-value : i64
+      (compiler-ctfe-call1-in-env env "expr-bool-value" false-expr)]
+    [cond-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-cond" if-expr)]
+    [then-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-then" if-expr)]
+    [bad-cond-expr : i64
+      (compiler-ctfe-call1-in-env env "expr-if-cond" true-expr)]
     (and
       (compiler-ctfe-eval-bool-ok? if-predicate env true)
       (compiler-ctfe-eval-bool-ok? bool-predicate env true)
@@ -9847,7 +9886,7 @@
             [(CtfeExpr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
-                (ctfe-test-expr-eq node true-lit))]
+                (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
         [(ErrCtfe _) false])
       (match (compiler-ctfe-eval
@@ -9859,7 +9898,7 @@
             [(CtfeExpr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
-                (ctfe-test-expr-eq node false-lit))]
+                (ctfe-test-expr-eq-in-env env node false-lit))]
             [_ false])]
         [(ErrCtfe _) false])
       (compiler-ctfe-eval-error-ok?
@@ -9869,19 +9908,22 @@
 
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
-    [int-expr-value : CompilerCtfeValue
-      (CtfeExpr (ast-node-push (AstExprLiteral (ast-lit-int 1))) (AstTyI64))]
-    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "n" int-expr-value)]
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [int-node : i64 (ctfe-ast-push base-env (AstExprLiteral (ast-lit-int 1)))]
+    [int-expr-value : CompilerCtfeValue (CtfeExpr int-node (AstTyI64))]
+    [env : CtfeEnv (ctfe-env-extend base-env "n" int-expr-value)]
     [spliced-int : i64
-      (compiler-ctfe-call1
+      (compiler-ctfe-call1-in-env
+        env
         "expr-splice"
-        (ast-node-push (AstExprVar (intern "n"))))]
+        (ctfe-ast-push env (AstExprVar (intern "n"))))]
     [true-expr : i64
-      (compiler-ctfe-call1
+      (compiler-ctfe-call1-in-env
+        env
         "expr-bool"
-        (ast-node-push (AstExprLiteral (AstLitBool true))))]
+        (ctfe-ast-push env (AstExprLiteral (AstLitBool true))))]
     [if-expr : i64
-      (compiler-ctfe-call3 "expr-if" spliced-int true-expr true-expr)]
+      (compiler-ctfe-call3-in-env env "expr-if" spliced-int true-expr true-expr)]
     (compiler-ctfe-eval-error-ok?
       if-expr
       env
@@ -9889,34 +9931,42 @@
 
 (define (compiler-ctfe-quote-syntax-ok?) : bool
   (let
-    [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
-    [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
-    [flag-var : i64 (ast-node-push (AstExprVar (intern "flag")))]
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [true-lit : i64 (ctfe-ast-push base-env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64
+      (ctfe-ast-push base-env (AstExprLiteral (AstLitBool false)))]
+    [flag-var : i64 (ctfe-ast-push base-env (AstExprVar (intern "flag")))]
     [spliced : AstExprList
       (ast-expr-cons true-lit (ast-expr-cons false-lit AstExprNil))]
     [env : CtfeEnv
       (ctfe-env-extend
-        (ctfe-env-extend
-          (ctfe-env-empty)
-          "cond"
-          (CtfeExpr flag-var (AstTyBool)))
+        (ctfe-env-extend base-env "cond" (CtfeExpr flag-var (AstTyBool)))
         "xs"
         (CtfeExprList spliced))]
-    [quoted-bool : i64 (ast-expr-quote true-lit)]
+    [quoted-bool : i64
+      (ast-expr-quote-with-pools (ctfe-env-pools env) true-lit)]
+    [cond-var : i64 (ctfe-ast-push env (AstExprVar (intern "cond")))]
     [qq-if : i64
-      (ast-expr-quasiquote
-        (ast-expr-if
-          (ast-expr-unquote (ast-node-push (AstExprVar (intern "cond"))))
+      (ast-expr-quasiquote-with-pools
+        (ctfe-env-pools env)
+        (ast-expr-if-with-pools
+          (ctfe-env-pools env)
+          (ast-expr-unquote-with-pools (ctfe-env-pools env) cond-var)
           true-lit
           false-lit))]
+    [xs-var : i64 (ctfe-ast-push env (AstExprVar (intern "xs")))]
     [qq-splice : i64
-      (ast-expr-quasiquote
-        (ast-node-push
+      (ast-expr-quasiquote-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push
+          env
           (AstExprBegin
             (ast-expr-cons
-              (ast-expr-unquote-splicing
-                (ast-node-push (AstExprVar (intern "xs"))))
+              (ast-expr-unquote-splicing-with-pools (ctfe-env-pools env) xs-var)
               AstExprNil))))]
+    [expected-if : i64
+      (ast-expr-if-with-pools (ctfe-env-pools env) flag-var true-lit false-lit)]
+    [expected-begin : i64 (ctfe-ast-push env (AstExprBegin spliced))]
     (and
       (match (compiler-ctfe-eval
         (ctfe-ast-get env quoted-bool)
@@ -9927,7 +9977,7 @@
             [(CtfeExpr node ty)
               (and
                 (ctfe-type-eq ty (AstTyBool))
-                (ctfe-test-expr-eq node true-lit))]
+                (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
         [(ErrCtfe _) false])
       (match (compiler-ctfe-eval (ctfe-ast-get env qq-if) env (ctfe-fuel-limit))
@@ -9936,9 +9986,7 @@
             [(CtfeExpr node ty)
               (and
                 (ctfe-type-eq ty (AstTyBool))
-                (ctfe-test-expr-eq
-                  node
-                  (ast-expr-if flag-var true-lit false-lit)))]
+                (ctfe-test-expr-eq-in-env env node expected-if))]
             [_ false])]
         [(ErrCtfe _) false])
       (match (compiler-ctfe-eval
@@ -9948,28 +9996,31 @@
         [(OkCtfe value _)
           (match value
             [(CtfeExpr node _)
-              (ctfe-test-expr-eq node (ast-node-push (AstExprBegin spliced)))]
+              (ctfe-test-expr-eq-in-env env node expected-begin)]
             [_ false])]
         [(ErrCtfe _) false]))))
 
 (define (compiler-ctfe-expr-pattern-match-int-ok?) : bool
   (let
-    [subject-node : i64 (ast-node-push (AstExprLiteral (ast-lit-int 7)))]
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [subject-node : i64
+      (ctfe-ast-push base-env (AstExprLiteral (ast-lit-int 7)))]
     [subject : CompilerCtfeValue (CtfeExpr subject-node (AstTyI64))]
-    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
-    [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
+    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [scrutinee : i64 (ctfe-ast-push env (AstExprVar (intern "subject")))]
     [int-pattern : AstPattern
       (ast-pat-variant
         "ExprInt"
         (ast-pattern-cons (ast-pat-binding "n") AstPatternNil))]
     [int-arm : AstMatchArm
-      (ast-match-arm int-pattern (ast-node-push (AstExprVar (intern "n"))))]
+      (ast-match-arm int-pattern (ctfe-ast-push env (AstExprVar (intern "n"))))]
     [fallback-arm : AstMatchArm
       (ast-match-arm
         AstPatWildcard
-        (ast-node-push (AstExprLiteral (ast-lit-int 0))))]
+        (ctfe-ast-push env (AstExprLiteral (ast-lit-int 0))))]
     [match-expr : i64
-      (ast-expr-match
+      (ast-expr-match-with-pools
+        (ctfe-env-pools env)
         scrutinee
         (ast-match-arm-cons
           int-arm
@@ -9978,13 +10029,16 @@
 
 (define (compiler-ctfe-expr-pattern-match-if-ok?) : bool
   (let
-    [flag : i64 (ast-node-push (AstExprVar (intern "flag")))]
-    [true-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool true)))]
-    [false-lit : i64 (ast-node-push (AstExprLiteral (AstLitBool false)))]
-    [if-node : i64 (ast-expr-if flag true-lit false-lit)]
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [flag : i64 (ctfe-ast-push base-env (AstExprVar (intern "flag")))]
+    [true-lit : i64 (ctfe-ast-push base-env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64
+      (ctfe-ast-push base-env (AstExprLiteral (AstLitBool false)))]
+    [if-node : i64
+      (ast-expr-if-with-pools (ctfe-env-pools base-env) flag true-lit false-lit)]
     [subject : CompilerCtfeValue (CtfeExpr if-node (AstTyBool))]
-    [env : CtfeEnv (ctfe-env-extend (ctfe-env-empty) "subject" subject)]
-    [scrutinee : i64 (ast-node-push (AstExprVar (intern "subject")))]
+    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [scrutinee : i64 (ctfe-ast-push env (AstExprVar (intern "subject")))]
     [if-pattern : AstPattern
       (ast-pat-variant
         "ExprIf"
@@ -9994,20 +10048,23 @@
             (ast-pat-binding "t")
             (ast-pattern-cons (ast-pat-binding "e") AstPatternNil))))]
     [swapped : i64
-      (compiler-ctfe-call3
+      (compiler-ctfe-call3-in-env
+        env
         "expr-if"
-        (ast-node-push (AstExprVar (intern "c")))
-        (ast-node-push (AstExprVar (intern "e")))
-        (ast-node-push (AstExprVar (intern "t"))))]
+        (ctfe-ast-push env (AstExprVar (intern "c")))
+        (ctfe-ast-push env (AstExprVar (intern "e")))
+        (ctfe-ast-push env (AstExprVar (intern "t"))))]
     [if-arm : AstMatchArm (ast-match-arm if-pattern swapped)]
     [fallback-arm : AstMatchArm (ast-match-arm AstPatWildcard scrutinee)]
     [match-expr : i64
-      (ast-expr-match
+      (ast-expr-match-with-pools
+        (ctfe-env-pools env)
         scrutinee
         (ast-match-arm-cons
           if-arm
           (ast-match-arm-cons fallback-arm AstMatchArmNil)))]
-    [expected : i64 (ast-expr-if flag false-lit true-lit)]
+    [expected : i64
+      (ast-expr-if-with-pools (ctfe-env-pools env) flag false-lit true-lit)]
     (match (compiler-ctfe-eval
       (ctfe-ast-get env match-expr)
       env
@@ -10017,7 +10074,7 @@
           [(CtfeExpr node ty)
             (and
               (ctfe-type-eq ty (AstTyBool))
-              (ctfe-test-expr-eq node expected))]
+              (ctfe-test-expr-eq-in-env env node expected))]
           [_ false])]
       [(ErrCtfe _) false])))
 

@@ -10042,29 +10042,36 @@
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
                     (CtfeExprClause
                       (ast-expr-clause
-                        (ast-node-push
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
                           (AstExprVar
                             (intern (string-append (intern-str name) "$first"))))
-                        (ast-node-push
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
                           (AstExprVar
                             (intern (string-append (intern-str name) "$second"))))))]
                   [(tc-macro-expr-binding-clause-type?
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
                     (let
                       [unit-expr : i64
-                        (ast-node-push (AstExprLiteral (AstLitUnit)))]
+                        (ast-node-pool-context-expr-push
+                          (tc-context-pools ctx)
+                          (AstExprLiteral (AstLitUnit)))]
                       (CtfeExprBindingClause
                         (ast-expr-binding-clause-id
                           name
                           false
                           unit-expr
-                          (ast-node-push
+                          (ast-node-pool-context-expr-push
+                            (tc-context-pools ctx)
                             (AstExprVar
                               (intern (string-append (intern-str name) "$init"))))
                           (AstSourceSpan 0 0 0 0))))]
                   [else
                     (CtfeExpr
-                      (ast-node-push (AstExprVar name))
+                      (ast-node-pool-context-expr-push
+                        (tc-context-pools ctx)
+                        (AstExprVar name))
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))]))
               rest)]))]))
 
@@ -21885,13 +21892,14 @@
 ;; rewound scratch arena) and reset per compile at the top of that function.
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
   (if macro-expand-ctfe-env-ready
-    macro-expand-ctfe-env-value
+    (ctfe-env-rebase-pools macro-expand-ctfe-env-value (tc-context-pools ctx))
     (if ctfe-needs-metadata
-      (ctfe-env-with-metadata
+      (ctfe-env-with-metadata-and-pools
         (tc-ctfe-layouts ctx)
         (ctfe-reflections-from-program (tc-context-program ctx))
-        (tc-ctfe-module-exports ctx))
-      (ctfe-env-empty))))
+        (tc-ctfe-module-exports ctx)
+        (tc-context-pools ctx))
+      (ctfe-env-empty-with-pools (tc-context-pools ctx)))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -27973,14 +27981,21 @@
               (AstTyExpr)
               "typecheck: macro body must return Expr")
               [(OkTcUnit)
-                (match (compiler-ctfe-eval
-                  body
-                  (tc-ctfe-env-extend-macro-params ctx (tc-ctfe-env ctx) params)
-                  (ctfe-fuel-limit))
-                  [(OkCtfe value _)
-                    (tc-check-defmacro-produced-type ctx ret value)]
-                  [(ErrCtfe diag)
-                    (ErrTcUnit (compiler-diagnostic-message diag))])]
+                (begin
+                  (tc-context-capture-active-pools! ctx)
+                  (match (compiler-ctfe-eval
+                    body
+                    (tc-ctfe-env-extend-macro-params
+                      ctx
+                      (tc-ctfe-env ctx)
+                      params)
+                    (ctfe-fuel-limit))
+                    [(OkCtfe value _)
+                      (begin
+                        (ast-node-pool-context-install! (tc-context-pools ctx))
+                        (tc-check-defmacro-produced-type ctx ret value))]
+                    [(ErrCtfe diag)
+                      (ErrTcUnit (compiler-diagnostic-message diag))]))]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
@@ -36785,7 +36800,11 @@
     ", got bracket clause"))
 
 (define (macro-type-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroTypeArg
-  (match (ctfe-expr-to-type arg arg (ctfe-fuel-limit))
+  (match (ctfe-expr-to-type
+    arg
+    arg
+    (ctfe-env-empty-with-pools (tc-context-pools ctx))
+    (ctfe-fuel-limit))
     [(OkCtfeQuoteType ty _)
       (match (tc-source-type-policy-ok ctx ty)
         [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
@@ -37016,7 +37035,9 @@
     (if capture-expr-types
       (match (tc-expr ctx env arg)
         [(OkTcType actual)
-          (ctfe-captured-expr-type (tc-resolve-type ctx actual))]
+          (ctfe-captured-expr-type-with-pools
+            (tc-context-pools ctx)
+            (tc-resolve-type ctx actual))]
         [(ErrTcType _) (ctfe-untyped-expr-type)])
       (ctfe-untyped-expr-type))
     resolved-expected))
@@ -37181,34 +37202,46 @@
   ;; unbound value.
   (match (macro-expand-exprs ctx type-env decls depth args)
     [(OkMacroExprList expanded-args)
-      (match (macro-bind-params
-        ctx
-        type-env
-        params
-        expanded-args
-        (tc-ctfe-env ctx)
-        (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
-        call-expr)
-        [(OkMacroEnv env)
-          (begin
-            (cfg compile-profile (compiler-tc-macro-profile-start))
-            (match (ctfe-eval-node
-              body
-              (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
-              (ctfe-fuel-limit))
-              [(OkCtfe value _)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (OkMacroValue value))]
-              [(ErrCtfe diag)
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-finish macro-name expanded-args))
-                  (ErrMacroValue diag))]))]
-        [(ErrMacroEnv diag) (ErrMacroValue diag)])]
+      (begin
+        (tc-context-capture-active-pools! ctx)
+        (match (macro-bind-params
+          ctx
+          type-env
+          params
+          expanded-args
+          (tc-ctfe-env ctx)
+          (tc-string-list-contains
+            macro-expand-expr-type-macro-names
+            macro-name)
+          call-expr)
+          [(OkMacroEnv env)
+            (begin
+              (cfg compile-profile (compiler-tc-macro-profile-start))
+              (match (ctfe-eval-node
+                body
+                (ctfe-env-extend
+                  env
+                  (ctfe-hygiene-enabled-name)
+                  (CtfeBool true))
+                (ctfe-fuel-limit))
+                [(OkCtfe value _)
+                  (begin
+                    (ast-node-pool-context-install! (tc-context-pools ctx))
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (OkMacroValue value))]
+                [(ErrCtfe diag)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (ErrMacroValue diag))]))]
+          [(ErrMacroEnv diag) (ErrMacroValue diag)]))]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its

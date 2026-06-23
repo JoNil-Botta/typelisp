@@ -2877,38 +2877,60 @@
                         (OkCompilerBackend
                           (cond
                             [(and
-                                (string-eq dst-reg true-reg)
-                                (not (string-eq true-reg false-reg)))
-                              (string-append
-                                (str-cat "    " move " " true-reg ", %zmm15\n")
-                                (string-append
-                                  (string-append
-                                    (str-cat "    " move " " false-reg ", ")
-                                    (str-cat dst-reg "\n"))
-                                  (string-append
-                                    (str-cat
-                                      "    "
-                                      move
-                                      " %zmm15, "
-                                      dst-reg
-                                      "{")
-                                    (str-cat mask-reg "}\n"))))]
-                            [(string-eq true-reg false-reg)
-                              (if (string-eq dst-reg false-reg)
+                                (string-eq (& dst-reg) (& true-reg))
+                                (not (string-eq (& true-reg) (& false-reg))))
+                              (str-cat
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                ", %zmm15\n"
+                                "    "
+                                move
+                                " "
+                                false-reg
+                                ", "
+                                dst-reg
+                                "\n"
+                                "    "
+                                move
+                                " %zmm15, "
+                                dst-reg
+                                "{"
+                                mask-reg
+                                "}\n")]
+                            [(string-eq (& true-reg) (& false-reg))
+                              (if (string-eq (& dst-reg) (& false-reg))
                                 ""
-                                (string-append
-                                  (str-cat "    " move " " false-reg ", ")
-                                  (str-cat dst-reg "\n")))]
+                                (str-cat
+                                  "    "
+                                  move
+                                  " "
+                                  false-reg
+                                  ", "
+                                  dst-reg
+                                  "\n"))]
                             [else
-                              (string-append
-                                (if (string-eq dst-reg false-reg)
+                              (str-cat
+                                (if (string-eq (& dst-reg) (& false-reg))
                                   ""
-                                  (string-append
-                                    (str-cat "    " move " " false-reg ", ")
-                                    (str-cat dst-reg "\n")))
-                                (string-append
-                                  (str-cat "    " move " " true-reg ", ")
-                                  (str-cat dst-reg "{" mask-reg "}\n")))]))]
+                                  (str-cat
+                                    "    "
+                                    move
+                                    " "
+                                    false-reg
+                                    ", "
+                                    dst-reg
+                                    "\n"))
+                                "    "
+                                move
+                                " "
+                                true-reg
+                                ", "
+                                dst-reg
+                                "{"
+                                mask-reg
+                                "}\n")]))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-with-message instr-diag message))])]

@@ -21052,6 +21052,44 @@
     [(IrBlockArray seq)
       (opt-inline-tiny-predicate-blocks-ok? (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-inline-tiny-predicate-forward-successors?
+  [index : OptCfgIndex]
+  [source-id : i64]
+  [succs : OptLabelSet]) : bool
+  (match succs
+    [(OptLabelNil) true]
+    [(OptLabelCons label rest)
+      (match (opt-cfg-index-id index label)
+        [(OptSomeI64 target-id)
+          (and
+            (> target-id source-id)
+            (opt-inline-tiny-predicate-forward-successors?
+              index
+              source-id
+              (box-get rest)))]
+        [(OptNoI64) false])]))
+
+(define (opt-inline-tiny-predicate-forward-edges-from?
+  [index : OptCfgIndex]
+  [id : i64]
+  [count : i64]) : bool
+  (if (>= id count)
+    true
+    (if (opt-inline-tiny-predicate-forward-successors?
+      index
+      id
+      (opt-cfg-index-successors index (opt-cfg-index-label index id)))
+      (opt-inline-tiny-predicate-forward-edges-from? index (+ id 1) count)
+      false)))
+
+(define (opt-inline-tiny-predicate-acyclic? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (opt-inline-tiny-predicate-forward-edges-from?
+      index
+      0
+      (opt-cfg-index-block-count index))))
+
 (define (opt-inline-tiny-predicate-callee?
   [callee : CompilerIrFunction]
   [census : OptInlineCensus]) : bool
@@ -21072,7 +21110,7 @@
           (<= instr-count (opt-inline-tiny-predicate-max-instrs))
           (> (opt-inline-return-count-blocks cblocks) 0)
           (opt-inline-structure-ok? cblocks)
-          (opt-inline-callee-acyclic? cblocks)
+          (opt-inline-tiny-predicate-acyclic? cblocks)
           (not (opt-inline-param-mutating-blocks? cblocks np))
           (opt-inline-tiny-predicate-blocks-ok? cblocks)))]))
 

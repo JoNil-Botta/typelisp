@@ -714,23 +714,17 @@
       (tc-canonical-diagnostic diag))))
 
 (define (tc-located-error [span : AstSourceSpan] [message : String]) : String
-  (string-append
+  (str-cat
     (tc-located-error-prefix)
-    (string-append
-      (int->string (struct-get span start-line))
-      (string-append
-        "|"
-        (string-append
-          (int->string (struct-get span start-col))
-          (string-append
-            "|"
-            (string-append
-              (int->string (struct-get span end-line))
-              (string-append
-                "|"
-                (string-append
-                  (int->string (struct-get span end-col))
-                  (string-append "|" message))))))))))
+    (int->string (struct-get span start-line))
+    "|"
+    (int->string (struct-get span start-col))
+    "|"
+    (int->string (struct-get span end-line))
+    "|"
+    (int->string (struct-get span end-col))
+    "|"
+    message))
 
 (define (tc-located-error-diag [message : String]) : CompilerDiagnostic
   (let

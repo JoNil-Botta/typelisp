@@ -2176,31 +2176,20 @@
                     [body-zero-c : String
                       (str-cat ", " dst-reg "\n" done-label ":\n")]
                     [body-asm : String
-                      (string-append
+                      (str-cat
                         body-range
-                        (string-append
-                          body-nonzero-a
-                          (string-append
-                            body-nonzero-b
-                            (string-append
-                              body-mask-a
-                              (string-append
-                                body-mask-b
-                                (string-append
-                                  body-mask-c
-                                  (string-append
-                                    body-full-a
-                                    (string-append
-                                      body-full-b
-                                      (string-append
-                                        body-full-c
-                                        (string-append
-                                          body-zero-a
-                                          (string-append
-                                            body-zero-b
-                                            body-zero-c)))))))))))]
-                    (OkCompilerBackend
-                      (string-append index-asm (string-append end-asm body-asm))))]
+                        body-nonzero-a
+                        body-nonzero-b
+                        body-mask-a
+                        body-mask-b
+                        body-mask-c
+                        body-full-a
+                        body-full-b
+                        body-full-c
+                        body-zero-a
+                        body-zero-b
+                        body-zero-c)]
+                    (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
                     (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -24289,25 +24278,18 @@ tl_alloc:
     jmp tl_oom_abort
 
 "]
-    (string-append
+    (str-cat
       prefix
-      (string-append
-        fast-profile
-        (string-append
-          atomic-fast-asm
-          (string-append
-            atomic-fast-profile
-            (string-append
-              atomic-lock-asm
-              (string-append
-                atomic-locked-profile
-                (string-append
-                  atomic-map-asm
-                  (string-append
-                    atomic-new-profile
-                    (string-append
-                      ordinary-new-asm
-                      (string-append new-profile tail-asm))))))))))))
+      fast-profile
+      atomic-fast-asm
+      atomic-fast-profile
+      atomic-lock-asm
+      atomic-locked-profile
+      atomic-map-asm
+      atomic-new-profile
+      ordinary-new-asm
+      new-profile
+      tail-asm)))
 
 (define (compiler-backend-runtime-region-mark-functions
   [target : CompilerBackendTarget]) : String

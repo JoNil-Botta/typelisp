@@ -215,9 +215,9 @@
 (defenum LowerArgWriteback
   (LowerArgWriteback i64 CompilerIrValue AstType AstExpr))
 
-(defenum LowerArgWritebackList
-  (LowerArgWritebackNil)
-  (LowerArgWritebackCons LowerArgWriteback (Box LowerArgWritebackList)))
+(defstruct LowerArgWritebackList
+  (items (Array LowerArgWriteback))
+  (count i64))
 
 (defenum LowerMaybeArgWriteback
   (LowerNoArgWriteback)
@@ -247,9 +247,9 @@
 (defenum LowerCAbiSlot
   (LowerCAbiSlot AstType i64))
 
-(defenum LowerCAbiSlotList
-  (LowerCAbiSlotNil)
-  (LowerCAbiSlotCons LowerCAbiSlot (Box LowerCAbiSlotList)))
+(defstruct LowerCAbiSlotList
+  (items (Array LowerCAbiSlot))
+  (count i64))
 
 (defenum LowerCAbiAggregate
   (LowerCAbiNoAggregate)
@@ -13599,13 +13599,56 @@
     [(ErrTcExpr message)
       (ErrLowerCallArg (lower-diagnostic-at-expr arg message))]))
 
-(define (lower-call-arg-writebacks-cons-maybe
-  [maybe-writeback : LowerMaybeArgWriteback]
-  [rest : LowerArgWritebackList]) : LowerArgWritebackList
+(define (lower-arg-writeback-list-empty) : LowerArgWritebackList
+  (LowerArgWritebackList (make-array LowerArgWriteback 0) 0))
+
+(define (lower-arg-writeback-list-count [writebacks : LowerArgWritebackList]) : i64
+  (struct-get writebacks count))
+
+(define (lower-arg-writeback-list-ref
+  [writebacks : LowerArgWritebackList]
+  [index : i64]) : LowerArgWriteback
+  (array-ref (struct-get writebacks items) index))
+
+(define (lower-arg-writeback-list-add
+  [writebacks : LowerArgWritebackList]
+  [writeback : LowerArgWriteback]) : LowerArgWritebackList
+  (let
+    [items : (Array LowerArgWriteback) (struct-get writebacks items)]
+    [count : i64 (struct-get writebacks count)]
+    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! out index (array-ref items index))
+          (set! index (+ index 1))))
+      (array-set! out count writeback)
+      (LowerArgWritebackList out (+ count 1)))))
+
+(define (lower-arg-writeback-list-add-front
+  [writebacks : LowerArgWritebackList]
+  [writeback : LowerArgWriteback]) : LowerArgWritebackList
+  (let
+    [items : (Array LowerArgWriteback) (struct-get writebacks items)]
+    [count : i64 (struct-get writebacks count)]
+    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
+    [index : i64 0]
+    (begin
+      (array-set! out 0 writeback)
+      (while (< index count)
+        (begin
+          (array-set! out (+ index 1) (array-ref items index))
+          (set! index (+ index 1))))
+      (LowerArgWritebackList out (+ count 1)))))
+
+(define (lower-call-arg-writebacks-add-maybe
+  [writebacks : LowerArgWritebackList]
+  [maybe-writeback : LowerMaybeArgWriteback]) : LowerArgWritebackList
   (match maybe-writeback
-    [(LowerNoArgWriteback) rest]
+    [(LowerNoArgWriteback) writebacks]
     [(LowerSomeArgWriteback writeback)
-      (LowerArgWritebackCons writeback (box rest))]))
+      (lower-arg-writeback-list-add-front writebacks writeback)]))
 
 (define (lower-call-args-as
   [ctx : TcContext]
@@ -13617,7 +13660,8 @@
   (match args
     [(AstExprNil)
       (match types
-        [(AstTypeNil) (OkLowerCallArgs state IrValueNil LowerArgWritebackNil)]
+        [(AstTypeNil)
+          (OkLowerCallArgs state IrValueNil (lower-arg-writeback-list-empty))]
         [_
           (ErrLowerCallArgs
             (lower-diagnostic "lower: constructor arity mismatch"))])]
@@ -13657,9 +13701,9 @@
                           (OkLowerCallArgs
                             rest-state
                             (compiler-ir-value-cons value rest-values)
-                            (lower-call-arg-writebacks-cons-maybe
-                              maybe-writeback
-                              rest-writebacks))]
+                            (lower-call-arg-writebacks-add-maybe
+                              rest-writebacks
+                              maybe-writeback))]
                         [(ErrLowerCallArgs message) (ErrLowerCallArgs message)])])]
                 [(ErrLowerCallArg message) (ErrLowerCallArgs message)]))]
           [(AstTypeNil)
@@ -13687,13 +13731,21 @@
   [ctx : TcContext]
   [state : LowerState]
   [writebacks : LowerArgWritebackList]) : LowerState
-  (match writebacks
-    [(LowerArgWritebackNil) state]
-    [(LowerArgWritebackCons head rest)
-      (lower-apply-arg-writebacks
-        ctx
-        (lower-apply-arg-writeback ctx state head)
-        (box-get rest))]))
+  (let
+    [count : i64 (lower-arg-writeback-list-count writebacks)]
+    [index : i64 0]
+    [out : LowerState state]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (lower-apply-arg-writeback
+              ctx
+              out
+              (lower-arg-writeback-list-ref writebacks index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (compiler-builtin-lower-bootstrap-runtime-id? name-id))
@@ -13781,7 +13833,7 @@
     (lower-call-args-as ctx state env type-env args types)
     (match (lower-args-as ctx state env type-env args types)
       [(OkLowerArgs args-state values)
-        (OkLowerCallArgs args-state values LowerArgWritebackNil)]
+        (OkLowerCallArgs args-state values (lower-arg-writeback-list-empty))]
       [(ErrLowerArgs message) (ErrLowerCallArgs message)])))
 
 (define (lower-construct-struct-inline-from-values
@@ -18209,6 +18261,29 @@
       [_
         (LowerCAbiSlot (lower-c-abi-integer-scalar-type slot-size) slot-offset)])))
 
+(define (lower-c-abi-slot-list-count [slots : LowerCAbiSlotList]) : i64
+  (struct-get slots count))
+
+(define (lower-c-abi-slot-list-ref [slots : LowerCAbiSlotList] [index : i64]) : LowerCAbiSlot
+  (array-ref (struct-get slots items) index))
+
+(define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
+  (let
+    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
+    (begin
+      (array-set! items 0 slot)
+      (LowerCAbiSlotList items 1))))
+
+(define (lower-c-abi-slot-list-pair
+  [first : LowerCAbiSlot]
+  [second : LowerCAbiSlot]) : LowerCAbiSlotList
+  (let
+    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
+    (begin
+      (array-set! items 0 first)
+      (array-set! items 1 second)
+      (LowerCAbiSlotList items 2))))
+
 (define (lower-c-abi-sysv-register-aggregate
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -18247,17 +18322,13 @@
                 [_
                   (if (> size 8)
                     (LowerCAbiRegisterAggregate
-                      (LowerCAbiSlotCons
+                      (lower-c-abi-slot-list-pair
                         (lower-c-abi-sysv-slot-from-class first size 0)
-                        (box
-                          (LowerCAbiSlotCons
-                            (lower-c-abi-sysv-slot-from-class second size 1)
-                            (box (LowerCAbiSlotNil)))))
+                        (lower-c-abi-sysv-slot-from-class second size 1))
                       size)
                     (LowerCAbiRegisterAggregate
-                      (LowerCAbiSlotCons
-                        (lower-c-abi-sysv-slot-from-class first size 0)
-                        (box (LowerCAbiSlotNil)))
+                      (lower-c-abi-slot-list-single
+                        (lower-c-abi-sysv-slot-from-class first size 0))
                       size))])])]
         [(LowerCAbiSysvSlotsUnsupported)
           (LowerCAbiUnsupportedAggregate
@@ -18593,34 +18664,43 @@
             (ErrLowerArgs
               (lower-diagnostic "lower: constructor arity mismatch"))]))]))
 
+(define (lower-c-abi-register-arg-slot-values-from
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [arg-ty : AstType]
+  [slots : LowerCAbiSlotList]
+  [index : i64]) : ResultLowerArgs
+  (if (>= index (lower-c-abi-slot-list-count slots))
+    (OkLowerArgs state IrValueNil)
+    (match (lower-c-abi-slot-list-ref slots index)
+      [(LowerCAbiSlot scalar-ty offset)
+        (match (if (lower-type-register-resident? ctx arg-ty)
+          (if (lower-type-register-group? ctx arg-ty)
+            (lower-emit-word state value (/ offset 8) scalar-ty)
+            (LowerExpr state value scalar-ty))
+          (lower-load-at-offset state value offset scalar-ty))
+          [(LowerExpr slot-state slot-value _)
+            (match (lower-c-abi-register-arg-slot-values-from
+              ctx
+              slot-state
+              value
+              arg-ty
+              slots
+              (+ index 1))
+              [(OkLowerArgs rest-state rest-values)
+                (OkLowerArgs
+                  rest-state
+                  (compiler-ir-value-cons slot-value rest-values))]
+              [(ErrLowerArgs message) (ErrLowerArgs message)])])])))
+
 (define (lower-c-abi-register-arg-slot-values
   [ctx : TcContext]
   [state : LowerState]
   [value : CompilerIrValue]
   [arg-ty : AstType]
   [slots : LowerCAbiSlotList]) : ResultLowerArgs
-  (match slots
-    [(LowerCAbiSlotNil) (OkLowerArgs state IrValueNil)]
-    [(LowerCAbiSlotCons slot rest)
-      (match slot
-        [(LowerCAbiSlot scalar-ty offset)
-          (match (if (lower-type-register-resident? ctx arg-ty)
-            (if (lower-type-register-group? ctx arg-ty)
-              (lower-emit-word state value (/ offset 8) scalar-ty)
-              (LowerExpr state value scalar-ty))
-            (lower-load-at-offset state value offset scalar-ty))
-            [(LowerExpr slot-state slot-value _)
-              (match (lower-c-abi-register-arg-slot-values
-                ctx
-                slot-state
-                value
-                arg-ty
-                (box-get rest))
-                [(OkLowerArgs rest-state rest-values)
-                  (OkLowerArgs
-                    rest-state
-                    (compiler-ir-value-cons slot-value rest-values))]
-                [(ErrLowerArgs message) (ErrLowerArgs message)])])])]))
+  (lower-c-abi-register-arg-slot-values-from ctx state value arg-ty slots 0))
 
 (define (lower-value-list-append
   [values : CompilerIrValueList]
@@ -18632,15 +18712,19 @@
         head
         (lower-value-list-append (box-get rest) tail))]))
 
+(define (lower-c-abi-ir-return-slots-from
+  [slots : LowerCAbiSlotList]
+  [index : i64]) : CompilerIrCAbiReturnSlotList
+  (if (>= index (lower-c-abi-slot-list-count slots))
+    (IrCAbiReturnSlotNil)
+    (match (lower-c-abi-slot-list-ref slots index)
+      [(LowerCAbiSlot scalar-ty offset)
+        (IrCAbiReturnSlotCons
+          (IrCAbiReturnSlot scalar-ty offset)
+          (box (lower-c-abi-ir-return-slots-from slots (+ index 1))))])))
+
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : CompilerIrCAbiReturnSlotList
-  (match slots
-    [(LowerCAbiSlotNil) (IrCAbiReturnSlotNil)]
-    [(LowerCAbiSlotCons slot rest)
-      (match slot
-        [(LowerCAbiSlot scalar-ty offset)
-          (IrCAbiReturnSlotCons
-            (IrCAbiReturnSlot scalar-ty offset)
-            (box (lower-c-abi-ir-return-slots (box-get rest))))])]))
+  (lower-c-abi-ir-return-slots-from slots 0))
 
 (define (lower-c-abi-materialize-stored-register-result
   [ctx : TcContext]
@@ -18686,38 +18770,38 @@
                 base
                 result-ty))]))]
     [(LowerCAbiRegisterAggregate slots size)
-      (match slots
-        [(LowerCAbiSlotCons slot rest)
-          (match (box-get rest)
-            [(LowerCAbiSlotNil)
-              (match slot
-                [(LowerCAbiSlot scalar-ty offset)
-                  (if (lower-type-register-resident? ctx result-ty)
-                    (OkLowerExpr (LowerExpr state call-value result-ty))
-                    (match (lower-reserve-heap-storage state size result-ty)
-                      [(LowerExpr base-state base _)
-                        (OkLowerExpr
-                          (LowerExpr
-                            (lower-store-at-offset
-                              base-state
-                              base
-                              offset
-                              call-value
-                              scalar-ty)
+      (let
+        [slot-count : i64 (lower-c-abi-slot-list-count slots)]
+        (cond
+          [(= slot-count 1)
+            (match (lower-c-abi-slot-list-ref slots 0)
+              [(LowerCAbiSlot scalar-ty offset)
+                (if (lower-type-register-resident? ctx result-ty)
+                  (OkLowerExpr (LowerExpr state call-value result-ty))
+                  (match (lower-reserve-heap-storage state size result-ty)
+                    [(LowerExpr base-state base _)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-store-at-offset
+                            base-state
                             base
-                            result-ty))]))])]
-            [_
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  origin
-                  (lower-c-abi-two-register-return-message result-ty)))])]
-        [(LowerCAbiSlotNil)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              origin
-              (lower-c-abi-unsupported-message
-                (lower-state-mode state)
-                result-ty)))])]
+                            offset
+                            call-value
+                            scalar-ty)
+                          base
+                          result-ty))]))])]
+          [(= slot-count 0)
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                (lower-c-abi-unsupported-message
+                  (lower-state-mode state)
+                  result-ty)))]
+          [else
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                (lower-c-abi-two-register-return-message result-ty)))]))]
     [(LowerCAbiByRefAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
@@ -18795,52 +18879,52 @@
                   (LowerCAbiIntegerAggregate scalar-ty size)
                   origin))])]
         [(LowerCAbiRegisterAggregate slots size)
-          (match slots
-            [(LowerCAbiSlotCons slot rest)
-              (match (box-get rest)
-                [(LowerCAbiSlotNil)
-                  (match slot
-                    [(LowerCAbiSlot scalar-ty _)
-                      (match (lower-state-alloc-var args-state)
-                        [(LowerAlloc allocated var-id)
-                          (let
-                            [instr : CompilerIrInstr
-                              (IrInstrCall
-                                var-id
-                                (lower-resolve-call-name allocated env name)
-                                (compiler-ir-call-args-from-list values)
-                                scalar-ty)]
-                            (lower-c-abi-finish-call-result
-                              ctx
-                              (lower-state-emit-at-expr allocated instr origin)
-                              (IrValueVar var-id)
-                              result-ty
-                              (LowerCAbiRegisterAggregate slots size)
-                              origin))])])]
-                [_
-                  (match (lower-reserve-heap-storage args-state size result-ty)
-                    [(LowerExpr base-state base _)
-                      (let
-                        [instr : CompilerIrInstr
-                          (ir-instr-call-cabi-store-result
-                            base
-                            (lower-resolve-call-name base-state env name)
-                            (compiler-ir-call-args-from-list values)
-                            (lower-c-abi-ir-return-slots slots))]
-                        (match (lower-c-abi-materialize-stored-register-result
-                          ctx
-                          (lower-state-emit-at-expr base-state instr origin)
+          (let
+            [slot-count : i64 (lower-c-abi-slot-list-count slots)]
+            (cond
+              [(= slot-count 1)
+                (match (lower-c-abi-slot-list-ref slots 0)
+                  [(LowerCAbiSlot scalar-ty _)
+                    (match (lower-state-alloc-var args-state)
+                      [(LowerAlloc allocated var-id)
+                        (let
+                          [instr : CompilerIrInstr
+                            (IrInstrCall
+                              var-id
+                              (lower-resolve-call-name allocated env name)
+                              (compiler-ir-call-args-from-list values)
+                              scalar-ty)]
+                          (lower-c-abi-finish-call-result
+                            ctx
+                            (lower-state-emit-at-expr allocated instr origin)
+                            (IrValueVar var-id)
+                            result-ty
+                            (LowerCAbiRegisterAggregate slots size)
+                            origin))])])]
+              [(= slot-count 0)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    origin
+                    (lower-c-abi-unsupported-message
+                      (lower-state-mode args-state)
+                      result-ty)))]
+              [else
+                (match (lower-reserve-heap-storage args-state size result-ty)
+                  [(LowerExpr base-state base _)
+                    (let
+                      [instr : CompilerIrInstr
+                        (ir-instr-call-cabi-store-result
                           base
-                          result-ty)
-                          [(LowerExpr out-state out-value out-ty)
-                            (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])])]
-            [(LowerCAbiSlotNil)
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  origin
-                  (lower-c-abi-unsupported-message
-                    (lower-state-mode args-state)
-                    result-ty)))])]
+                          (lower-resolve-call-name base-state env name)
+                          (compiler-ir-call-args-from-list values)
+                          (lower-c-abi-ir-return-slots slots))]
+                      (match (lower-c-abi-materialize-stored-register-result
+                        ctx
+                        (lower-state-emit-at-expr base-state instr origin)
+                        base
+                        result-ty)
+                        [(LowerExpr out-state out-value out-ty)
+                          (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])]))]
         [(LowerCAbiByRefAggregate _)
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -18933,52 +19017,52 @@
               (LowerCAbiIntegerAggregate scalar-ty size)
               origin))])]
     [(LowerCAbiRegisterAggregate slots size)
-      (match slots
-        [(LowerCAbiSlotCons slot rest)
-          (match (box-get rest)
-            [(LowerCAbiSlotNil)
-              (match slot
-                [(LowerCAbiSlot scalar-ty _)
-                  (match (lower-state-alloc-var state)
-                    [(LowerAlloc allocated var-id)
-                      (let
-                        [instr : CompilerIrInstr
-                          (IrInstrCallIndirectC
-                            var-id
-                            func-value
-                            (compiler-ir-call-args-from-list values)
-                            scalar-ty)]
-                        (lower-c-abi-finish-call-result
-                          ctx
-                          (lower-state-emit-at-expr allocated instr origin)
-                          (IrValueVar var-id)
-                          result-ty
-                          (LowerCAbiRegisterAggregate slots size)
-                          origin))])])]
-            [_
-              (match (lower-reserve-heap-storage state size result-ty)
-                [(LowerExpr base-state base _)
-                  (let
-                    [instr : CompilerIrInstr
-                      (ir-instr-call-indirect-cabi-store-result
-                        base
-                        func-value
-                        (compiler-ir-call-args-from-list values)
-                        (lower-c-abi-ir-return-slots slots))]
-                    (match (lower-c-abi-materialize-stored-register-result
-                      ctx
-                      (lower-state-emit-at-expr base-state instr origin)
+      (let
+        [slot-count : i64 (lower-c-abi-slot-list-count slots)]
+        (cond
+          [(= slot-count 1)
+            (match (lower-c-abi-slot-list-ref slots 0)
+              [(LowerCAbiSlot scalar-ty _)
+                (match (lower-state-alloc-var state)
+                  [(LowerAlloc allocated var-id)
+                    (let
+                      [instr : CompilerIrInstr
+                        (IrInstrCallIndirectC
+                          var-id
+                          func-value
+                          (compiler-ir-call-args-from-list values)
+                          scalar-ty)]
+                      (lower-c-abi-finish-call-result
+                        ctx
+                        (lower-state-emit-at-expr allocated instr origin)
+                        (IrValueVar var-id)
+                        result-ty
+                        (LowerCAbiRegisterAggregate slots size)
+                        origin))])])]
+          [(= slot-count 0)
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                (lower-c-abi-unsupported-message
+                  (lower-state-mode state)
+                  result-ty)))]
+          [else
+            (match (lower-reserve-heap-storage state size result-ty)
+              [(LowerExpr base-state base _)
+                (let
+                  [instr : CompilerIrInstr
+                    (ir-instr-call-indirect-cabi-store-result
                       base
-                      result-ty)
-                      [(LowerExpr out-state out-value out-ty)
-                        (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])])]
-        [(LowerCAbiSlotNil)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              origin
-              (lower-c-abi-unsupported-message
-                (lower-state-mode state)
-                result-ty)))])]
+                      func-value
+                      (compiler-ir-call-args-from-list values)
+                      (lower-c-abi-ir-return-slots slots))]
+                  (match (lower-c-abi-materialize-stored-register-result
+                    ctx
+                    (lower-state-emit-at-expr base-state instr origin)
+                    base
+                    result-ty)
+                    [(LowerExpr out-state out-value out-ty)
+                      (OkLowerExpr (LowerExpr out-state out-value out-ty))]))])]))]
     [(LowerCAbiByRefAggregate _)
       (ErrLowerExpr
         (lower-diagnostic-at-expr
@@ -19413,7 +19497,7 @@
     [_
       (match (lower-args ctx state env type-env args)
         [(OkLowerArgs args-state values)
-          (OkLowerCallArgs args-state values LowerArgWritebackNil)]
+          (OkLowerCallArgs args-state values (lower-arg-writeback-list-empty))]
         [(ErrLowerArgs message) (ErrLowerCallArgs message)])]))
 
 (define (lower-indirect-call
@@ -46634,6 +46718,20 @@
           "cleanup-a")
         "hidden-b"
         "cleanup-b")]
+    [origin : AstExpr (AstExprLiteral (ast-lit-int 0))]
+    [tail-writebacks : LowerArgWritebackList
+      (lower-arg-writeback-list-add
+        (lower-arg-writeback-list-empty)
+        (LowerArgWriteback 12 (IrValueVar 22) (AstTyBool) origin))]
+    [writebacks : LowerArgWritebackList
+      (lower-call-arg-writebacks-add-maybe
+        tail-writebacks
+        (LowerSomeArgWriteback
+          (LowerArgWriteback 11 (IrValueVar 21) (AstTyI64) origin)))]
+    [slots : LowerCAbiSlotList
+      (lower-c-abi-slot-list-pair
+        (LowerCAbiSlot (AstTyI64) 0)
+        (LowerCAbiSlot (AstTyF64) 8))]
     (and
       (= (lower-name-env-count names) 2)
       (string-eq (lower-name-env-resolve names "source-b") "logical-b")
@@ -46645,7 +46743,31 @@
       (lower-capture-list-storage-entry? captures 1 "cap-a" 1 0)
       (= (lower-cleanup-stack-count cleanups) 2)
       (lower-cleanup-stack-entry? cleanups 0 "hidden-a" "cleanup-a")
-      (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b"))))
+      (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b")
+      (= (lower-arg-writeback-list-count writebacks) 2)
+      (match (lower-arg-writeback-list-ref writebacks 0)
+        [(LowerArgWriteback local-id storage ty _)
+          (and
+            (= local-id 11)
+            (match storage
+              [(IrValueVar storage-id) (= storage-id 21)]
+              [_ false])
+            (tc-type-eq ty (AstTyI64)))])
+      (match (lower-arg-writeback-list-ref writebacks 1)
+        [(LowerArgWriteback local-id storage ty _)
+          (and
+            (= local-id 12)
+            (match storage
+              [(IrValueVar storage-id) (= storage-id 22)]
+              [_ false])
+            (tc-type-eq ty (AstTyBool)))])
+      (= (lower-c-abi-slot-list-count slots) 2)
+      (match (lower-c-abi-slot-list-ref slots 0)
+        [(LowerCAbiSlot ty offset)
+          (and (= offset 0) (tc-type-eq ty (AstTyI64)))])
+      (match (lower-c-abi-slot-list-ref slots 1)
+        [(LowerCAbiSlot ty offset)
+          (and (= offset 8) (tc-type-eq ty (AstTyF64)))]))))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let

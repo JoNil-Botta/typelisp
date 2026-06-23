@@ -81,7 +81,7 @@
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
-    [pool-arena : i64 (arena-make)]
+    [pool-arena : i64 (tl_arena_make)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
         (ast-expr-node-pool-state-init 2097152 pool-arena)
@@ -149,7 +149,7 @@
     unit
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
-      [new-arena : i64 (arena-make)]
+      [new-arena : i64 (tl_arena_make)]
       (begin
         (compiler-load-session-floors-set! 0 0 0)
         (compiler-load-program-cache-clear!)
@@ -166,7 +166,7 @@
           (ast-type-node-pool-state-init 262144 new-arena))
         (compiler-driver-state-install-pools! state)
         (unsafe
-          (arena-destroy old-arena))))))
+          (tl_arena_destroy old-arena))))))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -920,11 +920,11 @@
   [stdlib-roots : StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (let
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
       (begin
         (unsafe
-          (arena-set! node-pool-base-arena))
+          (tl_arena_set node-pool-base-arena))
         (let
           [persistent-key : String (string-copy-borrowed (& key))]
           [cold : ResultCompilerLoadWithPaths
@@ -940,7 +940,7 @@
                   seen)]
               [(ErrCompilerLoadWithPaths _) unit])
             (unsafe
-              (arena-set! prev-arena))
+              (tl_arena_set prev-arena))
             cold)))]
     loaded))
 
@@ -1086,11 +1086,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
-    [prev-arena : i64 (arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
       (begin
         (unsafe
-          (arena-set! (ast-node-pool-context-base-arena pools)))
+          (tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
           [persistent-key : String (string-copy-borrowed (& key))]
           [cold : ResultCompilerLoadWithPaths
@@ -1110,7 +1110,7 @@
                   pools)]
               [(ErrCompilerLoadWithPaths _) unit])
             (unsafe
-              (arena-set! prev-arena))
+              (tl_arena_set prev-arena))
             cold)))]
     loaded))
 

@@ -410,16 +410,16 @@
   (if (compiler-load-program-admission-contains? key)
     true
     (let
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (tl_arena_current)]
       [recorded : bool
         (begin
           (unsafe
-            (arena-set! node-pool-base-arena))
+            (tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string-copy-borrowed (& key))]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (compiler-load-program-admission-record persistent-key))))]
       recorded)))
 
@@ -2449,18 +2449,18 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena-set! node-pool-base-arena))
+            (tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string-copy-borrowed (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping path cfgs)]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (compiler-load-cache-program-result persistent-key parsed))))]
       loaded)
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
@@ -2472,11 +2472,11 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena-set! (ast-node-pool-context-base-arena pools)))
+            (tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : String (string-copy-borrowed (& key))]
             [parsed : ResultAstProgramDiagnostic
@@ -2486,7 +2486,7 @@
                 pools)]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
                 persistent-key
                 parsed
@@ -2656,18 +2656,18 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena-set! node-pool-base-arena))
+            (tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string-copy-borrowed (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (compiler-load-cache-program-result persistent-key parsed))))]
       loaded)
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
@@ -2680,11 +2680,11 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (arena-current)]
+      [prev-arena : i64 (tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (arena-set! (ast-node-pool-context-base-arena pools)))
+            (tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : String (string-copy-borrowed (& key))]
             [parsed : ResultAstProgramDiagnostic
@@ -2695,7 +2695,7 @@
                 pools)]
             (begin
               (unsafe
-                (arena-set! prev-arena))
+                (tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
                 persistent-key
                 parsed

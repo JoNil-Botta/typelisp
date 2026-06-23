@@ -75,7 +75,7 @@
 
 (define (sync-api-run-string-channel [channel : sync.ChannelString]) : i64
   (let
-    [owner : i64 (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.arena-make-atomic)]
     [packed : (Array i64) (make-array i64 sync.channel-string-raw-field-count)]
     (begin
       (sync.channel-string-store-raw! channel packed 0)

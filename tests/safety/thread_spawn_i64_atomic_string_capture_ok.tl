@@ -14,7 +14,7 @@
 
 (define (main) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     [message : AtomicThreadMessage
       (in-arena
         owner

@@ -70,7 +70,7 @@
 (defstruct ThreadBoxI64
   (raw Thread)
   (result-addr i64)
-  (owner i64))
+  (owner arena.Arena))
 
 ;: Result returned by `thread-spawn-i64`.
 (defenum ThreadI64SpawnResult
@@ -519,7 +519,7 @@
 ;: worker and the joining thread. The handle must be joined exactly once.
 (define (thread-spawn-string [task : (-> String)]) : ThreadStringSpawnResult
   (let
-    [owner : i64 (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.arena-make-atomic)]
     [result : (Array String) (in-arena owner (make-array String 1))]
     [result-addr : i64 (thread-array-string-addr result)]
     (match (thread-spawn
@@ -542,7 +542,7 @@
 ;: joiner. The handle must be joined exactly once.
 (define (thread-spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
   (let
-    [owner : i64 (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.arena-make-atomic)]
     [result : (Array (Array i64)) (in-arena owner (make-array (Array i64) 1))]
     [result-addr : i64 (thread-array-array-i64-addr result)]
     (match (thread-spawn
@@ -565,7 +565,7 @@
 ;: fresh box in that same spanning owner. The handle must be joined exactly once.
 (define (thread-spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
-    [owner : i64 (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.arena-make-atomic)]
     [result : (Array i64) (in-arena owner (make-array i64 1))]
     [result-addr : i64 (thread-array-i64-addr result)]
     (match (thread-spawn

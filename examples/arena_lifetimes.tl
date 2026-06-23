@@ -35,7 +35,7 @@
         "per-frame with-arena should restore live bytes")
       score)))
 
-(define (frame-summary [scratch : i64] [frame-index : i64] [score : i64]) : String
+(define (frame-summary [scratch : Arena] [frame-index : i64] [score : i64]) : String
   (with-escape
     scratch
     (let
@@ -46,44 +46,56 @@
       (string-append prefix suffix))))
 
 (define (run-level [global : GlobalState]) : i64
-  (with-arena
-    level
-    (let
-      [scratch : i64 (arena-make)]
-      [frame-count : i64 (struct-get global frame-count)]
-      [frames : (Array String) (make-array String frame-count)]
-      [frame-index : i64 0]
-      [total : i64 0]
-      (begin
-        (while (< frame-index frame-count)
-          (let
-            [score : i64 (frame-temp-score frame-index)]
-            [summary : String (frame-summary scratch frame-index score)]
-            (begin
-              (array-set! frames frame-index summary)
-              (set! total (+ total score))
-              (set! frame-index (+ frame-index 1)))))
+  (let
+    [scratch : Arena (arena-make)]
+    [result : i64
+      (with-arena
+        level
         (let
-          [state : LevelState (LevelState frames total)]
-          [global-title : String (struct-get global title)]
-          [first : String (array-ref (struct-get state frames) 0)]
-          [last : String (array-ref (struct-get state frames) 2)]
-          [want-title : String "arena-cookbook"]
-          [want-first : String "frame:0/score:9"]
-          [want-last : String "frame:2/score:9"]
+          [frame-count : i64 (struct-get global frame-count)]
+          [frames : (Array String) (make-array String frame-count)]
+          [frame-index : i64 0]
+          [total : i64 0]
           (begin
-            (assert-string-eq (& global-title) (& want-title) "global title")
-            (assert-string-eq (& first) (& want-first) "first frame summary")
-            (assert-string-eq (& last) (& want-last) "last frame summary")
-            (assert-i64-eq
-              (struct-get global frame-count)
-              3
-              "global state should remain available inside level")
-            (assert-i64-eq
-              (struct-get state total-score)
-              27
-              "level total score")
-            42))))))
+            (while (< frame-index frame-count)
+              (let
+                [score : i64 (frame-temp-score frame-index)]
+                [summary : String (frame-summary scratch frame-index score)]
+                (begin
+                  (array-set! frames frame-index summary)
+                  (set! total (+ total score))
+                  (set! frame-index (+ frame-index 1)))))
+            (let
+              [state : LevelState (LevelState frames total)]
+              [global-title : String (struct-get global title)]
+              [first : String (array-ref (struct-get state frames) 0)]
+              [last : String (array-ref (struct-get state frames) 2)]
+              [want-title : String "arena-cookbook"]
+              [want-first : String "frame:0/score:9"]
+              [want-last : String "frame:2/score:9"]
+              (begin
+                (assert-string-eq
+                  (& global-title)
+                  (& want-title)
+                  "global title")
+                (assert-string-eq
+                  (& first)
+                  (& want-first)
+                  "first frame summary")
+                (assert-string-eq (& last) (& want-last) "last frame summary")
+                (assert-i64-eq
+                  (struct-get global frame-count)
+                  3
+                  "global state should remain available inside level")
+                (assert-i64-eq
+                  (struct-get state total-score)
+                  27
+                  "level total score")
+                42)))))]
+    (begin
+      (unsafe
+        (arena-destroy scratch))
+      result)))
 
 (define (run-game) : i64
   (let

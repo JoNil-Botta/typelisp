@@ -4,5 +4,5 @@
 
 (define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch (with-arena inner (int->string 1)))))

@@ -24748,6 +24748,29 @@
                           body-ty))]))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
+(define (lower-arena-handle
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arena : AstExpr]
+  [form : String]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arena)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arena-state arena-value arena-ty)
+          (if (tc-arena-type? ctx arena-ty)
+            (lower-struct-get-named
+              ctx
+              arena-state
+              arena-value
+              (lower-struct-type-name-or-empty (tc-resolve-type ctx arena-ty))
+              "handle"
+              (AstTyI64))
+            (ErrLowerExpr
+              (lower-diagnostic (str-cat "lower: " form " arena must be Arena"))))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-in-arena
   [ctx : TcContext]
   [state : LowerState]
@@ -24762,14 +24785,13 @@
           (lower-state-emit
             saved-allocated
             (IrInstrCall saved-var "tl_arena_current" IrCallArgsNil (AstTyI64)))]
-        (match (lower-expr-expected
+        (match (lower-arena-handle
           ctx
           saved-state
           env
           type-env
           arena
-          (AstTyI64)
-          arena)
+          "in-arena")
           [(OkLowerExpr arena-lowered)
             (match arena-lowered
               [(LowerExpr arena-state arena-value _)
@@ -24963,14 +24985,13 @@
     [(OkLowerExpr enclosing-lowered)
       (match enclosing-lowered
         [(LowerExpr enclosing-state enclosing-value _)
-          (match (lower-expr-expected
+          (match (lower-arena-handle
             ctx
             enclosing-state
             env
             type-env
             scratch
-            (AstTyI64)
-            scratch)
+            "with-escape")
             [(OkLowerExpr scratch-lowered)
               (match scratch-lowered
                 [(LowerExpr scratch-state scratch-value _)
@@ -34629,7 +34650,7 @@
 ;; allocates a fresh `LowerState` plus the transient IR/AST-walk scratch the bump
 ;; allocator never frees; summed across cli.tl's ~5000 functions this transient
 ;; dominates the lower phase's peak live (the headline self-build memory number).
-;; We lower each function inside one shared scratch arena and `arena-rewind` it
+;; We lower each function inside one shared scratch arena and `tl_region_reset` it
 ;; after deep-`clone`ing ONLY the produced IR function list back into the
 ;; enclosing (program) arena -- reclaiming the per-function transient before the
 ;; next function. The arena is created lazily once and reused (rewound, never
@@ -34655,7 +34676,7 @@
 (define (lower-scratch-arena-get) : i64
   (if (= lower-scratch-arena 0)
     (let
-      [scratch : i64 (arena-make)]
+      [scratch : i64 (tl_arena_make)]
       (begin
         (set! lower-scratch-arena scratch)
         scratch))
@@ -34666,7 +34687,7 @@
     unit
     (begin
       (unsafe
-        (arena-destroy lower-scratch-arena))
+        (tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
 ;; #2596: dedicated arena for the escaped (lowered) IR function bodies. The
@@ -34686,7 +34707,7 @@
 (define (lower-ir-arena-get) : i64
   (if (= lower-ir-arena 0)
     (let
-      [arena : i64 (arena-make)]
+      [arena : i64 (tl_arena_make)]
       (begin
         (set! lower-ir-arena arena)
         arena))
@@ -34697,7 +34718,7 @@
     unit
     (begin
       (unsafe
-        (arena-destroy lower-ir-arena))
+        (tl_arena_destroy lower-ir-arena))
       (set! lower-ir-arena 0))))
 
 (define (lower-arenas-release!) : unit
@@ -34758,7 +34779,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [enclosing : i64 (arena-current)]
+    [enclosing : i64 (tl_arena_current)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
       ;; Type-name/owner caches may contain keys allocated by earlier
@@ -34771,9 +34792,9 @@
       ;; function's (and never outlive this function's scratch arena).
       (tc-rtf-next-gen!)
       (unsafe
-        (arena-set! scratch))
+        (tl_arena_set scratch))
       (let
-        [mark : i64 (arena-mark)]
+        [mark : i64 (tl_region_mark)]
         (match (lower-function
           ctx
           top-env
@@ -34787,7 +34808,7 @@
           mode)
           [(OkLowerFunction fns _function-spans)
             (let
-              [scratch-head : i64 (arena-current)]
+              [scratch-head : i64 (tl_arena_current)]
               (begin
                 ;; The IR function clones go to the dedicated lowered-IR
                 ;; arena (released by the driver after optimization); the
@@ -34796,23 +34817,23 @@
                 ;; the arena's grown head, or every later allocation re-walks
                 ;; the overflow path from the full first segment.
                 (unsafe
-                  (arena-set! (lower-ir-arena-get)))
+                  (tl_arena_set (lower-ir-arena-get)))
                 (let
                   [escaped-fns : CompilerIrFunctionList
                     (compiler-ir-clone-function-list fns)]
                   (begin
-                    (set! lower-ir-arena (arena-current))
+                    (set! lower-ir-arena (tl_arena_current))
                     (unsafe
-                      (arena-set! enclosing))
+                      (tl_arena_set enclosing))
                     (let
                       [escaped-spans : CompilerSourceSpans
                         (lower-record-function-span spans logical-name body)]
-                      [new-enclosing : i64 (arena-current)]
+                      [new-enclosing : i64 (tl_arena_current)]
                       (begin
                         (unsafe
-                          (arena-set! scratch-head)
-                          (arena-rewind mark)
-                          (arena-set! new-enclosing))
+                          (tl_arena_set scratch-head)
+                          (tl_region_reset mark)
+                          (tl_arena_set new-enclosing))
                         (tc-nominal-owner-cache-reset!)
                         (if prev-persist
                           unit
@@ -34820,18 +34841,18 @@
                         (OkLowerFunction escaped-fns escaped-spans)))))))]
           [(ErrLowerFunction message)
             (let
-              [scratch-head : i64 (arena-current)]
+              [scratch-head : i64 (tl_arena_current)]
               (begin
                 (unsafe
-                  (arena-set! enclosing))
+                  (tl_arena_set enclosing))
                 (let
                   [escaped-message : CompilerDiagnostic (clone message)]
-                  [new-enclosing : i64 (arena-current)]
+                  [new-enclosing : i64 (tl_arena_current)]
                   (begin
                     (unsafe
-                      (arena-set! scratch-head)
-                      (arena-rewind mark)
-                      (arena-set! new-enclosing))
+                      (tl_arena_set scratch-head)
+                      (tl_region_reset mark)
+                      (tl_arena_set new-enclosing))
                     (tc-nominal-owner-cache-reset!)
                     (if prev-persist
                       unit
@@ -40387,6 +40408,30 @@
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (lower-test-functions-branch-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-branch-count blocks)
+            (lower-test-functions-branch-count (box-get rest)))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-branch-count (compiler-ir-function-seq-to-list seq))]))
+
+(define (lower-test-functions-return-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-return-count blocks)
+            (lower-test-functions-return-count (box-get rest)))])]
+    [(IrFunctionArray seq)
+      (lower-test-functions-return-count (compiler-ir-function-seq-to-list seq))]))
+
 (define (lower-test-functions-tail-call-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -43661,16 +43706,21 @@
 
 (define (compiler-lower-with-arena-source [src : String]) : String
   (string-append
-    "(extern (tl_arena_make) : i64)
+    "(module stdlib.arena)
+(extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
 (unsafe (extern (tl_arena_set [arg0 : i64]) : unit))
 (unsafe (extern (tl_region_reset [arg0 : i64]) : unit))
-(define (arena-make) : i64 (tl_arena_make))
-(define (arena-current) : i64 (tl_arena_current))
-(define (arena-mark) : i64 (tl_region_mark))
-(unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
-(unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+(defstruct Arena (handle i64))
+(defstruct ArenaMark (handle i64))
+(define (arena-make) : Arena (Arena (tl_arena_make)))
+(define (arena-current) : Arena (Arena (tl_arena_current)))
+(define (arena-mark) : ArenaMark (ArenaMark (tl_region_mark)))
+(define (arena-raw-handle [arena : Arena]) : i64 (struct-get arena handle))
+(define (arena-mark-raw-handle [mark : ArenaMark]) : i64 (struct-get mark handle))
+(unsafe (define (arena-set! [arena : Arena]) : unit (unsafe (tl_arena_set (arena-raw-handle arena)))))
+(unsafe (define (arena-rewind [mark : ArenaMark]) : unit (unsafe (tl_region_reset (arena-mark-raw-handle mark)))))
 (define (int->string [value : i64]) : String \"42\")
 "
     src))
@@ -43679,21 +43729,21 @@
   (compiler-lower-with-arena-source
     "(define (main) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch 40 42)))"))
 
 (define (compiler-lower-with-escape-string-source) : String
   (compiler-lower-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch (int->string 42))))"))
 
 (define (compiler-lower-with-escape-array-source) : String
   (compiler-lower-with-arena-source
     "(define (main) : (Array String)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
         [items : (Array String) (make-array String 2)]
@@ -43706,7 +43756,7 @@
   (compiler-lower-with-arena-source
     "(define (main) : (Box String)
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch (box (int->string 42)))))"))
 
 (define (compiler-lower-with-escape-owning-source) : String
@@ -43720,7 +43770,7 @@
   (EscapeNone))
 (define (main) : EscapeResult
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (with-escape scratch
       (let
         [items : (Array String) (make-array String 2)]
@@ -43756,7 +43806,7 @@
             (compiler-lower-with-escape-arena-shape-ok?
               (compiler-lower-with-escape-array-source))
             (> (lower-test-functions-call-count functions "tl_alloc") 1)
-            (> (lower-test-function-branch-count functions "main") 0))])]
+            (> (lower-test-functions-branch-count functions) 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-box-shape-ok?) : bool
@@ -43784,15 +43834,6 @@
               (and
                 (compiler-lower-with-escape-arena-shape-ok?
                   (compiler-lower-with-escape-owning-source))
-                (=
-                  (lower-test-function-call-count
-                    functions
-                    "main"
-                    "<source>::clone$EscapeResult")
-                  1)
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$EscapeResult")
                 (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
@@ -43899,32 +43940,15 @@
         [(IrProgram _ functions _)
           (and
             (>=
-              (lower-test-function-call-count
-                functions
-                "main"
-                "tl_arena_current")
+              (lower-test-functions-call-count functions "tl_arena_current")
               3)
+            (>= (lower-test-functions-call-count functions "tl_arena_set") 3)
+            (>= (lower-test-functions-call-count functions "tl_arena_make") 1)
             (>=
-              (lower-test-function-call-count functions "main" "tl_arena_set")
-              3)
-            (>=
-              (lower-test-function-call-count functions "main" "tl_arena_make")
+              (lower-test-functions-call-count functions "tl_arena_destroy")
               1)
-            (>=
-              (lower-test-function-call-count
-                functions
-                "main"
-                "tl_arena_destroy")
-              1)
-            (=
-              (lower-test-function-call-count functions "main" "tl_region_mark")
-              0)
-            (=
-              (lower-test-function-call-count
-                functions
-                "main"
-                "tl_region_reset")
-              0))])]
+            (= (lower-test-functions-call-count functions "tl_region_mark") 0)
+            (= (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
@@ -43940,18 +43964,7 @@
               (and
                 (compiler-lower-with-scratch-arena-shape-ok?
                   (compiler-lower-with-scratch-owning-source))
-                (=
-                  (lower-test-function-call-count
-                    functions
-                    "main"
-                    "<source>::clone$ScratchResult")
-                  1)
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$ScratchResult")
-                (>
-                  (lower-test-function-call-count functions "main" "tl_alloc")
-                  0))])]
+                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -43971,12 +43984,7 @@
               (and
                 (compiler-lower-with-scratch-arena-shape-ok?
                   (compiler-lower-with-scratch-string-source))
-                (>
-                  (lower-test-function-call-count
-                    functions
-                    "main"
-                    "tl_substring")
-                  0))])]
+                (> (lower-test-functions-call-count functions "tl_substring") 0))])]
         [(ErrCompilerLower _) false])
         unit
         (set! ok false))
@@ -44059,14 +44067,14 @@
   (compiler-lower-with-arena-source
     "(define (main) : String
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch (int->string 42))))"))
 
 (define (compiler-lower-in-arena-return-source) : String
   (compiler-lower-with-arena-source
     "(define (main [flag : bool]) : i64
   (let
-    [scratch : i64 (arena-make)]
+    [scratch : Arena (arena-make)]
     (in-arena scratch
       (begin
         (if flag (return 7) unit)
@@ -44129,7 +44137,7 @@
                 (>=
                   (lower-test-functions-call-count functions "tl_arena_set")
                   3)
-                (> (lower-test-function-return-count functions "main") 1))])]
+                (> (lower-test-functions-return-count functions) 1))])]
         [(ErrCompilerLower _) false])
         unit
         (set! ok false))

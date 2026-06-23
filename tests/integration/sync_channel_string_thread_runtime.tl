@@ -99,7 +99,7 @@
 
 (define (sync-string-integration-run [channel : ChannelString]) : i64
   (let
-    [owner : i64 (arena-make-atomic)]
+    [owner : Arena (arena-make-atomic)]
     [ctx : (Array i64) (make-array i64 (+ channel-string-raw-field-count 1))]
     [expected : i64
       (sync-string-integration-expected-sum sync-string-integration-count)]

@@ -4231,7 +4231,22 @@
   [name-id : i64]) : ResultTcType
   (let
     [name : String (intern-str name-id)]
-    (match (tc-lookup-id env name-id)
+    [found : ResultTcType
+      (match (tc-lookup-id env name-id)
+        [(OkTcType ty) (OkTcType ty)]
+        [(ErrTcType message)
+          (let
+            [module : String (tc-context-module ctx)]
+            (if (and
+              (> (string-length module) 0)
+              (not (tc-name-qualified? name)))
+              (match (tc-lookup-id
+                env
+                (tc-name-id (compiler-symbol-module-key module name)))
+                [(OkTcType ty) (OkTcType ty)]
+                [(ErrTcType _) (ErrTcType message)])
+              (ErrTcType message)))])]
+    (match found
       [(OkTcType ty)
         (match (tc-qualified-value-visible-ok ctx name)
           [(OkTcUnit) (OkTcType ty)]
@@ -5590,6 +5605,22 @@
 (define (tc-source-name-bound-exact? [env : TcTypeEnv] [name : String]) : bool
   (tc-source-name-bound-exact-id? env (tc-name-id name)))
 
+(define (tc-current-module-source-lookup-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : TcMaybeString
+  (let
+    [module : String (tc-context-module ctx)]
+    (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+      (let
+        [module-key : String (compiler-symbol-module-key module name)]
+        [module-key-id : i64 (tc-name-id module-key)]
+        (if (tc-source-name-bound-exact-id? env module-key-id)
+          (TcSomeString module-key)
+          (TcNoString)))
+      (TcNoString))))
+
 (define (tc-source-leading-segment-bound?
   [env : TcTypeEnv]
   [name : String]
@@ -6381,7 +6412,11 @@
       (let
         [first-dot : i64 (intern-first-dot name-id)]
         (if (< first-dot 0)
-          (OkTcString name)
+          (if (tc-source-name-bound-exact-id? env name-id)
+            (OkTcString name)
+            (match (tc-current-module-source-lookup-key ctx env name name-id)
+              [(TcSomeString key) (OkTcString key)]
+              [(TcNoString) (OkTcString name)]))
           (if (and
             check-local-field
             (tc-source-leading-segment-wins-over-exact-from-id?
@@ -6679,7 +6714,7 @@
         (tc-resolved-nominal-type name handle)
         (if (tc-current-module-enum? ctx name)
           (AstTyEnum (intern name))
-          (tc-resolved-nominal-type name handle)))]
+          (tc-resolved-nominal-type owner-name handle)))]
     [(ErrTcString _)
       (if (tc-current-module-enum? ctx name)
         (AstTyEnum (intern name))
@@ -6696,7 +6731,7 @@
         (tc-resolved-nominal-type-with-args name handle lifetimes)
         (if (tc-current-module-enum? ctx name)
           (ast-ty-enum-args (intern name) lifetimes)
-          (tc-resolved-nominal-type-with-args name handle lifetimes)))]
+          (tc-resolved-nominal-type-with-args owner-name handle lifetimes)))]
     [(ErrTcString _)
       (if (tc-current-module-enum? ctx name)
         (ast-ty-enum-args (intern name) lifetimes)
@@ -10805,13 +10840,21 @@
   [ctx : TcContext]
   [all-decls : AstDeclList]
   [decls : AstDeclList]
-  [env : TcTypeEnv]) : ResultTcEnv
+  [env : TcTypeEnv]
+  [module : String]) : ResultTcEnv
   (match decls
     [(AstDeclNil) (OkTcEnv env)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
+          [(AstDeclModule next-module)
+            (tc-build-top-env-aliases-list
+              ctx
+              all-decls
+              rest
+              env
+              (intern-str next-module))]
           [(AstDeclImport
               (AstImportSpec
                 _
@@ -10824,11 +10867,16 @@
               all-decls
               env
               target-module
-              alias)
+              (compiler-symbols-import-alias-key module alias))
               [(OkTcEnv next-env)
-                (tc-build-top-env-aliases-list ctx all-decls rest next-env)]
+                (tc-build-top-env-aliases-list
+                  ctx
+                  all-decls
+                  rest
+                  next-env
+                  module)]
               [(ErrTcEnv message) (ErrTcEnv message)])]
-          [_ (tc-build-top-env-aliases-list ctx all-decls rest env)]))]))
+          [_ (tc-build-top-env-aliases-list ctx all-decls rest env module)]))]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
@@ -10839,7 +10887,7 @@
           [decls : AstDeclList (box-get decls-box)]
           (match (tc-build-top-env-list ctx decls (tc-default-env))
             [(OkTcEnv env)
-              (match (tc-build-top-env-aliases-list ctx decls decls env)
+              (match (tc-build-top-env-aliases-list ctx decls decls env "")
                 [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
             [(ErrTcEnv message) (ErrTcEnv message)]))])))
@@ -10976,6 +11024,23 @@
             (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
+    [(AstDeclImport
+        (AstImportSpec
+          _
+          _
+          (AstSomeModuleName target-module)
+          (AstSomeImportAlias alias)
+          _))
+      (if (string-eq alias "")
+        (match (tc-context-program ctx)
+          [(AstProgram decls-box)
+            (tc-bind-import-alias-module
+              ctx
+              (box-get decls-box)
+              env
+              target-module
+              "")])
+        (OkTcEnv env))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]

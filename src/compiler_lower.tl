@@ -1494,6 +1494,11 @@
     (lower-decl-logical-name entry-path decl-path module source-name)
     (compiler-symbol-module-key module source-name)))
 
+(define (lower-import-alias-key [importer-module : String] [alias : String]) : String
+  (if (string-eq alias "")
+    importer-module
+    alias))
+
 (define (lower-name-env-add-decl-alias-in-module
   [names : LowerNameEnv]
   [entry-path : String]
@@ -1897,6 +1902,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
+  [module : String]
   [path-aware : bool]) : LowerNameEnv
   (match decls
     [(AstDeclNil) names]
@@ -1912,6 +1918,7 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         [next-names : LowerNameEnv
           (match decl
+            [(AstDeclModule _) names]
             [(AstDeclImport
                 (AstImportSpec
                   _
@@ -1925,18 +1932,31 @@
                 entry-path
                 names
                 target-module
-                alias
+                (lower-import-alias-key module alias)
                 ""
                 path-aware)]
             [_ names])]
-        (lower-name-env-from-import-aliases
-          all-decls
-          all-paths
-          rest
-          rest-paths
-          entry-path
-          next-names
-          path-aware))]))
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-name-env-from-import-aliases
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              entry-path
+              next-names
+              (intern-str next-module)
+              path-aware)]
+          [_
+            (lower-name-env-from-import-aliases
+              all-decls
+              all-paths
+              rest
+              rest-paths
+              entry-path
+              next-names
+              module
+              path-aware)]))]))
 
 (define (lower-name-env-with-import-aliases
   [decls : AstDeclList]
@@ -1951,6 +1971,7 @@
     paths
     entry-path
     names
+    ""
     path-aware))
 
 (define (lower-name-env-from-import-aliases-in-module

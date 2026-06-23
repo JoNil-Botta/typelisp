@@ -5353,7 +5353,46 @@
                 (set! i (+ i 1)))))
           result)))))
 
-;; Replace form at position (line, col) with new-text. Returns original text if position invalid.
+;; Find start of the top-level form containing offset.
+;; Scans forward tracking depth; a '(' at depth 0 is a top-level form.
+;; Returns -1 if offset is not inside any top-level form.
+(define (lsp-find-top-level-form-at-offset [text : String] [offset : i64]) : i64
+  (let
+    [n : i64 (string-length text)]
+    (if (or (< offset 0) (>= offset n))
+      -1
+      (let
+        [i : i64 0]
+        [depth : i64 0]
+        [current-start : i64 -1]
+        [result : i64 -1]
+        (begin
+          (while (and (< i n) (= result -1))
+            (let
+              [c : char (string-ref text i)]
+              (begin
+                (if (= c (string-ref "(" 0))
+                  (begin
+                    (if (= depth 0)
+                      (set! current-start i)
+                      unit)
+                    (set! depth (+ depth 1)))
+                  (if (= c (string-ref ")" 0))
+                    (if (> depth 0)
+                      (begin
+                        (set! depth (- depth 1))
+                        (if (= depth 0)
+                          (if (and (>= offset current-start) (<= offset i))
+                            (set! result current-start)
+                            unit)
+                          unit))
+                      unit)
+                    unit))
+                (set! i (+ i 1)))))
+          result)))))
+
+;; Replace top-level form at position (line, col) with new-text.
+;; Any position inside a top-level form selects that entire form.
 (define (lsp-replace-form-at-position
   [text : String]
   [line : i64]
@@ -5366,7 +5405,7 @@
       (if (>= offset (string-length text))
         (OkLspEdit text)
         (let
-          [form-start : i64 (lsp-find-form-at-offset text offset)]
+          [form-start : i64 (lsp-find-top-level-form-at-offset text offset)]
           (if (= form-start -1)
             (OkLspEdit text)
             (let
@@ -5492,7 +5531,8 @@
                       (lsp-write-error id -32600 "No form found at position")
                       (LspContinue docs))
                     (let
-                      [form-start : i64 (lsp-find-form-at-offset text offset)]
+                      [form-start : i64
+                        (lsp-find-top-level-form-at-offset text offset)]
                       (if (= form-start -1)
                         (begin
                           (lsp-write-error
@@ -5570,7 +5610,7 @@
                           (LspContinue docs))
                         (let
                           [form-start : i64
-                            (lsp-find-form-at-offset text offset)]
+                            (lsp-find-top-level-form-at-offset text offset)]
                           (if (= form-start -1)
                             (begin
                               (lsp-write-error
@@ -5895,6 +5935,27 @@
         (string-eq replaced "(define (foo) : i64 1)\n(define (baz) : i64 3)")]
       [(ErrLspEdit _) false])))
 
+(define (lsp-find-top-level-form-at-offset-smoke-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64\n  (+ 1 2))\n(define (bar) : i64 3)"]
+    [nested-offset : i64 (lsp-offset-at-position text 1 4)]
+    [second-offset : i64 (lsp-offset-at-position text 2 9)]
+    (and
+      (= (lsp-find-top-level-form-at-offset text nested-offset) 0)
+      (=
+        (lsp-find-top-level-form-at-offset text second-offset)
+        (lsp-offset-at-position text 2 0))
+      (= (lsp-find-top-level-form-at-offset text -1) -1)
+      (= (lsp-find-top-level-form-at-offset text (string-length text)) -1))))
+
+(define (lsp-replace-form-at-position-nested-smoke-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64\n  (+ 1 2))\n(define (bar) : i64 3)"]
+    (match (lsp-replace-form-at-position text 1 4 "(define (baz) : i64 4)")
+      [(OkLspEdit replaced)
+        (string-eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)")]
+      [(ErrLspEdit _) false])))
+
 (define (lsp-replace-form-at-position-noop-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
@@ -5907,6 +5968,18 @@
   (unless
     (lsp-replace-form-at-position-smoke-ok?)
     (panic "lsp-replace-form-at-position-smoke failed")))
+
+(test
+  lsp-find-top-level-form-at-offset-smoke
+  (unless
+    (lsp-find-top-level-form-at-offset-smoke-ok?)
+    (panic "lsp-find-top-level-form-at-offset-smoke failed")))
+
+(test
+  lsp-replace-form-at-position-nested-smoke
+  (unless
+    (lsp-replace-form-at-position-nested-smoke-ok?)
+    (panic "lsp-replace-form-at-position-nested-smoke failed")))
 
 (test
   lsp-replace-form-at-position-noop

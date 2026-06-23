@@ -21438,6 +21438,34 @@
         [rewritten-vars : i64
           (match loop-split-rewrite
             [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+        [remat-func : CompilerIrFunction
+          (IrFunction name params ret-ty rewritten-vars rewritten-blocks)]
+        [remat-rewrite : CompilerRegCallSaveRewrite
+          (if call-save-enabled
+            (compiler-reg-remat-rewrite-blocks
+              remat-func
+              rewritten-blocks
+              rewritten-vars
+              (compiler-reg-function-var-types remat-func)
+              rewrite-reg-plan)
+            (CompilerRegCallSaveRewrite
+              rewritten-blocks
+              rewritten-vars
+              rewritten-vars
+              CompilerRegAssignmentNil
+              CompilerRegVarTypeNil))]
+        [remat-reg-plan : CompilerRegPlan
+          (if call-save-enabled
+            (compiler-reg-plan-with-call-save-rewrite
+              rewrite-reg-plan
+              remat-rewrite)
+            rewrite-reg-plan)]
+        [remat-blocks : CompilerIrBlockList
+          (match remat-rewrite
+            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+        [remat-vars : i64
+          (match remat-rewrite
+            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
         [_regalloc-census : unit
           (cfg
             regalloc-census
@@ -21446,13 +21474,13 @@
               unit)
             unit)]
         [plan-types : CompilerRegVarTypeList
-          (compiler-reg-plan-types rewrite-reg-plan)]
+          (compiler-reg-plan-types remat-reg-plan)]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
         [fn-group-vars : CompilerLiveI64Set
           (compiler-reg-function-group-vars
-            (IrFunction name params ret-ty rewritten-vars rewritten-blocks)
+            (IrFunction name params ret-ty remat-vars remat-blocks)
             plan-types)]
         [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
         ;; #2598: compact the frame after regalloc by renumbering stack-resident
@@ -21467,38 +21495,38 @@
           ;; That keeps both words inside the `slot-vars`-sized frame instead of
           ;; preserving the old high raw ids that drove #2598 frame growth.
           (compiler-reg-color-stack-slots
-            rewrite-reg-plan
+            remat-reg-plan
             fn-group-vars
             params
-            rewritten-blocks
-            rewritten-vars)]
+            remat-blocks
+            remat-vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
             [(CompilerRegColoringNone)
-              (compiler-reg-plan-assignments rewrite-reg-plan)]
+              (compiler-reg-plan-assignments remat-reg-plan)]
             [(CompilerRegColoringRemap remap _)
               (compiler-reg-color-rebuild-assignments
                 remap
-                rewritten-vars
-                (compiler-reg-plan-assignments rewrite-reg-plan))])]
+                remat-vars
+                (compiler-reg-plan-assignments remat-reg-plan))])]
         [emit-blocks-list : CompilerIrBlockList
           (match coloring
-            [(CompilerRegColoringNone) rewritten-blocks]
+            [(CompilerRegColoringNone) remat-blocks]
             [(CompilerRegColoringRemap remap _)
-              (compiler-reg-remap-blocks remap rewritten-blocks)])]
+              (compiler-reg-remap-blocks remap remat-blocks)])]
         [slot-vars : i64
           (match coloring
-            [(CompilerRegColoringNone) rewritten-vars]
+            [(CompilerRegColoringNone) remat-vars]
             [(CompilerRegColoringRemap _ slots) slots])]
         [types : CompilerRegVarTypeList
           (match coloring
             [(CompilerRegColoringNone) plan-types]
             [(CompilerRegColoringRemap remap _)
-              (compiler-reg-color-rebuild-types remap rewritten-vars plan-types)])]
+              (compiler-reg-color-rebuild-types remap remat-vars plan-types)])]
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
         [use-counts : (Array i64)
-          (compiler-backend-function-use-counts rewritten-vars emit-blocks-list)]
+          (compiler-backend-function-use-counts remat-vars emit-blocks-list)]
         (if (compiler-backend-atomic-call-name? symbol)
           (OkCompilerBackend
             (compiler-backend-emit-atomic-helper-function target symbol))
@@ -21523,12 +21551,12 @@
                     (compiler-backend-function-label-scope program-index name)]
                   [_addr-forward : unit
                     (compiler-backend-addr-of-forwarding-enable!
-                      rewritten-vars
+                      remat-vars
                       emit-blocks-list
                       use-counts)]
                   [_fuse-need : unit
                     (compiler-backend-fuse-need-enable!
-                      rewritten-vars
+                      remat-vars
                       use-counts
                       emit-blocks-list)]
                   (match (compiler-backend-emit-blocks

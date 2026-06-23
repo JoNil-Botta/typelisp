@@ -1,6 +1,7 @@
 (import "../../stdlib/string.tl")
 (import "../compiler_driver_core.tl")
 (import "../compiler_clone.tl")
+(import "../compiler_specialize.tl")
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
@@ -424,6 +425,112 @@
               augmented-a
               "CloneA")))))))
 
+(define (compiler-driver-state-smoke-specialize-source [n : i64]) : String
+  (string-append
+    "(define (scale [comptime n : i64] [x : i64]) : i64 (+ x n))
+(define (main) : i64 (scale "
+    (string-append (int->string n) " 35))")))
+
+(define (compiler-driver-state-smoke-specialized-scale-body-ok?
+  [pools : AstNodePoolContext]
+  [body : i64]) : bool
+  (match (compiler-driver-state-smoke-context-expr-unspan
+    pools
+    (ast-node-pool-context-expr-get pools body))
+    [(AstExprBinary op left right)
+      (match op
+        [(AstBinAdd)
+          (match (compiler-driver-state-smoke-context-expr-unspan
+            pools
+            (ast-node-pool-context-expr-get pools left))
+            [(AstExprVar name)
+              (if (string-eq (intern-str name) "x")
+                (match (compiler-driver-state-smoke-context-expr-unspan
+                  pools
+                  (ast-node-pool-context-expr-get pools right))
+                  [(AstExprLiteral lit)
+                    (match lit
+                      [(AstLitInt value _) (= value 7)]
+                      [_ false])]
+                  [_ false])
+                false)]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-driver-state-smoke-specialized-scale-decls-ok?
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn name _ _ body _)
+          (if (string-eq (intern-str name) "__tl_specialized_scale_i64_7_none")
+            (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
+            (compiler-driver-state-smoke-specialized-scale-decls-ok?
+              pools
+              (box-get rest)))]
+        [_
+          (compiler-driver-state-smoke-specialized-scale-decls-ok?
+            pools
+            (box-get rest))])]))
+
+(define (compiler-driver-state-smoke-specialized-scale-program-ok?
+  [pools : AstNodePoolContext]
+  [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (compiler-driver-state-smoke-specialized-scale-decls-ok?
+        pools
+        (box-get decls-box))]))
+
+(define (compiler-driver-state-smoke-specialize-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        (match (parse-ast-source-diagnostic-with-cfg-and-pools
+          "spec-a.tl"
+          (compiler-driver-state-smoke-specialize-source 7)
+          (compiler-cfg-empty)
+          pools-a)
+          [(OkAstProgramDiagnostic program-a)
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              "spec-b.tl"
+              (compiler-driver-state-smoke-specialize-source 11)
+              (compiler-cfg-empty)
+              pools-b)
+              [(OkAstProgramDiagnostic _)
+                (begin
+                  (compiler-driver-state-install-pools! state-b)
+                  (match (compiler-specialize-program-with-pools
+                    program-a
+                    pools-a)
+                    [(OkSpecProgram specialized-a)
+                      (begin
+                        (compiler-driver-state-reset-file-state! state-b)
+                        (unless
+                          (compiler-driver-state-smoke-specialized-scale-program-ok?
+                            pools-a
+                            specialized-a)
+                          (set! ok false))
+                        (unless
+                          (> (ast-node-pool-context-expr-len pools-a) 0)
+                          (set! ok false))
+                        ok)]
+                    [(ErrSpecProgram _) false]))]
+              [(ErrAstProgramDiagnostic _) false])]
+          [(ErrAstProgramDiagnostic _) false])))))
+
 (define (compiler-driver-state-smoke-active-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -687,6 +794,9 @@
     (unless (compiler-driver-state-smoke-type-dedup-isolated?) (return 5))
     (unless (compiler-driver-state-smoke-parse-pools-isolated?) (return 12))
     (unless (compiler-driver-state-smoke-clone-pools-isolated?) (return 14))
+    (unless
+      (compiler-driver-state-smoke-specialize-pools-isolated?)
+      (return 15))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
     (unless

@@ -37,7 +37,7 @@
 ;; generated StringStringMap; the former SpecCache linked list made every
 ;; lookup a linear scan.
 (defenum SpecState
-  (SpecState AstDeclList StringStringMap CtfeEnv))
+  (SpecState AstDeclList StringStringMap CtfeEnv AstNodePoolContext))
 
 (defenum SpecValueList
   (SpecValueNil)
@@ -189,7 +189,25 @@
 
 (define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
   (match state
-    [(SpecState _ _ env) env]))
+    [(SpecState _ _ env _) env]))
+
+(define (spec-state-pools [state : SpecState]) : AstNodePoolContext
+  (match state
+    [(SpecState _ _ _ pools) pools]))
+
+(define (spec-ctfe-eval [state : SpecState] [expr : AstExpr] [fuel : i64]) : ResultCtfe
+  (let
+    [pools : AstNodePoolContext (spec-state-pools state)]
+    (begin
+      (ast-node-pool-context-capture-active! pools)
+      (ast-node-pool-context-install! pools)
+      (let
+        [result : ResultCtfe
+          (compiler-ctfe-eval expr (spec-state-ctfe-env state) fuel)]
+        (begin
+          (ast-node-pool-context-capture-active! pools)
+          (ast-node-pool-context-install! pools)
+          result)))))
 
 (define (spec-type-kind? [ty : AstType]) : bool
   (match ty
@@ -5961,7 +5979,7 @@
               [(ErrGenDeclsWithPaths diag) (ErrGenDeclsWithPaths diag)])]
           [(ErrGenDecl diag) (ErrGenDeclsWithPaths diag)]))]))
 
-(define (gen-normalize-program [program : AstProgram]) : ResultGenProgram
+(define (gen-normalize-program-active [program : AstProgram]) : ResultGenProgram
   (match program
     [(AstProgram decls-box)
       (let
@@ -5972,7 +5990,7 @@
           [(OkGenDecls rewritten _ _) (OkGenProgram (ast-program rewritten))]
           [(ErrGenDecls diag) (ErrGenProgram diag)]))]))
 
-(define (gen-normalize-program-with-paths
+(define (gen-normalize-program-with-paths-active
   [program : AstProgram]
   [paths : AstDeclPathList]
   [fallback-path : String]) : ResultGenProgramWithPaths
@@ -5992,6 +6010,61 @@
           [(OkGenDeclsWithPaths rewritten rewritten-paths _ _)
             (OkGenProgramWithPaths (ast-program rewritten) rewritten-paths)]
           [(ErrGenDeclsWithPaths diag) (ErrGenProgramWithPaths diag)]))]))
+
+(define (gen-normalize-program-with-pools
+  [program : AstProgram]
+  [pools : AstNodePoolContext]) : ResultGenProgram
+  (let
+    [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      (let
+        [result : ResultGenProgram (gen-normalize-program-active program)]
+        (begin
+          (ast-node-pool-context-capture-active! pools)
+          (ast-node-pool-context-install! prev)
+          result)))))
+
+(define (gen-normalize-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [pools : AstNodePoolContext]) : ResultGenProgramWithPaths
+  (let
+    [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      (let
+        [result : ResultGenProgramWithPaths
+          (gen-normalize-program-with-paths-active program paths fallback-path)]
+        (begin
+          (ast-node-pool-context-capture-active! pools)
+          (ast-node-pool-context-install! prev)
+          result)))))
+
+(define (gen-normalize-program [program : AstProgram]) : ResultGenProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultGenProgram (gen-normalize-program-with-pools program pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
+
+(define (gen-normalize-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]) : ResultGenProgramWithPaths
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultGenProgramWithPaths
+      (gen-normalize-program-with-paths-and-pools
+        program
+        paths
+        fallback-path
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
   (match decl
@@ -6475,10 +6548,7 @@
               (match param
                 [(AstParam param-name param-ty is-comptime)
                   (if is-comptime
-                    (match (compiler-ctfe-eval
-                      arg
-                      (spec-state-ctfe-env state)
-                      (ctfe-fuel-limit))
+                    (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
                       [(OkCtfe value _)
                         (if (spec-type-kind? param-ty)
                           (match value
@@ -6630,7 +6700,7 @@
   (match template
     [(SpecTemplate name params ret body)
       (match state
-        [(SpecState generated cache ctfe-env)
+        [(SpecState generated cache ctfe-env pools)
           (let
             [key : String (spec-specialization-key name values)]
             (match (spec-cache-lookup cache key)
@@ -6654,7 +6724,8 @@
                                       cache
                                       key
                                       generated-name)
-                                    ctfe-env)]
+                                    ctfe-env
+                                    pools)]
                                 (match (spec-rewrite-expr
                                   (ast-node-get valued-body)
                                   (spec-template-env-shadow-params
@@ -6666,7 +6737,8 @@
                                       [(SpecState
                                           rewritten-generated
                                           rewritten-cache
-                                          rewritten-ctfe-env)
+                                          rewritten-ctfe-env
+                                          rewritten-pools)
                                         (OkSpecEnsure
                                           generated-name
                                           (SpecState
@@ -6682,7 +6754,8 @@
                                                   type-subs)
                                                 rewritten-body))
                                             rewritten-cache
-                                            rewritten-ctfe-env))])]
+                                            rewritten-ctfe-env
+                                            rewritten-pools))])]
                                   [(ErrSpecExpr diag) (ErrSpecEnsure diag)]))]
                             [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
                         [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
@@ -9009,8 +9082,8 @@
     AstDeclPathNil
     (gen-path-list-for-decls decls fallback-path AstDeclPathNil)))
 
-(define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
-  (match (gen-normalize-program program)
+(define (compiler-specialize-program-active [program : AstProgram]) : ResultSpecProgram
+  (match (gen-normalize-program-active program)
     [(OkGenProgram normalized)
       (match normalized
         [(AstProgram decls-box)
@@ -9027,21 +9100,22 @@
                     AstDeclNil
                     (string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
-                      (ctfe-reflections-from-program normalized))))
+                      (ctfe-reflections-from-program normalized))
+                    (ast-node-pool-context-capture-active)))
                   [(OkSpecDecls rewritten state)
                     (match state
-                      [(SpecState generated _ _)
+                      [(SpecState generated _ _ _)
                         (OkSpecProgram
                           (ast-program
                             (spec-decl-list-append rewritten generated)))])]
                   [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))])]
     [(ErrGenProgram diag) (ErrSpecProgram diag)]))
 
-(define (compiler-specialize-program-with-paths
+(define (compiler-specialize-program-with-paths-active
   [program : AstProgram]
   [paths : AstDeclPathList]
   [fallback-path : String]) : ResultSpecProgramWithPaths
-  (match (gen-normalize-program-with-paths program paths fallback-path)
+  (match (gen-normalize-program-with-paths-active program paths fallback-path)
     [(OkGenProgramWithPaths normalized normalized-paths)
       (match normalized
         [(AstProgram decls-box)
@@ -9061,10 +9135,11 @@
                     AstDeclNil
                     (string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
-                      (ctfe-reflections-from-program normalized))))
+                      (ctfe-reflections-from-program normalized))
+                    (ast-node-pool-context-capture-active)))
                   [(OkSpecDeclsWithPaths rewritten rewritten-paths state)
                     (match state
-                      [(SpecState generated _ _)
+                      [(SpecState generated _ _ _)
                         (OkSpecProgramWithPaths
                           (ast-program
                             (spec-decl-list-append rewritten generated))
@@ -9073,6 +9148,66 @@
                             (spec-generated-paths generated fallback-path)))])]
                   [(ErrSpecDeclsWithPaths diag) (ErrSpecProgramWithPaths diag)])]))])]
     [(ErrGenProgramWithPaths diag) (ErrSpecProgramWithPaths diag)]))
+
+(define (compiler-specialize-program-with-pools
+  [program : AstProgram]
+  [pools : AstNodePoolContext]) : ResultSpecProgram
+  (let
+    [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      (let
+        [result : ResultSpecProgram
+          (compiler-specialize-program-active program)]
+        (begin
+          (ast-node-pool-context-capture-active! pools)
+          (ast-node-pool-context-install! prev)
+          result)))))
+
+(define (compiler-specialize-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [pools : AstNodePoolContext]) : ResultSpecProgramWithPaths
+  (let
+    [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      (let
+        [result : ResultSpecProgramWithPaths
+          (compiler-specialize-program-with-paths-active
+            program
+            paths
+            fallback-path)]
+        (begin
+          (ast-node-pool-context-capture-active! pools)
+          (ast-node-pool-context-install! prev)
+          result)))))
+
+(define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultSpecProgram
+      (compiler-specialize-program-with-pools program pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
+
+(define (compiler-specialize-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fallback-path : String]) : ResultSpecProgramWithPaths
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultSpecProgramWithPaths
+      (compiler-specialize-program-with-paths-and-pools
+        program
+        paths
+        fallback-path
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (match program

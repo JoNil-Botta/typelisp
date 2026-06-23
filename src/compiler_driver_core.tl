@@ -277,6 +277,13 @@
     ;; the escaped IR stays alive until the next file reset.
     (lower-arenas-release!)))
 
+(define (compiler-driver-reset-analysis-state!) : unit
+  (begin
+    (compiler-builtin-reset!)
+    (compiler-typecheck-reset-file-state!)
+    (lower-reset-file-state!)
+    (lower-arenas-release!)))
+
 (define (compiler-driver-state-reset-file-state! [state : CompilerDriverState]) : unit
   (begin
     (compiler-driver-state-apply-session-flags! state)
@@ -526,6 +533,13 @@
   (if (>= opt-level 1)
     (lower-ir-arena-release!)
     unit))
+
+;; Package builds may run TLci, direct-object, and doctest passes after an
+;; assembly emit while keeping the loaded AST alive. A full file-state reset
+;; would invalidate those loaded pools, but the lowered IR has already been
+;; consumed by the backend and can be dropped at any opt level.
+(define (compiler-driver-release-lower-arenas-after-emit!) : unit
+  (lower-arenas-release!))
 
 (define (compiler-driver-emit-lowered-with-level-mode-and-entry
   [input-path : String]

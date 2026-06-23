@@ -172,7 +172,8 @@
   (profile BuildProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
-  (stdlib-roots StringVec))
+  (stdlib-roots StringVec)
+  (resolved-deps CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
   (OkBuildPackageWorkerConfig BuildPackageWorkerConfig)
@@ -706,7 +707,8 @@
   [opt-level : i64]
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : StringVec]) : ResultBuildPackageWorkerConfig
+  [stdlib-roots : StringVec]
+  [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
       (OkBuildPackageWorkerConfig
@@ -718,7 +720,8 @@
           profile
           opt-level
           lock-policy
-          stdlib-roots))
+          stdlib-roots
+          (build-package-dep-list-reverse resolved-deps)))
       (ErrBuildPackageWorkerConfig
         "build: --package-worker requires --manifest-path"))
     (let
@@ -739,7 +742,8 @@
               opt-level
               has-opt-level
               lock-policy
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig "build: --target requires a value")
@@ -758,7 +762,8 @@
                     opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots)]
+                    stdlib-roots
+                    resolved-deps)]
                 [(ErrSourceToolTarget _)
                   (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))]
         [(string-eq current "--backend-mode")
@@ -780,7 +785,8 @@
                     opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots)]
+                    stdlib-roots
+                    resolved-deps)]
                 [(ErrSourceToolBackendMode message)
                   (ErrBuildPackageWorkerConfig message)])))]
         [(string-eq current "--profile")
@@ -805,7 +811,8 @@
                     next-opt-level
                     has-opt-level
                     lock-policy
-                    stdlib-roots))]))]
+                    stdlib-roots
+                    resolved-deps))]))]
         [(string-eq current "--release")
           (build-package-worker-parse-options
             (+ idx 1)
@@ -820,7 +827,8 @@
               (build-profile-default-opt-level (BuildProfileRelease)))
             has-opt-level
             lock-policy
-            stdlib-roots)]
+            stdlib-roots
+            resolved-deps)]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig "build: --opt-level requires a value")
@@ -838,7 +846,8 @@
                   (string->int value)
                   true
                   lock-policy
-                  stdlib-roots)
+                  stdlib-roots
+                  resolved-deps)
                 (ErrBuildPackageWorkerConfig (build-unknown-opt-level value)))))]
         [(string-eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
@@ -855,7 +864,8 @@
               opt-level
               has-opt-level
               (BuildPackageLockLocked)
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
             (ErrBuildPackageWorkerConfig
@@ -871,7 +881,8 @@
               opt-level
               has-opt-level
               (BuildPackageLockUpdate)
-              stdlib-roots))]
+              stdlib-roots
+              resolved-deps))]
         [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrBuildPackageWorkerConfig
@@ -887,7 +898,27 @@
               opt-level
               has-opt-level
               lock-policy
-              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
+              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              resolved-deps))]
+        [(string-eq current "--resolved-dep")
+          (if (>= (+ idx 2) count)
+            (ErrBuildPackageWorkerConfig
+              "build: --resolved-dep requires alias and path")
+            (build-package-worker-parse-options
+              (+ idx 3)
+              count
+              manifest-path
+              has-manifest
+              target
+              mode
+              profile
+              opt-level
+              has-opt-level
+              lock-policy
+              stdlib-roots
+              (CompilerPkgDepCons
+                (CompilerPkgDep (arg (+ idx 1)) (arg (+ idx 2)))
+                (box resolved-deps))))]
         [(host-plan-flag? current)
           (ErrBuildPackageWorkerConfig
             (str-cat "build: unknown package worker flag " current))]
@@ -907,7 +938,8 @@
     (build-package-default-opt-level)
     false
     (BuildPackageLockDefault)
-    (string-vec-new)))
+    (string-vec-new)
+    CompilerPkgDepNil))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
   (match config
@@ -1200,6 +1232,19 @@
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
+
+(define (build-package-dep-list-reverse-onto
+  [deps : CompilerPkgDepList]
+  [acc : CompilerPkgDepList]) : CompilerPkgDepList
+  (match deps
+    [(CompilerPkgDepNil) acc]
+    [(CompilerPkgDepCons dep rest)
+      (build-package-dep-list-reverse-onto
+        (box-get rest)
+        (CompilerPkgDepCons dep (box acc)))]))
+
+(define (build-package-dep-list-reverse [deps : CompilerPkgDepList]) : CompilerPkgDepList
+  (build-package-dep-list-reverse-onto deps CompilerPkgDepNil))
 
 (define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
   (compiler-load-normalize-path
@@ -3443,6 +3488,63 @@
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
 
+(define (build-package-finish-artifacts
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]
+  [link-inputs : SourceToolLinkInputs]
+  [tlci-path : String]
+  [tlci-text : String]
+  [asm : String]
+  [direct-object : ResultSourceToolString]) : i64
+  (match (source-tool-write-file
+    asm-path
+    (source-tool-augment-assembly-for-target asm target)
+    "build: failed to write package assembly")
+    [(SourceToolCommandErr message)
+      (begin
+        (print-error message)
+        1)]
+    [(SourceToolCommandOk)
+      (let
+        [direct-status : SourceToolDirectObjectStatus
+          (match direct-object
+            [(OkSourceToolString obj)
+              (build-package-write-linux-direct-object-artifact
+                kind
+                target
+                obj-path
+                artifact-path
+                link-inputs
+                obj)]
+            [(ErrSourceToolString message)
+              (SourceToolDirectObjectUnavailable message)])]
+        (match (build-package-artifact-status
+          kind
+          target
+          asm-path
+          obj-path
+          artifact-path
+          link-inputs
+          direct-status)
+          [(SourceToolCommandErr message)
+            (begin
+              (print-error message)
+              1)]
+          [(SourceToolCommandOk)
+            (match (build-package-write-tlci tlci-path tlci-text)
+              [(SourceToolCommandErr message)
+                (begin
+                  (print-error message)
+                  1)]
+              [(SourceToolCommandOk)
+                (begin
+                  (print-string (str-cat "Built " artifact-path "\n"))
+                  (print-string (str-cat "Built " tlci-path "\n"))
+                  0)])]))]))
+
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
     [(AstDeclPathNil) AstDeclPathNil]
@@ -3622,6 +3724,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]
   [dep-libs : ProcessStringList]) : i64
   (let
@@ -3712,86 +3815,87 @@
                     (print-error (compiler-diagnostic-render diag))
                     1)]
                 [(OkCompilerDriver asm)
-                  (match (build-package-tlci-text manifest decls owned-paths)
-                    [(ErrBuildPackageTlciText message)
-                      (begin
-                        (print-error message)
-                        1)]
-                    [(OkBuildPackageTlciText tlci-text)
-                      (let
-                        [direct-object : ResultSourceToolString
-                          (build-package-try-render-linux-direct-object
-                            kind
-                            target
-                            opt-level
-                            mode
-                            emit-entry
-                            crt-entry
-                            decls
-                            owned-paths)]
-                        [_reset-before-doctests : unit
-                          (compiler-driver-reset-file-state!)]
-                        [doctest-status : i64
-                          (build-doctest-typecheck-package-paths
-                            (build-package-doctest-paths name paths)
-                            stdlib-roots
-                            manifest-dir
-                            (struct-get manifest deps))]
-                        (if (= doctest-status 0)
-                          (match (source-tool-write-file
-                            asm-path
-                            (source-tool-augment-assembly-for-target asm target)
-                            "build: failed to write package assembly")
-                            [(SourceToolCommandErr message)
-                              (begin
-                                (print-error message)
-                                1)]
-                            [(SourceToolCommandOk)
+                  (begin
+                    (compiler-driver-release-lower-arenas-after-emit!)
+                    (match (build-package-tlci-text manifest decls owned-paths)
+                      [(ErrBuildPackageTlciText message)
+                        (begin
+                          (print-error message)
+                          1)]
+                      [(OkBuildPackageTlciText tlci-text)
+                        (if (build-package-async-process-supported?)
+                          (let
+                            [_reset-before-doctests : unit
+                              (compiler-driver-reset-analysis-state!)]
+                            [doctest-status : i64
+                              (build-package-run-doctest-worker
+                                manifest-path
+                                target
+                                opt-level
+                                profile
+                                mode
+                                lock-policy
+                                (compiler-pkg-deps-list
+                                  (struct-get manifest deps))
+                                stdlib-roots)]
+                            (if (= doctest-status 0)
                               (let
-                                [direct-status : SourceToolDirectObjectStatus
-                                  (match direct-object
-                                    [(OkSourceToolString obj)
-                                      (build-package-write-linux-direct-object-artifact
-                                        kind
-                                        target
-                                        obj-path
-                                        artifact-path
-                                        effective-link-inputs
-                                        obj)]
-                                    [(ErrSourceToolString message)
-                                      (SourceToolDirectObjectUnavailable
-                                        message)])]
-                                (match (build-package-artifact-status
+                                [direct-object : ResultSourceToolString
+                                  (build-package-try-render-linux-direct-object
+                                    kind
+                                    target
+                                    opt-level
+                                    mode
+                                    emit-entry
+                                    crt-entry
+                                    decls
+                                    owned-paths)]
+                                [_reset-after-direct-object : unit
+                                  (compiler-driver-reset-analysis-state!)]
+                                (build-package-finish-artifacts
                                   kind
                                   target
                                   asm-path
                                   obj-path
                                   artifact-path
                                   effective-link-inputs
-                                  direct-status)
-                                  [(SourceToolCommandErr message)
-                                    (begin
-                                      (print-error message)
-                                      1)]
-                                  [(SourceToolCommandOk)
-                                    (match (build-package-write-tlci
-                                      tlci-path
-                                      tlci-text)
-                                      [(SourceToolCommandErr message)
-                                        (begin
-                                          (print-error message)
-                                          1)]
-                                      [(SourceToolCommandOk)
-                                        (begin
-                                          (print-string
-                                            (str-cat
-                                              "Built "
-                                              artifact-path
-                                              "\n"))
-                                          (print-string
-                                            (str-cat "Built " tlci-path "\n"))
-                                          0)])]))])
-                          doctest-status))])]))])))))
+                                  tlci-path
+                                  tlci-text
+                                  asm
+                                  direct-object))
+                              doctest-status))
+                          (let
+                            [direct-object : ResultSourceToolString
+                              (build-package-try-render-linux-direct-object
+                                kind
+                                target
+                                opt-level
+                                mode
+                                emit-entry
+                                crt-entry
+                                decls
+                                owned-paths)]
+                            [_reset-before-doctests : unit
+                              (compiler-driver-reset-file-state!)]
+                            [doctest-status : i64
+                              (build-doctest-typecheck-package-paths
+                                (build-package-doctest-paths name paths)
+                                stdlib-roots
+                                manifest-dir
+                                (struct-get manifest deps))]
+                            (if (= doctest-status 0)
+                              (build-package-finish-artifacts
+                                kind
+                                target
+                                asm-path
+                                obj-path
+                                artifact-path
+                                effective-link-inputs
+                                tlci-path
+                                tlci-text
+                                asm
+                                direct-object)
+                              doctest-status)))]))]))])))))
 
 (define (build-package-worker-unified-cli?) : bool
   (and (> (arg-count) 1) (string-eq (arg 1) "build")))
@@ -3826,19 +3930,63 @@
           (set! i (+ i 1))))
       out)))
 
-(define (build-package-worker-args
+(define (build-package-worker-append-resolved-deps
+  [args : ProcessStringList]
+  [deps : CompilerPkgDepList]) : ProcessStringList
+  (match deps
+    [(CompilerPkgDepNil) args]
+    [(CompilerPkgDepCons dep rest)
+      (build-package-worker-append-resolved-deps
+        (source-tool-args-append
+          (source-tool-args-append
+            (source-tool-args-append args "--resolved-dep")
+            (struct-get dep alias))
+          (struct-get dep path))
+        (box-get rest))]))
+
+(define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
+  (let
+    [remote : CompilerPkgDep
+      (CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
+    [local : CompilerPkgDep (CompilerPkgDep "local" "../local")]
+    [deps : CompilerPkgDepList
+      (CompilerPkgDepCons
+        remote
+        (box (CompilerPkgDepCons local (box CompilerPkgDepNil))))]
+    [actual : ProcessStringList
+      (build-package-worker-append-resolved-deps (process-args-empty) deps)]
+    [expected0 : ProcessStringList
+      (source-tool-args-append (process-args-empty) "--resolved-dep")]
+    [expected1 : ProcessStringList (source-tool-args-append expected0 "remote")]
+    [expected2 : ProcessStringList
+      (source-tool-args-append expected1 "target/typelisp/git-deps/remote")]
+    [expected3 : ProcessStringList
+      (source-tool-args-append expected2 "--resolved-dep")]
+    [expected4 : ProcessStringList (source-tool-args-append expected3 "local")]
+    [expected : ProcessStringList
+      (source-tool-args-append expected4 "../local")]
+    (source-tool-string-list-eq? actual expected)))
+
+(test
+  build-package-worker-resolved-deps-args-smoke
+  (unless
+    (build-package-worker-resolved-deps-args-smoke-ok?)
+    (panic "build package worker resolved deps args smoke failed")))
+
+(define (build-package-worker-args-with-flag
+  [worker-flag : String]
   [manifest-path : String]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
   [stdlib-roots : StringVec]) : ProcessStringList
   (let
     [args0 : ProcessStringList
       (build-package-worker-command-prefix (process-args-empty))]
-    [args1 : ProcessStringList
-      (source-tool-args-append args0 "--package-worker")]
+    [args1 : ProcessStringList (source-tool-args-append args0 worker-flag)]
     [args2 : ProcessStringList
       (build-package-worker-append-option args1 "--manifest-path" manifest-path)]
     [args3 : ProcessStringList
@@ -3863,7 +4011,28 @@
         (int->string opt-level))]
     [args7 : ProcessStringList
       (build-package-lock-policy-arg args6 lock-policy)]
-    (build-package-worker-append-stdlib-roots args7 stdlib-roots)))
+    [args8 : ProcessStringList
+      (build-package-worker-append-resolved-deps args7 resolved-deps)]
+    (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
+
+(define (build-package-worker-args
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : StringVec]) : ProcessStringList
+  (build-package-worker-args-with-flag
+    "--package-worker"
+    manifest-path
+    target
+    opt-level
+    profile
+    mode
+    lock-policy
+    CompilerPkgDepNil
+    stdlib-roots))
 
 (define (build-package-worker-command
   [manifest-path : String]
@@ -3884,6 +4053,59 @@
       lock-policy
       stdlib-roots)))
 
+(define (build-package-doctest-worker-command
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
+  [stdlib-roots : StringVec]) : ProcessCommand
+  (process-command
+    (arg 0)
+    (build-package-worker-args-with-flag
+      "--package-doctest-worker"
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      resolved-deps
+      stdlib-roots)))
+
+(define (build-package-run-doctest-worker
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [resolved-deps : CompilerPkgDepList]
+  [stdlib-roots : StringVec]) : i64
+  (match (process-output
+    (build-package-doctest-worker-command
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      resolved-deps
+      stdlib-roots))
+    [(OkProcessOutput output)
+      (begin
+        (source-tool-forward-output output)
+        (process-output-status output))]
+    [(ErrProcessOutput error)
+      (begin
+        (print-error
+          (str-cat
+            "build: failed to run package doctest worker: "
+            (process-error-message error)))
+        1)]))
+
 (define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
   (match (build-package-worker-config-from idx count)
     [(ErrBuildPackageWorkerConfig message)
@@ -3901,30 +4123,106 @@
               (print-error (str-cat "Error: " message))
               1)]
           [(OkBuildManifest manifest)
-            (match (build-package-resolve-manifest-deps
-              normalized-path
-              manifest
-              (struct-get config lock-policy))
-              [(ErrBuildManifest message)
-                (begin
-                  (print-error message)
-                  1)]
-              [(OkBuildManifest resolved-manifest)
-                (if (build-package-kind-lib?
-                  (struct-get resolved-manifest kind))
-                  (build-package-emit-one
-                    normalized-path
-                    resolved-manifest
-                    (struct-get config target)
-                    (struct-get config opt-level)
-                    (struct-get config profile)
-                    (struct-get config mode)
-                    (struct-get config stdlib-roots)
-                    (process-args-empty))
+            (let
+              [resolved-deps : CompilerPkgDepList
+                (struct-get config resolved-deps)]
+              [resolved-manifest-result : ResultBuildManifest
+                (match resolved-deps
+                  [(CompilerPkgDepNil)
+                    (build-package-resolve-manifest-deps
+                      normalized-path
+                      manifest
+                      (struct-get config lock-policy))]
+                  [_
+                    (OkBuildManifest
+                      (CompilerPkgManifest
+                        (struct-get manifest name)
+                        (struct-get manifest version)
+                        (struct-get manifest kind)
+                        (struct-get manifest entry)
+                        (compiler-pkg-deps-from-list resolved-deps)
+                        (struct-get manifest link)))])]
+              (match resolved-manifest-result
+                [(ErrBuildManifest message)
                   (begin
-                    (print-error
-                      "build: package worker can only build staticlib packages")
-                    1))])]))]))
+                    (print-error message)
+                    1)]
+                [(OkBuildManifest resolved-manifest)
+                  (if (build-package-kind-lib?
+                    (struct-get resolved-manifest kind))
+                    (build-package-emit-one
+                      normalized-path
+                      resolved-manifest
+                      (struct-get config target)
+                      (struct-get config opt-level)
+                      (struct-get config profile)
+                      (struct-get config mode)
+                      (struct-get config lock-policy)
+                      (struct-get config stdlib-roots)
+                      (process-args-empty))
+                    (begin
+                      (print-error
+                        "build: package worker can only build staticlib packages")
+                      1))]))]))]))
+
+(define (build-package-doctest-worker-run-from [idx : i64] [count : i64]) : i64
+  (match (build-package-worker-config-from idx count)
+    [(ErrBuildPackageWorkerConfig message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkBuildPackageWorkerConfig config)
+      (let
+        [manifest-path : String (struct-get config manifest-path)]
+        [normalized-path : String
+          (build-package-normalize-manifest-path manifest-path)]
+        (match (build-load-manifest normalized-path)
+          [(ErrBuildManifest message)
+            (begin
+              (print-error (str-cat "Error: " message))
+              1)]
+          [(OkBuildManifest manifest)
+            (let
+              [resolved-deps : CompilerPkgDepList
+                (struct-get config resolved-deps)]
+              [resolved-manifest-result : ResultBuildManifest
+                (match resolved-deps
+                  [(CompilerPkgDepNil)
+                    (build-package-resolve-manifest-deps
+                      normalized-path
+                      manifest
+                      (struct-get config lock-policy))]
+                  [_
+                    (OkBuildManifest
+                      (CompilerPkgManifest
+                        (struct-get manifest name)
+                        (struct-get manifest version)
+                        (struct-get manifest kind)
+                        (struct-get manifest entry)
+                        (compiler-pkg-deps-from-list resolved-deps)
+                        (struct-get manifest link)))])]
+              (match resolved-manifest-result
+                [(ErrBuildManifest message)
+                  (begin
+                    (print-error message)
+                    1)]
+                [(OkBuildManifest resolved-manifest)
+                  (let
+                    [manifest-dir : String
+                      (compiler-load-dirname normalized-path)]
+                    [entry-path : String
+                      (compiler-load-join-root-path
+                        manifest-dir
+                        (struct-get resolved-manifest entry))]
+                    [kind : CompilerPkgKind (struct-get resolved-manifest kind)]
+                    (build-package-closure-doctest-status
+                      (struct-get resolved-manifest name)
+                      entry-path
+                      (struct-get config target)
+                      (struct-get config stdlib-roots)
+                      manifest-dir
+                      (struct-get resolved-manifest deps)
+                      (build-package-kind-entry? kind)))]))]))]))
 
 (define (build-package-async-process-supported?) : bool
   (not (string-eq (env-path-list-separator) ";")))
@@ -4321,7 +4619,7 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
-  [_lock-policy : BuildPackageLockPolicy]
+  [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : StringVec]) : i64
   (let
     [index : i64 0]
@@ -4342,6 +4640,7 @@
               opt-level
               profile
               mode
+              lock-policy
               stdlib-roots
               (process-args-empty))]
           (if (= node-status 0)
@@ -4491,6 +4790,7 @@
                       opt-level
                       profile
                       mode
+                      lock-policy
                       stdlib-roots
                       (build-package-graph-link-libs nodes profile target))
                     dep-status))])]))]))
@@ -4964,8 +5264,11 @@
 ;; first argument after any subcommand name). `--direct` remains accepted as a
 ;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
-  (if (and (> count start) (string-eq (arg start) "--package-worker"))
-    (build-package-worker-run-from (+ start 1) count)
-    (if (and (> count start) (string-eq (arg start) "--direct"))
-      (build-direct-from (+ start 1) count)
-      (build-direct-from start count))))
+  (cond
+    [(and (> count start) (string-eq (arg start) "--package-worker"))
+      (build-package-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string-eq (arg start) "--package-doctest-worker"))
+      (build-package-doctest-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string-eq (arg start) "--direct"))
+      (build-direct-from (+ start 1) count)]
+    [else (build-direct-from start count)]))

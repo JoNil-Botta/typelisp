@@ -5353,7 +5353,41 @@
                 (set! i (+ i 1)))))
           result)))))
 
-;; Replace form at position (line, col) with new-text. Returns original text if position invalid.
+;; Find start of the top-level form containing offset.
+;; Scans forward tracking depth; a '(' at depth 0 is a top-level form.
+;; Returns -1 if offset is not inside any top-level form.
+(define (lsp-find-top-level-form-at-offset [text : String] [offset : i64]) : i64
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [depth : i64 0]
+    [current-start : i64 -1]
+    [result : i64 -1]
+    (begin
+      (while (and (< i n) (= result -1))
+        (let
+          [c : char (string-ref text i)]
+          (begin
+            (if (= c (string-ref "(" 0))
+              (begin
+                (if (= depth 0)
+                  (set! current-start i)
+                  unit)
+                (set! depth (+ depth 1)))
+              (if (= c (string-ref ")" 0))
+                (begin
+                  (set! depth (- depth 1))
+                  (if (= depth 0)
+                    (if (and (>= offset current-start) (<= offset i))
+                      (set! result current-start)
+                      unit)
+                    unit))
+                unit))
+            (set! i (+ i 1)))))
+      result)))
+
+;; Replace top-level form at position (line, col) with new-text.
+;; Any position inside a top-level form selects that entire form.
 (define (lsp-replace-form-at-position
   [text : String]
   [line : i64]
@@ -5366,7 +5400,7 @@
       (if (>= offset (string-length text))
         (OkLspEdit text)
         (let
-          [form-start : i64 (lsp-find-form-at-offset text offset)]
+          [form-start : i64 (lsp-find-top-level-form-at-offset text offset)]
           (if (= form-start -1)
             (OkLspEdit text)
             (let
@@ -5492,7 +5526,7 @@
                       (lsp-write-error id -32600 "No form found at position")
                       (LspContinue docs))
                     (let
-                      [form-start : i64 (lsp-find-form-at-offset text offset)]
+                      [form-start : i64 (lsp-find-top-level-form-at-offset text offset)]
                       (if (= form-start -1)
                         (begin
                           (lsp-write-error
@@ -5570,7 +5604,7 @@
                           (LspContinue docs))
                         (let
                           [form-start : i64
-                            (lsp-find-form-at-offset text offset)]
+                            (lsp-find-top-level-form-at-offset text offset)]
                           (if (= form-start -1)
                             (begin
                               (lsp-write-error

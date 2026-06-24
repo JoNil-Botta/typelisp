@@ -7,9 +7,7 @@
   `(begin
     (module generated.imported_type_vector_provider)
     (defstruct T
-      (value i64))
-    (export (type T))
-    (export (constructor T))))
+      (value i64))))
 
 (defmacro (vector-user) : Module
   `(begin
@@ -23,9 +21,7 @@
         [items : vec.Vec (vec.new)]
         (begin
           (vec.push (&mut items) value)
-          (struct-get (vec.get (& items) 0 (T 0)) value))))
-    (export (value make))
-    (export (value score))))
+          (struct-get (vec.get (& items) 0 (T 0)) value))))))
 
 (import (vector-user) as user)
 

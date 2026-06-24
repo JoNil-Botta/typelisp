@@ -113,10 +113,6 @@
 
 ;: Exported only so imported `str-cat` expansions can finish their internal
 ;: recursive pack step.
-(export (macro str-cat-pack))
-
-(export (macro str-cat))
-
 ;; Inline coverage migrated from stdlib/tests/str_cat_api.tl (#3082).
 (cfg
   test

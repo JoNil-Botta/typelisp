@@ -12,11 +12,6 @@
   (if (< index (struct-get v len))
     (struct-get v first)
     fallback))
-(export
-  (type StringVec)
-  (value string-vec-new)
-  (value string-vec-push)
-  (value string-vec-get))
 (module stdlib.list)
 (import stdlib.vector)
 (defenum StringList (StringNil) (StringCons String (Box StringList)))
@@ -41,13 +36,6 @@
   (StringCons (vector.string-vec-get v 0 \"\") (box StringNil)))
 (define (string-list-roundtrip-count [items : StringList]) : i64
   (string-list-count (string-list-from-vec-single (string-list-to-vec items))))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-single)
-  (value string-list-count)
-  (value string-list-roundtrip-count))
 (module main)
 (import stdlib.list)
 (define (main) : i64
@@ -74,13 +62,7 @@
 (define (string-list-cons [value : String] [rest : StringList]) : StringList
   (StringCons value (box rest)))
 (define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-cons)
-  (value string-list-single))")
+  (StringCons value (box StringNil)))")
       (write-file
         entry
         "(import stdlib.list)

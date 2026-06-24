@@ -932,12 +932,41 @@
     names
     (string-i64-map-put names name 1)))
 
+;; The leaf of an alias-qualified source name (`io.panic` -> `panic`). Source
+;; calls write the importing module's alias dot-form; the callee function is
+;; declared under its bare leaf name, so reachability must mark the leaf too.
+;; Returns the input unchanged when there is no interior `.`.
+(define (tltest-reach-name-dot-leaf [name : String]) : String
+  (let
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string-length name)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref name i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (if (and (>= last-dot 0) (< last-dot (- n 1)))
+        (substring name (+ last-dot 1) (- n (+ last-dot 1)))
+        name))))
+
 (define (tltest-reach-mark-source-name [names : StringI64Map] [name : String]) : StringI64Map
   (let
     [marked : StringI64Map (tltest-reach-mark-name names name)]
-    (if (tc-name-qualified? name)
-      (tltest-reach-mark-name marked (tc-qualified-name-base name))
-      marked)))
+    [with-slash-base : StringI64Map
+      (if (tc-name-qualified? name)
+        (tltest-reach-mark-name marked (tc-qualified-name-base name))
+        marked)]
+    ;; Alias-qualified source calls (`io.panic`) are not slash-qualified, so the
+    ;; base extraction above leaves them whole. Mark the dot-leaf so the callee
+    ;; (`panic`) survives runtime-decl pruning (everything is exported by
+    ;; default: there is no longer an export list to seed it as a root).
+    [leaf : String (tltest-reach-name-dot-leaf name)]
+    (if (string-eq leaf name)
+      with-slash-base
+      (tltest-reach-mark-name with-slash-base leaf))))
 
 (define (tltest-reach-mark-string-snapshot-runtime [names : StringI64Map]) : StringI64Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
@@ -1428,21 +1457,6 @@
         (box-get rest)
         (tltest-reach-mark-runtime-helper-root decl names))]))
 
-(define (tltest-reach-mark-export-items
-  [items : AstExportItemList]
-  [names : StringI64Map]) : StringI64Map
-  (match items
-    [(AstExportItemNil) names]
-    [(AstExportItemCons item rest)
-      (let
-        [rest : AstExportItemList (box-get rest)]
-        (match item
-          [(AstExportValue name)
-            (tltest-reach-mark-export-items
-              rest
-              (tltest-reach-mark-name names name))]
-          [_ (tltest-reach-mark-export-items rest names)]))]))
-
 (define (tltest-reach-mark-struct-cleanup
   [cleanup : AstStructCleanup]
   [names : StringI64Map]) : StringI64Map
@@ -1534,7 +1548,6 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
-    [(AstDeclExport items) (tltest-reach-mark-export-items items names)]
     [(AstDeclDefStruct _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
@@ -1730,9 +1743,6 @@
         AstParamNil
         (AstTyBool)
         (ast-node-push (AstExprLiteral (AstLitBool true))))]
-    [dep-export : AstDecl
-      (AstDeclExport
-        (ast-export-item-cons (AstExportValue "string-eq") AstExportItemNil))]
     [source-import : AstDecl
       (AstDeclImport
         (AstImportSpec
@@ -1747,29 +1757,25 @@
         (ast-decl-cons
           dep-fn
           (ast-decl-cons
-            dep-export
+            (ast-decl-module "stdlib.args")
             (ast-decl-cons
-              (ast-decl-module "stdlib.args")
+              source-import
               (ast-decl-cons
-                source-import
-                (ast-decl-cons
-                  (ast-decl-test
-                    "owned"
-                    (tltest-call-expr "string.string-eq")
-                    span)
-                  AstDeclNil))))))]
+                (ast-decl-test
+                  "owned"
+                  (tltest-call-expr "string.string-eq")
+                  span)
+                AstDeclNil)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         dep-path
         (ast-decl-path-cons
           dep-path
           (ast-decl-path-cons
-            dep-path
+            source
             (ast-decl-path-cons
               source
-              (ast-decl-path-cons
-                source
-                (ast-decl-path-cons source AstDeclPathNil))))))]
+              (ast-decl-path-cons source AstDeclPathNil)))))]
     (match (tltest-build-harness source decls paths)
       [(InlineHarness program _ count)
         (match program
@@ -2117,59 +2123,6 @@
   (if (tltest-import-alias-preserved-self-test?)
     unit
     (panic "test CLI inline harness dropped import alias")))
-
-(define (tltest-exported-value-preserved-self-test?) : bool
-  (let
-    [helper-name : String "__tl_exported_test_helper"]
-    [helper-decl : AstDecl
-      (ast-decl-def-fn
-        helper-name
-        AstParamNil
-        (AstTyUnit)
-        (ast-node-push (AstExprLiteral (AstLitUnit))))]
-    [export-decl : AstDecl
-      (AstDeclExport
-        (ast-export-item-cons (AstExportValue helper-name) AstExportItemNil))]
-    [span : AstSourceSpan (AstSourceSpan 7 1 7 1)]
-    [decls : AstDeclList
-      (ast-decl-cons
-        helper-decl
-        (ast-decl-cons
-          export-decl
-          (ast-decl-cons
-            (ast-decl-test
-              "exported-helper-not-called"
-              (ast-node-push (AstExprLiteral (AstLitUnit)))
-              span)
-            AstDeclNil)))]
-    [paths : AstDeclPathList
-      (ast-decl-path-cons
-        "exports.tl"
-        (ast-decl-path-cons
-          "exports.tl"
-          (ast-decl-path-cons "exports.tl" AstDeclPathNil)))]
-    (match (tltest-build-harness "exports.tl" decls paths)
-      [(InlineHarness program _ count)
-        (match program
-          [(AstProgram harness-decls-box)
-            (match (box-get harness-decls-box)
-              [(AstDeclCons first rest0)
-                (match (box-get rest0)
-                  [(AstDeclCons second _)
-                    (and
-                      (= count 1)
-                      (string-eq (tltest-decl-name first) helper-name)
-                      (match second
-                        [(AstDeclExport _) true]
-                        [_ false]))]
-                  [_ false])]
-              [_ false])])])))
-
-(test
-  test-cli-inline-harness-preserves-exported-values
-  (if (tltest-exported-value-preserved-self-test?)
-    unit
-    (panic "test CLI inline harness pruned exported value")))
 
 (define (tltest-runtime-string-helper-roots-self-test?) : bool
   (let

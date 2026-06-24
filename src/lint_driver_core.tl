@@ -450,8 +450,9 @@
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 ;; Package-level dead-code linting records all top-level declarations as graph
-;; nodes, but only reports private `define` values/functions. Non-reportable
-;; nodes still carry references so exported types/macros can keep helpers alive.
+;; nodes. Top-level items are visible by default after legacy `(export ...)`
+;; removal, so declarations are roots and not private dead-code candidates until
+;; the language grows an explicit private marker.
 (defstruct SelfhostLintDeadDecl
   (path String)
   (name String)
@@ -1050,28 +1051,6 @@
           0)
         body-span))))
 
-(define (selfhost-lint-dead-export-refs
-  [items : AstExportItemList]
-  [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (match items
-    [(AstExportItemNil) scan]
-    [(AstExportItemCons item rest)
-      (let
-        [next : SelfhostLintDeadScan
-          (match item
-            [(AstExportValue name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportType name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportMacro name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportConstructor name)
-              (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportField type-name field-name)
-              (selfhost-lint-dead-scan-add-root
-                (selfhost-lint-dead-scan-add-root scan type-name)
-                field-name)]
-            [(AstExportVariant name)
-              (selfhost-lint-dead-scan-add-root scan name)])]
-        (selfhost-lint-dead-export-refs (box-get rest) next))]))
-
 (define (selfhost-lint-dead-refs-to-roots-from
   [scan : SelfhostLintDeadScan]
   [refs : StringVec]
@@ -1206,6 +1185,16 @@
     scan
     (SelfhostLintDeadDecl path name span refs false reportable)))
 
+(define (selfhost-lint-dead-add-visible-node
+  [scan : SelfhostLintDeadScan]
+  [path : String]
+  [name : String]
+  [span : AstSourceSpan]
+  [refs : StringVec]) : SelfhostLintDeadScan
+  (selfhost-lint-dead-scan-add-root
+    (selfhost-lint-dead-add-node scan path name span refs false)
+    name))
+
 (define (selfhost-lint-dead-scan-decl
   [scan : SelfhostLintDeadScan]
   [path : String]
@@ -1226,18 +1215,8 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        [with-node : SelfhostLintDeadScan
-          (selfhost-lint-dead-add-node
-            scan
-            path
-            text
-            span
-            refs
-            (and allow-report (not (string-eq text "main"))))]
-        (if (string-eq text "main")
-          (selfhost-lint-dead-scan-add-root with-node text)
-          with-node))]
-    [(AstDeclDefFn name params ret body export)
+        (selfhost-lint-dead-add-visible-node scan path text span refs))]
+    [(AstDeclDefFn name params ret body _)
       (let
         [text : String (intern-str name)]
         [refs : StringVec
@@ -1251,28 +1230,9 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        [is-exported : bool
-          (match export
-            [(AstFnNoExport) false]
-            [(AstFnExport _) true])]
-        [is-main : bool (string-eq text "main")]
-        [with-node : SelfhostLintDeadScan
-          (selfhost-lint-dead-add-node
-            scan
-            path
-            text
-            span
-            refs
-            (if allow-report
-              (if is-exported
-                false
-                (not is-main))
-              false))]
-        (if (or is-exported is-main)
-          (selfhost-lint-dead-scan-add-root with-node text)
-          with-node))]
+        (selfhost-lint-dead-add-visible-node scan path text span refs))]
     [(AstDeclDefMacro name params ret body)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
@@ -1281,58 +1241,52 @@
           (ast-node-get body)
           (selfhost-lint-dead-type-refs
             ret
-            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new))))
-        false)]
+            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new)))))]
     [(AstDeclExtern name _ meta ty)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-type-refs
           ty
-          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new))))]
     [(AstDeclDefEnum name cleanup variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefEnumLifetimes name _ cleanup variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefStruct name _ cleanup fields)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefStructLifetimes name _ _ cleanup fields)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1344,17 +1298,15 @@
     [(AstDeclImport _) scan]
     [(AstDeclIncludeStr _ _) scan]
     [(AstDeclIncludeBin _ _) scan]
-    [(AstDeclExport items) (selfhost-lint-dead-export-refs items scan)]
     [(AstDeclDefDispatch name variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-dispatch-variant-list-refs
           variants
-          (string-vec-new))
-        false)]
+          (string-vec-new)))]
     [(AstDeclTest _ body _)
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1957,10 +1909,6 @@
     [(data.Maybe.Some y) y]
     [_ 0]))")
 
-(define (selfhost-lint-used-import-export-source) : String
-  "(import pkg.data)
-(export (value data.value))")
-
 (define (selfhost-lint-used-import-macro-call-source) : String
   "(import pkg.macros)
 (pkg.macros.emit i64)")
@@ -1975,12 +1923,12 @@
 (define (main) : i64 42)")
 
 (define (selfhost-lint-package-dead-source-a) : String
-  "(export (value public-api))
+  "(define (main) : i64 (public-api 1))
 (define (public-api [x : i64]) : i64 (helper x))
 (define (helper [x : i64]) : i64 (cross-file-helper x))
-(define (unused-private) : i64 1)
+(define (default-visible-helper) : i64 1)
 ;; lint-allow: dead-code
-(define (suppressed-unused) : i64 2)")
+(define (suppressed-visible-helper) : i64 2)")
 
 (define (selfhost-lint-package-dead-source-b) : String
   (string-append
@@ -2235,12 +2183,6 @@
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-export-source))
-            0))
-        39]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
               (selfhost-lint-used-import-macro-call-source))
             0))
         40]
@@ -2279,7 +2221,7 @@
     [count-b : i64
       (selfhost-lint-package-dead-count-for-source "pkg/b.tl" source-b decls)]
     (cond
-      [(not (= count-a 1)) 50]
+      [(not (= count-a 0)) 50]
       [(not (= count-b 0)) 51]
       [(not
           (string-eq

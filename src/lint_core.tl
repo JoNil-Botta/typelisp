@@ -1747,35 +1747,6 @@
               true
               (lint-dispatch-variant-list-uses-import? rest alias module-name))]))]))
 
-(define (lint-export-item-uses-import?
-  [item : AstExportItem]
-  [alias : String]
-  [module-name : String]) : bool
-  (match item
-    [(AstExportValue name) (lint-name-uses-import? name alias module-name)]
-    [(AstExportType name) (lint-name-uses-import? name alias module-name)]
-    [(AstExportMacro name) (lint-name-uses-import? name alias module-name)]
-    [(AstExportConstructor name)
-      (lint-name-uses-import? name alias module-name)]
-    [(AstExportField type-name field-name)
-      (if (lint-name-uses-import? type-name alias module-name)
-        true
-        (lint-name-uses-import? field-name alias module-name))]
-    [(AstExportVariant name) (lint-name-uses-import? name alias module-name)]))
-
-(define (lint-export-item-list-uses-import?
-  [items : AstExportItemList]
-  [alias : String]
-  [module-name : String]) : bool
-  (match items
-    [(AstExportItemNil) false]
-    [(AstExportItemCons item rest)
-      (let
-        [rest : AstExportItemList (box-get rest)]
-        (if (lint-export-item-uses-import? item alias module-name)
-          true
-          (lint-export-item-list-uses-import? rest alias module-name)))]))
-
 (define (lint-generated-decl-meta-uses-import?
   [meta : AstGeneratedDeclMeta]
   [alias : String]
@@ -1834,8 +1805,6 @@
     [(AstDeclImport _) false]
     [(AstDeclIncludeStr _ _) false]
     [(AstDeclIncludeBin _ _) false]
-    [(AstDeclExport items)
-      (lint-export-item-list-uses-import? items alias module-name)]
     [(AstDeclDefDispatch _ variants)
       (lint-dispatch-variant-list-uses-import? variants alias module-name)]
     [(AstDeclTest _ body _)
@@ -5061,7 +5030,6 @@
     [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclDefStructLifetimes _ _ _ _ _) acc]
     [(AstDeclDefDispatch _ _) acc]
-    [(AstDeclExport _) acc]
     [(AstDeclIncludeStr _ _) acc]
     [(AstDeclIncludeBin _ _) acc]
     [(AstDeclImport _) acc]))

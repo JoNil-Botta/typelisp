@@ -880,54 +880,6 @@
         [(AstFnExport b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
-(define (gen-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
-  (match a
-    [(AstExportValue a-name)
-      (match b
-        [(AstExportValue b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportType a-name)
-      (match b
-        [(AstExportType b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportMacro a-name)
-      (match b
-        [(AstExportMacro b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportConstructor a-name)
-      (match b
-        [(AstExportConstructor b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportField a-type a-field)
-      (match b
-        [(AstExportField b-type b-field)
-          (and (string-eq a-type b-type) (string-eq a-field b-field))]
-        [_ false])]
-    [(AstExportVariant a-name)
-      (match b
-        [(AstExportVariant b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (gen-export-item-list-eq?
-  [a : AstExportItemList]
-  [b : AstExportItemList]) : bool
-  (match a
-    [(AstExportItemNil)
-      (match b
-        [(AstExportItemNil) true]
-        [_ false])]
-    [(AstExportItemCons a-head a-rest)
-      (let
-        [a-rest : AstExportItemList (box-get a-rest)]
-        (match b
-          [(AstExportItemCons b-head b-rest)
-            (let
-              [b-rest : AstExportItemList (box-get b-rest)]
-              (and
-                (gen-export-item-eq? a-head b-head)
-                (gen-export-item-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
 (define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
   (match a
     [(AstImportPath)
@@ -1079,10 +1031,6 @@
       (match b
         [(AstDeclIncludeBin b-name b-path)
           (and (string-eq a-name b-name) (string-eq a-path b-path))]
-        [_ false])]
-    [(AstDeclExport a-items)
-      (match b
-        [(AstDeclExport b-items) (gen-export-item-list-eq? a-items b-items)]
         [_ false])]
     [(AstDeclTest a-name a-body-box _)
       (let

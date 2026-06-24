@@ -356,21 +356,3 @@
       (if (ptr-null? (ffi-c-string-alloc with-nul))
         unit
         (ffi-test-fail)))))
-
-(export
-  (value ffi-c-bytes-required-bytes)
-  (value ffi-c-bytes-interior-nul?)
-  (value ffi-c-bytes-copy-bytes!)
-  (value ffi-c-bytes-copy!)
-  (value ffi-c-bytes-alloc)
-  (value ffi-cbytes)
-  (value ffi-c-string-required-bytes)
-  (value ffi-c-string-interior-nul?)
-  (value ffi-c-string-copy-bytes!)
-  (value ffi-c-string-copy!)
-  (value ffi-c-string-alloc)
-  (value ffi-cstr)
-  (type FfiCStringCopyResult)
-  (variant FfiCStringCopyOk)
-  (variant FfiCStringInteriorNul)
-  (variant FfiCStringBufferTooSmall))

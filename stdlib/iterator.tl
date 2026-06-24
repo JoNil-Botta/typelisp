@@ -203,25 +203,3 @@
   (test
     iterator-range-api
     (test.assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
-
-(export
-  (value range)
-  (value range-inclusive)
-  (value i64-range-iterator)
-  (value i64-range-next)
-  (value i64-range-done?)
-  (value i64-range-value-or)
-  (type I64Range)
-  (type I64RangeIter)
-  (type I64RangeNext)
-  (constructor I64Range)
-  (constructor I64RangeIter)
-  (field I64Range start)
-  (field I64Range end)
-  (field I64Range inclusive)
-  (field I64RangeIter current)
-  (field I64RangeIter end)
-  (field I64RangeIter inclusive)
-  (field I64RangeIter exhausted)
-  (variant I64RangeDone)
-  (variant I64RangeItem))

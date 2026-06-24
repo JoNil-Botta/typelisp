@@ -269,9 +269,9 @@ generic/type-constructor work in #483 is superseded by that chain.
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
 `extern`, and `import`. The selfhost module/macro path also supports `module`
 and `defmacro` for typed expression macro workflows; every top-level item is
-exported by default, so the legacy `export` form is deprecated (still parsed but
-inert). The final stdlib-macro migration of parser-owned core forms remains
-separate.
+exported by default, and the legacy `export` form has been removed (it is no
+longer a recognized declaration). The final stdlib-macro migration of
+parser-owned core forms remains separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
@@ -403,7 +403,7 @@ builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
 Assembly and object side artifacts use the same `target/<profile>/` directory.
 Package builds also emit a metadata-only comptime image named `<name>.tlci`
 beside the native artifact; `typelisp inspect <file.tlci>` renders the tlci
-header, section table, package metadata, and exports. The `.tlci` name is
+header, section table, and package metadata. The `.tlci` name is
 target-independent today because v1 images carry host compile-time metadata,
 not target runtime object code; cross-target package builds keep separate
 runtime artifacts while sharing the same host comptime image path.
@@ -927,7 +927,7 @@ Commands:
 `check` is the public type-check command.
 
 `inspect <file.tlci>` reads a TypeLisp comptime image and prints stable header,
-section, package, and export metadata. Malformed images report tlci parse
+section, and package metadata. Malformed images report tlci parse
 diagnostics.
 
 Common options include `--target <target>`, `--backend-mode <mode>`,

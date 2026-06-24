@@ -127,5 +127,3 @@
                       (set! (struct-get v len) (+ index 1))))))))]
         [_ `(begin)])]
     [_ `(begin)]))
-
-(export (macro vector-family))

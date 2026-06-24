@@ -1764,16 +1764,6 @@
               alias
               module
               path-aware)]
-          [(AstDeclExport _)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              module
-              path-aware)]
           [(AstDeclTest _ _ _)
             (lower-name-env-add-module-aliases
               rest
@@ -1849,15 +1839,6 @@
               alias
               module-id)]
           [(AstDeclIncludeBin _ _)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              module-id)]
-          [(AstDeclExport _)
             (lower-name-env-add-module-aliases-cache
               rest
               base-cache
@@ -4453,21 +4434,16 @@
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
-          (match (build-compiler-exports-with program symbols registries)
-            [(OkCompilerExports exports)
-              (let
-                [ctx : TcContext
-                  (TcContext program symbols registries exports "" pools)]
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (begin
-                      (tc-context-capture-active-pools! ctx)
-                      (OkLowerCloneRoots
-                        (lower-clone-roots-program ctx top-env names program)))]
-                  [(ErrTcEnv message)
-                    (ErrLowerCloneRoots (lower-diagnostic message))]))]
-            [(ErrCompilerExports message)
-              (ErrLowerCloneRoots (lower-diagnostic message))])]
+          (let
+            [ctx : TcContext (TcContext program symbols registries "" pools)]
+            (match (tc-build-top-env ctx program)
+              [(OkTcEnv top-env)
+                (begin
+                  (tc-context-capture-active-pools! ctx)
+                  (OkLowerCloneRoots
+                    (lower-clone-roots-program ctx top-env names program)))]
+              [(ErrTcEnv message)
+                (ErrLowerCloneRoots (lower-diagnostic message))]))]
         [(ErrCompilerRegistries message)
           (ErrLowerCloneRoots (lower-diagnostic message))])]
     [(ErrCompilerSymbols message)
@@ -5631,86 +5607,6 @@
 (define (lower-comptime-only-module? [module : String]) : bool
   (string-eq module "stdlib.comptime"))
 
-(define (lower-export-value-item-kept?
-  [_entry-path : String]
-  [_decl-path : String]
-  [module : String]
-  [names : LowerNameCache]
-  [all-functions : StringI64Map]
-  [reachable : StringI64Map]
-  [dispatch-variants : StringI64Map]
-  [name : String]) : bool
-  (if (lower-comptime-only-module? module)
-    true
-    (let
-      [logical-name : String
-        (lower-name-cache-resolve
-          names
-          (compiler-symbol-module-key module name))]
-      (if (string-i64-map-contains? all-functions logical-name)
-        (lower-function-kept-by-reach-or-dispatch?
-          reachable
-          dispatch-variants
-          logical-name)
-        true))))
-
-(define (lower-export-item-kept?
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [names : LowerNameCache]
-  [all-functions : StringI64Map]
-  [reachable : StringI64Map]
-  [dispatch-variants : StringI64Map]
-  [item : AstExportItem]) : bool
-  (match item
-    [(AstExportValue name)
-      (lower-export-value-item-kept?
-        entry-path
-        decl-path
-        module
-        names
-        all-functions
-        reachable
-        dispatch-variants
-        name)]
-    [_ true]))
-
-(define (lower-filter-reachable-export-items
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [names : LowerNameCache]
-  [all-functions : StringI64Map]
-  [reachable : StringI64Map]
-  [dispatch-variants : StringI64Map]
-  [items : AstExportItemList]) : AstExportItemList
-  (match items
-    [(AstExportItemNil) AstExportItemNil]
-    [(AstExportItemCons item rest)
-      (let
-        [filtered-rest : AstExportItemList
-          (lower-filter-reachable-export-items
-            entry-path
-            decl-path
-            module
-            names
-            all-functions
-            reachable
-            dispatch-variants
-            (box-get rest))]
-        (if (lower-export-item-kept?
-          entry-path
-          decl-path
-          module
-          names
-          all-functions
-          reachable
-          dispatch-variants
-          item)
-          (ast-export-item-cons item filtered-rest)
-          filtered-rest))]))
-
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -5766,27 +5662,6 @@
                 rest-paths
                 entry-path
                 (intern-str next-module)
-                names
-                all-functions
-                reachable
-                dispatch-variants))]
-          [(AstDeclExport items)
-            (ast-decl-cons
-              (AstDeclExport
-                (lower-filter-reachable-export-items
-                  entry-path
-                  decl-path
-                  module
-                  names
-                  all-functions
-                  reachable
-                  dispatch-variants
-                  items))
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                module
                 names
                 all-functions
                 reachable
@@ -5951,79 +5826,6 @@
           all-functions
           state
           inner))]
-    [_ state]))
-
-(define (lower-reach-add-module-export-value-item
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [all-functions : StringI64Map]
-  [state : LowerReachState]
-  [item : AstExportItem]) : LowerReachState
-  (match item
-    [(AstExportValue name)
-      (lower-reach-add-logical
-        all-functions
-        state
-        (lower-decl-logical-name entry-path decl-path module name))]
-    [_ state]))
-
-(define (lower-reach-add-module-export-value-items
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [all-functions : StringI64Map]
-  [state : LowerReachState]
-  [items : AstExportItemList]) : LowerReachState
-  (match items
-    [(AstExportItemNil) state]
-    [(AstExportItemCons item rest)
-      (lower-reach-add-module-export-value-items
-        entry-path
-        decl-path
-        module
-        all-functions
-        (lower-reach-add-module-export-value-item
-          entry-path
-          decl-path
-          module
-          all-functions
-          state
-          item)
-        (box-get rest))]))
-
-(define (lower-reach-add-module-export-root-decl
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [all-functions : StringI64Map]
-  [state : LowerReachState]
-  [decl : AstDecl]) : LowerReachState
-  (match decl
-    [(AstDeclExport items)
-      (lower-reach-add-module-export-value-items
-        entry-path
-        decl-path
-        module
-        all-functions
-        state
-        items)]
-    [(AstDeclComptimeDecl _ inner-box)
-      (lower-reach-add-module-export-root-decl
-        entry-path
-        decl-path
-        module
-        all-functions
-        state
-        (box-get inner-box))]
-    [(AstDeclUnsafe inner-box)
-      (lower-reach-add-module-export-root-decl
-        entry-path
-        decl-path
-        module
-        all-functions
-        state
-        (box-get inner-box))]
     [_ state]))
 
 (define (lower-reach-add-export-roots-in-module
@@ -6804,7 +6606,7 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -9869,7 +9671,7 @@
                             fail-label
                             scrut-reg-group?)
                           (match ctx
-                            [(TcContext _ symbols registries _ _ _)
+                            [(TcContext _ symbols registries _ _)
                               (match (compiler-registries-lookup-variant-id
                                 registries
                                 nested-name)
@@ -10162,7 +9964,7 @@
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       [nested-name-str : String (intern-str nested-name)]
                       (match ctx
-                        [(TcContext _ symbols registries _ _ _)
+                        [(TcContext _ symbols registries _ _)
                           (match (compiler-registries-lookup-variant-id
                             registries
                             nested-name)
@@ -10613,7 +10415,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -11375,7 +11177,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _)
       (match (tc-program-enum-variants program enum-name)
         [(OkAstVariantDefList variants)
           (match (lower-reserve-heap-storage
@@ -12431,7 +12233,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _ _)
+    [(TcContext _ _ registries _ _)
       (let
         [enum-name : String (tc-result-info-enum-name return-info)]
         [err-name : String (tc-result-info-err-name return-info)]
@@ -12563,7 +12365,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _ _)
+    [(TcContext _ _ registries _ _)
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         (match (compiler-registries-lookup-variant registries ok-name)
@@ -12664,7 +12466,7 @@
 
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ _ module _)
+    [(TcContext _ symbols _ module _)
       (match (if (and
         (> (string-length module) 0)
         (not (tc-name-qualified? name)))
@@ -14079,7 +13881,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -14207,7 +14009,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(OkAstTypeList fields)
           (let
@@ -32612,7 +32414,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -32795,7 +32597,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -34224,7 +34026,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -34363,7 +34165,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -36262,7 +36064,6 @@
                 [(AstDeclImport _) (set! cur-decls rest)]
                 [(AstDeclIncludeStr _ _) (set! cur-decls rest)]
                 [(AstDeclIncludeBin _ _) (set! cur-decls rest)]
-                [(AstDeclExport _) (set! cur-decls rest)]
                 [(AstDeclModule next-module)
                   (let
                     [next-module-str : String (intern-str next-module)]
@@ -36846,8 +36647,7 @@
       (if flag x 0))))")
 
 (define (compiler-lower-export-source) : String
-  "(export (value answer))
-(define answer : i64 42)
+  "(define answer : i64 42)
 (define (main) : i64 answer)")
 
 (define (compiler-lower-macro-expand-source) : String
@@ -37400,7 +37200,6 @@
 (define (compiler-lower-stdlib-string-wrapper-prune-source) : String
   "(module stdlib.string)
 (define (string-length [text : (& text str)]) : i64 0)
-(export (value string-length))
 (module stdlib.io)
 (import stdlib.string)
 (define (io-len [text : String]) : i64 (string-length text))
@@ -38066,11 +37865,6 @@
 (defenum StringList (StringNil) (StringCons String (Box StringList)))
 (define (string-list-cons [value : String] [rest : StringList]) : StringList
   (StringCons value (box rest)))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-cons))
 (module main)
 (import stdlib.list)
 (define (main) : i64
@@ -41562,11 +41356,9 @@
   "(module left)
 (define same : i64 20)
 (define (get) : i64 same)
-(export (value get))
 (module right)
 (define same : i64 22)
 (define (get) : i64 same)
-(export (value get))
 (module main)
 (import left)
 (import right)
@@ -41590,14 +41382,6 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
@@ -41623,7 +41407,6 @@
 (define (compiler-lower-dotted-import-default-alias-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import pkg.data)
 (define (main) : i64 (+ (data.get) 1))")
@@ -41642,7 +41425,6 @@
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
 (define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
-(export (value string-eq))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
@@ -41672,14 +41454,6 @@
   (match cands
     [(CandNil) (Candidate 0)]
     [(CandCons head rest) head]))
-(export
-  (value cand-nth)
-  (type Candidate)
-  (constructor Candidate)
-  (field Candidate number)
-  (type CandList)
-  (variant CandNil)
-  (variant CandCons))
 (module main)
 (import data)
 (define (main) : i64
@@ -41699,7 +41473,6 @@
 (define (compiler-lower-module-function-returning-enum-source) : String
   "(module data)
 (defenum Maybe (get))
-(export (type Maybe) (variant get))
 (module main)
 (import data)
 (define (get) : data.Maybe
@@ -41721,11 +41494,6 @@
   "(module data)
 (defstruct Payload (code i64) (left i64) (right i64))
 (defenum Choice (Wrap Payload))
-(export
-  (type Payload)
-  (constructor Payload)
-  (type Choice)
-  (variant Wrap))
 (module main)
 (import data)
 (define (make) : data.Choice
@@ -41753,11 +41521,7 @@
     (define (double [b : Box1]) : i64
       (* (struct-get b value) 2))
     (define (bumped [b : Box1]) : i64
-      (+ (double b) 1))
-    (export (type Box1))
-    (export (constructor Box1))
-    (export (value make))
-    (export (value bumped))))
+      (+ (double b) 1))))
 (import (int-box) as ib)
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
@@ -46374,44 +46138,6 @@
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
-(define (lower-test-export-list-has-value?
-  [items : AstExportItemList]
-  [name : String]) : bool
-  (match items
-    [(AstExportItemNil) false]
-    [(AstExportItemCons item rest)
-      (match item
-        [(AstExportValue found)
-          (if (string-eq found name)
-            true
-            (lower-test-export-list-has-value? (box-get rest) name))]
-        [_ (lower-test-export-list-has-value? (box-get rest) name)])]))
-
-(define (lower-test-decl-list-exports-value?
-  [decls : AstDeclList]
-  [name : String]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclExport items)
-          (if (lower-test-export-list-has-value? items name)
-            true
-            (lower-test-decl-list-exports-value? (box-get rest) name))]
-        [(AstDeclComptimeDecl _ inner-box)
-          (if (lower-test-decl-list-exports-value?
-            (ast-decl-cons (box-get inner-box) AstDeclNil)
-            name)
-            true
-            (lower-test-decl-list-exports-value? (box-get rest) name))]
-        [(AstDeclUnsafe inner-box)
-          (if (lower-test-decl-list-exports-value?
-            (ast-decl-cons (box-get inner-box) AstDeclNil)
-            name)
-            true
-            (lower-test-decl-list-exports-value? (box-get rest) name))]
-        [_ (lower-test-decl-list-exports-value? (box-get rest) name)])]))
-
 (define (compiler-lower-ast-dce-program) : AstProgram
   (ast-program
     (ast-decl-cons
@@ -46498,19 +46224,14 @@
           (AstTyI64)
           (ast-node-push (AstExprLiteral (ast-lit-int 7))))
         (ast-decl-cons
-          (AstDeclExport
-            (ast-export-item-cons
-              (AstExportValue "ctfe-runtime-helper")
-              AstExportItemNil))
+          (ast-decl-module "main")
           (ast-decl-cons
-            (ast-decl-module "main")
-            (ast-decl-cons
-              (ast-decl-def-fn
-                "main"
-                AstParamNil
-                (AstTyI64)
-                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
-              AstDeclNil)))))))
+            (ast-decl-def-fn
+              "main"
+              AstParamNil
+              (AstTyI64)
+              (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+            AstDeclNil))))))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
@@ -46518,13 +46239,6 @@
 (unsafe (define (unsafe-entry) : i64 (unsafe-helper)))
 (define (dead-helper) : i64 0)
 (unsafe (define (dead-unsafe) : i64 (dead-helper)))")
-
-(define (compiler-lower-module-export-dce-source) : String
-  "(define (main) : i64 0)
-(module demo)
-(define (public-helper) : i64 1)
-(define (dead-helper) : i64 2)
-(export (value public-helper))")
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
@@ -46612,36 +46326,6 @@
                 (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
 
-(define (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?) : bool
-  (let
-    [program : AstProgram (compiler-lower-stdlib-comptime-runtime-dce-program)]
-    [names : LowerNameEnv
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls
-              decls
-              AstDeclPathNil
-              "entry.tl"
-              LowerNameNil))])]
-    [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions
-        "entry.tl"
-        program
-        AstDeclPathNil
-        names)]
-    (match pruned
-      [(LowerPrunedProgram kept-program _)
-        (match kept-program
-          [(AstProgram kept-box)
-            (let
-              [kept : AstDeclList (box-get kept-box)]
-              (and
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "ctfe-runtime-helper")
-                (lower-test-decl-list-exports-value? kept "ctfe-runtime-helper")))])])))
-
 (define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
   (match (lower-compiler-program-with-decl-paths
     "entry.tl"
@@ -46689,38 +46373,6 @@
                 (match kept-program
                   [(AstProgram kept-box)
                     (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-lower-module-export-dce-ok?) : bool
-  (match (parse-ast-source (compiler-lower-module-export-dce-source))
-    [(OkAstProgram program)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            [names : LowerNameEnv
-              (lower-name-env-from-decls
-                decls
-                AstDeclPathNil
-                "entry.tl"
-                LowerNameNil)]
-            [pruned : LowerPrunedProgram
-              (lower-prune-unreachable-functions
-                "entry.tl"
-                program
-                AstDeclPathNil
-                names)]
-            (match pruned
-              [(LowerPrunedProgram kept-program _)
-                (match kept-program
-                  [(AstProgram kept-box)
-                    (let
-                      [kept : AstDeclList (box-get kept-box)]
-                      (and
-                        (lower-test-decl-list-defines? kept "main")
-                        (not
-                          (lower-test-decl-list-defines? kept "public-helper"))
-                        (not (lower-test-decl-list-defines? kept "dead-helper"))))])]))])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
@@ -46807,9 +46459,6 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-specialize-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-export-dce-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-region-shape-ok?)
@@ -46931,9 +46580,6 @@
         unit
         (set! ok false))
       (if (compiler-lower-macro-body-dce-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-stdlib-comptime-prune-keeps-surface-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-stdlib-comptime-runtime-dce-ok?)

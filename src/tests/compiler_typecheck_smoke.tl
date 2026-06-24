@@ -1145,6 +1145,26 @@
 (import (uses-vector) as uv)
 (define (main) : i64 (uv.answer))")
 
+(define (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source) : String
+  "(import \"stdlib/vector.tl\")
+(defmacro (vector-user) : Module
+  `(begin
+    (module generated.local_type_vector_user)
+    (defstruct T
+      (value i64))
+    (import (vector T) as vec)
+    (define (make [value : i64]) : T
+      (T value))
+    (define (score [value : T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (struct-get (vec.get (& items) 0 (T 0)) value))))))
+(import (vector-user) as user)
+(define (main) : i64
+  (user.score (user.make 42)))")
+
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
   `(begin
@@ -1199,6 +1219,8 @@
       (compiler-typecheck-smoke-module-macro-type-key-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?

@@ -2229,6 +2229,107 @@
     unit
     (panic "test CLI inline harness dropped macro quasiquote dependency")))
 
+(define (tltest-nested-module-macro-vector-source) : String
+  "(import stdlib.vector)
+(import stdlib.vector_slice)
+
+(defstruct Pair
+  (value i64))
+
+(defmacro (slice-user [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append \"generated.slice_user.\" (type-key T)))]
+    `(begin
+      (module ,module-name)
+      (import (stdlib.vector.vector ,T) as vec)
+      (import (stdlib.vector_slice.slice ,T) as slice)
+      (define (score [first : ,T] [fallback : ,T]) : i64
+        (let
+          [items : vec.Vec (vec.new)]
+          (begin
+            (vec.push (&mut items) first)
+            (let
+              [view : (slice.Slice items) (slice.all-vec (& items))]
+              (if (= (slice.len view) 1)
+                (begin
+                  (slice.get view 0 fallback)
+                  42)
+                0))))))))
+
+(import (slice-user i64) as user)
+(import (slice-user Pair) as pair-user)
+
+(test
+  generated-module-body-imports-slice-module-macro-i64
+  (begin
+    (user.score 7 0)
+    unit))
+
+(test
+  generated-module-body-imports-slice-module-macro-struct
+  (begin
+    (pair-user.score (Pair 7) (Pair 0))
+    unit))")
+
+(define (tltest-nested-module-macro-vector-typecheck-ok?
+  [program : AstProgram]
+  [harness-paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (typecheck-compiler-program-with-paths-cache
+    (tltest-program-with-print-runtime program target)
+    (tltest-paths-with-print-runtime target harness-paths)
+    roots
+    (tltest-typecheck-cache-scope roots target))
+    [(OkCompilerTypecheck _) true]
+    [(ErrCompilerTypecheck _) false]))
+
+(define (tltest-nested-module-macro-vector-loaded-ok?
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness program harness-paths count)
+      (if (= count 2)
+        (tltest-nested-module-macro-vector-typecheck-ok?
+          program
+          harness-paths
+          roots
+          target)
+        false)]))
+
+(define (tltest-nested-module-macro-vector-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-nested-module-macro-vector")
+    [(ErrSourceToolString _) false]
+    [(OkSourceToolString dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
+        [roots : StringVec (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (BackendTargetLinux)]
+        (begin
+          (write-file source (tltest-nested-module-macro-vector-source))
+          (match (compiler-driver-load-file-with-runtime
+            source
+            roots
+            (tltest-cfgs target))
+            [(ErrCompilerLoadWithPaths _) false]
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (tltest-nested-module-macro-vector-loaded-ok?
+                source
+                decls
+                paths
+                roots
+                target)])))]))
+
+(test
+  test-cli-inline-harness-nested-module-macro-vector-import
+  (if (tltest-nested-module-macro-vector-self-test?)
+    unit
+    (panic "test CLI nested module macro vector import mismatch")))
+
 (test
   test-cli-enables-test-cfg
   (cfg test unit (panic "test CLI did not enable test cfg")))

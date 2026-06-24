@@ -40067,6 +40067,27 @@
         (macro-decl-has-module-placeholder? decl)
         (macro-program-has-module-placeholder? (box-get rest)))]))
 
+(define (macro-decl-module-placeholder-count [decl : AstDecl]) : i64
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacro _ _) 1]
+        [(AstImportMacroDecls _ _) 1]
+        [_ 0])]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-module-placeholder-count (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-module-placeholder-count (box-get template-box))]
+    [_ 0]))
+
+(define (macro-program-module-placeholder-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (+
+        (macro-decl-module-placeholder-count decl)
+        (macro-program-module-placeholder-count (box-get rest)))]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
@@ -40203,6 +40224,19 @@
 (define (macro-expand-fixed-point-limit) : i64
   8)
 
+;; The walker expands one existing module-macro placeholder per pass; generated
+;; modules can introduce their own import placeholders for the next pass. Keep a
+;; fixed guard, but scale it with loaded placeholder volume so legitimate nested
+;; module families converge under `test` cfg stdlib imports.
+(define (macro-expand-fixed-point-limit-for-program [program : AstProgram]) : i64
+  (match program
+    [(AstProgram decls-box)
+      (+
+        (macro-expand-fixed-point-limit)
+        (*
+          (macro-expand-fixed-point-limit)
+          (macro-program-module-placeholder-count (box-get decls-box))))]))
+
 (define (macro-expand-program-with-paths-loop-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -40267,7 +40301,7 @@
     program
     paths
     pools
-    (macro-expand-fixed-point-limit)))
+    (macro-expand-fixed-point-limit-for-program program)))
 
 (define (macro-expand-program-with-paths
   [program : AstProgram]

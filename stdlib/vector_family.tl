@@ -53,9 +53,16 @@
             [grow-name : Expr (expr-var (string-append base "-grow"))]
             [push-name : Expr (expr-var (string-append base "-push"))]
             `(begin
-              (defstruct ,vec-name
-                (slots (Array ,T))
-                (len i64))
+              (cfg
+                feature-compiler-private-dynamic-buffer
+                (defstruct ,vec-name
+                  (slots (__tl_dyn-array ,T))
+                  (len i64)))
+              (cfg
+                (not feature-compiler-private-dynamic-buffer)
+                (defstruct ,vec-name
+                  (slots (Array ,T))
+                  (len i64)))
               (define (,slots-name [v : (& v ,vec-name)]) : (& v (Array ,T))
                 (& (struct-get v slots)))
               (define (,len-name [v : (& v ,vec-name)]) : i64

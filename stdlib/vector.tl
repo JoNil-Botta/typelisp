@@ -153,9 +153,16 @@
         [_ `false])]
     `(begin
       (module ,module-name)
-      (defstruct ,vec-name
-        (slots (Array ,T))
-        (len i64))
+      (cfg
+        feature-compiler-private-dynamic-buffer
+        (defstruct ,vec-name
+          (slots (__tl_dyn-array ,T))
+          (len i64)))
+      (cfg
+        (not feature-compiler-private-dynamic-buffer)
+        (defstruct ,vec-name
+          (slots (Array ,T))
+          (len i64)))
       (defenum ,pop-name
         (Empty)
         (Ok ,T))
@@ -332,11 +339,21 @@
 
 ;: A growable `i64` sequence: the backing array and the number of live
 ;: elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
-(comptime-decl
-  (:generated vector-family I64Vec "i64")
-  (defstruct I64Vec
-    (slots (Array i64))
-    (len i64)))
+(cfg
+  feature-compiler-private-dynamic-buffer
+  (comptime-decl
+    (:generated vector-family I64Vec "i64")
+    (defstruct I64Vec
+      (slots (__tl_dyn-array i64))
+      (len i64))))
+
+(cfg
+  (not feature-compiler-private-dynamic-buffer)
+  (comptime-decl
+    (:generated vector-family I64Vec "i64")
+    (defstruct I64Vec
+      (slots (Array i64))
+      (len i64))))
 
 ;: Result of `i64-vec-pop`: the removed last element together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.
@@ -642,11 +659,21 @@
 
 ;: A growable `String` sequence generated from the same vector template as
 ;: `I64Vec`.
-(comptime-decl
-  (:generated vector-family StringVec "String")
-  (defstruct StringVec
-    (slots (Array String))
-    (len i64)))
+(cfg
+  feature-compiler-private-dynamic-buffer
+  (comptime-decl
+    (:generated vector-family StringVec "String")
+    (defstruct StringVec
+      (slots (__tl_dyn-array String))
+      (len i64))))
+
+(cfg
+  (not feature-compiler-private-dynamic-buffer)
+  (comptime-decl
+    (:generated vector-family StringVec "String")
+    (defstruct StringVec
+      (slots (Array String))
+      (len i64))))
 
 ;: Result of `string-vec-pop`: the removed last string together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.

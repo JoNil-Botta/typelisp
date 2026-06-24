@@ -251,10 +251,12 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
+            (compiler-cfg-enable
+              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "feature-compiler-private-dynamic-buffer")
       "array-helper-intrinsics")
     "feature-plain-comptime-well-known"))
 
@@ -6021,6 +6023,8 @@
       "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
     (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+    (compiler-typecheck-ok?
+      "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (begin (type i64) 0))"
       "type value i64 is compile-time only")

@@ -463,10 +463,12 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
+            (compiler-cfg-enable
+              (compiler-cfg-enable cfgs "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "feature-compiler-private-dynamic-buffer")
       "array-helper-intrinsics")
     "feature-plain-comptime-well-known"))
 

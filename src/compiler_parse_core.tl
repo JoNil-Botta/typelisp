@@ -516,6 +516,9 @@
 (define (compiler-parse-tag-ty-box) : i64
   138)
 
+(define (compiler-parse-tag-ty-dyn-array) : i64
+  139)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -817,6 +820,9 @@
       (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
       (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
       (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
+      (set!
+        out
+        (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
       out)))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
@@ -1140,7 +1146,7 @@
           (<= tag (compiler-parse-tag-ty-bytes)))
         (and
           (>= tag (compiler-parse-tag-ty-func))
-          (<= tag (compiler-parse-tag-ty-box)))))))
+          (<= tag (compiler-parse-tag-ty-dyn-array)))))))
 
 (define (parse-ast-lifetime-list
   [dispatch : SymI64Env]
@@ -1352,6 +1358,22 @@
                           [_ (ErrAstType "parse: malformed array type")])]
                       [_ (ErrAstType "parse: malformed array type")])]
                   [_ (ErrAstType "parse: malformed array type")])]
+              [(= tag (compiler-parse-tag-ty-dyn-array))
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch pools (box-get elem))
+                          [(OkAstType elem-ty)
+                            (OkAstType
+                              (ast-ty-dyn-array-with-pools pools elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [_
+                        (ErrAstType
+                          "parse: __tl_dyn-array expects exactly one type")])]
+                  [_
+                    (ErrAstType
+                      "parse: __tl_dyn-array expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match rest
                   [(SCons elem tail)
@@ -9317,7 +9339,12 @@
   (and
     (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
+      "parse: __tl_dyn-array expects exactly one type")
     (compiler-parse-error-ok?
       "(define (main) : i64 (type))"
       "parse: type expects exactly one type")

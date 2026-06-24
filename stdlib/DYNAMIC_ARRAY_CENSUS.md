@@ -10,10 +10,12 @@ These are the uses that should move to generated vectors or vector/slice-style
 borrowed APIs.
 
 - `stdlib/vector_family.tl`: named generated vector families. This file now
-  emits read helpers that take `&` and mutators that take `&mut`; its backing
-  `slots` field remains an implementation detail.
+  emits read helpers that take `&` and mutators that take `&mut`; with
+  compiler-private dynamic-buffer support enabled, its backing `slots` field
+  uses the private dynamic-buffer spelling and remains an implementation detail.
 - `stdlib/vector.tl`: legacy `I64Vec` and `StringVec` helpers are still
-  threaded owned-value compatibility APIs. New code should prefer
+  threaded owned-value compatibility APIs, with private dynamic-buffer backing
+  selected by compiler cfg where available. New code should prefer
   `(import stdlib.vector)` plus generated modules such as
   `(import (vector.vector i64) as ivec)`, whose reads take `&` and mutators take
   `&mut`.

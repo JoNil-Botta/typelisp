@@ -43,10 +43,12 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
+            (compiler-cfg-enable
+              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "feature-compiler-private-dynamic-buffer")
       "array-helper-intrinsics")
     "feature-plain-comptime-well-known"))
 
@@ -498,6 +500,17 @@
        (+ (profile-alloc-total)
           (+ (profile-alloc-live) (profile-alloc-peak))))))")
 
+(define (compiler-check-private-dynamic-buffer-vector-source) : String
+  "(import stdlib.vector as vector)
+(import (vector.vector i64) as i64vec)
+(define (main) : i64
+  (let
+    [items : i64vec.Vec (i64vec.with-capacity 2)]
+    (begin
+      (i64vec.push (&mut items) 41)
+      (i64vec.push (&mut items) 1)
+      (i64vec.len (& items)))))")
+
 (define (compiler-check-virtual-import-ok?) : bool
   (match (compiler-check-source
     "src/virtual_entry.tl"
@@ -646,6 +659,11 @@
     (compiler-check-runtime-stdlib-boundary-no-import-ok?)
     (compiler-check-runtime-stdlib-boundary-import-ok?)))
 
+(define (compiler-check-private-dynamic-buffer-vector-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/private_dynamic_buffer_vector.tl"
+    (compiler-check-private-dynamic-buffer-vector-source)))
+
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?
     "tests/implicit_core_prelude_check.tl"
@@ -728,6 +746,13 @@
       (return
         (begin
           (panic "compiler-check: runtime stdlib boundary smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-check-private-dynamic-buffer-vector-ok?)
+      (return
+        (begin
+          (panic "compiler-check: private dynamic-buffer vector smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

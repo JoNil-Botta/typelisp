@@ -333,6 +333,10 @@ semantics are deferred to a future feature.
   `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
   compiler-internal pools. Final rejection/removal of public unsized
   `(Array T)` is tracked by #3581.
+- Compiler and stdlib internals may use a compiler-private dynamic-buffer
+  spelling for vector backing while the migration is active. That spelling is
+  not a public source type and must not be documented or used as an application
+  API.
 - Collection APIs should inspect existing storage through immutable borrows and
   mutate through `&mut` where possible. Mutating collection operations should
   update storage in place instead of returning copied whole collections.

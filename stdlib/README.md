@@ -177,6 +177,12 @@ use.
   `log`, and `pow` are intentionally deferred until a freestanding soft-math or
   explicit platform-extern policy is chosen. Import it with
   `(import "stdlib/math.tl")`.
+- `option.tl`: module-emitting `(option T)` macro for absence-only results.
+  Import it with `(import "stdlib/option.tl")` and instantiate with a module
+  alias such as `(import (option i64) as option_i64)`. Each generated module
+  exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
+  `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
+  for the same payload type share the generated module/type.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

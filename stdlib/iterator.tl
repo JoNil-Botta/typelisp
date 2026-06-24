@@ -10,8 +10,8 @@
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning
-;# `Done`. The final generated `(option T)` module from #3203 should replace
-;# these monomorphic `*Next` enums when it lands.
+;# `Done`. Migrating these monomorphic `*Next` enums to the generated
+;# `(option T)` module belongs with the option user-migration work (#3214).
 ;#
 ;# ```typelisp
 ;# (import stdlib.iterator as iter)

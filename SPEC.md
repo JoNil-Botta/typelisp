@@ -650,27 +650,21 @@ whose payloads share the same generator and argument keys:
 
 ```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
 (comptime-decl
-  (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
+  (:generated sample-family Box_String (type-key (type String)))
+  (defstruct Box_String
+    (value String)))
 
 (comptime-decl
-  (:generated stdlib/option-family option-string-some? (type-key (type String)))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
+  (:generated sample-family box-string-value (type-key (type String)))
+  (define (box-string-value [value : Box_String]) : String
+    (struct-get value value)))
 
 (comptime-decls
-  (:generated stdlib/option-family (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
+  (:generated sample-family (type-key (type String)))
+  (defstruct Box_String
+    (value String))
+  (define (box-string-value [value : Box_String]) : String
+    (struct-get value value)))
 ```
 
 `comptime-decl` and `comptime-decls` are valid only at top level, after
@@ -6108,29 +6102,31 @@ Function-local early exit uses the Lisp-shaped `(return expr)` form:
 Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
 functions, traits, trait objects, vtables, or runtime type-erased dispatch for
-recoverable errors. Reuse comes from comptime-generated concrete declarations:
-the generator emits nominal enum types and helper functions for the requested
-payload/error type keys.
+recoverable errors. Reuse comes from module-emitting stdlib macros and
+remaining comptime-generated concrete result declarations: the generator emits
+nominal enum types and helper functions for the requested payload/error type
+keys.
 
 The generated-family identity is a stable key, not a runtime type object:
 
-- Absence-only family key: `option:<payload-type-key>`.
+- Absence-only family key: `stdlib.option.generated.<payload-type-key>`.
 - Recoverable-error family key:
   `result:<success-type-key>:<error-type-key>`.
-- Generated declaration keys also include the generator module identity and
-  generator identity from #893, so repeated requests for the same family reuse
-  the same concrete declarations or report a precise duplicate according to the
-  generated-declaration policy.
-- Display names are deterministic ASCII identifiers derived from those keys,
-  for example `Option_String`, `Result_String_IoError`, `Some_String`,
-  `None_String`, `Ok_String_IoError`, and `Err_String_IoError`. Exact
-  mangling is compiler-owned, but generated names must be stable, readable in
-  diagnostics/docs, and collision-free within the value/type namespaces.
+- Module-macro generated option keys include the macro identity and
+  `type-key`, so repeated imports of `(option T)` reuse the same concrete
+  module and type.
+- Display names are deterministic ASCII identifiers derived from those keys.
+  Options expose module-relative names such as `option_i64.Option`,
+  `option_i64.some`, `option_i64.none`, `option_i64.is-some?`,
+  `option_i64.value-or`, and `option_i64.map`; result-family compatibility
+  declarations keep names such as `Result_String_IoError`,
+  `Ok_String_IoError`, and `Err_String_IoError`.
 
-Until the generator lands, hand-written monomorphic enums are the source
-equivalent. Use `Maybe*` or `Option*` names for absence-only APIs and `Result*`
-names for APIs that distinguish success from an error value. Matches must be
-exhaustive; omitted variants are rejected by the type checker.
+Where no stdlib module macro or generated result family is available,
+hand-written monomorphic enums are the source equivalent. Use `Maybe*` or
+`Option*` names for absence-only APIs and `Result*` names for APIs that
+distinguish success from an error value. Matches must be exhaustive; omitted
+variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
 (import "stdlib/str_cat.tl")
@@ -6170,15 +6166,15 @@ exhaustive; omitted variants are rejected by the type checker.
 ```
 
 Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
-`?` or Zig `try`, but it operates on concrete generated families rather than
-generic traits or implicit conversions.
+`?` or Zig `try`, but it operates on concrete option/result families rather
+than generic traits or implicit conversions.
 
 - For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
   success variant it unwraps and yields the success payload. On the error
   variant it returns from the enclosing function with the compatible error
   variant carrying the same error payload.
-- For an absence-only option, `(try expr)` unwraps `Some*` and returns the
-  enclosing compatible `None*` on absence.
+- For an absence-only option, `(try expr)` unwraps `Some`/`Some*` and returns
+  the enclosing compatible `None`/`None*` on absence.
 - V1 compatibility is exact-family compatibility. There is no trait-like
   `From` conversion, no cross-family conversion, and no implicit
   Option-to-Result conversion; explicit conversion helpers may be generated by

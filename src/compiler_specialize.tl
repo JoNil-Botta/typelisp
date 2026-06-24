@@ -9646,53 +9646,40 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-reuse-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-function-reuse-source) : String
-  "(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option-string [value : String]) : String value))
-(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option-string [value : String]) : String value))")
+  "(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box-string [value : String]) : String value))
+(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box-string [value : String]) : String value))")
 
 (define (compiler-generated-decl-incompatible-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value i64)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value i64)))")
 
 (define (compiler-generated-decl-item-mismatch-source) : String
-  "(comptime-decl (:generated option-family Expected \"String\")
+  "(comptime-decl (:generated sample-family Expected \"String\")
   (defstruct Actual (value String)))")
 
 (define (compiler-generated-decl-non-string-key-source) : String
-  "(comptime-decl (:generated option-family Option_String 7)
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String 7)
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-duplicate-visible-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"Bytes\")
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"Bytes\")
+  (defstruct Box_String (value String)))")
 
-(define (compiler-generated-option-result-family-source) : String
+(define (compiler-generated-result-family-source) : String
   "(defstruct Payload (value i64))
 (defenum Status (StatusOk) (StatusBad i64))
-(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
-(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
-(comptime-decl (:generated stdlib/option-family option-string-some? (type-key (type String)))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
 (comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
   (defenum Result_I64_String
     (Ok_I64_String i64)
@@ -9711,8 +9698,7 @@
     (Ok_Payload_Status Payload)
     (Err_Payload_Status Status)))
 (define (main) : i64
-  (+ (if (option-string-some? (Some_String \"x\")) 1 0)
-     (result-i64-string-value-or (Ok_I64_String 41) 0)))")
+  (result-i64-string-value-or (Ok_I64_String 41) 0))")
 
 (define (compiler-generated-decl-bundle-source) : String
   "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
@@ -9752,26 +9738,26 @@
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
     ""
-    "option-family"
-    "Option_String"
+    "sample-family"
+    "Box_String"
     (string-append (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-cross-module-reuse-source) : String
-  "(module option.family)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
+  "(module sample.family)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
 (module app)
-(module option.family)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+(module sample.family)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-cross-module-distinct-source) : String
-  "(module option.left)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(module option.right)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+  "(module sample.left)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(module sample.right)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-hashmap-descriptor-distinct-source) : String
   "(comptime-decl (:generated stdlib/hashmap-family HashMapSlot (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
@@ -9859,7 +9845,7 @@
                   (=
                     (compiler-specialize-decl-list-count-visible
                       decls
-                      "Option_String")
+                      "Box_String")
                     1))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
@@ -9876,7 +9862,7 @@
                 (=
                   (compiler-specialize-decl-list-count-defs
                     decls
-                    "make-option-string")
+                    "make-box-string")
                   1))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
@@ -9933,13 +9919,13 @@
                 (=
                   (compiler-specialize-decl-list-count-visible
                     decls
-                    "Option_String")
+                    "Box_String")
                   2))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
-(define (compiler-generated-option-result-family-ok?) : bool
-  (match (parse-ast-source (compiler-generated-option-result-family-source))
+(define (compiler-generated-result-family-ok?) : bool
+  (match (parse-ast-source (compiler-generated-result-family-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
         [(OkSpecProgram normalized)
@@ -9947,14 +9933,6 @@
             [(AstProgram decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
-                [option-count : i64
-                  (compiler-specialize-decl-list-count-visible
-                    decls
-                    "Option_String")]
-                [option-helper-count : i64
-                  (compiler-specialize-decl-list-count-defs
-                    decls
-                    "option-string-some?")]
                 [result-count : i64
                   (compiler-specialize-decl-list-count-visible
                     decls
@@ -9968,8 +9946,6 @@
                     decls
                     "Result_Payload_Status")]
                 (and
-                  (= option-count 1)
-                  (= option-helper-count 1)
                   (= result-count 1)
                   (= result-helper-count 1)
                   (= nominal-result-count 1)))])]
@@ -10029,14 +10005,14 @@
   (=
     (compiler-generated-decl-visible-count
       (compiler-generated-decl-cross-module-reuse-source)
-      "Option_String")
+      "Box_String")
     1))
 
 (define (compiler-generated-decl-cross-module-distinct-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
       (compiler-generated-decl-cross-module-distinct-source)
-      "Option_String")
+      "Box_String")
     2))
 
 (define (compiler-generated-hashmap-descriptor-distinct-ok?) : bool
@@ -10477,15 +10453,15 @@
                         (match meta
                           [(AstSomeGeneratedDeclMeta generator item _ key)
                             (and
-                              (string-eq generator "option-family")
-                              (string-eq item "Option_String")
+                              (string-eq generator "sample-family")
+                              (string-eq item "Box_String")
                               (string-eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)
-                            (string-eq (intern-str name) "Option_String")]
+                            (string-eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]
@@ -10529,7 +10505,7 @@
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
-    (unless (compiler-generated-option-result-family-ok?) (return 0))
+    (unless (compiler-generated-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-bundle-ok?) (return 0))
     (unless (compiler-generated-decl-bundle-incompatible-rejected?) (return 0))
     (unless (compiler-generated-decl-bundle-cross-module-reuse-ok?) (return 0))

@@ -426,6 +426,9 @@
 (define (lsp-documents-find-index [docs : LspDocuments] [uri : String]) : i64
   (lsp-documents-find-index-from docs uri 0))
 
+(define lsp-documents-max-capacity : i64
+  16)
+
 (define (lsp-documents-set
   [docs : LspDocuments]
   [uri : String]
@@ -437,7 +440,12 @@
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (lsp-documents-set! docs index doc)
-      (lsp-documents-push docs doc))))
+      (if (>= (lsp-documents-len docs) lsp-documents-max-capacity)
+        (begin
+          (lsp-documents-shift-left! docs 0)
+          (lsp-documents-set! docs (- (lsp-documents-len docs) 1) doc)
+          docs)
+        (lsp-documents-push docs doc)))))
 
 (define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
   (let
@@ -3751,7 +3759,9 @@
         (LspContinue docs))
       (match (lsp-documents-lookup docs uri)
         [(FoundLspDocument path text _)
-          (match (compiler-check-source-with-roots path text stdlib-roots)
+          (match (lsp-with-fresh-pools
+            (lambda ()
+              (compiler-check-source-with-roots path text stdlib-roots)))
             [(OkCompilerCheck _)
               (begin
                 (lsp-write-response
@@ -3783,10 +3793,9 @@
                         "error"
                         (json.JsonString "Could not read document")))
                     (LspContinue docs))
-                  (match (compiler-check-source-with-roots
-                    path
-                    text
-                    stdlib-roots)
+                  (match (lsp-with-fresh-pools
+                    (lambda ()
+                      (compiler-check-source-with-roots path text stdlib-roots)))
                     [(OkCompilerCheck _)
                       (begin
                         (lsp-write-response
@@ -3833,7 +3842,9 @@
               [col1 : i64 (+ char0 1)]
               (begin
                 (tc-inlay-hints-enable!)
-                (match (compiler-check-source-with-roots path text stdlib-roots)
+                (match (lsp-with-fresh-pools
+                  (lambda ()
+                    (compiler-check-source-with-roots path text stdlib-roots)))
                   [(OkCompilerCheck _) unit]
                   [(ErrCompilerCheck _) unit])
                 (let
@@ -4407,7 +4418,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-list-functions id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-list-functions id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id
@@ -4427,7 +4439,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-find-position id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-find-position id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4445,7 +4458,11 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-structural-replace-at id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-structural-replace-at
+                                id
+                                params
+                                docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4479,7 +4496,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-structural-move id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-structural-move id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4497,7 +4515,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-expand-macro id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-expand-macro id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4515,7 +4534,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-check id params docs stdlib-roots))]
+                            (with-scratch
+                              (lsp-handle-tl-check id params docs stdlib-roots)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4533,11 +4553,12 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-get-type-at
-                              id
-                              params
-                              docs
-                              stdlib-roots))]
+                            (with-scratch
+                              (lsp-handle-tl-get-type-at
+                                id
+                                params
+                                docs
+                                stdlib-roots)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4555,7 +4576,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-find-references id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-find-references id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4573,7 +4595,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-eval-at-point id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-eval-at-point id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4591,7 +4614,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-append-function id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-append-function id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4609,7 +4633,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-replace-body id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-replace-body id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4627,7 +4652,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-signature-help id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-signature-help id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4645,7 +4671,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-replace-pattern-at id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-replace-pattern-at id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4679,7 +4706,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-project-search id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-project-search id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4729,7 +4757,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-insert-after id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-insert-after id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4747,7 +4776,8 @@
                         [(json.JsonFound params)
                           (set!
                             result
-                            (lsp-handle-tl-read-form-at id params docs))]
+                            (with-scratch
+                              (lsp-handle-tl-read-form-at id params docs)))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -4780,6 +4810,26 @@
 
 (define (lsp-frame-session-cache-enable!) : unit
   (compiler-load-session-cache-enable!))
+
+(define (lsp-with-fresh-pools [body : (-> ResultCompilerCheck)]) : ResultCompilerCheck
+  (let
+    [old-ast-floor : i64 (compiler-load-session-ast-floor-value)]
+    [old-ty-floor : i64 (compiler-load-session-ty-floor-value)]
+    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    (begin
+      (compiler-load-session-floors-set! 0 0 0)
+      (compiler-check-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (let
+        [result : ResultCompilerCheck (body)]
+        (begin
+          (compiler-check-reset-pools!)
+          (compiler-load-session-reset-interns!)
+          (compiler-load-session-floors-set!
+            old-ast-floor
+            old-ty-floor
+            old-intern-floor)
+          result)))))
 
 (define (lsp-frame-session-cache-smoke-ok?) : bool
   (begin

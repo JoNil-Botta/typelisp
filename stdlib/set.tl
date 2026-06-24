@@ -22,7 +22,8 @@
 ;# insertion order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
-(import "string.tl")
+;; lint-allow: unused-import
+(import stdlib.string)
 
 ;: Emit a generated hash set module for key type `T`.
 (defmacro (set [T : type]) : Module

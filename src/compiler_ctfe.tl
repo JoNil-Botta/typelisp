@@ -3498,6 +3498,8 @@
         "expr-bool"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-int") "expr-int"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-var") "expr-var"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-struct-get")
+        "expr-struct-get"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-splice")
         "expr-splice"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
@@ -3741,6 +3743,69 @@
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg"))]))
+
+;; `(expr-struct-get target field)` builds a struct-get Expr whose field name is
+;; computed at macro CTFE. The expanded program typechecks the field access.
+(define (ctfe-eval-expr-struct-get-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons target-arg tail)
+      (let
+        [target-arg : AstExpr (ctfe-ast-get env target-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons field-arg rest)
+            (let
+              [field-arg : AstExpr (ctfe-ast-get env field-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval target-arg env fuel)
+                    [(OkCtfe target-val target-fuel)
+                      (match target-val
+                        [(CtfeExpr target-node _)
+                          (match (compiler-ctfe-eval field-arg env target-fuel)
+                            [(OkCtfe field-val field-fuel)
+                              (match field-val
+                                [(CtfeString field)
+                                  (OkCtfe
+                                    (CtfeExpr
+                                      (ast-expr-struct-get-with-pools
+                                        (ctfe-env-pools env)
+                                        target-node
+                                        field)
+                                      (ctfe-untyped-expr-type))
+                                    field-fuel)]
+                                [_
+                                  (ErrCtfe
+                                    (ctfe-diagnostic-at-expr
+                                      expr
+                                      "expr-struct-get field expects String"))])]
+                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                        [_
+                          (ErrCtfe
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-struct-get target expects Expr"))])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_
+                  (ErrCtfe
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "expr-struct-get expects exactly two args"))]))]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                "expr-struct-get expects exactly two args"))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-struct-get expects exactly two args"))]))
 
 (define (ctfe-expr-inspector-name? [name : String]) : bool
   (or
@@ -4543,6 +4608,8 @@
             (ctfe-eval-expr-int-call args expr env fuel)]
           [(string-eq call-name "expr-var")
             (ctfe-eval-expr-var-call args expr env fuel)]
+          [(string-eq call-name "expr-struct-get")
+            (ctfe-eval-expr-struct-get-call args expr env fuel)]
           [(string-eq call-name "expr-splice")
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(string-eq call-name "expr-if")
@@ -8179,6 +8246,9 @@
 (define (ctfe-expr-var [name : String]) : i64
   (ast-node-push (AstExprVar (intern name))))
 
+(define (ctfe-expr-struct-get [target : i64] [field : String]) : i64
+  (ast-expr-struct-get target field))
+
 (define (ctfe-expr-if [cond : i64] [then-branch : i64] [else-branch : i64]) : i64
   (ast-expr-if cond then-branch else-branch))
 
@@ -9459,12 +9529,17 @@
     [true-lit : i64 (ctfe-expr-bool true)]
     [false-lit : i64 (ctfe-expr-bool false)]
     [var-x : i64 (ctfe-expr-var "x")]
+    [field-x : i64 (ctfe-expr-struct-get var-x "value")]
+    [field-x-again : i64 (ctfe-expr-struct-get var-x "value")]
+    [field-y : i64 (ctfe-expr-struct-get var-x "other")]
     [if1 : i64 (ctfe-expr-if var-x true-lit false-lit)]
     [if2 : i64 (ctfe-expr-if var-x true-lit false-lit)]
     [if3 : i64 (ctfe-expr-if true-lit var-x false-lit)]
     (and
       (ctfe-test-expr-eq if1 if2)
       (not (ctfe-test-expr-eq if1 if3))
+      (ctfe-test-expr-eq field-x field-x-again)
+      (not (ctfe-test-expr-eq field-x field-y))
       (ctfe-expr-if? if1)
       (ctfe-test-expr-eq (ctfe-expr-if-cond if1) var-x)
       (ctfe-test-expr-eq (ctfe-expr-if-then if1) true-lit)
@@ -9524,15 +9599,48 @@
         true-expr)]
     [expected : i64
       (ast-expr-if-with-pools (ctfe-env-pools env) true-lit false-lit true-lit)]
-    (match (compiler-ctfe-eval (ctfe-ast-get env if-expr) env (ctfe-fuel-limit))
-      [(OkCtfe value _)
-        (match value
-          [(CtfeExpr node checked-ty)
-            (and
-              (ctfe-type-eq checked-ty (AstTyBool))
-              (ctfe-test-expr-eq-in-env env node expected))]
-          [_ false])]
-      [(ErrCtfe _) false])))
+    [point-name-lit : i64
+      (ctfe-ast-push env (AstExprLiteral (AstLitString "point")))]
+    [field-name-lit : i64
+      (ctfe-ast-push env (AstExprLiteral (AstLitString "x")))]
+    [point-expr : i64
+      (compiler-ctfe-call1-in-env env "expr-var" point-name-lit)]
+    [field-expr : i64
+      (compiler-ctfe-call2-in-env
+        env
+        "expr-struct-get"
+        point-expr
+        field-name-lit)]
+    [expected-field : i64
+      (ast-expr-struct-get-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExprVar (intern "point")))
+        "x")]
+    (and
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env if-expr)
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyBool))
+                (ctfe-test-expr-eq-in-env env node expected))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env field-expr)
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-untyped-expr-type? checked-ty)
+                (ctfe-test-expr-eq-in-env env node expected-field))]
+            [_ false])]
+        [(ErrCtfe _) false]))))
 
 (define (compiler-ctfe-checked-expr-inspectors-ok?) : bool
   (let

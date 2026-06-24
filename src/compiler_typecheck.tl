@@ -6797,6 +6797,12 @@
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 
+(define (compiler-typecheck-defmacro-expr-struct-get-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defmacro (field-x [target : Expr]) : i64
+  (comptime.expr-struct-get target (string-concat \"x\" \"\")))
+(define (main) : i64 (field-x (Point 42 7)))")
+
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
   "(defmacro (all [args : bool ...]) : bool
   (if (comptime.expr-list-empty? args)
@@ -6862,6 +6868,8 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-pure-string-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-expr-struct-get-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defmacro-comptime-qualified-helper-source))
     (compiler-typecheck-error-ok?

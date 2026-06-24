@@ -1785,6 +1785,9 @@
 (define (compiler-backend-avx512-mask-xor-mnemonic [lanes : i64]) : String
   (string-append "xor" (compiler-backend-avx512-mask-int-suffix lanes)))
 
+(define (compiler-backend-avx512-mask-kxor-mnemonic [lanes : i64]) : String
+  (string-append "kxor" (compiler-backend-avx512-mask-op-suffix lanes)))
+
 (define (compiler-backend-avx512-mask-kortest-mnemonic [lanes : i64]) : String
   (string-append "kortest" (compiler-backend-avx512-mask-op-suffix lanes)))
 
@@ -2310,6 +2313,55 @@
       [(CompilerBackendSomeVectorMemFold _) true]
       [(CompilerBackendNoVectorMemFold) false])))
 
+(define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
+  (let
+    [i : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< i active-lanes)
+        (begin
+          (set! mask (bit-or mask (shl 1 i)))
+          (set! i (+ i 1))))
+      mask)))
+
+(define (compiler-backend-avx512-tail-mask-immediate
+  [index : i64]
+  [end-value : i64]
+  [lanes : i64]) : i64
+  (let
+    [active-lanes : i64 (- end-value index)]
+    (cond
+      [(<= active-lanes 0) 0]
+      [(>= active-lanes lanes) (compiler-backend-avx512-lane-mask lanes)]
+      [else (compiler-backend-avx512-partial-mask active-lanes)])))
+
+(define (compiler-backend-emit-avx512-mask-immediate
+  [dst-reg : String]
+  [mask : i64]
+  [lanes : i64]) : String
+  (if (= mask 0)
+    (let
+      [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
+      (str-cat "    " kxor " " dst-reg ", " dst-reg ", " dst-reg "\n"))
+    (let
+      [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+      [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
+      [mov-imm : String (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
+      (str-cat
+        "    "
+        mov-imm
+        " $"
+        (int->string mask)
+        ", "
+        mask-gpr
+        "\n    "
+        mask-move
+        " "
+        mask-gpr
+        ", "
+        dst-reg
+        "\n"))))
+
 (define (compiler-backend-emit-vector-reduce
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -2362,6 +2414,113 @@
       elem-ty
       instr-diag)))
 
+(define (compiler-backend-emit-avx512-tail-mask-dynamic
+  [function : String]
+  [current-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [dst-reg : String]
+  [dst : i64]
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+      [(OkCompilerBackend index-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          end-value
+          "%rcx")
+          [(OkCompilerBackend end-asm)
+            (let
+              [full-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_full")]
+              [zero-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_zero")]
+              [done-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_done")]
+              [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+              [mask-move : String
+                (compiler-backend-avx512-mask-move-mnemonic lanes)]
+              [mov-imm : String
+                (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
+              [shift : String (compiler-backend-avx512-mask-shl-mnemonic lanes)]
+              [sub : String (compiler-backend-avx512-mask-sub-mnemonic lanes)]
+              [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
+              [body-range : String
+                (str-cat
+                  "    subq %rax, %rcx\n    cmpq $"
+                  (int->string lanes)
+                  ", %rcx\n    jge "
+                  full-label
+                  "\n")]
+              [body-nonzero-a : String
+                (str-cat
+                  "    testq %rcx, %rcx\n    jle "
+                  zero-label
+                  "\n    "
+                  mov-imm
+                  " $1, ")]
+              [body-nonzero-b : String
+                (str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
+              [body-mask-a : String
+                (str-cat "    " sub " $1, " mask-gpr "\n    ")]
+              [body-mask-b : String
+                (str-cat mask-move " " mask-gpr ", " dst-reg)]
+              [body-mask-c : String
+                (str-cat "\n    jmp " done-label "\n" full-label ":\n    ")]
+              [body-full-a : String
+                (str-cat mov-imm " $" (int->string full-mask) ", " mask-gpr)]
+              [body-full-b : String
+                (str-cat "\n    " mask-move " " mask-gpr ", ")]
+              [body-full-c : String
+                (str-cat dst-reg "\n    jmp " done-label "\n" zero-label ":\n")]
+              [body-zero : String
+                (str-cat
+                  "    "
+                  kxor
+                  " "
+                  dst-reg
+                  ", "
+                  dst-reg
+                  ", "
+                  dst-reg
+                  "\n"
+                  done-label
+                  ":\n")]
+              [body-asm : String
+                (str-cat
+                  body-range
+                  body-nonzero-a
+                  body-nonzero-b
+                  body-mask-a
+                  body-mask-b
+                  body-mask-c
+                  body-full-a
+                  body-full-b
+                  body-full-c
+                  body-zero)]
+              (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
 (define (compiler-backend-emit-avx512-tail-mask
   [function : String]
   [current-label : String]
@@ -2375,119 +2534,40 @@
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "tail mask dst")
       [(OkBackendReg dst-reg)
-        (let
-          [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            index
-            "%rax")
-            [(OkCompilerBackend index-asm)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                end-value
-                "%rcx")
-                [(OkCompilerBackend end-asm)
-                  (let
-                    [full-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_full")]
-                    [zero-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_zero")]
-                    [done-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_done")]
-                    [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
-                    [mask-move : String
-                      (compiler-backend-avx512-mask-move-mnemonic lanes)]
-                    [mov-imm : String
-                      (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
-                    [shift : String
-                      (compiler-backend-avx512-mask-shl-mnemonic lanes)]
-                    [sub : String
-                      (compiler-backend-avx512-mask-sub-mnemonic lanes)]
-                    [xor : String
-                      (compiler-backend-avx512-mask-xor-mnemonic lanes)]
-                    [body-range : String
-                      (str-cat
-                        "    subq %rax, %rcx\n    cmpq $"
-                        (int->string lanes)
-                        ", %rcx\n    jge "
-                        full-label
-                        "\n")]
-                    [body-nonzero-a : String
-                      (str-cat
-                        "    testq %rcx, %rcx\n    jle "
-                        zero-label
-                        "\n    "
-                        mov-imm
-                        " $1, ")]
-                    [body-nonzero-b : String
-                      (str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
-                    [body-mask-a : String
-                      (str-cat "    " sub " $1, " mask-gpr "\n    ")]
-                    [body-mask-b : String
-                      (str-cat mask-move " " mask-gpr ", " dst-reg)]
-                    [body-mask-c : String
-                      (str-cat
-                        "\n    jmp "
-                        done-label
-                        "\n"
-                        full-label
-                        ":\n    ")]
-                    [body-full-a : String
-                      (str-cat
-                        mov-imm
-                        " $"
-                        (int->string full-mask)
-                        ", "
-                        mask-gpr)]
-                    [body-full-b : String
-                      (str-cat "\n    " mask-move " " mask-gpr ", ")]
-                    [body-full-c : String
-                      (str-cat
-                        dst-reg
-                        "\n    jmp "
-                        done-label
-                        "\n"
-                        zero-label
-                        ":\n")]
-                    [body-zero-a : String
-                      (str-cat "    " xor " " mask-gpr ", ")]
-                    [body-zero-b : String
-                      (str-cat mask-gpr "\n    " mask-move " " mask-gpr)]
-                    [body-zero-c : String
-                      (str-cat ", " dst-reg "\n" done-label ":\n")]
-                    [body-asm : String
-                      (str-cat
-                        body-range
-                        body-nonzero-a
-                        body-nonzero-b
-                        body-mask-a
-                        body-mask-b
-                        body-mask-c
-                        body-full-a
-                        body-full-b
-                        body-full-c
-                        body-zero-a
-                        body-zero-b
-                        body-zero-c)]
-                    (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+        (match index
+          [(IrValueI64 index-imm)
+            (match end-value
+              [(IrValueI64 end-imm)
+                (OkCompilerBackend
+                  (compiler-backend-emit-avx512-mask-immediate
+                    dst-reg
+                    (compiler-backend-avx512-tail-mask-immediate
+                      index-imm
+                      end-imm
+                      lanes)
+                    lanes))]
+              [_
+                (compiler-backend-emit-avx512-tail-mask-dynamic
+                  function
+                  current-label
+                  assignments
+                  dst-reg
+                  dst
+                  index
+                  end-value
+                  lanes
+                  instr-diag)])]
+          [_
+            (compiler-backend-emit-avx512-tail-mask-dynamic
+              function
+              current-label
+              assignments
+              dst-reg
+              dst
+              index
+              end-value
+              lanes
+              instr-diag)])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])))

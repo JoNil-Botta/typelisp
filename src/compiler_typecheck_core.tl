@@ -2406,9 +2406,7 @@
   (sym-i64-empty))
 (define tc-unqualified-import-ambiguous-second-modules : SymI64Env
   (sym-i64-empty))
-(define tc-unqualified-import-local-value-modules : SymI64Env
-  (sym-i64-empty))
-(define tc-unqualified-import-local-value-modules-ready : bool
+(define tc-unqualified-import-has-ambiguity : bool
   false)
 
 (define (tc-unqualified-import-ambiguity-reset!) : unit
@@ -2416,131 +2414,17 @@
     (set! tc-unqualified-import-owner-modules (sym-i64-empty))
     (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
     (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
-    (set! tc-unqualified-import-local-value-modules (sym-i64-empty))
-    (set! tc-unqualified-import-local-value-modules-ready false)))
+    (set! tc-unqualified-import-has-ambiguity false)))
 
 (define (tc-unqualified-import-key-id
   [importer-module : String]
   [name-id : i64]) : i64
-  (compiler-symbol-module-key-id-by-name-id importer-module name-id))
-
-(define (tc-unqualified-import-note-local-value!
-  [module : String]
-  [name-id : i64]) : unit
-  (set!
-    tc-unqualified-import-local-value-modules
-    (sym-i64-bind-id
-      tc-unqualified-import-local-value-modules
-      (tc-unqualified-import-key-id module name-id)
-      1)))
-
-(define (tc-unqualified-import-note-struct-cleanup-local!
-  [module : String]
-  [cleanup : AstStructCleanup]) : unit
-  (match cleanup
-    [(AstStructNoCleanup) unit]
-    [(AstStructCleanupFn cleanup-name)
-      (tc-unqualified-import-note-local-value! module cleanup-name)]))
-
-(define (tc-unqualified-import-note-enum-cleanup-local!
-  [module : String]
-  [cleanup : AstEnumCleanup]) : unit
-  (match cleanup
-    [(AstEnumNoCleanup) unit]
-    [(AstEnumCleanupFn cleanup-name)
-      (tc-unqualified-import-note-local-value! module cleanup-name)]))
-
-(define (tc-unqualified-import-note-variant-list-local!
-  [module : String]
-  [variants : AstVariantDefList]) : unit
-  (match variants
-    [(AstVariantDefNil) unit]
-    [(AstVariantDefCons variant rest)
-      (begin
-        (match variant
-          [(AstVariantDef variant-name _ _)
-            (tc-unqualified-import-note-local-value! module variant-name)])
-        (tc-unqualified-import-note-variant-list-local! module (box-get rest)))]))
-
-(define (tc-unqualified-import-note-local-decl!
-  [module : String]
-  [decl : AstDecl]) : unit
-  (match decl
-    [(AstDeclDef local-name _ _)
-      (tc-unqualified-import-note-local-value! module local-name)]
-    [(AstDeclDefFn local-name _ _ _ _)
-      (tc-unqualified-import-note-local-value! module local-name)]
-    [(AstDeclDefMacro _ _ _ _) unit]
-    [(AstDeclExtern local-name _ _ _)
-      (tc-unqualified-import-note-local-value! module local-name)]
-    [(AstDeclDefDispatch local-name _)
-      (tc-unqualified-import-note-local-value! module local-name)]
-    [(AstDeclDefEnum local-name cleanup variants)
-      (begin
-        (tc-unqualified-import-note-local-value! module local-name)
-        (tc-unqualified-import-note-enum-cleanup-local! module cleanup)
-        (tc-unqualified-import-note-variant-list-local! module variants))]
-    [(AstDeclDefEnumLifetimes local-name _ cleanup variants)
-      (begin
-        (tc-unqualified-import-note-local-value! module local-name)
-        (tc-unqualified-import-note-enum-cleanup-local! module cleanup)
-        (tc-unqualified-import-note-variant-list-local! module variants))]
-    [(AstDeclDefStruct local-name _ cleanup _)
-      (begin
-        (tc-unqualified-import-note-local-value! module local-name)
-        (tc-unqualified-import-note-struct-cleanup-local! module cleanup))]
-    [(AstDeclDefStructLifetimes local-name _ _ cleanup _)
-      (begin
-        (tc-unqualified-import-note-local-value! module local-name)
-        (tc-unqualified-import-note-struct-cleanup-local! module cleanup))]
-    [(AstDeclUnsafe inner-box)
-      (tc-unqualified-import-note-local-decl! module (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
-      (tc-unqualified-import-note-local-decl! module (box-get template-box))]
-    [_ unit]))
-
-(define (tc-unqualified-import-note-local-decls!
-  [decls : AstDeclList]
-  [module : String]) : unit
-  (match decls
-    [(AstDeclNil) unit]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-unqualified-import-note-local-decls!
-              rest
-              (intern-str next-module))]
-          [_
-            (begin
-              (tc-unqualified-import-note-local-decl! module decl)
-              (tc-unqualified-import-note-local-decls! rest module))]))]))
-
-(define (tc-unqualified-import-local-values-ensure! [ctx : TcContext]) : unit
-  (if tc-unqualified-import-local-value-modules-ready
-    unit
-    (begin
-      (set! tc-unqualified-import-local-value-modules (sym-i64-empty))
-      (match (tc-context-program ctx)
-        [(AstProgram decls-box)
-          (tc-unqualified-import-note-local-decls! (box-get decls-box) "")])
-      (set! tc-unqualified-import-local-value-modules-ready true))))
-
-(define (tc-program-module-has-local-value-id?
-  [ctx : TcContext]
-  [target-module : String]
-  [name-id : i64]) : bool
-  (begin
-    (tc-unqualified-import-local-values-ensure! ctx)
-    (match (sym-i64-lookup-id
-      tc-unqualified-import-local-value-modules
-      (tc-unqualified-import-key-id target-module name-id))
-      [(SomeI64 _) true]
-      [NoneI64 false])))
+  (if (string-eq importer-module "")
+    name-id
+    (compiler-symbol-module-key-id-by-name-id importer-module name-id)))
 
 (define (tc-unqualified-import-note-value!
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [env : TcTypeEnv]
   [alias : String]
   [importer-module : String]
@@ -2552,39 +2436,38 @@
       [key-id : i64 (tc-unqualified-import-key-id importer-module name-id)]
       [source-id : i64 (intern source-module)]
       [binding-id : i64 (tc-module-name-id alias name-id)]
-      (if (tc-program-module-has-local-value-id? ctx importer-module name-id)
-        unit
-        (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
-          [(SomeI64 owner-id)
-            (if (= owner-id source-id)
-              unit
-              (match (sym-i64-lookup-id
-                tc-unqualified-import-ambiguous-first-modules
-                key-id)
-                [(SomeI64 _) unit]
-                [NoneI64
-                  (begin
-                    (set!
+      (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
+        [(SomeI64 owner-id)
+          (if (= owner-id source-id)
+            unit
+            (match (sym-i64-lookup-id
+              tc-unqualified-import-ambiguous-first-modules
+              key-id)
+              [(SomeI64 _) unit]
+              [NoneI64
+                (begin
+                  (set! tc-unqualified-import-has-ambiguity true)
+                  (set!
+                    tc-unqualified-import-ambiguous-first-modules
+                    (sym-i64-bind-id
                       tc-unqualified-import-ambiguous-first-modules
-                      (sym-i64-bind-id
-                        tc-unqualified-import-ambiguous-first-modules
-                        key-id
-                        owner-id))
-                    (set!
+                      key-id
+                      owner-id))
+                  (set!
+                    tc-unqualified-import-ambiguous-second-modules
+                    (sym-i64-bind-id
                       tc-unqualified-import-ambiguous-second-modules
-                      (sym-i64-bind-id
-                        tc-unqualified-import-ambiguous-second-modules
-                        key-id
-                        source-id)))]))]
-          [NoneI64
-            (if (tc-name-bound-id? env binding-id)
-              unit
-              (set!
+                      key-id
+                      source-id)))]))]
+        [NoneI64
+          (if (tc-name-bound-id? env binding-id)
+            unit
+            (set!
+              tc-unqualified-import-owner-modules
+              (sym-i64-bind-id
                 tc-unqualified-import-owner-modules
-                (sym-i64-bind-id
-                  tc-unqualified-import-owner-modules
-                  key-id
-                  source-id)))])))
+                key-id
+                source-id)))]))
     unit))
 
 (define (tc-bind-import-alias-value-id
@@ -4685,40 +4568,54 @@
             (box-get rest)
             name-id)))]))
 
+(define (tc-unqualified-import-ambiguity-message-for-key
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [_module : String]
+  [name : String]
+  [name-id : i64]
+  [key-id : i64]) : TcMaybeString
+  (match (sym-i64-lookup-id
+    tc-unqualified-import-ambiguous-first-modules
+    key-id)
+    [NoneI64 (TcNoString)]
+    [(SomeI64 first-module)
+      (if (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
+        (TcNoString)
+        (match (sym-i64-lookup-id
+          tc-unqualified-import-ambiguous-second-modules
+          key-id)
+          [NoneI64 (TcNoString)]
+          [(SomeI64 second-module)
+            (TcSomeString
+              (str-cat
+                "typecheck: ambiguous unqualified import for value "
+                name
+                " between modules "
+                (intern-str first-module)
+                " and "
+                (intern-str second-module)
+                "; use an explicit alias or qualified access"))]))]))
+
 (define (tc-unqualified-import-ambiguity-message
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : TcMaybeString
-  (let
-    [name : String (intern-str name-id)]
-    (if (tc-name-qualified? name)
-      (TcNoString)
-      (let
-        [module : String (tc-context-module ctx)]
-        [key-id : i64 (tc-unqualified-import-key-id module name-id)]
-        (match (sym-i64-lookup-id
-          tc-unqualified-import-ambiguous-first-modules
-          key-id)
-          [NoneI64 (TcNoString)]
-          [(SomeI64 first-module)
-            (if (or
-              (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
-              (tc-program-module-has-local-value-id? ctx module name-id))
-              (TcNoString)
-              (match (sym-i64-lookup-id
-                tc-unqualified-import-ambiguous-second-modules
-                key-id)
-                [NoneI64 (TcNoString)]
-                [(SomeI64 second-module)
-                  (TcSomeString
-                    (str-cat
-                      "typecheck: ambiguous unqualified import for value "
-                      name
-                      " between modules "
-                      (intern-str first-module)
-                      " and "
-                      (intern-str second-module)
-                      "; use an explicit alias or qualified access"))]))])))))
+  (if tc-unqualified-import-has-ambiguity
+    (let
+      [name : String (intern-str name-id)]
+      (if (tc-name-qualified? name)
+        (TcNoString)
+        (let
+          [module : String (tc-context-module ctx)]
+          (tc-unqualified-import-ambiguity-message-for-key
+            ctx
+            env
+            module
+            name
+            name-id
+            (tc-unqualified-import-key-id module name-id)))))
+    (TcNoString)))
 
 (define (tc-lookup-visible-id
   [ctx : TcContext]

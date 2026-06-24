@@ -3424,9 +3424,10 @@
 
 (define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
   (let
-    [name : String (intern-str name-id)]
+    [name : String (tc-hygiene-global-call-name (intern-str name-id))]
+    [lookup-id : i64 (intern name)]
     (or
-      (compiler-builtin-lower-clone-id? name-id)
+      (compiler-builtin-lower-clone-id? lookup-id)
       (string-eq name "substring")
       (string-eq name "string-slice"))))
 
@@ -3704,23 +3705,45 @@
         args)]
     (match (ast-expr-unspan callee)
       [(AstExprVar name)
-        (if (and
-          (string-eq (intern-str name) "clone")
-          (not (tc-name-bound? env (intern-str name))))
-          (match args
-            [(AstExprCons arg rest)
-              (let
-                [arg : AstExpr (ast-node-get arg)]
-                [rest : AstExprList (box-get rest)]
-                (match rest
-                  [(AstExprNil)
-                    (match (tc-expr ctx env arg)
-                      [(OkTcType arg-ty)
-                        (lower-clone-root-add-type ctx decls able walked arg-ty)]
-                      [(ErrTcType _) walked])]
-                  [_ walked]))]
-            [_ walked])
-          walked)]
+        (let
+          [raw-name : String (intern-str name)]
+          [lookup-name : String (tc-hygiene-global-call-name raw-name)]
+          [lookup-id : i64 (intern lookup-name)]
+          [bound : bool
+            (if (tc-hygiene-global-name? raw-name)
+              false
+              (tc-name-bound? env lookup-name))]
+          (if (and
+            (compiler-builtin-lower-clone-id? lookup-id)
+            (not bound)
+            (not (lower-top-level-value-defined? ctx lookup-name)))
+            (match args
+              [(AstExprCons _ rest)
+                (let
+                  [rest : AstExprList (box-get rest)]
+                  (match rest
+                    [(AstExprNil)
+                      (match (tc-expr
+                        ctx
+                        env
+                        (ast-node-get
+                          (ast-expr-call-with-pools
+                            (tc-context-pools ctx)
+                            (ast-node-pool-context-expr-push
+                              (tc-context-pools ctx)
+                              callee)
+                            args)))
+                        [(OkTcType clone-ty)
+                          (lower-clone-root-add-type
+                            ctx
+                            decls
+                            able
+                            walked
+                            clone-ty)]
+                        [(ErrTcType _) walked])]
+                    [_ walked]))]
+              [_ walked])
+            walked))]
       [_ walked])))
 
 (define (lower-clone-roots-expr
@@ -4311,6 +4334,19 @@
                 top-env
                 local-env
                 (ast-decl-cons inner rest)
+                all-decls
+                able
+                roots
+                names
+                module))]
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (lower-clone-roots-decls-in-module
+                ctx
+                top-env
+                local-env
+                (ast-decl-cons template rest)
                 all-decls
                 able
                 roots

@@ -2247,15 +2247,18 @@
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]
-          (begin
-            (vec.push (&mut items) first)
-            (let
-              [view : (slice.Slice items) (slice.all-vec (& items))]
-              (if (= (slice.len view) 1)
-                (begin
-                  (slice.get view 0 fallback)
-                  42)
-                0))))))))
+        (begin
+          (vec.push (&mut items) first)
+          (let
+            [has-one : bool
+              (let
+                [view : (slice.Slice items) (slice.all-vec (& items))]
+                (= (slice.len view) 1))]
+            (if has-one
+              (match (vec.pop (&mut items))
+                [(vec.Pop.Ok _) 42]
+                [(vec.Pop.Empty) 0])
+              0))))))))
 
 (import (slice-user i64) as user)
 (import (slice-user Pair) as pair-user)
@@ -2285,6 +2288,41 @@
     [(OkCompilerTypecheck _) true]
     [(ErrCompilerTypecheck _) false]))
 
+(define (tltest-function-base-defined?
+  [funcs : CompilerIrFunctionList]
+  [base : String]) : bool
+  (match funcs
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (if (string-contains (& name) (& base))
+            true
+            (tltest-function-base-defined? (box-get rest) base))])]
+    [(IrFunctionArray seq)
+      (tltest-function-base-defined?
+        (compiler-ir-function-seq-to-list seq)
+        base)]))
+
+(define (tltest-nested-module-macro-vector-lower-roots-ok?
+  [source : String]
+  [program : AstProgram]
+  [harness-paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (lower-compiler-program-with-decl-paths-mode-cache
+    source
+    (tltest-program-with-print-runtime program target)
+    (tltest-paths-with-print-runtime target harness-paths)
+    (CompilerLowerScalar)
+    roots
+    (tltest-typecheck-cache-scope roots target))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (tltest-function-base-defined? functions "clone$Pair")])]
+    [(ErrCompilerLower _) false]))
+
 (define (tltest-nested-module-macro-vector-loaded-ok?
   [source : String]
   [decls : AstDeclList]
@@ -2293,13 +2331,29 @@
   [target : CompilerBackendTarget]) : bool
   (match (tltest-build-harness source decls paths)
     [(InlineHarness program harness-paths count)
-      (if (= count 2)
-        (tltest-nested-module-macro-vector-typecheck-ok?
-          program
-          harness-paths
-          roots
-          target)
-        false)]))
+      (begin
+        (unless (= count 2) (return false))
+        (unless
+          (tltest-nested-module-macro-vector-typecheck-ok?
+            program
+            harness-paths
+            roots
+            target)
+          (begin
+            (print-error "nested module macro vector fixture failed typecheck")
+            (return false)))
+        (unless
+          (tltest-nested-module-macro-vector-lower-roots-ok?
+            source
+            program
+            harness-paths
+            roots
+            target)
+          (begin
+            (print-error
+              "nested module macro vector fixture did not emit clone$Pair")
+            (return false)))
+        true)]))
 
 (define (tltest-nested-module-macro-vector-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-nested-module-macro-vector")

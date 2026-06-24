@@ -29804,7 +29804,7 @@ tl_memcpy:
             dst
             next-src
             next-dst)
-            (backend-cat4 "    movq " src ", " next-dst)
+            (str-cat "    movq " src ", " next-dst)
             next)]
         [(CompilerBackendPeepholeNoMove) next])]
     [(CompilerBackendPeepholeNoMove) next]))
@@ -29943,7 +29943,7 @@ tl_memcpy:
             dst
             next-src
             next-dst)
-            (backend-cat4 "    movq " src ", " next-dst)
+            (str-cat "    movq " src ", " next-dst)
             (substring asm next-start (- next-end next-start)))]
         [(CompilerBackendPeepholeNoMove)
           (substring asm next-start (- next-end next-start))])]

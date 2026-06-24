@@ -3879,8 +3879,12 @@
     movq %rax, %r9
     movq %r9, %r10
 "]
+    [direct : String
+      (compiler-backend-peephole-forward-frame-load-line
+        "    movq %r8, -24(%rbp)"
+        "    movq -24(%rbp), %r10")]
     [got : String (compiler-backend-peephole-asm input)]
-    (string-eq got want)))
+    (and (string-eq direct "    movq %r8, %r10") (string-eq got want))))
 
 (define (compiler-backend-rax-forward-chain-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons

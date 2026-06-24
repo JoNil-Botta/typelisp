@@ -6352,7 +6352,7 @@
         [(CompilerRegEdgeCopyRewriteRefused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
 
-(define (compiler-reg-loop-split-rewrite-blocks
+(define (compiler-reg-loop-split-rewrite-one
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
@@ -6417,6 +6417,93 @@
                       ty
                       reg
                       copies)])]))]))))
+
+(define (compiler-reg-loop-split-max-rounds) : i64
+  (compiler-reg-sysv-integer-register-count))
+
+(define (compiler-reg-loop-split-rewrite-rounds
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [in-vars : i64]
+  [current-vars : i64]
+  [plan : CompilerRegPlan]
+  [extra-assignments : CompilerRegAssignmentList]
+  [extra-types : CompilerRegVarTypeList]
+  [rounds-left : i64]) : CompilerRegCallSaveRewrite
+  (if (<= rounds-left 0)
+    (CompilerRegCallSaveRewrite
+      blocks
+      in-vars
+      current-vars
+      extra-assignments
+      extra-types)
+    (let
+      [round-plan : CompilerRegPlan
+        (compiler-reg-plan-with-call-save-rewrite
+          plan
+          (CompilerRegCallSaveRewrite
+            blocks
+            in-vars
+            current-vars
+            extra-assignments
+            extra-types))]
+      [round-type-info : CompilerRegVarTypes
+        (compiler-reg-function-var-types func)]
+      (match (compiler-reg-loop-split-rewrite-one
+        func
+        blocks
+        current-vars
+        round-type-info
+        round-plan)
+        [(CompilerRegCallSaveRewrite
+            next-blocks
+            _
+            next-vars
+            next-assignments
+            next-types)
+          (if (= next-vars current-vars)
+            (CompilerRegCallSaveRewrite
+              blocks
+              in-vars
+              current-vars
+              extra-assignments
+              extra-types)
+            (match func
+              [(IrFunction name params ret-ty _ _)
+                (let
+                  [merged-assignments : CompilerRegAssignmentList
+                    (compiler-reg-assignment-list-merge
+                      next-assignments
+                      extra-assignments)]
+                  [merged-types : CompilerRegVarTypeList
+                    (compiler-reg-var-type-list-merge next-types extra-types)]
+                  [next-func : CompilerIrFunction
+                    (IrFunction name params ret-ty next-vars next-blocks)]
+                  (compiler-reg-loop-split-rewrite-rounds
+                    next-func
+                    next-blocks
+                    in-vars
+                    next-vars
+                    plan
+                    merged-assignments
+                    merged-types
+                    (- rounds-left 1)))]))]))))
+
+(define (compiler-reg-loop-split-rewrite-blocks
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [_type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  (compiler-reg-loop-split-rewrite-rounds
+    func
+    blocks
+    vars
+    vars
+    plan
+    CompilerRegAssignmentNil
+    CompilerRegVarTypeNil
+    (compiler-reg-loop-split-max-rounds)))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]
@@ -7602,7 +7689,7 @@
 ;; functions cannot have loop-carried values; very large functions stay on the
 ;; cheap block-level interval builder to cap opt2 compiler cost.
 (define (compiler-reg-scalar-full-interval-block-limit) : i64
-  8)
+  10)
 
 (define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
   (match func
@@ -13327,6 +13414,30 @@
 
 (cfg
   test
+  (define (compiler-reg-loop-split-two-plan [func : CompilerIrFunction]) : CompilerRegPlan
+    (let
+      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      (match (compiler-reg-live-interval-selection func liveness)
+        [(CompilerRegIntervalSelection intervals _)
+          (CompilerRegPlan
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment
+                0
+                (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment
+                  1
+                  (CompilerRegSpill (compiler-reg-stack-slot-offset 1)))
+                CompilerRegAssignmentNil))
+            (compiler-live-set-empty)
+            intervals
+            (compiler-reg-var-types-list type-info)
+            (compiler-live-set-empty))]))))
+
+(cfg
+  test
   (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
     (IrFunction
       "loop_split_rewrite"
@@ -13353,6 +13464,48 @@
                 (compiler-ir-instr-cons
                   (IrInstrStore "hot1" (IrValueVar 0) (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil))
+              IrBlockNil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-two-rewrite-function) : CompilerIrFunction
+    (IrFunction
+      "loop_split_two_rewrite"
+      IrParamNil
+      (AstTyI64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 1 (IrValueI64 11) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool false) "body" "exit")
+              IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "body"
+              (compiler-ir-instr-cons
+                (IrInstrStore "hot0" (IrValueVar 0) (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (IrInstrStore "hot1" (IrValueVar 1) (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (IrInstrStore "hot2" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (IrInstrStore "hot3" (IrValueVar 1) (compiler-reg-i64-ty))
+                      (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))))))
             (compiler-ir-block-cons
               (compiler-ir-block
                 "exit"
@@ -13482,6 +13635,58 @@
                     (compiler-reg-instr-list-has-store-var? body "hot0" vars)
                     (compiler-reg-instr-list-has-store-var? body "hot1" vars)
                     (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))))]))]))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-multiple-rewrite-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-loop-split-two-rewrite-function)]
+      [plan : CompilerRegPlan (compiler-reg-loop-split-two-plan func)]
+      (match func
+        [(IrFunction _ _ _ vars blocks)
+          (let
+            [rewrite : CompilerRegCallSaveRewrite
+              (compiler-reg-loop-split-rewrite-blocks
+                func
+                blocks
+                vars
+                (compiler-reg-function-var-types func)
+                plan)]
+            (match rewrite
+              [(CompilerRegCallSaveRewrite
+                  rewritten
+                  _
+                  out-vars
+                  extra-assignments
+                  _)
+                (let
+                  [body : CompilerIrInstrList
+                    (compiler-reg-block-instr-list rewritten "body")]
+                  [rewritten-plan : CompilerRegPlan
+                    (compiler-reg-plan-with-call-save-rewrite plan rewrite)]
+                  [rewritten-assignments : CompilerRegAssignmentList
+                    (compiler-reg-plan-assignments rewritten-plan)]
+                  [split0 : i64 vars]
+                  [split1 : i64 (+ vars 1)]
+                  (and
+                    (= out-vars (+ vars 2))
+                    (= (compiler-reg-assignment-count extra-assignments) 2)
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup
+                        rewritten-assignments
+                        split0)
+                      "%r12")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup
+                        rewritten-assignments
+                        split1)
+                      "%r13")
+                    (compiler-reg-instr-list-has-store-var? body "hot0" split0)
+                    (compiler-reg-instr-list-has-store-var? body "hot1" split1)
+                    (compiler-reg-instr-list-has-store-var? body "hot2" split0)
+                    (compiler-reg-instr-list-has-store-var? body "hot3" split1)
+                    (not (compiler-reg-instr-list-has-store-var? body "hot0" 0))
+                    (not (compiler-reg-instr-list-has-store-var? body "hot1" 1))))]))]))))
 
 (cfg
   test
@@ -14541,6 +14746,7 @@
     (cfg test (compiler-reg-edge-copy-backedge-ok?) true)
     (cfg test (compiler-reg-edge-copy-critical-refusal-ok?) true)
     (cfg test (compiler-reg-loop-split-rewrite-ok?) true)
+    (cfg test (compiler-reg-loop-split-multiple-rewrite-ok?) true)
     (cfg test (compiler-reg-loop-split-low-benefit-ok?) true)
     (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)))
 

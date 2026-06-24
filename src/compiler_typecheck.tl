@@ -4058,8 +4058,29 @@
     [owner : Arena (arena-make-atomic)]
     [channel : ChannelString (ChannelString 0)]
     [message (in-arena owner (string-append \"atom\" \"ic\"))]
+    (match (channel-string-send channel message)
+      [(ChannelStringSendOk) 42]
+      [(ChannelStringSendErr _) 2])))"))
+
+(define (compiler-typecheck-channel-atomic-string-send-bound-source) : String
+  (compiler-typecheck-with-arena-source
+    "(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : Arena (arena-make-atomic)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"atom\" \"ic\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
-    42))"))
+    (match sent
+      [(ChannelStringSendOk) 42]
+      [(ChannelStringSendErr _) 2])))"))
 
 (define (compiler-typecheck-channel-ordinary-string-send-source) : String
   (compiler-typecheck-with-arena-source
@@ -4094,6 +4115,8 @@
       "typecheck: region-tagged value cannot escape with-arena 'phase'")
     (compiler-typecheck-ok?
       (compiler-typecheck-channel-atomic-string-send-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-channel-atomic-string-send-bound-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-channel-ordinary-string-send-source)
       "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")

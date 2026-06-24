@@ -5317,7 +5317,7 @@
         (while (<= i limit)
           (begin
             (when
-              (string-eq (substring text i old-len) old-text)
+              (is-string-prefix-at (& text) (& old-text) i)
               (begin
                 (when (= found-at -1) (set! found-at i))
                 (set! matches (+ matches 1))))

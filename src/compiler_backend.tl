@@ -972,6 +972,37 @@
     role
     "; unsupported spill, call, or ABI lifetime"))
 
+(define (compiler-backend-vector-home-to-reg [home : String] [width : String]) : String
+  (if (string-eq width "xmm")
+    (compiler-backend-vector-home-to-xmm home)
+    (if (string-eq width "zmm")
+      (compiler-backend-vector-home-to-zmm home)
+      (compiler-backend-vector-home-to-ymm home))))
+
+(define (compiler-backend-vector-home-valid? [home : String]) : bool
+  (> (string-length (compiler-backend-vector-home-to-ymm home)) 0))
+
+(define (compiler-backend-vector-var-home
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]
+  [role : String]) : ResultBackendReg
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister home)
+          (if (compiler-backend-vector-home-valid? home)
+            (OkBackendReg home)
+            (ErrBackendReg (compiler-backend-vector-home-unavailable role)))]
+        [(CompilerRegRegisterPair _ _)
+          (ErrBackendReg (compiler-backend-vector-home-unavailable role))]
+        [(CompilerRegSpill _)
+          (ErrBackendReg
+            (string-append
+              "backend: vector spills are not implemented for "
+              role))])]
+    [(CompilerRegNoLocation)
+      (ErrBackendReg (compiler-backend-vector-home-unavailable role))]))
+
 (define (compiler-backend-mask-home-unavailable [role : String]) : String
   (str-cat
     "backend: mask register home unavailable for "
@@ -983,29 +1014,14 @@
   [var : i64]
   [role : String]
   [width : String]) : ResultBackendReg
-  (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (let
-            [reg : String
-              (if (string-eq width "xmm")
-                (compiler-backend-vector-home-to-xmm home)
-                (if (string-eq width "zmm")
-                  (compiler-backend-vector-home-to-zmm home)
-                  (compiler-backend-vector-home-to-ymm home)))]
-            (if (= (string-length reg) 0)
-              (ErrBackendReg (compiler-backend-vector-home-unavailable role))
-              (OkBackendReg reg)))]
-        [(CompilerRegRegisterPair _ _)
-          (ErrBackendReg (compiler-backend-vector-home-unavailable role))]
-        [(CompilerRegSpill _)
-          (ErrBackendReg
-            (string-append
-              "backend: vector spills are not implemented for "
-              role))])]
-    [(CompilerRegNoLocation)
-      (ErrBackendReg (compiler-backend-vector-home-unavailable role))]))
+  (match (compiler-backend-vector-var-home assignments var role)
+    [(OkBackendReg home)
+      (let
+        [reg : String (compiler-backend-vector-home-to-reg home width)]
+        (if (= (string-length reg) 0)
+          (ErrBackendReg (compiler-backend-vector-home-unavailable role))
+          (OkBackendReg reg)))]
+    [(ErrBackendReg message) (ErrBackendReg message)]))
 
 (define (compiler-backend-mask-var-reg
   [assignments : CompilerRegAssignmentList]
@@ -4868,6 +4884,7 @@
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
     [(AstTyI32) "    vmovd %xmm0, %eax\n"]
+    [(AstTyU32) "    vmovd %xmm0, %eax\n"]
     [(AstTyF64) ""]
     [_ "    vmovq %xmm0, %rax\n"]))
 
@@ -4875,6 +4892,43 @@
   (if (compiler-backend-float-type? elem-ty)
     "%xmm0"
     "%rax"))
+
+(define (compiler-backend-i64-u64-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [_ false]))
+
+(define (compiler-backend-emit-vmovq-xmm0-to-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]) : String
+  (match (compiler-reg-assignment-lookup assignments var-id)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister home) (str-cat "    vmovq %xmm0, " home "\n")]
+        [(CompilerRegRegisterPair home _)
+          (str-cat "    vmovq %xmm0, " home "\n")]
+        [(CompilerRegSpill offset)
+          (str-cat
+            "    vmovq %xmm0, "
+            (compiler-backend-frame-offset offset)
+            "\n")])]
+    [(CompilerRegNoLocation)
+      (str-cat "    vmovq %xmm0, " (compiler-backend-slot var-id) "\n")]))
+
+(define (compiler-backend-vector-reduce-store-scalar
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [elem-ty : AstType]) : String
+  (if (compiler-backend-i64-u64-type? elem-ty)
+    (compiler-backend-emit-vmovq-xmm0-to-var-with-plan assignments dst)
+    (string-append
+      (compiler-backend-avx2-vector-reduce-move-scalar elem-ty)
+      (compiler-backend-emit-store-typed-var-with-plan
+        assignments
+        dst
+        (compiler-backend-vector-reduce-result-reg elem-ty)
+        elem-ty))))
 
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [mnemonic : String]
@@ -4950,18 +5004,20 @@
             "backend: unsupported AVX2 vector reduction"))
         (match src
           [(IrValueVar src-var)
-            (match (compiler-backend-vector-var-reg
+            (match (compiler-backend-vector-var-home
               assignments
               src-var
-              "reduce source"
-              "ymm")
-              [(OkBackendReg ymm)
-                (match (compiler-backend-vector-var-reg
-                  assignments
-                  src-var
-                  "reduce source"
-                  "xmm")
-                  [(OkBackendReg xmm)
+              "reduce source")
+              [(OkBackendReg src-home)
+                (let
+                  [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
+                  [xmm : String (compiler-backend-vector-home-to-xmm src-home)]
+                  (if (or (= (string-length ymm) 0) (= (string-length xmm) 0))
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-with-message
+                        instr-diag
+                        (compiler-backend-vector-home-unavailable
+                          "reduce source")))
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
@@ -4969,17 +5025,10 @@
                           ymm
                           xmm
                           elem-ty)
-                        (string-append
-                          (compiler-backend-avx2-vector-reduce-move-scalar
-                            elem-ty)
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (compiler-backend-vector-reduce-result-reg elem-ty)
-                            elem-ty))))]
-                  [(ErrBackendReg message)
-                    (ErrCompilerBackend
-                      (compiler-diagnostic-with-message instr-diag message))])]
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -5082,18 +5131,20 @@
             "backend: unsupported AVX-512 vector reduction"))
         (match src
           [(IrValueVar src-var)
-            (match (compiler-backend-vector-var-reg
+            (match (compiler-backend-vector-var-home
               assignments
               src-var
-              "reduce source"
-              "zmm")
-              [(OkBackendReg zmm)
-                (match (compiler-backend-vector-var-reg
-                  assignments
-                  src-var
-                  "reduce source"
-                  "ymm")
-                  [(OkBackendReg ymm)
+              "reduce source")
+              [(OkBackendReg src-home)
+                (let
+                  [zmm : String (compiler-backend-vector-home-to-zmm src-home)]
+                  [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
+                  (if (or (= (string-length zmm) 0) (= (string-length ymm) 0))
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-with-message
+                        instr-diag
+                        (compiler-backend-vector-home-unavailable
+                          "reduce source")))
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-avx512-vector-reduce-horizontal-asm
@@ -5101,17 +5152,10 @@
                           zmm
                           ymm
                           elem-ty)
-                        (string-append
-                          (compiler-backend-avx2-vector-reduce-move-scalar
-                            elem-ty)
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (compiler-backend-vector-reduce-result-reg elem-ty)
-                            elem-ty))))]
-                  [(ErrBackendReg message)
-                    (ErrCompilerBackend
-                      (compiler-diagnostic-with-message instr-diag message))])]
+                        (compiler-backend-vector-reduce-store-scalar
+                          assignments
+                          dst
+                          elem-ty)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]

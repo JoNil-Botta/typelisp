@@ -7263,43 +7263,62 @@
             (let
               [rhs-reg : String
                 (compiler-backend-value-scalar-register assignments rhs)]
-              (if (if (string-eq rhs-reg "")
-                false
-                (not (string-eq rhs-reg dst-home)))
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  lhs
-                  dst-home)
-                  [(OkCompilerBackend lhs-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        lhs-asm
-                        (str-cat
-                          "    "
-                          mnem
-                          " "
-                          rhs-reg
-                          (string-append ", " (string-append dst-home "\n")))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  rhs
-                  "%r8")
-                  [(OkCompilerBackend rhs-asm)
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      lhs
-                      dst-home)
-                      [(OkCompilerBackend lhs-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            rhs-asm
+              [lhs-reg : String
+                (compiler-backend-value-scalar-register assignments lhs)]
+              (if (if (string-eq mnem "addq")
+                (if (string-eq lhs-reg "")
+                  false
+                  (not (string-eq rhs-reg "")))
+                false)
+                ;; bucket a (two-address tie): when both operands already live in
+                ;; registers and the op is add, emit a 3-address LEA so the
+                ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
+                ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
+                ;; never consumes a binop's flags (comparisons emit their own cmp).
+                (OkCompilerBackend
+                  (str-cat
+                    "    leaq ("
+                    lhs-reg
+                    ","
+                    rhs-reg
+                    (string-append "), " (string-append dst-home "\n"))))
+                (if (if (string-eq rhs-reg "")
+                  false
+                  (not (string-eq rhs-reg dst-home)))
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    lhs
+                    dst-home)
+                    [(OkCompilerBackend lhs-asm)
+                      (OkCompilerBackend
+                        (string-append
+                          lhs-asm
+                          (str-cat
+                            "    "
+                            mnem
+                            " "
+                            rhs-reg
+                            (string-append ", " (string-append dst-home "\n")))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    rhs
+                    "%r8")
+                    [(OkCompilerBackend rhs-asm)
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        lhs
+                        dst-home)
+                        [(OkCompilerBackend lhs-asm)
+                          (OkCompilerBackend
                             (string-append
-                              lhs-asm
-                              (str-cat "    " mnem " %r8, " dst-home "\n"))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])
+                              rhs-asm
+                              (string-append
+                                lhs-asm
+                                (str-cat "    " mnem " %r8, " dst-home "\n"))))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)])]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs

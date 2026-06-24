@@ -1,5 +1,5 @@
 ;; compiler_embedded_stdlib.tl - Checked-in stdlib source payloads (#1509).
-(import "../stdlib/string.tl")
+(import stdlib.string as string)
 
 (defenum CompilerEmbeddedStdlibSource
   (CompilerEmbeddedStdlibNoSource)
@@ -75,79 +75,79 @@
 
 (define (compiler-embedded-stdlib-lookup-modules [suffix : String]) : CompilerEmbeddedStdlibSource
   (cond
-    [(string-eq suffix "arena.tl")
+    [(string.string-eq suffix "arena.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)]
-    [(string-eq suffix "atomic.tl")
+    [(string.string-eq suffix "atomic.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-atomic)]
-    [(string-eq suffix "args.tl")
+    [(string.string-eq suffix "args.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-args)]
-    [(string-eq suffix "array.tl")
+    [(string.string-eq suffix "array.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-array)]
-    [(string-eq suffix "byte_buf.tl")
+    [(string.string-eq suffix "byte_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-byte-buf)]
-    [(string-eq suffix "cpu.tl")
+    [(string.string-eq suffix "cpu.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)]
-    [(string-eq suffix "comptime.tl")
+    [(string.string-eq suffix "comptime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-comptime)]
-    [(string-eq suffix "core_macros.tl")
+    [(string.string-eq suffix "core_macros.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
-    [(string-eq suffix "env.tl")
+    [(string.string-eq suffix "env.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
-    [(string-eq suffix "ffi.tl")
+    [(string.string-eq suffix "ffi.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
-    [(string-eq suffix "fs.tl")
+    [(string.string-eq suffix "fs.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)]
-    [(string-eq suffix "hash.tl")
+    [(string.string-eq suffix "hash.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)]
-    [(string-eq suffix "hashmap.tl")
+    [(string.string-eq suffix "hashmap.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)]
-    [(string-eq suffix "io.tl")
+    [(string.string-eq suffix "io.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)]
-    [(string-eq suffix "iterator.tl")
+    [(string.string-eq suffix "iterator.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-iterator)]
-    [(string-eq suffix "json.tl")
+    [(string.string-eq suffix "json.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
-    [(string-eq suffix "list.tl")
+    [(string.string-eq suffix "list.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)]
-    [(string-eq suffix "math.tl")
+    [(string.string-eq suffix "math.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-math)]
-    [(string-eq suffix "msvc.tl")
+    [(string.string-eq suffix "msvc.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-msvc)]
-    [(string-eq suffix "process.tl")
+    [(string.string-eq suffix "process.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-process)]
-    [(string-eq suffix "process_borrowed.tl")
+    [(string.string-eq suffix "process_borrowed.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-process-borrowed)]
-    [(string-eq suffix "profile.tl")
+    [(string.string-eq suffix "profile.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-profile)]
-    [(string-eq suffix "queue.tl")
+    [(string.string-eq suffix "queue.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
-    [(string-eq suffix "random.tl")
+    [(string.string-eq suffix "random.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
-    [(string-eq suffix "runtime.tl")
+    [(string.string-eq suffix "runtime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
-    [(string-eq suffix "sort.tl")
+    [(string.string-eq suffix "sort.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sort)]
-    [(string-eq suffix "sync.tl")
+    [(string.string-eq suffix "sync.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-sync)]
-    [(string-eq suffix "string.tl")
+    [(string.string-eq suffix "string.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-string)]
-    [(string-eq suffix "test.tl")
+    [(string.string-eq suffix "test.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-test)]
-    [(string-eq suffix "thread.tl")
+    [(string.string-eq suffix "thread.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-thread)]
-    [(string-eq suffix "time.tl")
+    [(string.string-eq suffix "time.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-time)]
-    [(string-eq suffix "text_buf.tl")
+    [(string.string-eq suffix "text_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-text-buf)]
-    [(string-eq suffix "text_buf_borrowed.tl")
+    [(string.string-eq suffix "text_buf_borrowed.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-text-buf-borrowed)]
-    [(string-eq suffix "vector.tl")
+    [(string.string-eq suffix "vector.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
-    [(string-eq suffix "vector_family.tl")
+    [(string.string-eq suffix "vector_family.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-family)]
-    [(string-eq suffix "vector_slice.tl")
+    [(string.string-eq suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-slice)]
     [else (CompilerEmbeddedStdlibNoSource)]))
 
@@ -155,187 +155,191 @@
   (let
     [source : CompilerEmbeddedStdlibSource (CompilerEmbeddedStdlibNoSource)]
     (begin
-      (if (string-eq suffix "tests/arena_atomic_api.tl")
+      (if (string.string-eq suffix "tests/arena_atomic_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-atomic-api))
         unit)
-      (if (string-eq suffix "tests/arena_patterns.tl")
+      (if (string.string-eq suffix "tests/arena_patterns.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-patterns))
         unit)
-      (if (string-eq suffix "tests/arena_policy_escape_string.tl")
+      (if (string.string-eq suffix "tests/arena_policy_escape_string.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-string))
         unit)
-      (if (string-eq suffix "tests/arena_policy_escape_text_buf.tl")
+      (if (string.string-eq suffix "tests/arena_policy_escape_text_buf.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-text-buf))
         unit)
-      (if (string-eq suffix "tests/arena_policy_escape_text_buf_borrowed.tl")
+      (if (string.string-eq
+        suffix
+        "tests/arena_policy_escape_text_buf_borrowed.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed))
         unit)
-      (if (string-eq suffix "tests/args_api.tl")
+      (if (string.string-eq suffix "tests/args_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-args-api))
         unit)
-      (if (string-eq suffix "tests/byte_buf_api.tl")
+      (if (string.string-eq suffix "tests/byte_buf_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-byte-buf-api))
         unit)
-      (if (string-eq suffix "tests/cpu_api.tl")
+      (if (string.string-eq suffix "tests/cpu_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-cpu-api))
         unit)
-      (if (string-eq suffix "tests/comptime_api.tl")
+      (if (string.string-eq suffix "tests/comptime_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-comptime-api))
         unit)
-      (if (string-eq suffix "tests/core_macros_api.tl")
+      (if (string.string-eq suffix "tests/core_macros_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-core-macros-api))
         unit)
-      (if (string-eq suffix "tests/env_api.tl")
+      (if (string.string-eq suffix "tests/env_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-env-api))
         unit)
-      (if (string-eq suffix "tests/fs_api.tl")
+      (if (string.string-eq suffix "tests/fs_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-fs-api))
         unit)
-      (if (string-eq suffix "tests/hashmap_mut_borrow_insert_or_update_live.tl")
+      (if (string.string-eq
+        suffix
+        "tests/hashmap_mut_borrow_insert_or_update_live.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-hashmap-mut-borrow-insert-or-update-live))
         unit)
-      (if (string-eq suffix "tests/io_stdio_bytes.tl")
+      (if (string.string-eq suffix "tests/io_stdio_bytes.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-bytes))
         unit)
-      (if (string-eq suffix "tests/io_stdio_lines.tl")
+      (if (string.string-eq suffix "tests/io_stdio_lines.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-lines))
         unit)
-      (if (string-eq suffix "tests/io_stdio_pipe_short_read.tl")
+      (if (string.string-eq suffix "tests/io_stdio_pipe_short_read.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-pipe-short-read))
         unit)
-      (if (string-eq suffix "tests/list_api.tl")
+      (if (string.string-eq suffix "tests/list_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-list-api))
         unit)
-      (if (string-eq suffix "tests/msvc_api.tl")
+      (if (string.string-eq suffix "tests/msvc_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-msvc-api))
         unit)
-      (if (string-eq suffix "tests/process_api.tl")
+      (if (string.string-eq suffix "tests/process_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-api))
         unit)
-      (if (string-eq suffix "tests/process_borrowed_escape.tl")
+      (if (string.string-eq suffix "tests/process_borrowed_escape.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-borrowed-escape))
         unit)
-      (if (string-eq suffix "tests/process_runtime.tl")
+      (if (string.string-eq suffix "tests/process_runtime.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-runtime))
         unit)
-      (if (string-eq suffix "tests/process_runtime_stderr.tl")
+      (if (string.string-eq suffix "tests/process_runtime_stderr.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-process-runtime-stderr))
         unit)
-      (if (string-eq suffix "tests/profile_api.tl")
+      (if (string.string-eq suffix "tests/profile_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-profile-api))
         unit)
-      (if (string-eq suffix "tests/sort_api.tl")
+      (if (string.string-eq suffix "tests/sort_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-sort-api))
         unit)
-      (if (string-eq suffix "tests/sync_api.tl")
+      (if (string.string-eq suffix "tests/sync_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-sync-api))
         unit)
-      (if (string-eq suffix "tests/string_edges.tl")
+      (if (string.string-eq suffix "tests/string_edges.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-string-edges))
         unit)
-      (if (string-eq suffix "tests/test_assert_failure.tl")
+      (if (string.string-eq suffix "tests/test_assert_failure.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-test-assert-failure))
         unit)
-      (if (string-eq suffix "tests/time_api.tl")
+      (if (string.string-eq suffix "tests/time_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-time-api))
         unit)
-      (if (string-eq suffix "tests/text_buf_api.tl")
+      (if (string.string-eq suffix "tests/text_buf_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-text-buf-api))
         unit)
-      (if (string-eq suffix "tests/vector_api.tl")
+      (if (string.string-eq suffix "tests/vector_api.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-vector-api))
         unit)
-      (if (string-eq suffix "tests/vector_slice_escape.tl")
+      (if (string.string-eq suffix "tests/vector_slice_escape.tl")
         (set!
           source
           (CompilerEmbeddedStdlibSomeSource

@@ -502,6 +502,8 @@
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
+  (uses-avx2-i64-lane-id bool)
+  (uses-avx512-i64-lane-id bool)
   (uses-f64-neg bool))
 
 (defenum CompilerBackendCollectState
@@ -556,6 +558,8 @@
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
+    false
+    false
     false))
 
 (define (compiler-backend-program-collections-add-function
@@ -566,6 +570,8 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-string
@@ -576,6 +582,8 @@
     (compiler-backend-string-set-add (struct-get collections strings) text)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-float
@@ -587,6 +595,8 @@
     (struct-get collections strings)
     (compiler-backend-float-set-add (struct-get collections floats) ty bits)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-bytes
@@ -597,6 +607,30 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (compiler-backend-string-set-add (struct-get collections bytes) text)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
+    (struct-get collections uses-f64-neg)))
+
+(define (compiler-backend-program-collections-mark-avx2-i64-lane-id
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (struct-get collections bytes)
+    true
+    (struct-get collections uses-avx512-i64-lane-id)
+    (struct-get collections uses-f64-neg)))
+
+(define (compiler-backend-program-collections-mark-avx512-i64-lane-id
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    true
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-mark-f64-neg
@@ -606,6 +640,8 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     true))
 
 ;; Concatenate fixed string groups with one allocation and one linear copy per
@@ -1803,14 +1839,11 @@
     function
     (str-cat "tail_mask_" current-label "_v" (int->string dst) suffix)))
 
-(define (compiler-backend-lane-id-label
-  [function : String]
-  [current-label : String]
-  [dst : i64]
-  [suffix : String]) : String
-  (compiler-backend-asm-label
-    function
-    (str-cat "lane_id_" current-label "_v" (int->string dst) suffix)))
+(define (compiler-backend-avx2-i64-lane-id-label) : String
+  ".L_tl_lane_id_i64x4")
+
+(define (compiler-backend-avx512-i64-lane-id-label) : String
+  ".L_tl_lane_id_i64x8")
 
 (define (compiler-backend-lane-id-avx512-i64-shape-ok?
   [elem-ty : AstType]
@@ -1846,9 +1879,40 @@
     .quad 3
 ")
 
+(define (compiler-backend-emit-avx2-i64-lane-id-rodata-into [buf : TextBuf]) : TextBuf
+  (text-buf-append
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append buf "    .section .rodata\n    .balign 32\n")
+        (compiler-backend-avx2-i64-lane-id-label))
+      ":\n")
+    (compiler-backend-avx2-i64-lane-id-data)))
+
+(define (compiler-backend-emit-avx512-i64-lane-id-rodata-into [buf : TextBuf]) : TextBuf
+  (text-buf-append
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append buf "    .section .rodata\n    .balign 64\n")
+        (compiler-backend-avx512-i64-lane-id-label))
+      ":\n")
+    (compiler-backend-avx512-i64-lane-id-data)))
+
+(define (compiler-backend-emit-lane-id-rodata-into
+  [uses-avx2-i64-lane-id : bool]
+  [uses-avx512-i64-lane-id : bool]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [avx2-buf : TextBuf
+      (if uses-avx2-i64-lane-id
+        (compiler-backend-emit-avx2-i64-lane-id-rodata-into buf)
+        buf)]
+    (if uses-avx512-i64-lane-id
+      (compiler-backend-emit-avx512-i64-lane-id-rodata-into avx2-buf)
+      avx2-buf)))
+
 (define (compiler-backend-emit-vector-lane-id
-  [function : String]
-  [current-label : String]
+  [_function : String]
+  [_current-label : String]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [lanes : i64]
@@ -1858,18 +1922,9 @@
     (match (compiler-backend-vector-var-reg assignments dst "lane id dst" "zmm")
       [(OkBackendReg dst-reg)
         (let
-          [data-label : String
-            (compiler-backend-lane-id-label function current-label dst "_data")]
-          [done-label : String
-            (compiler-backend-lane-id-label function current-label dst "_done")]
+          [data-label : String (compiler-backend-avx512-i64-lane-id-label)]
           (OkCompilerBackend
-            (string-append
-              (str-cat "    jmp " done-label "\n" data-label ":\n")
-              (string-append
-                (compiler-backend-avx512-i64-lane-id-data)
-                (string-append
-                  (str-cat done-label ":\n    vmovdqu64 " data-label "(%rip), ")
-                  (str-cat dst-reg "\n"))))))]
+            (str-cat "    vmovdqa64 " data-label "(%rip), " dst-reg "\n")))]
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])
@@ -1881,26 +1936,9 @@
         "ymm")
         [(OkBackendReg dst-reg)
           (let
-            [data-label : String
-              (compiler-backend-lane-id-label
-                function
-                current-label
-                dst
-                "_data")]
-            [done-label : String
-              (compiler-backend-lane-id-label
-                function
-                current-label
-                dst
-                "_done")]
+            [data-label : String (compiler-backend-avx2-i64-lane-id-label)]
             (OkCompilerBackend
-              (string-append
-                (str-cat "    jmp " done-label "\n" data-label ":\n")
-                (string-append
-                  (compiler-backend-avx2-i64-lane-id-data)
-                  (string-append
-                    (str-cat done-label ":\n    vmovdqu " data-label "(%rip), ")
-                    (str-cat dst-reg "\n"))))))]
+              (str-cat "    vmovdqa " data-label "(%rip), " dst-reg "\n")))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))])
@@ -22428,6 +22466,14 @@
   [collections : CompilerBackendProgramCollections]) : BackendStringList
   (compiler-backend-string-set-list (struct-get collections bytes)))
 
+(define (compiler-backend-program-collections-uses-avx2-i64-lane-id?
+  [collections : CompilerBackendProgramCollections]) : bool
+  (struct-get collections uses-avx2-i64-lane-id))
+
+(define (compiler-backend-program-collections-uses-avx512-i64-lane-id?
+  [collections : CompilerBackendProgramCollections]) : bool
+  (struct-get collections uses-avx512-i64-lane-id))
+
 (define (compiler-backend-program-collections-uses-f64-neg?
   [collections : CompilerBackendProgramCollections]) : bool
   (struct-get collections uses-f64-neg))
@@ -22439,6 +22485,16 @@
     (compiler-backend-program-collections-add-float collections (AstTyF64) bits)
     (AstTyF32)
     bits))
+
+(define (compiler-backend-collect-lane-id-collections
+  [collections : CompilerBackendProgramCollections]
+  [lanes : i64]
+  [elem-ty : AstType]) : CompilerBackendProgramCollections
+  (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
+    (compiler-backend-program-collections-mark-avx512-i64-lane-id collections)
+    (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
+      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)
+      collections)))
 
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]
@@ -22672,7 +22728,8 @@
         args)]
     [(IrInstrAlloc _ _) collections]
     [(IrInstrAddrOf _ _) collections]
-    [(IrInstrLaneId _ _ _) collections]
+    [(IrInstrLaneId _ lanes elem-ty)
+      (compiler-backend-collect-lane-id-collections collections lanes elem-ty)]
     [(IrInstrEntryArgc _) collections]
     [(IrInstrEntryArgv _) collections]
     [(IrInstrEntryEnvp _) collections]
@@ -26810,6 +26867,8 @@ tl_memcpy:
   [strings : BackendStringList]
   [bytes : BackendStringList]
   [floats : BackendFloatList]
+  [uses-avx2-i64-lane-id : bool]
+  [uses-avx512-i64-lane-id : bool]
   [uses-f64-neg : bool]
   [globals-buf : TextBuf]
   [emit-entry : bool]
@@ -26837,6 +26896,11 @@ tl_memcpy:
               (compiler-backend-emit-f64-sign-bit-rodata-into
                 uses-f64-neg
                 float-literals-buf)]
+            [lane-id-buf : TextBuf
+              (compiler-backend-emit-lane-id-rodata-into
+                uses-avx2-i64-lane-id
+                uses-avx512-i64-lane-id
+                f64-buf)]
             (begin
               (cfg
                 compile-profile
@@ -26849,7 +26913,7 @@ tl_memcpy:
                     entry-functions
                     externs
                     program-index
-                    f64-buf)]
+                    lane-id-buf)]
                 (begin
                   (cfg
                     compile-profile
@@ -26943,6 +27007,11 @@ tl_memcpy:
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
+    [uses-avx2-i64-lane-id : bool
+      (compiler-backend-program-collections-uses-avx2-i64-lane-id? collections)]
+    [uses-avx512-i64-lane-id : bool
+      (compiler-backend-program-collections-uses-avx512-i64-lane-id?
+        collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [span-index : CompilerBackendSourceSpanIndex
@@ -26965,6 +27034,8 @@ tl_memcpy:
             strings
             bytes
             floats
+            uses-avx2-i64-lane-id
+            uses-avx512-i64-lane-id
             uses-f64-neg
             globals-buf
             emit-entry

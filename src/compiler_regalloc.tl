@@ -8332,6 +8332,35 @@
     [(CompilerRegSomeLocation _) true]
     [(CompilerRegNoLocation) false]))
 
+;; RS_* stage machine (LLVM RAGreedy selectOrSplit, made explicit on the per-vreg
+;; base). alloc-one! pops one root in priority order and returns its terminal
+;; stage:
+;;   RS_Assign (1) -- got a register (hint reg, free reg, or by evicting strictly
+;;                    lower-weight interferers).
+;;   RS_Split  (2) -- no register, but the spilled root has a split-eligible
+;;                    (multi-segment / loop-carried) live range, so the function-
+;;                    level region-splitter (compiler-reg-loop-split-*, run as the
+;;                    backend post-pass on THIS plan) will rescue it: rewrite the
+;;                    hot region to a fresh register-resident var + cold-edge
+;;                    boundary copies, cost-gated by mentions x loop-depth. The
+;;                    greedy returns a CompilerRegPlan (not a rewritten function),
+;;                    so the IR-rewriting split necessarily lives in that post-pass;
+;;                    this stage records the selectOrSplit decision.
+;;   RS_Spill  (3) -- no register and not split-eligible: stack-home it.
+;; The plan output is identical to the single-pass M1 (every non-assigned root is
+;; spilled either way); the stage is the explicit decision the post-pass consumes.
+(define (compiler-reg-greedy-stage-rs-new) : i64
+  0)
+
+(define (compiler-reg-greedy-stage-rs-assign) : i64
+  1)
+
+(define (compiler-reg-greedy-stage-rs-split) : i64
+  2)
+
+(define (compiler-reg-greedy-stage-rs-spill) : i64
+  3)
+
 (define (compiler-reg-greedy-alloc-one!
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -8342,11 +8371,11 @@
   [reg-arr : (Array String)]
   [rcount : i64]
   [var : i64]
-  [n : i64]) : unit
+  [n : i64]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
-    unit
+    (compiler-reg-greedy-stage-rs-new)
     (let
       [hint : String
         (compiler-reg-greedy-hint-free-reg
@@ -8363,7 +8392,7 @@
             assignments
             var
             (CompilerRegRegister hint))
-          unit)
+          (compiler-reg-greedy-stage-rs-assign))
         (let
           [free : String
             (compiler-reg-greedy-first-free
@@ -8381,7 +8410,7 @@
                 assignments
                 var
                 (CompilerRegRegister free))
-              unit)
+              (compiler-reg-greedy-stage-rs-assign))
             (let
               [weight : i64
                 (if (< var (array-length ref-counts))
@@ -8411,13 +8440,17 @@
                     assignments
                     var
                     (CompilerRegRegister ev))
-                  unit)
+                  (compiler-reg-greedy-stage-rs-assign))
                 (begin
                   (compiler-reg-assignment-table-insert
                     assignments
                     var
                     (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
-                  unit)))))))))
+                  (if (compiler-reg-interval-index-var-has-segments?
+                    interval-index
+                    var)
+                    (compiler-reg-greedy-stage-rs-split)
+                    (compiler-reg-greedy-stage-rs-spill)))))))))))
 
 (define (compiler-reg-greedy-collect-vars
   [candidates : CompilerRegIntervalList]
@@ -8480,6 +8513,10 @@
       (compiler-reg-greedy-sort-insert! arr ref-counts i)
       (compiler-reg-greedy-sort! arr ref-counts (+ i 1) count))))
 
+;; Staged worklist driver: pop each root in priority (spill-weight desc) order,
+;; run selectOrSplit (alloc-one!), and record its terminal RS_* stage in `stages`.
+;; The stage array is the explicit selectOrSplit state the post-pass region split
+;; consumes (RS_Split roots are exactly the loop-split rescue candidates).
 (define (compiler-reg-greedy-alloc-all!
   [arr : (Array i64)]
   [i : i64]
@@ -8492,34 +8529,42 @@
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
   [rcount : i64]
+  [stages : (Array i64)]
   [n : i64]) : unit
   (if (>= i count)
     unit
-    (begin
-      (compiler-reg-greedy-alloc-one!
-        assignments
-        interval-index
-        ref-counts
-        copy-hints
-        group-vars
-        regs
-        reg-arr
-        rcount
-        (array-ref arr i)
-        n)
-      (compiler-reg-greedy-alloc-all!
-        arr
-        (+ i 1)
-        count
-        assignments
-        interval-index
-        ref-counts
-        copy-hints
-        group-vars
-        regs
-        reg-arr
-        rcount
-        n))))
+    (let
+      [v : i64 (array-ref arr i)]
+      [stg : i64
+        (compiler-reg-greedy-alloc-one!
+          assignments
+          interval-index
+          ref-counts
+          copy-hints
+          group-vars
+          regs
+          reg-arr
+          rcount
+          v
+          n)]
+      (begin
+        (if (and (>= v 0) (< v (array-length stages)))
+          (array-set! stages v stg)
+          unit)
+        (compiler-reg-greedy-alloc-all!
+          arr
+          (+ i 1)
+          count
+          assignments
+          interval-index
+          ref-counts
+          copy-hints
+          group-vars
+          regs
+          reg-arr
+          rcount
+          stages
+          n)))))
 
 (define (compiler-reg-greedy-integer-state
   [candidates : CompilerRegIntervalList]
@@ -8544,6 +8589,14 @@
         (if (< (array-length (struct-get assignments present)) 1)
           1
           (array-length (struct-get assignments present))))]
+    ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
+    ;; split rescues the RS_Split entries.
+    [stages : (Array i64)
+      (make-array
+        i64
+        (if (< (array-length (struct-get assignments present)) 1)
+          1
+          (array-length (struct-get assignments present))))]
     (begin
       (compiler-reg-greedy-string-list-to-array regs reg-arr 0)
       (let
@@ -8562,6 +8615,7 @@
             regs
             reg-arr
             rcount
+            stages
             n)
           (CompilerRegAssignState CompilerRegActiveNil assignments))))))
 

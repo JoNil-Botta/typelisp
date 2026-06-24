@@ -1798,7 +1798,6 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]
-  [asm : String]
   [write-context : String]) : SourceToolCommandStatus
   (match (source-tool-try-lowered-linux-direct-object-and-link
     source
@@ -1824,14 +1823,24 @@
         [(SourceToolDirectObjectOk) SourceToolCommandOk]
         [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
         [(SourceToolDirectObjectUnavailable _)
-          (source-tool-write-assembly-and-link
+          (match (compiler-driver-emit-lowered-with-level
+            source
+            program
+            spans
             target
-            asm-path
-            obj-path
-            bin-path
-            link-inputs
-            asm
-            write-context)])]))
+            true
+            opt-level)
+            [(OkCompilerDriver asm)
+              (source-tool-write-assembly-and-link
+                target
+                asm-path
+                obj-path
+                bin-path
+                link-inputs
+                (source-tool-augment-assembly-for-target asm target)
+                write-context)]
+            [(ErrCompilerDriver diag)
+              (SourceToolCommandErr (compiler-diagnostic-render diag))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

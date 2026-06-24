@@ -617,7 +617,11 @@
     (ast-node-push (AstExprVar (intern "__tl_test_print_error")))
     (ast-expr-cons
       (ast-node-push (AstExprLiteral (AstLitString text)))
-      AstExprNil)))
+      (ast-expr-cons
+        (ast-expr-cast
+          (ast-node-push (AstExprLiteral (ast-lit-int (string-length text))))
+          (AstTyI32))
+        AstExprNil))))
 
 (define (tltest-call-expr [name : String]) : i64
   (ast-expr-call (ast-node-push (AstExprVar (intern name))) AstExprNil))
@@ -777,13 +781,10 @@
     [(BackendTargetLinux) (tltest-linux-print-runtime-write-decl)]
     [(BackendTargetWindows) (tltest-windows-print-runtime-write-decl)]))
 
-(define (tltest-text-param-list) : AstParamList
-  (ast-param-cons (ast-param "text" (AstTyString) false) AstParamNil))
-
-(define (tltest-text-length-expr) : i64
-  (ast-expr-call
-    (ast-node-push (AstExprVar (intern "__tl_string_length")))
-    (ast-expr-cons (ast-node-push (AstExprVar (intern "text"))) AstExprNil)))
+(define (tltest-print-param-list) : AstParamList
+  (ast-param-cons
+    (ast-param "text" (AstTyString) false)
+    (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil)))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
@@ -799,14 +800,12 @@
               (ast-expr-string-data
                 (ast-node-push (AstExprVar (intern "text"))))
               AstExprNil)))
-        (ast-expr-cons
-          (ast-expr-cast (tltest-text-length-expr) (AstTyI32))
-          AstExprNil)))))
+        (ast-expr-cons (ast-node-push (AstExprVar (intern "n"))) AstExprNil)))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
   (ast-decl-def-fn
     "__tl_test_print_error"
-    (tltest-text-param-list)
+    (tltest-print-param-list)
     (AstTyUnit)
     (ast-node-push
       (AstExprBegin
@@ -2455,73 +2454,54 @@
       roots
       (tltest-typecheck-cache-scope roots target))
       [(OkCompilerLower ir spans)
-        (match (compiler-driver-emit-lowered-with-level
+        (match (source-tool-lowered-object-or-assembly-and-link
           source
           ir
           spans
           target
-          true
-          opt-level)
-          [(OkCompilerDriver asm)
-            (match (source-tool-lowered-object-or-assembly-and-link
-              source
-              ir
-              spans
-              target
-              opt-level
-              (source-tool-link-inputs-empty)
-              asm-path
-              obj-path
-              bin-path
-              (source-tool-augment-assembly-for-target asm target)
-              "test: failed to write assembly artifact")
-              [(SourceToolCommandErr message)
-                (begin
-                  (print-error message)
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    bin-path
-                    true)
-                  1)]
-              [(SourceToolCommandOk)
-                (match (tltest-run-harness-output source bin-path target)
-                  [(OkProcessOutput output)
-                    (let
-                      [status : i64 (process-output-status output)]
-                      (begin
-                        (source-tool-forward-output output)
-                        (if (= status 0)
-                          unit
-                          (tltest-report-child-status output))
-                        (source-tool-clean-temp
-                          temp-dir
-                          asm-path
-                          obj-path
-                          bin-path
-                          true)
-                        ;; A failed test executable (including one that
-                        ;; panics/aborts, which exits 134) is a test
-                        ;; FAILURE, not a host crash: report the raw status
-                        ;; above, but exit cleanly with 1 so CI does not retry
-                        ;; it as a transient #1204 segfault.
-                        (if (= status 0)
-                          0
-                          1)))]
-                  [(ErrProcessOutput error)
-                    (begin
-                      (print-error
-                        (tltest-run-executable-error-message
-                          bin-path
-                          temp-dir
-                          error))
-                      1)])])]
-          [(ErrCompilerDriver diag)
+          opt-level
+          (source-tool-link-inputs-empty)
+          asm-path
+          obj-path
+          bin-path
+          "test: failed to write assembly artifact")
+          [(SourceToolCommandErr message)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
-              1)])]
+              1)]
+          [(SourceToolCommandOk)
+            (match (tltest-run-harness-output source bin-path target)
+              [(OkProcessOutput output)
+                (let
+                  [status : i64 (process-output-status output)]
+                  (begin
+                    (source-tool-forward-output output)
+                    (if (= status 0)
+                      unit
+                      (tltest-report-child-status output))
+                    (source-tool-clean-temp
+                      temp-dir
+                      asm-path
+                      obj-path
+                      bin-path
+                      true)
+                    ;; A failed test executable (including one that
+                    ;; panics/aborts, which exits 134) is a test
+                    ;; FAILURE, not a host crash: report the raw status
+                    ;; above, but exit cleanly with 1 so CI does not retry
+                    ;; it as a transient #1204 segfault.
+                    (if (= status 0)
+                      0
+                      1)))]
+              [(ErrProcessOutput error)
+                (begin
+                  (print-error
+                    (tltest-run-executable-error-message
+                      bin-path
+                      temp-dir
+                      error))
+                  1)])])]
       [(ErrCompilerLower diag)
         (begin
           (print-error

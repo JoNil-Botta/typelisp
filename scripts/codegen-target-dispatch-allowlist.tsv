@@ -56,6 +56,10 @@ src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	
 src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	2	Function emission adds target entry argument capture and object-format suffixes.
 src/compiler_backend.tl	compiler-backend-target-arg-reg	abi	BackendTarget(Linux|Windows)	2	Integer argument register selection is target ABI specific.
 src/compiler_backend.tl	compiler-backend-target-float-arg-reg	abi	BackendTarget(Linux|Windows)	2	Float argument register selection is target ABI specific.
+src/compiler_backend.tl	compiler-backend-object-call-reg-count	abi	BackendTarget(Linux|Windows)	2	Direct-object call lowering follows target ABI argument register counts.
+src/compiler_backend.tl	compiler-backend-object-call-space	abi	BackendTarget(Linux|Windows)	2	Direct-object call lowering reserves target ABI shadow and stack argument space.
+src/compiler_backend.tl	compiler-backend-object-call-arg-moves	abi	BackendTarget(Linux|Windows)	2	Direct-object stack argument moves differ between System V and Win64.
+src/compiler_backend.tl	compiler-backend-object-param-spills	abi	BackendTarget(Linux|Windows)	2	Direct-object callee parameter spills differ for target stack arguments.
 src/compiler_backend.tl	compiler-backend-target-linux?	backend-mode	BackendTarget(Linux|Windows)|compiler-backend-target-linux[?]	3	Backend target predicate centralizes Linux target checks.
 src/compiler_backend.tl	compiler-backend-target-windows?	backend-mode	BackendTarget(Linux|Windows)|compiler-backend-target-windows[?]	3	Backend target predicate centralizes Windows target checks.
 src/compiler_backend.tl	compiler-backend-target-entry-text-with-crt	entry	BackendTarget(Linux|Windows)	2	Entry symbol text differs between freestanding Linux and CRT targets.

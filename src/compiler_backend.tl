@@ -27587,10 +27587,11 @@ tl_memcpy:
 (define (compiler-backend-object-disp8? [disp : i64]) : bool
   (and (>= disp -128) (<= disp 127)))
 
-(define (compiler-backend-object-load-slot-bytes [var-id : i64] [reg : String]) : String
+(define (compiler-backend-object-load-rbp-disp-bytes
+  [disp : i64]
+  [reg : String]) : String
   (let
     [out : (Array u8) (make-array u8 0)]
-    [disp : i64 (compiler-backend-object-slot-disp var-id)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -27705,6 +27706,73 @@ tl_memcpy:
 (define (compiler-backend-object-leave-ret-bytes) : String
   (compiler-backend-object-bytes-from-hex "c9c3"))
 
+(define (compiler-backend-object-zero-eax-bytes) : String
+  (compiler-backend-object-bytes-from-hex "31c0"))
+
+(define (compiler-backend-object-rsp-imm-bytes [opcode : i64] [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (if (<= value 127)
+        (begin
+          (compiler-backend-object-push-u8! out 0x48)
+          (compiler-backend-object-push-u8! out 0x83)
+          (compiler-backend-object-push-u8! out opcode)
+          (compiler-backend-object-push-u8! out value))
+        (begin
+          (compiler-backend-object-push-u8! out 0x48)
+          (compiler-backend-object-push-u8! out 0x81)
+          (compiler-backend-object-push-u8! out opcode)
+          (compiler-backend-object-push-u32! out value)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-sub-rsp-bytes [value : i64]) : String
+  (if (= value 0)
+    ""
+    (compiler-backend-object-rsp-imm-bytes 0xec value)))
+
+(define (compiler-backend-object-add-rsp-bytes [value : i64]) : String
+  (if (= value 0)
+    ""
+    (compiler-backend-object-rsp-imm-bytes 0xc4 value)))
+
+(define (compiler-backend-object-store-rax-rsp-bytes [disp : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x89)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! out 0x44)
+          (compiler-backend-object-push-u8! out 0x24)
+          (compiler-backend-object-push-u8! out disp))
+        (begin
+          (compiler-backend-object-push-u8! out 0x84)
+          (compiler-backend-object-push-u8! out 0x24)
+          (compiler-backend-object-push-u32! out disp)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-load-rax-pointee-bytes [ty : AstType]) : String
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
+    [signed : bool (compiler-backend-type-signed? ty)]
+    (cond
+      [(= size 8) (compiler-backend-object-bytes-from-hex "488b00")]
+      [(= size 4)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "486300")
+          (compiler-backend-object-bytes-from-hex "8b00"))]
+      [(= size 2)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "480fbf00")
+          (compiler-backend-object-bytes-from-hex "0fb700"))]
+      [(= size 1)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "480fbe00")
+          (compiler-backend-object-bytes-from-hex "0fb600"))]
+      [else (compiler-backend-object-bytes-from-hex "488b00")])))
+
 (define (compiler-backend-object-leave-bytes) : String
   (compiler-backend-object-bytes-from-hex "c9"))
 
@@ -27717,7 +27785,9 @@ tl_memcpy:
     [(IrValueVar id)
       (compiler-backend-object-add-nonempty-bytes
         parts
-        (compiler-backend-object-load-slot-bytes id reg))]
+        (compiler-backend-object-load-rbp-disp-bytes
+          (compiler-backend-object-slot-disp id)
+          reg))]
     [(IrValueI64 n)
       (compiler-backend-object-add-nonempty-bytes
         parts
@@ -27802,6 +27872,19 @@ tl_memcpy:
     dst
     "%rax"))
 
+(define (compiler-backend-object-load-ptr-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendObjectParts
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-load-value-to-reg parts site src "%rax")
+      (compiler-backend-object-load-rax-pointee-bytes ty))
+    dst
+    "%rax"))
+
 (define (compiler-backend-object-sub-imm32-rax-bytes [value : i64]) : String
   (let
     [out : (Array u8) (make-array u8 0)]
@@ -27810,6 +27893,67 @@ tl_memcpy:
       (compiler-backend-object-push-u8! out 0x2d)
       (compiler-backend-object-push-u32! out value)
       (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-add-imm32-rax-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x05)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-imul-imm32-r8-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x4d)
+      (compiler-backend-object-push-u8! out 0x69)
+      (compiler-backend-object-push-u8! out 0xc0)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-add-r8-rax-bytes) : String
+  (compiler-backend-object-bytes-from-hex "4c01c0"))
+
+(define (compiler-backend-object-gep-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]) : CompilerBackendObjectParts
+  (let
+    [elem-size : i64 (compiler-backend-type-size elem-ty)]
+    [with-base : CompilerBackendObjectParts
+      (compiler-backend-object-load-value-to-reg parts site base "%rax")]
+    [with-offset : CompilerBackendObjectParts
+      (match offset
+        [(IrValueI64 n)
+          (let
+            [disp : i64 (* n elem-size)]
+            (if (= disp 0)
+              with-base
+              (compiler-backend-object-add-nonempty-bytes
+                with-base
+                (compiler-backend-object-add-imm32-rax-bytes disp))))]
+        [_
+          (compiler-backend-object-add-nonempty-bytes
+            (if (= elem-size 1)
+              (compiler-backend-object-load-value-to-reg
+                with-base
+                site
+                offset
+                "%r8")
+              (compiler-backend-object-add-nonempty-bytes
+                (compiler-backend-object-load-value-to-reg
+                  with-base
+                  site
+                  offset
+                  "%r8")
+                (compiler-backend-object-imul-imm32-r8-bytes elem-size)))
+            (compiler-backend-object-add-r8-rax-bytes))])]
+    (compiler-backend-object-store-reg-to-var with-offset dst "%rax")))
 
 (define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
   (let
@@ -27996,32 +28140,113 @@ tl_memcpy:
         dst
         "%rax"))))
 
-(define (compiler-backend-object-call-arg-reg [index : i64]) : String
-  (match (compiler-backend-arg-reg index)
+(define (compiler-backend-object-call-arg-reg
+  [target : CompilerBackendTarget]
+  [index : i64]) : String
+  (match (compiler-backend-target-arg-reg target index)
     [(OkBackendReg reg) reg]
     [(ErrBackendReg _) "%rax"]))
 
+(define (compiler-backend-object-call-reg-count
+  [target : CompilerBackendTarget]) : i64
+  (match target
+    [(BackendTargetLinux) 6]
+    [(BackendTargetWindows) 4]))
+
+(define (compiler-backend-object-call-stack-word-count
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : i64
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    [regs : i64 (compiler-backend-object-call-reg-count target)]
+    (if (> count regs)
+      (- count regs)
+      0)))
+
+(define (compiler-backend-object-call-space
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows)
+      (compiler-backend-round-up-16
+        (+
+          (compiler-backend-outgoing-shadow-space target)
+          (* 8 (compiler-backend-object-call-stack-word-count target args))))]))
+
+(define (compiler-backend-object-call-stack-arg
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [site : String]
+  [value : CompilerIrValue]
+  [stack-index : i64]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-nonempty-bytes
+    (compiler-backend-object-load-value-to-reg parts site value "%rax")
+    (compiler-backend-object-store-rax-rsp-bytes
+      (compiler-backend-outgoing-stack-arg-offset target stack-index))))
+
 (define (compiler-backend-object-call-arg-moves
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [site : String]
   [args : CompilerIrCallArgs]
   [index : i64]) : CompilerBackendObjectParts
   (if (>= index (compiler-backend-call-args-count args))
     parts
-    (if (>= index 6)
-      parts
+    (if (>= index (compiler-backend-object-call-reg-count target))
+      (match target
+        [(BackendTargetLinux) parts]
+        [(BackendTargetWindows)
+          (compiler-backend-object-call-arg-moves
+            (compiler-backend-object-call-stack-arg
+              parts
+              target
+              site
+              (compiler-backend-call-arg-at args index)
+              (- index (compiler-backend-object-call-reg-count target)))
+            target
+            site
+            args
+            (+ index 1))])
       (compiler-backend-object-call-arg-moves
         (compiler-backend-object-load-value-to-reg
           parts
           site
           (compiler-backend-call-arg-at args index)
-          (compiler-backend-object-call-arg-reg index))
+          (compiler-backend-object-call-arg-reg target index))
+        target
         site
         args
         (+ index 1)))))
 
+(define (compiler-backend-object-direct-call
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [site : String]
+  [symbol : String]
+  [args : CompilerIrCallArgs]) : CompilerBackendObjectParts
+  (let
+    [space : i64 (compiler-backend-object-call-space target args)]
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          (compiler-backend-object-call-arg-moves
+            (compiler-backend-object-add-nonempty-bytes
+              parts
+              (compiler-backend-object-sub-rsp-bytes space))
+            target
+            site
+            args
+            0)
+          site
+          (ObjectRelocCall)
+          symbol)
+        (ObjectX64Call symbol))
+      (compiler-backend-object-add-rsp-bytes space))))
+
 (define (compiler-backend-object-param-spills
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [int-index : i64]) : CompilerBackendObjectParts
   (match params
@@ -28032,23 +28257,41 @@ tl_memcpy:
           (if (compiler-backend-float-type? ty)
             (compiler-backend-object-param-spills
               parts
+              target
               (box-get rest)
               int-index)
-            (if (>= int-index 6)
+            (if (>= int-index (compiler-backend-object-call-reg-count target))
               (compiler-backend-object-param-spills
-                parts
+                (match target
+                  [(BackendTargetLinux) parts]
+                  [(BackendTargetWindows)
+                    (compiler-backend-object-store-reg-to-var
+                      (compiler-backend-object-add-nonempty-bytes
+                        parts
+                        (compiler-backend-object-load-rbp-disp-bytes
+                          (compiler-backend-incoming-stack-arg-offset
+                            target
+                            (-
+                              int-index
+                              (compiler-backend-object-call-reg-count target)))
+                          "%rax"))
+                      var-id
+                      "%rax")])
+                target
                 (box-get rest)
                 (+ int-index 1))
               (compiler-backend-object-param-spills
                 (compiler-backend-object-store-reg-to-var
                   parts
                   var-id
-                  (compiler-backend-object-call-arg-reg int-index))
+                  (compiler-backend-object-call-arg-reg target int-index))
+                target
                 (box-get rest)
                 (+ int-index 1))))])]))
 
 (define (compiler-backend-object-instr
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
   [current-label : String]
@@ -28077,16 +28320,15 @@ tl_memcpy:
           [_ with-src]))]
     [(IrInstrCall dst name args _)
       (let
-        [target : String
+        [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-store-reg-to-var
-          (compiler-backend-object-add-text
-            (compiler-backend-object-add-text-relocation
-              (compiler-backend-object-call-arg-moves parts function args 0)
-              function
-              (ObjectRelocCall)
-              target)
-            (ObjectX64Call target))
+          (compiler-backend-object-direct-call
+            parts
+            target
+            function
+            call-target
+            args)
           dst
           "%rax"))]
     [(IrInstrCallIndirect _ callee args _)
@@ -28105,19 +28347,14 @@ tl_memcpy:
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
           (let
-            [target : String
+            [call-target : String
               (compiler-backend-call-symbol-index name plan program-index)]
-            (compiler-backend-object-add-text
-              (compiler-backend-object-add-text-relocation
-                (compiler-backend-object-call-args
-                  (compiler-backend-object-value-ref parts function base)
-                  function
-                  args
-                  0)
-                function
-                (ObjectRelocCall)
-                target)
-              (ObjectX64Call target)))])]
+            (compiler-backend-object-direct-call
+              (compiler-backend-object-value-ref parts function base)
+              target
+              function
+              call-target
+              args))])]
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
@@ -28131,17 +28368,22 @@ tl_memcpy:
             0)])]
     [(IrInstrTailCall name args _)
       (let
-        [target : String
+        [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             (compiler-backend-object-add-nonempty-bytes
-              (compiler-backend-object-call-arg-moves parts function args 0)
+              (compiler-backend-object-call-arg-moves
+                parts
+                target
+                function
+                args
+                0)
               (compiler-backend-object-leave-bytes))
             function
             (ObjectRelocTailCall)
-            target)
-          (ObjectX64TailCall target)))]
+            call-target)
+          (ObjectX64TailCall call-target)))]
     [(IrInstrStore name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -28186,7 +28428,12 @@ tl_memcpy:
     [(IrInstrReturn value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
-          [(IrNoValue) parts]
+          [(IrNoValue)
+            (if (string-eq function "main")
+              (compiler-backend-object-add-nonempty-bytes
+                parts
+                (compiler-backend-object-zero-eax-bytes))
+              parts)]
           [(IrSomeValue inner)
             (compiler-backend-object-load-value-to-reg
               parts
@@ -28196,13 +28443,16 @@ tl_memcpy:
         (compiler-backend-object-leave-ret-bytes))]
     [(IrInstrPhi _ inputs ty)
       (compiler-backend-object-phi-inputs-with-type parts function inputs ty)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts function base)
+    [(IrInstrGep dst base offset elem-ty)
+      (compiler-backend-object-gep-to-var
+        parts
         function
-        offset)]
-    [(IrInstrLoad _ src _)
-      (compiler-backend-object-value-ref parts function src)]
+        dst
+        base
+        offset
+        elem-ty)]
+    [(IrInstrLoad dst src ty)
+      (compiler-backend-object-load-ptr-to-var parts function dst src ty)]
     [(IrInstrStorePtr dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref parts function dst)
@@ -28219,10 +28469,10 @@ tl_memcpy:
         (compiler-backend-object-value-ref parts function index)
         function
         length)]
-    [(IrInstrCast _ src from-ty _)
-      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
-    [(IrInstrBitcast _ src from-ty _)
-      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
+    [(IrInstrCast dst src from-ty _)
+      (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
+    [(IrInstrBitcast dst src from-ty _)
+      (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
     [(IrInstrSplat _ value _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
     [(IrInstrVectorBinOp payload-box)
@@ -28356,6 +28606,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
   [current-label : String]
@@ -28368,12 +28619,14 @@ tl_memcpy:
     (compiler-backend-object-instr-seq
       (compiler-backend-object-instr
         parts
+        target
         function
         label-scope
         current-label
         (compiler-ir-instr-seq-ref instrs index)
         plan
         program-index)
+      target
       function
       label-scope
       current-label
@@ -28384,6 +28637,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-blocks
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function-symbol : String]
   [label-scope : String]
   [blocks : CompilerIrBlockList]
@@ -28406,6 +28660,7 @@ tl_memcpy:
                     (ObjectSectionText)
                     (ObjectSymbolFunction))
                   (ObjectX64Label block-label))
+                target
                 function-symbol
                 label-scope
                 label
@@ -28413,6 +28668,7 @@ tl_memcpy:
                 plan
                 program-index
                 0)
+              target
               function-symbol
               label-scope
               (box-get rest)
@@ -28421,6 +28677,7 @@ tl_memcpy:
     [(IrBlockArray seq)
       (compiler-backend-object-blocks
         parts
+        target
         function-symbol
         label-scope
         (compiler-ir-block-seq-to-list seq)
@@ -28429,6 +28686,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-functions
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
@@ -28455,19 +28713,23 @@ tl_memcpy:
                       (ObjectX64Label symbol))
                     (compiler-backend-object-prologue-bytes
                       (compiler-backend-frame-size vars)))
+                  target
                   params
                   0)
+                target
                 symbol
                 label-scope
                 blocks
                 plan
                 program-index)
+              target
               (box-get rest)
               plan
               program-index))])]
     [(IrFunctionArray seq)
       (compiler-backend-object-functions
         parts
+        target
         (compiler-ir-function-seq-to-list seq)
         plan
         program-index)]))
@@ -29116,9 +29378,13 @@ tl_memcpy:
       (compiler-backend-object-add-text-bytes
         with-argv-store
         (compiler-backend-object-windows-setup-epilogue-bytes))]
-    [with-boot-label : CompilerBackendObjectParts
+    [with-boot-public-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-setup-end
+        (ObjectX64Label "tl_alloc"))]
+    [with-boot-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-boot-public-label
         (ObjectX64Label ".L_tl_boot_alloc"))]
     [with-boot-off-load : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
@@ -29448,6 +29714,7 @@ tl_memcpy:
                       (compiler-backend-object-globals
                         (compiler-backend-object-functions
                           (compiler-backend-object-parts-empty)
+                          target
                           entry-functions
                           plan
                           program-index)

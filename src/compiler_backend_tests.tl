@@ -1352,6 +1352,12 @@
                   (ObjectSectionText)
                   ".L_tl_boot_alloc")
                 0)
+              (>=
+                (compiler-object-coff-section-label-offset
+                  image
+                  (ObjectSectionText)
+                  "tl_alloc")
+                0)
               (compiler-object-section-contains-label?
                 sections
                 (ObjectSectionPdata)
@@ -1365,7 +1371,6 @@
                 ".L_tl_boot_alloc"
                 (ObjectSymbolLocal)
                 (ObjectSymbolRuntime))
-              true
               true
               true)
             (backend-and8
@@ -1480,6 +1485,78 @@
                     0xc7)))]
             [(ErrCompilerObjectCoff _) false])
           false))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-unit-main-zero-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : unit unit)"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (match (compiler-object-coff-render image)
+        [(OkCompilerObjectCoff obj)
+          (let
+            [text-header : i64
+              (compiler-object-coff-section-header-offset (ObjectSectionText))]
+            [text-ptr : i64
+              (compiler-object-coff-u32-at obj (+ text-header 20))]
+            [main-offset : i64
+              (compiler-object-coff-section-label-offset
+                image
+                (ObjectSectionText)
+                "main")]
+            [main-ptr : i64 (+ text-ptr main-offset)]
+            (if (< main-offset 0)
+              false
+              (backend-and8
+                (= (compiler-object-coff-u8-at obj main-ptr) 0x55)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
+        [(ErrCompilerObjectCoff _) false])]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (string_data_ptr [s : String]) : (Ptr u8)
+  (unsafe (string-data s)))
+(define (main) : i64
+  (unsafe (cast (ptr->int (string_data_ptr \"hi\")) : i64)))"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (and
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b00"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488945"))))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+  e)
+(define (main) : i64
+  (sum5 1 2 3 4 5))"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (backend-and4
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4889442420"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b4530"))
+          true
+          true))]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-implicit-main-source) : String
@@ -3686,6 +3763,7 @@
     [packed : CompilerBackendObjectParts
       (compiler-backend-object-instr
         (compiler-backend-object-parts-empty)
+        (BackendTargetLinux)
         "main"
         "main"
         "entry"
@@ -3695,6 +3773,7 @@
     [worded : CompilerBackendObjectParts
       (compiler-backend-object-instr
         packed
+        (BackendTargetLinux)
         "main"
         "main"
         "entry"
@@ -11400,6 +11479,9 @@
         (compiler-object-coff-text-smoke-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
+        (compiler-backend-windows-object-unit-main-zero-ok?)
+        (compiler-backend-windows-object-load-stores-dst-ok?)
+        (compiler-backend-windows-object-stack-param-spill-ok?)
         (compiler-object-elf-smoke-ok?)
         (compiler-object-elf-text-smoke-ok?)
         (compiler-backend-elf-renders-real-text-ok?)

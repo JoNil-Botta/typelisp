@@ -28,7 +28,7 @@
 ;;     point against ASCII constants.
 (import "stdlib/io.tl")
 (import "stdlib/string.tl")
-(import stdlib.vector as vector)
+(import stdlib.vector)
 
 (defenum Token
   (TIdent String)

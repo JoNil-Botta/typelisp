@@ -43,7 +43,7 @@
 ;; `token-tag`) and a value vector (the integer payload of a `TInt`, else 0) -
 ;; so the cursor is a plain `i64` index the helpers advance.
 (import "stdlib/io.tl")
-(import stdlib.vector as vector)
+(import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
 (defenum Token

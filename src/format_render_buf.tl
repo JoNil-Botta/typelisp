@@ -1,5 +1,5 @@
 ;; format_render_buf.tl - Shared formatter render buffer helpers.
-(import stdlib.string as string)
+(import stdlib.string)
 
 (define (format-width) : i64
   80)

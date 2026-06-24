@@ -19,7 +19,7 @@
 ;# ```
 (module stdlib.core_macros)
 
-(import stdlib.comptime as comptime)
+(import stdlib.comptime)
 
 ;: Short-circuiting boolean conjunction.
 ;:

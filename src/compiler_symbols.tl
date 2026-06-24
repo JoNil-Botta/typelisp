@@ -1800,6 +1800,8 @@
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclExtern name _ _ _)
       (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefMacro name _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefDispatch name _)
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnum name _ _)

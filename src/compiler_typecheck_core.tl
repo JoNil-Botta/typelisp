@@ -35531,20 +35531,44 @@
 (define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
 
-(define (macro-parse-decl-sexpr [form : SpannedSexpr] [origin : AstExpr]) : ResultMacroParsedDecls
-  (match (parse-ast-decl-maybe (compiler-parse-dispatch-env) form)
+(define (macro-stdlib-private-dynamic-buffer-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (or
+    (and
+      (string-eq definition-module "stdlib.vector")
+      (string-eq macro-name "stdlib.vector/vector"))
+    (and
+      (string-eq definition-module "stdlib.vector_family")
+      (string-eq macro-name "stdlib.vector_family/vector-family"))))
+
+(define (macro-parse-dispatch-for-macro
+  [macro-name : String]
+  [definition-module : String]) : SymI64Env
+  (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
+    (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
+    (compiler-parse-dispatch-env)))
+
+(define (macro-parse-decl-sexpr
+  [dispatch : SymI64Env]
+  [form : SpannedSexpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
+  (match (parse-ast-decl-maybe dispatch form)
     [(OkAstSomeDecl decl) (OkMacroParsedDecls (ast-decl-cons decl AstDeclNil))]
     [(OkAstDecls decls) (OkMacroParsedDecls decls)]
     [(OkAstNoDecl) (OkMacroParsedDecls AstDeclNil)]
     [(ErrAstMaybeDecl message)
       (ErrMacroParsedDecls (macro-output-syntax-diag origin message))]))
 
-(define (macro-parse-decls-from-one-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-one-expr
+  [dispatch : SymI64Env]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (sp-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr expr origin)
       [(OkMacroSexpr form)
-        (match (macro-parse-decl-sexpr form origin)
+        (match (macro-parse-decl-sexpr dispatch form origin)
           [(OkMacroParsedDecls decls)
             (begin
               (sp-node-pool-truncate! mark)
@@ -35558,41 +35582,49 @@
           (sp-node-pool-truncate! mark)
           (ErrMacroParsedDecls diag))])))
 
-(define (macro-parse-decls-from-exprs [exprs : AstExprList] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-exprs
+  [dispatch : SymI64Env]
+  [exprs : AstExprList]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
     [(AstExprNil) (OkMacroParsedDecls AstDeclNil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (macro-parse-decls-from-expr head-expr origin)
+        (match (macro-parse-decls-from-expr dispatch head-expr origin)
           [(OkMacroParsedDecls head-decls)
-            (match (macro-parse-decls-from-exprs rest origin)
+            (match (macro-parse-decls-from-exprs dispatch rest origin)
               [(OkMacroParsedDecls rest-decls)
                 (OkMacroParsedDecls
                   (macro-decl-list-append head-decls rest-decls))]
               [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)])]
           [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)]))]))
 
-(define (macro-parse-decls-from-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-expr
+  [dispatch : SymI64Env]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (match (ast-expr-unspan expr)
-    [(AstExprBegin exprs) (macro-parse-decls-from-exprs exprs origin)]
+    [(AstExprBegin exprs) (macro-parse-decls-from-exprs dispatch exprs origin)]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (ast-expr-unspan func)
           [(AstExprVar name)
             (if (string-eq (macro-output-syntax-name (intern-str name)) "begin")
-              (macro-parse-decls-from-exprs args origin)
-              (macro-parse-decls-from-one-expr expr origin))]
-          [_ (macro-parse-decls-from-one-expr expr origin)]))]
-    [_ (macro-parse-decls-from-one-expr expr origin)]))
+              (macro-parse-decls-from-exprs dispatch args origin)
+              (macro-parse-decls-from-one-expr dispatch expr origin))]
+          [_ (macro-parse-decls-from-one-expr dispatch expr origin)]))]
+    [_ (macro-parse-decls-from-one-expr dispatch expr origin)]))
 
 (define (macro-module-decls-from-ctfe-value
   [value : CompilerCtfeValue]
-  [origin : AstExpr]) : ResultMacroParsedDecls
+  [origin : AstExpr]
+  [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _) (macro-parse-decls-from-expr (ast-node-get node) origin)]
+    [(CtfeExpr node _)
+      (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
         (macro-output-syntax-diag
@@ -35601,9 +35633,11 @@
 
 (define (macro-decls-from-ctfe-value
   [value : CompilerCtfeValue]
-  [origin : AstExpr]) : ResultMacroParsedDecls
+  [origin : AstExpr]
+  [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _) (macro-parse-decls-from-expr (ast-node-get node) origin)]
+    [(CtfeExpr node _)
+      (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
         (macro-output-syntax-diag
@@ -36415,17 +36449,39 @@
 ;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
-;; way macro-decl-from-decl does), so this returns the identical MacroSomeDecl the
-;; previous O(decls) macro-find-decl-by-index walk produced. The defining module
-;; is supplied by the caller -- every call site looks the macro up in the module
-;; it is defined in, which is exactly the module the scan recovered by tracking
-;; AstDeclModule as it walked.
+;; way macro-decl-from-decl does), so direct module lookups return the identical
+;; MacroSomeDecl the previous O(decls) macro-find-decl-by-index walk produced.
+(define (macro-decl-owner-module-or
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [fallback : String]) : String
+  (match (compiler-symbols-owner-name-at-index symbols target)
+    [(CompilerSomeString owner-name)
+      (if (tc-name-qualified? owner-name)
+        (tc-qualified-name-module owner-name)
+        fallback)]
+    [(CompilerNoString) fallback]))
+
 (define (macro-decl-at-index-in-module
   [symbols : CompilerSymbols]
   [target : i64]
   [module : String]) : MacroMaybeDecl
   (match (compiler-symbols-decl-at-index symbols target)
     [(OkAstDecl decl) (macro-decl-from-decl decl module)]
+    [(ErrAstDecl _) (MacroNoDecl)]))
+
+;; Imported macro aliases can be looked up from the importing module. In that
+;; path, recover the indexed owner module so the transformer still runs as its
+;; original definition module.
+(define (macro-decl-at-index-with-owner-module
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [module : String]) : MacroMaybeDecl
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(OkAstDecl decl)
+      (macro-decl-from-decl
+        decl
+        (macro-decl-owner-module-or symbols target module))]
     [(ErrAstDecl _) (MacroNoDecl)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
@@ -37267,7 +37323,7 @@
     (intern module)
     (intern lookup-name))
     [(SomeI64 handle)
-      (match (macro-decl-at-index-in-module
+      (match (macro-decl-at-index-with-owner-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         module)
@@ -38993,27 +39049,34 @@
                                 0
                                 call-expr)
                                 [(OkMacroValue value)
-                                  (match (macro-decls-from-ctfe-value
-                                    value
-                                    call-expr)
-                                    [(OkMacroParsedDecls generated)
-                                      (let
-                                        [contextual-generated : AstDeclList
-                                          (macro-generated-context-decls
-                                            generated
-                                            definition-module)]
-                                        [wrapped : AstDeclList
-                                          (macro-wrap-generated-decls-decls
-                                            contextual-generated
-                                            macro-name
-                                            (macro-decls-generated-key identity))]
-                                        (OkMacroDeclExpansion
-                                          wrapped
-                                          (macro-paths-for-decls
+                                  (let
+                                    [parse-dispatch : SymI64Env
+                                      (macro-parse-dispatch-for-macro
+                                        macro-name
+                                        definition-module)]
+                                    (match (macro-decls-from-ctfe-value
+                                      value
+                                      call-expr
+                                      parse-dispatch)
+                                      [(OkMacroParsedDecls generated)
+                                        (let
+                                          [contextual-generated : AstDeclList
+                                            (macro-generated-context-decls
+                                              generated
+                                              definition-module)]
+                                          [wrapped : AstDeclList
+                                            (macro-wrap-generated-decls-decls
+                                              contextual-generated
+                                              macro-name
+                                              (macro-decls-generated-key
+                                                identity))]
+                                          (OkMacroDeclExpansion
                                             wrapped
-                                            decl-path)))]
-                                    [(ErrMacroParsedDecls diag)
-                                      (ErrMacroDeclExpansion diag)])]
+                                            (macro-paths-for-decls
+                                              wrapped
+                                              decl-path)))]
+                                      [(ErrMacroParsedDecls diag)
+                                        (ErrMacroDeclExpansion diag)]))]
                                 [(ErrMacroValue diag)
                                   (ErrMacroDeclExpansion diag)])]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
@@ -39094,24 +39157,30 @@
                                 0
                                 call-expr)
                                 [(OkMacroValue value)
-                                  (match (macro-module-decls-from-ctfe-value
-                                    value
-                                    call-expr)
-                                    [(OkMacroParsedDecls generated)
-                                      (macro-expand-module-generated-decls
-                                        orig-decls
-                                        module
-                                        alias
-                                        span
-                                        decl-path
+                                  (let
+                                    [parse-dispatch : SymI64Env
+                                      (macro-parse-dispatch-for-macro
                                         macro-name
-                                        identity
-                                        (macro-generated-context-decls
-                                          generated
-                                          definition-module)
-                                        call-expr)]
-                                    [(ErrMacroParsedDecls diag)
-                                      (ErrMacroDeclExpansion diag)])]
+                                        definition-module)]
+                                    (match (macro-module-decls-from-ctfe-value
+                                      value
+                                      call-expr
+                                      parse-dispatch)
+                                      [(OkMacroParsedDecls generated)
+                                        (macro-expand-module-generated-decls
+                                          orig-decls
+                                          module
+                                          alias
+                                          span
+                                          decl-path
+                                          macro-name
+                                          identity
+                                          (macro-generated-context-decls
+                                            generated
+                                            definition-module)
+                                          call-expr)]
+                                      [(ErrMacroParsedDecls diag)
+                                        (ErrMacroDeclExpansion diag)]))]
                                 [(ErrMacroValue diag)
                                   (ErrMacroDeclExpansion diag)])]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]

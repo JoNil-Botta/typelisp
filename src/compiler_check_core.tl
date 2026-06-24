@@ -43,12 +43,10 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-              "feature-str-view")
-            "feature-private-string-intrinsics")
-          "feature-compiler-private-string-intrinsics")
-        "feature-compiler-private-dynamic-buffer")
+            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
       "array-helper-intrinsics")
     "feature-plain-comptime-well-known"))
 
@@ -511,6 +509,12 @@
       (i64vec.push (&mut items) 1)
       (i64vec.len (& items)))))")
 
+(define (compiler-check-private-dynamic-buffer-public-source) : String
+  "(define (main) : i64
+  (let
+    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    (array-length items)))")
+
 (define (compiler-check-virtual-import-ok?) : bool
   (match (compiler-check-source
     "src/virtual_entry.tl"
@@ -664,6 +668,12 @@
     "tests/private_dynamic_buffer_vector.tl"
     (compiler-check-private-dynamic-buffer-vector-source)))
 
+(define (compiler-check-private-dynamic-buffer-public-rejected-ok?) : bool
+  (compiler-check-source-error-ok?
+    "tests/private_dynamic_buffer_public.tl"
+    (compiler-check-private-dynamic-buffer-public-source)
+    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))
+
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?
     "tests/implicit_core_prelude_check.tl"
@@ -726,6 +736,10 @@
       (compiler-check-private-dynamic-buffer-vector-ok?)
       (return
         (panic "compiler-check: private dynamic-buffer vector smoke mismatch")))
+    (unless
+      (compiler-check-private-dynamic-buffer-public-rejected-ok?)
+      (return
+        (panic "compiler-check: private dynamic-buffer public smoke mismatch")))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
       (return (panic "compiler-check: implicit core prelude smoke mismatch")))

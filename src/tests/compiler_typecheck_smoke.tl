@@ -1082,6 +1082,20 @@
 (import (gen-b \"b\"))
 (define (main) : i64 (answer))")
 
+(define (compiler-typecheck-smoke-module-macro-generated-local-shadow-source) : String
+  "(defmacro (gen-a [key : String]) : Module
+  `(begin
+    (module generated.a)
+    (define (answer) : i64 42)))
+(defmacro (gen-b [key : String]) : Module
+  `(begin
+    (module generated.b)
+    (define (answer) : i64 99)))
+(import (gen-a \"a\"))
+(import (gen-b \"b\"))
+(define (answer) : i64 7)
+(define (main) : i64 (answer))")
+
 (define (compiler-typecheck-smoke-module-macro-local-collision-source) : String
   "(defmacro (gen [key : String]) : Module
   `(begin
@@ -1177,6 +1191,8 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-generated-collision-source)
       "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-generated-local-shadow-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-local-collision-source))
     (compiler-typecheck-ok?

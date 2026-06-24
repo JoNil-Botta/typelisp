@@ -61,6 +61,9 @@ if [ "$HOST_OS" = windows ]; then
     HOST_STATIC_LIB_PREFIX=
     HOST_STATIC_LIB_SUFFIX=.lib
 fi
+PACKAGE_SPLIT_TARGET=$HOST_TARGET
+PACKAGE_SPLIT_STATIC_LIB_PREFIX=$HOST_STATIC_LIB_PREFIX
+PACKAGE_SPLIT_STATIC_LIB_SUFFIX=$HOST_STATIC_LIB_SUFFIX
 
 WORKDIR="$ROOT/target/public-tool-verify"
 rm -rf "$WORKDIR"
@@ -2378,6 +2381,114 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stdout_empty
     assert_contains "$err" "inspect: tlci: truncated header"
 fi
+
+echo "[public-tools] package tlci host-target split"
+SPLIT_PKG="$WORKDIR/pkg-split"
+mkdir -p "$SPLIT_PKG/src" "$SPLIT_PKG/vendor/math/src" "$SPLIT_PKG/vendor/util/src"
+cat > "$SPLIT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "split_pkg")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl")
+  (dependencies
+    (math "vendor/math")
+    (util "vendor/util")))
+EOF
+maybe_strip_manifest_kind "$SPLIT_PKG/typelisp.pkg"
+cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(import "pkg:util/src/lib.tl")
+(define (split-root [x : i64]) : i64
+  (+ (split-math x) (split-util x)))
+EOF
+cat > "$SPLIT_PKG/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "split_math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$SPLIT_PKG/vendor/math/typelisp.pkg"
+cat > "$SPLIT_PKG/vendor/math/src/lib.tl" <<'EOF'
+(define (split-math [x : i64]) : i64 (+ x 1))
+EOF
+cat > "$SPLIT_PKG/vendor/util/typelisp.pkg" <<'EOF'
+(package
+  (name "split_util")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+maybe_strip_manifest_kind "$SPLIT_PKG/vendor/util/typelisp.pkg"
+cat > "$SPLIT_PKG/vendor/util/src/lib.tl" <<'EOF'
+(define (split-util [x : i64]) : i64 (+ x 2))
+EOF
+
+SPLIT_ROOT_ARCHIVE="$SPLIT_PKG/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_pkg${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_MATH_ARCHIVE="$SPLIT_PKG/vendor/math/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_math${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_UTIL_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_util${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_ROOT_TLCI="$SPLIT_PKG/target/release/split_pkg.tlci"
+SPLIT_MATH_TLCI="$SPLIT_PKG/vendor/math/target/release/split_math.tlci"
+SPLIT_UTIL_TLCI="$SPLIT_PKG/vendor/util/target/release/split_util.tlci"
+SPLIT_ROOT_HOST_ARCHIVE="$SPLIT_PKG/target/release/${HOST_STATIC_LIB_PREFIX}split_pkg${HOST_STATIC_LIB_SUFFIX}"
+SPLIT_MATH_HOST_ARCHIVE="$SPLIT_PKG/vendor/math/target/release/${HOST_STATIC_LIB_PREFIX}split_math${HOST_STATIC_LIB_SUFFIX}"
+SPLIT_UTIL_HOST_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${HOST_STATIC_LIB_PREFIX}split_util${HOST_STATIC_LIB_SUFFIX}"
+
+run_cmd package-host-target-split "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET"
+assert_success
+assert_stderr_empty
+[ -s "$SPLIT_ROOT_ARCHIVE" ] || fail "package split build did not write root target archive $SPLIT_ROOT_ARCHIVE"
+[ -s "$SPLIT_MATH_ARCHIVE" ] || fail "package split build did not write math target archive $SPLIT_MATH_ARCHIVE"
+[ -s "$SPLIT_UTIL_ARCHIVE" ] || fail "package split build did not write util target archive $SPLIT_UTIL_ARCHIVE"
+[ -s "$SPLIT_ROOT_TLCI" ] || fail "package split build did not write root host tlci $SPLIT_ROOT_TLCI"
+[ -s "$SPLIT_MATH_TLCI" ] || fail "package split build did not write math host tlci $SPLIT_MATH_TLCI"
+[ -s "$SPLIT_UTIL_TLCI" ] || fail "package split build did not write util host tlci $SPLIT_UTIL_TLCI"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_MATH_ARCHIVE")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_UTIL_ARCHIVE")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_ROOT_ARCHIVE")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_MATH_TLCI")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_UTIL_TLCI")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_ROOT_TLCI")"
+if [ "$SPLIT_ROOT_HOST_ARCHIVE" != "$SPLIT_ROOT_ARCHIVE" ]; then
+    [ ! -e "$SPLIT_ROOT_HOST_ARCHIVE" ] || fail "package split build wrote host runtime archive $SPLIT_ROOT_HOST_ARCHIVE"
+fi
+if [ "$SPLIT_MATH_HOST_ARCHIVE" != "$SPLIT_MATH_ARCHIVE" ]; then
+    [ ! -e "$SPLIT_MATH_HOST_ARCHIVE" ] || fail "package split build wrote math host runtime archive $SPLIT_MATH_HOST_ARCHIVE"
+fi
+if [ "$SPLIT_UTIL_HOST_ARCHIVE" != "$SPLIT_UTIL_ARCHIVE" ]; then
+    [ ! -e "$SPLIT_UTIL_HOST_ARCHIVE" ] || fail "package split build wrote util host runtime archive $SPLIT_UTIL_HOST_ARCHIVE"
+fi
+if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
+    run_cmd package-host-target-split-inspect "$COMPILER" inspect "$SPLIT_ROOT_TLCI"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "host-arch: x86_64"
+    assert_contains "$out" "package-name: split_pkg"
+    assert_contains "$out" "code: offset=0 bytes=0"
+    run_cmd package-host-target-split-dep-inspect "$COMPILER" inspect "$SPLIT_MATH_TLCI"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "host-arch: x86_64"
+    assert_contains "$out" "package-name: split_math"
+fi
+
+SPLIT_ROOT_DEV_ARCHIVE="$SPLIT_PKG/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_pkg${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_MATH_DEV_ARCHIVE="$SPLIT_PKG/vendor/math/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_math${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_UTIL_DEV_ARCHIVE="$SPLIT_PKG/vendor/util/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_util${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_ROOT_DEV_TLCI="$SPLIT_PKG/target/dev/split_pkg.tlci"
+SPLIT_MATH_DEV_TLCI="$SPLIT_PKG/vendor/math/target/dev/split_math.tlci"
+SPLIT_UTIL_DEV_TLCI="$SPLIT_PKG/vendor/util/target/dev/split_util.tlci"
+run_cmd package-host-target-split-dev "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET" --profile dev
+assert_success
+assert_stderr_empty
+[ -s "$SPLIT_ROOT_DEV_ARCHIVE" ] || fail "package split dev build did not write root target archive $SPLIT_ROOT_DEV_ARCHIVE"
+[ -s "$SPLIT_MATH_DEV_ARCHIVE" ] || fail "package split dev build did not write math target archive $SPLIT_MATH_DEV_ARCHIVE"
+[ -s "$SPLIT_UTIL_DEV_ARCHIVE" ] || fail "package split dev build did not write util target archive $SPLIT_UTIL_DEV_ARCHIVE"
+[ -s "$SPLIT_ROOT_DEV_TLCI" ] || fail "package split dev build did not write root host tlci $SPLIT_ROOT_DEV_TLCI"
+[ -s "$SPLIT_MATH_DEV_TLCI" ] || fail "package split dev build did not write math host tlci $SPLIT_MATH_DEV_TLCI"
+[ -s "$SPLIT_UTIL_DEV_TLCI" ] || fail "package split dev build did not write util host tlci $SPLIT_UTIL_DEV_TLCI"
+
 assert_contains "$PKG_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$PKG_ASM" "inc:"

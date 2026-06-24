@@ -11112,6 +11112,14 @@
                 lifetimes
                 rest))]))]))
 
+;; Alias construction runs after the canonical top env is built, so reuse the
+;; existing `module/name` type instead of recomputing each imported decl type.
+(define (tc-import-alias-source-value-type
+  [env : TcTypeEnv]
+  [module : String]
+  [name-id : i64]) : ResultTcType
+  (tc-lookup-id env (tc-module-name-id module name-id)))
+
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -11126,7 +11134,7 @@
         [inner : AstDecl (box-get inner-box)]
         (match inner
           [(AstDeclDefFn name _ _ _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+            (match (tc-import-alias-source-value-type env module name)
               [(OkTcType ty)
                 (OkTcEnv
                   (tc-bind-import-alias-value-unsafe-id
@@ -11142,7 +11150,7 @@
           [(AstDeclExtern name kind _ _)
             (let
               [extern-ctx : TcContext (tc-context-with-module ctx module)]
-              (match (tc-top-decl-type extern-ctx inner)
+              (match (tc-import-alias-source-value-type env module name)
                 [(OkTcType ty)
                   (OkTcEnv
                     (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
@@ -11167,7 +11175,7 @@
                 [(ErrTcType message) (ErrTcEnv message)]))]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
             (tc-bind-import-alias-value-id
@@ -11181,7 +11189,7 @@
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
             (tc-bind-import-alias-value-id
@@ -11195,7 +11203,7 @@
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
             (tc-bind-import-alias-value-id
@@ -11211,7 +11219,7 @@
     [(AstDeclExtern name kind _ _)
       (let
         [extern-ctx : TcContext (tc-context-with-module ctx module)]
-        (match (tc-top-decl-type extern-ctx decl)
+        (match (tc-import-alias-source-value-type env module name)
           [(OkTcType ty)
             (OkTcEnv
               (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
@@ -11287,28 +11295,27 @@
         [name-str : String (intern-str name)]
         [struct-ty : AstType
           (AstTyStruct (intern (compiler-symbol-module-key module name-str)))]
-        [constructor-ty : AstType
-          (ast-ty-func
-            (tc-field-type-list (tc-context-with-module ctx module) fields)
-            struct-ty)]
-        (OkTcEnv
-          (tc-bind-struct-cleanup-import-alias
-            ctx
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              constructor-ty)
-            alias
-            importer-module
-            module
-            import-unqualified
-            cleanup
-            struct-ty)))]
+        (match (tc-import-alias-source-value-type env module name)
+          [(OkTcType constructor-ty)
+            (OkTcEnv
+              (tc-bind-struct-cleanup-import-alias
+                ctx
+                (tc-bind-import-alias-value-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  constructor-ty)
+                alias
+                importer-module
+                module
+                import-unqualified
+                cleanup
+                struct-ty))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
@@ -11316,28 +11323,27 @@
           (ast-ty-struct-args
             (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
-        [constructor-ty : AstType
-          (ast-ty-func
-            (tc-field-type-list (tc-context-with-module ctx module) fields)
-            struct-ty)]
-        (OkTcEnv
-          (tc-bind-struct-cleanup-import-alias
-            ctx
-            (tc-bind-import-alias-value-id
-              ctx
-              env
-              alias
-              importer-module
-              module
-              import-unqualified
-              name
-              constructor-ty)
-            alias
-            importer-module
-            module
-            import-unqualified
-            cleanup
-            struct-ty)))]
+        (match (tc-import-alias-source-value-type env module name)
+          [(OkTcType constructor-ty)
+            (OkTcEnv
+              (tc-bind-struct-cleanup-import-alias
+                ctx
+                (tc-bind-import-alias-value-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  constructor-ty)
+                alias
+                importer-module
+                module
+                import-unqualified
+                cleanup
+                struct-ty))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -11519,9 +11525,18 @@
           [decls : AstDeclList (box-get decls-box)]
           (match (tc-build-top-env-list ctx decls (tc-default-env))
             [(OkTcEnv env)
-              (match (tc-build-top-env-aliases-list ctx decls decls env "")
-                [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
-                [(ErrTcEnv message) (ErrTcEnv message)])]
+              (let
+                [cached-env : TcTypeEnv (tc-env-with-cache env)]
+                ;; Alias fanout copies canonical entries by lookup; cache the
+                ;; source env before adding aliases so that copy is O(1).
+                (match (tc-build-top-env-aliases-list
+                  ctx
+                  decls
+                  decls
+                  cached-env
+                  "")
+                  [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
+                  [(ErrTcEnv message) (ErrTcEnv message)]))]
             [(ErrTcEnv message) (ErrTcEnv message)]))])))
 
 (define (tc-bind-enum-variants-local
@@ -38359,42 +38374,50 @@
       [(AstExprCall func-box args)
         (let
           [func : AstExpr (ast-node-get func-box)]
-          (match (macro-call-decl ctx func decls expr)
-            [(OkMacroCallDecl maybe-decl)
-              (match maybe-decl
-                [(MacroSomeDecl macro-name definition-module params ret body)
-                  (macro-expand-call
-                    ctx
-                    env
-                    decls
-                    macro-name
-                    definition-module
-                    params
-                    ret
-                    body
-                    args
-                    depth
-                    expr)]
-                [(MacroNoDecl)
-                  (match (macro-expand-compat-call
-                    ctx
-                    env
-                    decls
-                    depth
-                    func
-                    args
-                    expr)
-                    [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
-                    [(NoMacroCompatCall)
-                      (match (macro-expand-expr ctx env decls depth func)
-                        [(OkMacroExpr nfunc)
-                          (match (macro-expand-exprs ctx env decls depth args)
-                            [(OkMacroExprList nargs)
-                              (OkMacroExpr (ast-expr-call nfunc nargs))]
-                            [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                        [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                    [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
-            [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
+          (if (macro-call-callee-maybe-macro? func)
+            (match (macro-call-decl ctx func decls expr)
+              [(OkMacroCallDecl maybe-decl)
+                (match maybe-decl
+                  [(MacroSomeDecl macro-name definition-module params ret body)
+                    (macro-expand-call
+                      ctx
+                      env
+                      decls
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      body
+                      args
+                      depth
+                      expr)]
+                  [(MacroNoDecl)
+                    (match (macro-expand-compat-call
+                      ctx
+                      env
+                      decls
+                      depth
+                      func
+                      args
+                      expr)
+                      [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
+                      [(NoMacroCompatCall)
+                        (match (macro-expand-expr ctx env decls depth func)
+                          [(OkMacroExpr nfunc)
+                            (match (macro-expand-exprs ctx env decls depth args)
+                              [(OkMacroExprList nargs)
+                                (OkMacroExpr (ast-expr-call nfunc nargs))]
+                              [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                      [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
+              [(ErrMacroCallDecl diag) (ErrMacroExpr diag)])
+            (match (macro-expand-expr ctx env decls depth func)
+              [(OkMacroExpr nfunc)
+                (match (macro-expand-exprs ctx env decls depth args)
+                  [(OkMacroExprList nargs)
+                    (OkMacroExpr (ast-expr-call nfunc nargs))]
+                  [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])))]
       [(AstExprBracketClause items)
         (match (macro-expand-exprs ctx env decls depth items)
           [(OkMacroExprList nitems)
@@ -39471,6 +39494,45 @@
           (intern-str name)))]
     [_ (TcNoString)]))
 
+(define (macro-call-callee-last-dot [name : String]) : i64
+  (let
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string-length name)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref name i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      last-dot)))
+
+(define (macro-call-callee-base-name [name : String]) : String
+  (let
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [last-dot : i64 (macro-call-callee-last-dot source)]
+    [n : i64 (string-length source)]
+    (if (and (>= last-dot 0) (< last-dot (- n 1)))
+      (substring source (+ last-dot 1) (- n (+ last-dot 1)))
+      source)))
+
+(define (macro-call-name-maybe-macro? [name : String]) : bool
+  (let
+    [base : String (macro-call-callee-base-name name)]
+    (or
+      (tc-string-list-contains macro-expand-macro-names base)
+      (string-eq base "when")
+      (string-eq base "unless"))))
+
+(define (macro-call-callee-maybe-macro? [func : AstExpr]) : bool
+  (match (macro-call-callee-name func)
+    [(TcSomeString name) (macro-call-name-maybe-macro? name)]
+    [(TcNoString) false]))
+
 (define (macro-call-is-expandable?
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -39478,17 +39540,11 @@
   [call-expr : AstExpr]) : bool
   (match (macro-call-callee-name func)
     [(TcSomeString name)
-      ;; A qualified call (`mod.x`, formerly `mod/x`) may be an imported macro,
-      ;; a macro diagnostic, or a real value call that should fall through to
-      ;; ordinary typechecking. It still needs precise resolution. An
-      ;; unqualified call only needs the precise (allocating) resolution when its
-      ;; name matches a declared macro or `when`/`unless`; otherwise it is a
-      ;; plain function call that the macro pass leaves untouched, so skip it
-      ;; cheaply.
-      (if (or
-        (tc-name-qualified? name)
-        (>= (tc-name-first-dot name) 0)
-        (tc-string-list-contains macro-expand-macro-names name))
+      ;; Only callees whose base name matches a declared macro need precise
+      ;; alias/module resolution. This keeps value-heavy dotted imports such as
+      ;; `string.length` on the cheap path while still resolving qualified macro
+      ;; calls through `macro-call-decl`.
+      (if (macro-call-name-maybe-macro? name)
         (match (macro-call-decl ctx func decls call-expr)
           [(OkMacroCallDecl maybe)
             (match maybe

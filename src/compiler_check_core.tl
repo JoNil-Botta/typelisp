@@ -701,79 +701,38 @@
   (begin
     (unless
       (= (compiler-load-self-test) 42)
-      (return
-        (begin
-          (panic "compiler-check: loader smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: loader smoke mismatch")))
     (unless
       (compiler-check-virtual-import-ok?)
-      (return
-        (begin
-          (panic "compiler-check: virtual import smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: virtual import smoke mismatch")))
     (unless
       (compiler-check-virtual-import-inline-layout-ok?)
       (return
-        (begin
-          (panic "compiler-check: virtual import inline layout smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+        (panic "compiler-check: virtual import inline layout smoke mismatch")))
     (unless
       (compiler-check-export-ok?)
-      (return
-        (begin
-          (panic "compiler-check: export smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: export smoke mismatch")))
     (unless
       (compiler-check-qualified-export-cache-reset-ok?)
       (return
-        (begin
-          (panic "compiler-check: qualified export cache reset smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+        (panic "compiler-check: qualified export cache reset smoke mismatch")))
     (unless
       (compiler-check-virtual-error-ok?)
-      (return
-        (begin
-          (panic "compiler-check: virtual diagnostic smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: virtual diagnostic smoke mismatch")))
     (unless
       (compiler-check-runtime-stdlib-boundary-ok?)
-      (return
-        (begin
-          (panic "compiler-check: runtime stdlib boundary smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: runtime stdlib boundary smoke mismatch")))
     (unless
       (compiler-check-private-dynamic-buffer-vector-ok?)
       (return
-        (begin
-          (panic "compiler-check: private dynamic-buffer vector smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+        (panic "compiler-check: private dynamic-buffer vector smoke mismatch")))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
-      (return
-        (begin
-          (panic "compiler-check: implicit core prelude smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: implicit core prelude smoke mismatch")))
     (unless
       (compiler-check-seen-root-ok?)
-      (return
-        (begin
-          (panic "compiler-check: seen root smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: seen root smoke mismatch")))
     (unless
       (compiler-check-pool-reset-ok?)
-      (return
-        (begin
-          (panic "compiler-check: pool reset smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+      (return (panic "compiler-check: pool reset smoke mismatch")))
     42))

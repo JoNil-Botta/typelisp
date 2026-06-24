@@ -14,14 +14,14 @@ with the existing cachegrind harness:
 ```sh
 bash scripts/verify-compile-profile.sh
 wsl bash -lc 'cd /mnt/c/dev/typelisp && \
-  mkdir -p target/3612-linux && \
+  mkdir -p target/3612-linux-final && \
   tools/stage0-linux/typelisp build src/main.tl \
-    -o target/3612-linux/typelisp \
+    -o target/3612-linux-final/typelisp \
     --stdlib-root stdlib --stdlib-root src && \
   scripts/measure-instruction-counts.sh \
     --runs 1 --self-compile-only \
-    --output target/3612-ir-branch \
-    target/3612-linux/typelisp'
+    --output target/3612-ir-final \
+    target/3612-linux-final/typelisp'
 ```
 
 The profiled Windows self-compile used:
@@ -36,17 +36,20 @@ target\compile-profile-verify\windows\typelisp-profile.exe compile src\main.tl `
 
 ## Results
 
-Self-compile profile total: `16,049 ms` (`16,241 ms` host elapsed).
+Self-compile profile total: `13,114 ms`.
 
 Cachegrind self-compile for the branch-built Linux compiler:
 
-| row | baseline Ir | measured Ir | delta |
+| row | current-main Ir | branch Ir | delta |
 | --- | ---: | ---: | ---: |
-| `self_compile/compile_cli_opt1` | 107,680,565,264 | 107,775,098,231 | +94,532,967 (+0.0878%) |
+| `self_compile/compile_cli_opt1` | 108,315,402,649 | 108,253,908,240 | -61,494,409 (-0.0568%) |
 
-The instruction-count delta is inside the documented 0.5% self-compile
-tolerance. This change only adds profile-gated counters plus one small fixture;
-normal builds do not execute the counter increments.
+The current-main comparison used the same WSL/cachegrind harness family after
+rebasing onto `b7805f0d`. Absolute self-compile counts vary across runner and
+worktree path, so CI remains authoritative for the fixed
+`perf/insn-exec-baseline.tsv` gate. This change only adds profile-gated
+counters plus one small fixture; normal builds do not execute the counter
+increments.
 
 Self-compile `typecheck.layout.*` counters:
 
@@ -64,7 +67,7 @@ Self-compile `typecheck.layout.*` counters:
 | `stdlib_field_spec_visits` | 0 |
 | `stdlib_variant_spec_builds` | 0 |
 | `stdlib_variant_spec_visits` | 0 |
-| `cache_hits` | 942 |
+| `cache_hits` | 938 |
 | `cache_misses` | 168 |
 | `cache_bypasses` | 0 |
 

@@ -1101,64 +1101,8 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-layout-profile-repr-c-field-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-repr-c-field-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-field-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-field-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-payload-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-payload-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-variant-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-inline-variant-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-stdlib-field-spec-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-stdlib-field-spec-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-stdlib-variant-spec-builds : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-stdlib-variant-spec-visits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-cache-hits : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-cache-misses : i64
-    0))
-(cfg
-  compile-profile
-  (define compiler-tc-layout-profile-cache-bypasses : i64
-    0))
+  (define tc-lp-counts : (Array i64)
+    (make-array i64 15)))
 
 (cfg
   compile-profile
@@ -1200,108 +1144,17 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-layout-profile-note-repr-c-field-build) : unit
-    (set!
-      compiler-tc-layout-profile-repr-c-field-builds
-      (+ compiler-tc-layout-profile-repr-c-field-builds 1))))
+  (define (tc-lp-reset [index : i64]) : unit
+    (if (< index 15)
+      (begin
+        (array-set! tc-lp-counts index 0)
+        (tc-lp-reset (+ index 1)))
+      unit)))
 
 (cfg
   compile-profile
-  (define (compiler-tc-layout-profile-note-repr-c-field-visit) : unit
-    (set!
-      compiler-tc-layout-profile-repr-c-field-visits
-      (+ compiler-tc-layout-profile-repr-c-field-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-field-build) : unit
-    (set!
-      compiler-tc-layout-profile-inline-field-builds
-      (+ compiler-tc-layout-profile-inline-field-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-field-visit) : unit
-    (set!
-      compiler-tc-layout-profile-inline-field-visits
-      (+ compiler-tc-layout-profile-inline-field-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-payload-build) : unit
-    (set!
-      compiler-tc-layout-profile-inline-payload-builds
-      (+ compiler-tc-layout-profile-inline-payload-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-payload-visit) : unit
-    (set!
-      compiler-tc-layout-profile-inline-payload-visits
-      (+ compiler-tc-layout-profile-inline-payload-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-variant-build) : unit
-    (set!
-      compiler-tc-layout-profile-inline-variant-builds
-      (+ compiler-tc-layout-profile-inline-variant-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-inline-variant-visit) : unit
-    (set!
-      compiler-tc-layout-profile-inline-variant-visits
-      (+ compiler-tc-layout-profile-inline-variant-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-stdlib-field-spec-build) : unit
-    (set!
-      compiler-tc-layout-profile-stdlib-field-spec-builds
-      (+ compiler-tc-layout-profile-stdlib-field-spec-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-stdlib-field-spec-visit) : unit
-    (set!
-      compiler-tc-layout-profile-stdlib-field-spec-visits
-      (+ compiler-tc-layout-profile-stdlib-field-spec-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-stdlib-variant-spec-build) : unit
-    (set!
-      compiler-tc-layout-profile-stdlib-variant-spec-builds
-      (+ compiler-tc-layout-profile-stdlib-variant-spec-builds 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-stdlib-variant-spec-visit) : unit
-    (set!
-      compiler-tc-layout-profile-stdlib-variant-spec-visits
-      (+ compiler-tc-layout-profile-stdlib-variant-spec-visits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-cache-hit) : unit
-    (set!
-      compiler-tc-layout-profile-cache-hits
-      (+ compiler-tc-layout-profile-cache-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-cache-miss) : unit
-    (set!
-      compiler-tc-layout-profile-cache-misses
-      (+ compiler-tc-layout-profile-cache-misses 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-layout-profile-note-cache-bypass) : unit
-    (set!
-      compiler-tc-layout-profile-cache-bypasses
-      (+ compiler-tc-layout-profile-cache-bypasses 1))))
+  (define (tc-lp-note [index : i64]) : unit
+    (array-set! tc-lp-counts index (+ (array-ref tc-lp-counts index) 1))))
 
 (cfg
   compile-profile
@@ -1343,21 +1196,7 @@
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
-      (set! compiler-tc-layout-profile-repr-c-field-builds 0)
-      (set! compiler-tc-layout-profile-repr-c-field-visits 0)
-      (set! compiler-tc-layout-profile-inline-field-builds 0)
-      (set! compiler-tc-layout-profile-inline-field-visits 0)
-      (set! compiler-tc-layout-profile-inline-payload-builds 0)
-      (set! compiler-tc-layout-profile-inline-payload-visits 0)
-      (set! compiler-tc-layout-profile-inline-variant-builds 0)
-      (set! compiler-tc-layout-profile-inline-variant-visits 0)
-      (set! compiler-tc-layout-profile-stdlib-field-spec-builds 0)
-      (set! compiler-tc-layout-profile-stdlib-field-spec-visits 0)
-      (set! compiler-tc-layout-profile-stdlib-variant-spec-builds 0)
-      (set! compiler-tc-layout-profile-stdlib-variant-spec-visits 0)
-      (set! compiler-tc-layout-profile-cache-hits 0)
-      (set! compiler-tc-layout-profile-cache-misses 0)
-      (set! compiler-tc-layout-profile-cache-bypasses 0))))
+      (tc-lp-reset 0))))
 
 (cfg
   compile-profile
@@ -1645,13 +1484,15 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-layout-profile-line [phase : String] [value : i64]) : unit
+  (define (tc-lp-line [phase : String] [index : i64]) : unit
     (print-error
       (string-append
         "compile-profile|typecheck.layout."
         (string-append
           phase
-          (string-append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+          (string-append
+            (compiler-tc-profile-field (array-ref tc-lp-counts index))
+            "|0|0|0\n"))))))
 
 (cfg
   compile-profile
@@ -1742,51 +1583,21 @@
       (compiler-tc-env-profile-line
         "module_local_misses"
         compiler-tc-env-profile-module-local-misses)
-      (compiler-tc-layout-profile-line
-        "repr_c_field_builds"
-        compiler-tc-layout-profile-repr-c-field-builds)
-      (compiler-tc-layout-profile-line
-        "repr_c_field_visits"
-        compiler-tc-layout-profile-repr-c-field-visits)
-      (compiler-tc-layout-profile-line
-        "inline_field_builds"
-        compiler-tc-layout-profile-inline-field-builds)
-      (compiler-tc-layout-profile-line
-        "inline_field_visits"
-        compiler-tc-layout-profile-inline-field-visits)
-      (compiler-tc-layout-profile-line
-        "inline_payload_builds"
-        compiler-tc-layout-profile-inline-payload-builds)
-      (compiler-tc-layout-profile-line
-        "inline_payload_visits"
-        compiler-tc-layout-profile-inline-payload-visits)
-      (compiler-tc-layout-profile-line
-        "inline_variant_builds"
-        compiler-tc-layout-profile-inline-variant-builds)
-      (compiler-tc-layout-profile-line
-        "inline_variant_visits"
-        compiler-tc-layout-profile-inline-variant-visits)
-      (compiler-tc-layout-profile-line
-        "stdlib_field_spec_builds"
-        compiler-tc-layout-profile-stdlib-field-spec-builds)
-      (compiler-tc-layout-profile-line
-        "stdlib_field_spec_visits"
-        compiler-tc-layout-profile-stdlib-field-spec-visits)
-      (compiler-tc-layout-profile-line
-        "stdlib_variant_spec_builds"
-        compiler-tc-layout-profile-stdlib-variant-spec-builds)
-      (compiler-tc-layout-profile-line
-        "stdlib_variant_spec_visits"
-        compiler-tc-layout-profile-stdlib-variant-spec-visits)
-      (compiler-tc-layout-profile-line
-        "cache_hits"
-        compiler-tc-layout-profile-cache-hits)
-      (compiler-tc-layout-profile-line
-        "cache_misses"
-        compiler-tc-layout-profile-cache-misses)
-      (compiler-tc-layout-profile-line
-        "cache_bypasses"
-        compiler-tc-layout-profile-cache-bypasses))))
+      (tc-lp-line "repr_c_field_builds" 0)
+      (tc-lp-line "repr_c_field_visits" 1)
+      (tc-lp-line "inline_field_builds" 2)
+      (tc-lp-line "inline_field_visits" 3)
+      (tc-lp-line "inline_payload_builds" 4)
+      (tc-lp-line "inline_payload_visits" 5)
+      (tc-lp-line "inline_variant_builds" 6)
+      (tc-lp-line "inline_variant_visits" 7)
+      (tc-lp-line "stdlib_field_spec_builds" 8)
+      (tc-lp-line "stdlib_field_spec_visits" 9)
+      (tc-lp-line "stdlib_variant_spec_builds" 10)
+      (tc-lp-line "stdlib_variant_spec_visits" 11)
+      (tc-lp-line "cache_hits" 12)
+      (tc-lp-line "cache_misses" 13)
+      (tc-lp-line "cache_bypasses" 14))))
 
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (if (tc-rich-error? message)
@@ -3774,9 +3585,7 @@
   [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (begin
-    (cfg
-      compile-profile
-      (compiler-tc-layout-profile-note-stdlib-field-spec-build))
+    (cfg compile-profile (tc-lp-note 8))
     (TcStdlibFieldSpecCons name ty (box rest))))
 
 (define (tc-stdlib-variant-spec-cons
@@ -3784,9 +3593,7 @@
   [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (begin
-    (cfg
-      compile-profile
-      (compiler-tc-layout-profile-note-stdlib-variant-spec-build))
+    (cfg compile-profile (tc-lp-note 10))
     (TcStdlibVariantSpecCons name payloads (box rest))))
 
 (define (tc-stdlib-name-type [name : String]) : AstType
@@ -4013,9 +3820,7 @@
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra field")])]
     [(TcStdlibFieldSpecCons expected-name expected-ty rest-specs)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-stdlib-field-spec-visit))
+        (cfg compile-profile (tc-lp-note 9))
         (match fields
           [(AstFieldDefNil)
             (tc-stdlib-well-known-mismatch
@@ -4105,9 +3910,7 @@
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra variant")])]
     [(TcStdlibVariantSpecCons expected-name expected-payloads rest-specs)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-stdlib-variant-spec-visit))
+        (cfg compile-profile (tc-lp-note 11))
         (match variants
           [(AstVariantDefNil)
             (tc-stdlib-well-known-mismatch
@@ -21094,9 +20897,7 @@
     [(TcReprCFieldLayoutNil) -1]
     [(TcReprCFieldLayoutCons field rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-repr-c-field-visit))
+        (cfg compile-profile (tc-lp-note 1))
         (if (string-eq (tc-repr-c-field-layout-name field) name)
           (tc-repr-c-field-layout-offset field)
           (tc-repr-c-layout-field-offset (box-get rest) name)))]))
@@ -21120,9 +20921,7 @@
     [(TcInlineFieldLayoutNil) -1]
     [(TcInlineFieldLayoutCons field rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-field-visit))
+        (cfg compile-profile (tc-lp-note 3))
         (if (string-eq (tc-inline-field-layout-name field) name)
           (tc-inline-field-layout-offset field)
           (tc-inline-field-layout-list-offset (box-get rest) name)))]))
@@ -21168,13 +20967,9 @@
   (match fields
     [(TcInlineFieldLayoutNil) true]
     [(TcInlineFieldLayoutCons field rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-field-visit))
-        (if (tc-word-class-type? (tc-inline-field-layout-type field))
-          (tc-inline-fields-all-word-class? (box-get rest))
-          false))]))
+      (if (tc-word-class-type? (tc-inline-field-layout-type field))
+        (tc-inline-fields-all-word-class? (box-get rest))
+        false)]))
 
 ;; #2601/#2855: true when every struct field can be assigned to a supported
 ;; register eightbyte class and every occupied eightbyte has a single class.
@@ -21196,30 +20991,26 @@
   (match fields
     [(TcInlineFieldLayoutNil) found]
     [(TcInlineFieldLayoutCons field rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-field-visit))
-        (if (tc-inline-field-overlaps-word? field word-index)
-          (let
-            [class : i64
-              (tc-register-field-class
-                (tc-inline-field-layout-type field)
-                (tc-inline-field-layout-offset field))]
-            (cond
-              [(= class 2) 2]
-              [(= found -1)
-                (tc-inline-fields-word-register-class
-                  (box-get rest)
-                  word-index
-                  class)]
-              [(= found class)
-                (tc-inline-fields-word-register-class
-                  (box-get rest)
-                  word-index
-                  found)]
-              [else 2]))
-          (tc-inline-fields-word-register-class (box-get rest) word-index found)))]))
+      (if (tc-inline-field-overlaps-word? field word-index)
+        (let
+          [class : i64
+            (tc-register-field-class
+              (tc-inline-field-layout-type field)
+              (tc-inline-field-layout-offset field))]
+          (cond
+            [(= class 2) 2]
+            [(= found -1)
+              (tc-inline-fields-word-register-class
+                (box-get rest)
+                word-index
+                class)]
+            [(= found class)
+              (tc-inline-fields-word-register-class
+                (box-get rest)
+                word-index
+                found)]
+            [else 2]))
+        (tc-inline-fields-word-register-class (box-get rest) word-index found))]))
 
 (define (tc-inline-fields-all-register-class?
   [fields : TcInlineFieldLayoutList]) : bool
@@ -21235,15 +21026,11 @@
   (match payloads
     [(TcInlinePayloadLayoutNil) true]
     [(TcInlinePayloadLayoutCons payload rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-payload-visit))
-        (match payload
-          [(TcInlinePayloadLayout _ ty _)
-            (if (tc-word-class-type? ty)
-              (tc-inline-payloads-all-word-class? (box-get rest))
-              false)]))]))
+      (match payload
+        [(TcInlinePayloadLayout _ ty _)
+          (if (tc-word-class-type? ty)
+            (tc-inline-payloads-all-word-class? (box-get rest))
+            false)])]))
 
 (define (tc-register-payload-class [payload : TcInlinePayloadLayout]) : i64
   (match payload
@@ -21257,19 +21044,15 @@
   (match payloads
     [(TcInlinePayloadLayoutNil) found]
     [(TcInlinePayloadLayoutCons payload rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-payload-visit))
-        (let
-          [class : i64 (tc-register-payload-class payload)]
-          (cond
-            [(= class 2) 2]
-            [(= found -1)
-              (tc-inline-payloads-register-class (box-get rest) class)]
-            [(= found class)
-              (tc-inline-payloads-register-class (box-get rest) found)]
-            [else 2])))]))
+      (let
+        [class : i64 (tc-register-payload-class payload)]
+        (cond
+          [(= class 2) 2]
+          [(= found -1)
+            (tc-inline-payloads-register-class (box-get rest) class)]
+          [(= found class)
+            (tc-inline-payloads-register-class (box-get rest) found)]
+          [else 2]))]))
 
 (define (tc-inline-enum-register-payload-class
   [variants : TcInlineVariantLayoutList]
@@ -21277,23 +21060,19 @@
   (match variants
     [(TcInlineVariantLayoutNil) found]
     [(TcInlineVariantLayoutCons variant rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
-        (match variant
-          [(TcInlineVariantLayout _ _ _ payloads)
-            (let
-              [class : i64 (tc-inline-payloads-register-class payloads -1)]
-              (cond
-                [(= class 2) 2]
-                [(= class -1)
-                  (tc-inline-enum-register-payload-class (box-get rest) found)]
-                [(= found -1)
-                  (tc-inline-enum-register-payload-class (box-get rest) class)]
-                [(= found class)
-                  (tc-inline-enum-register-payload-class (box-get rest) found)]
-                [else 2]))]))]))
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (let
+            [class : i64 (tc-inline-payloads-register-class payloads -1)]
+            (cond
+              [(= class 2) 2]
+              [(= class -1)
+                (tc-inline-enum-register-payload-class (box-get rest) found)]
+              [(= found -1)
+                (tc-inline-enum-register-payload-class (box-get rest) class)]
+              [(= found class)
+                (tc-inline-enum-register-payload-class (box-get rest) found)]
+              [else 2]))])]))
 
 (define (tc-inline-enum-payloads-all-register-class?
   [variants : TcInlineVariantLayoutList]) : bool
@@ -21304,41 +21083,28 @@
   (match variants
     [(TcInlineVariantLayoutNil) true]
     [(TcInlineVariantLayoutCons variant rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
-        (match variant
-          [(TcInlineVariantLayout _ _ _ payloads)
-            (if (tc-inline-payloads-all-word-class? payloads)
-              (tc-inline-enum-payloads-all-word-class? (box-get rest))
-              false)]))]))
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (if (tc-inline-payloads-all-word-class? payloads)
+            (tc-inline-enum-payloads-all-word-class? (box-get rest))
+            false)])]))
 
 (define (tc-inline-payload-layout-list-empty?
   [payloads : TcInlinePayloadLayoutList]) : bool
   (match payloads
     [(TcInlinePayloadLayoutNil) true]
-    [(TcInlinePayloadLayoutCons _ _)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-payload-visit))
-        false)]))
+    [(TcInlinePayloadLayoutCons _ _) false]))
 
 (define (tc-inline-enum-variants-tag-only?
   [variants : TcInlineVariantLayoutList]) : bool
   (match variants
     [(TcInlineVariantLayoutNil) true]
     [(TcInlineVariantLayoutCons variant rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
-        (match variant
-          [(TcInlineVariantLayout _ size _ payloads)
-            (if (and (= size 8) (tc-inline-payload-layout-list-empty? payloads))
-              (tc-inline-enum-variants-tag-only? (box-get rest))
-              false)]))]))
+      (match variant
+        [(TcInlineVariantLayout _ size _ payloads)
+          (if (and (= size 8) (tc-inline-payload-layout-list-empty? payloads))
+            (tc-inline-enum-variants-tag-only? (box-get rest))
+            false)])]))
 
 (define (tc-inline-enum-layout-tag-only?
   [size : i64]
@@ -21371,9 +21137,7 @@
     [(TcInlinePayloadLayoutNil) -1]
     [(TcInlinePayloadLayoutCons payload rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-payload-visit))
+        (cfg compile-profile (tc-lp-note 5))
         (if (= (tc-inline-payload-layout-index payload) index)
           (tc-inline-payload-layout-offset payload)
           (tc-inline-payload-layout-list-offset (box-get rest) index)))]))
@@ -21430,9 +21194,7 @@
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
+        (cfg compile-profile (tc-lp-note 7))
         (if (string-eq (tc-inline-variant-layout-name variant) name)
           (tc-inline-variant-layout-size variant)
           (tc-inline-variant-layout-list-size-exact (box-get rest) name)))]))
@@ -21444,9 +21206,7 @@
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
+        (cfg compile-profile (tc-lp-note 7))
         (if (tc-inline-variant-layout-name-matches?
           (tc-inline-variant-layout-name variant)
           name)
@@ -21470,9 +21230,7 @@
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
+        (cfg compile-profile (tc-lp-note 7))
         (if (string-eq (tc-inline-variant-layout-name variant) name)
           (tc-inline-payload-layout-list-offset
             (tc-inline-variant-layout-payloads variant)
@@ -21490,9 +21248,7 @@
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
       (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-variant-visit))
+        (cfg compile-profile (tc-lp-note 7))
         (if (tc-inline-variant-layout-name-matches?
           (tc-inline-variant-layout-name variant)
           name)
@@ -21840,9 +21596,7 @@
                         (match rest-layout
                           [(TcInlineFieldsLayout size align rest-fields)
                             (begin
-                              (cfg
-                                compile-profile
-                                (compiler-tc-layout-profile-note-inline-field-build))
+                              (cfg compile-profile (tc-lp-note 2))
                               (OkTcInlineFieldsLayout
                                 (TcInlineFieldsLayout
                                   size
@@ -21893,9 +21647,7 @@
                   (match rest-layout
                     [(TcInlinePayloadFieldsLayout size align rest-payloads)
                       (begin
-                        (cfg
-                          compile-profile
-                          (compiler-tc-layout-profile-note-inline-payload-build))
+                        (cfg compile-profile (tc-lp-note 4))
                         (OkTcInlinePayloadFieldsLayout
                           (TcInlinePayloadFieldsLayout
                             size
@@ -21974,9 +21726,7 @@
                                 enum-align
                                 rest-variants)
                               (begin
-                                (cfg
-                                  compile-profile
-                                  (compiler-tc-layout-profile-note-inline-variant-build))
+                                (cfg compile-profile (tc-lp-note 6))
                                 (OkTcInlineAggregateLayout
                                   (TcInlineEnumLayout
                                     enum-size
@@ -22126,22 +21876,16 @@
           [key : i64 (tc-agg-layout-cache-slot-key name)]
           (if (< key 0)
             (begin
-              (cfg
-                compile-profile
-                (compiler-tc-layout-profile-note-cache-bypass))
+              (cfg compile-profile (tc-lp-note 14))
               (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack))
             (match (array-ref tc-agg-layout-cache key)
               [(TcAggLayoutCacheFull layout)
                 (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-layout-profile-note-cache-hit))
+                  (cfg compile-profile (tc-lp-note 12))
                   (OkTcInlineAggregateLayout layout))]
               [(TcAggLayoutCacheEmpty)
                 (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-layout-profile-note-cache-miss))
+                  (cfg compile-profile (tc-lp-note 13))
                   (tc-inline-aggregate-layout-fill-cache
                     ctx
                     name
@@ -22622,9 +22366,7 @@
                       seen)
                       [(OkTcReprCLayout rest-layout)
                         (begin
-                          (cfg
-                            compile-profile
-                            (compiler-tc-layout-profile-note-repr-c-field-build))
+                          (cfg compile-profile (tc-lp-note 0))
                           (OkTcReprCLayout
                             (TcReprCLayout
                               (tc-repr-c-layout-size rest-layout)
@@ -22672,25 +22414,17 @@
   (match fields
     [(TcInlineFieldLayoutNil) out]
     [(TcInlineFieldLayoutCons field rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-field-visit))
-        (match field
-          [(TcInlineFieldLayout name _ offset)
-            (tc-ctfe-inline-layout-fields-into
-              (box-get rest)
-              (ctfe-layout-field-list-push out (CtfeLayoutField name offset)))]))]))
+      (match field
+        [(TcInlineFieldLayout name _ offset)
+          (tc-ctfe-inline-layout-fields-into
+            (box-get rest)
+            (ctfe-layout-field-list-push out (CtfeLayoutField name offset)))])]))
 
 (define (tc-ctfe-inline-layout-field-count [fields : TcInlineFieldLayoutList]) : i64
   (match fields
     [(TcInlineFieldLayoutNil) 0]
     [(TcInlineFieldLayoutCons _ rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-layout-profile-note-inline-field-visit))
-        (+ 1 (tc-ctfe-inline-layout-field-count (box-get rest))))]))
+      (+ 1 (tc-ctfe-inline-layout-field-count (box-get rest)))]))
 
 (define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
   (tc-ctfe-inline-layout-fields-into

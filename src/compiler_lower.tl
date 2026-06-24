@@ -38061,17 +38061,17 @@
         [(Cons head _) (+ head 1)]))))")
 
 (define (compiler-lower-inline-imported-enum-payload-source) : String
-  "(module stdlib.list)
-(defenum StringList (StringNil) (StringCons String (Box StringList)))
-(define (string-list-cons [value : String] [rest : StringList]) : StringList
-  (StringCons value (box rest)))
+  "(module stdlib.maybe_string)
+(defenum MaybeString (NoString) (SomeString String))
+(define (maybe-string-single [value : String]) : MaybeString
+  (SomeString value))
 (module main)
-(import stdlib.list)
+(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
-    (match (list.string-list-cons \"a\" (list.StringNil))
-      [(list.StringNil) \"\"]
-      [(list.StringCons head _) head])))")
+    (match (maybe_string.maybe-string-single \"a\")
+      [(maybe_string.NoString) \"\"]
+      [(maybe_string.SomeString head) head])))")
 
 (define (compiler-lower-inline-recursive-error-source) : String
   "(defenum BadList (BadNil) (BadCons i64 BadList))
@@ -38308,7 +38308,7 @@
           (>
             (lower-test-functions-call-count
               functions
-              "stdlib.list/string-list-cons")
+              "stdlib.maybe_string/maybe-string-single")
             0)])]
     [(ErrCompilerLower _) false]))
 

@@ -13146,6 +13146,12 @@
     (string-eq (tc-thread-name-base source-name) "spawn")
     (string-eq (tc-thread-name-base lookup-name) "spawn")))
 
+(define (tc-thread-potential-safe-spawn-source-name? [source-name : String]) : bool
+  (or
+    (tc-thread-legacy-safe-spawn-name? source-name)
+    (tc-thread-generated-name? source-name "spawn")
+    (string-eq (tc-thread-name-base source-name) "spawn")))
+
 (define (tc-thread-dotted-source-spawn-name? [name : String]) : bool
   (and
     (>= (tc-thread-name-last-dot name) 0)
@@ -13157,10 +13163,12 @@
   [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)
     [(TcSomeString name)
-      (if (tc-thread-potential-safe-spawn-name?
-        name
-        (tc-thread-spawn-lookup-name ctx env name))
-        (TcSomeString name)
+      (if (tc-thread-potential-safe-spawn-source-name? name)
+        (if (tc-thread-potential-safe-spawn-name?
+          name
+          (tc-thread-spawn-lookup-name ctx env name))
+          (TcSomeString name)
+          (TcNoString))
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
 

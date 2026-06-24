@@ -18092,6 +18092,18 @@
           (intern-str name)
           offset
           slots)]
+      [(AstTyEnum name)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
+      [(AstTyEnumArgs name _)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
       [(AstTyF64) (lower-c-abi-sysv-mark-sse-slot slots (AstTyF64) offset)]
       [(AstTyF32) (lower-c-abi-sysv-mark-sse-slot slots (AstTyF32) offset)]
       [_
@@ -38716,6 +38728,12 @@
       (if (string-eq call-name name)
         1
         0)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ call-name _ _)
+          (if (string-eq call-name name)
+            1
+            0)])]
     [_ 0]))
 
 (define (lower-test-instr-cpuid-count [instr : CompilerIrInstr]) : i64
@@ -41890,9 +41908,12 @@
 
 (define (compiler-lower-c-abi-payload-enum-source) : String
   "(defenum SmallChoice (SmallNone) (SmallSome i64))
+(defstruct SmallBox (choice SmallChoice))
 (defenum WideChoice (WideNone) (WideSome u64 u64))
 (extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
 (extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (-> SmallChoice i64))
+(extern (box-score [arg : SmallBox]) : i64 (:symbol \"tl_cabi_box_score\"))
+(extern (box-make [seed : i64]) : SmallBox (:symbol \"tl_cabi_box_make\"))
 (extern (wide-make [seed : u64]) : WideChoice (:symbol \"tl_cabi_wide_make\"))
 (define (wide-score [w : WideChoice]) : i64
   (match w
@@ -41901,8 +41922,9 @@
 (define (main) : i64
   (let
     [copy : (-> SmallChoice i64) small-score-ptr]
+    [boxed : SmallBox (box-make 5)]
     [made : WideChoice (wide-make (cast 10 : u64))]
-    (+ (small-score (SmallSome 11)) (+ (copy (SmallNone)) (wide-score made)))))")
+    (+ (small-score (SmallSome 11)) (+ (copy (SmallNone)) (+ (box-score boxed) (wide-score made))))))")
 
 (define (compiler-lower-c-abi-linux-payload-enum-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -41915,6 +41937,8 @@
             (=
               (lower-test-function-call-count functions "main" "small-score")
               1)
+            (= (lower-test-function-call-count functions "main" "box-score") 1)
+            (= (lower-test-function-call-count functions "main" "box-make") 1)
             (= (lower-test-function-call-count functions "main" "wide-make") 1)
             (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))

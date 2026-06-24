@@ -14,6 +14,10 @@ typedef struct {
 } SmallChoice;
 
 typedef struct {
+  SmallChoice choice;
+} WrappedSmall;
+
+typedef struct {
   double value;
 } FloatSomePayload;
 
@@ -63,6 +67,20 @@ SmallChoice tl_cabi_small_choice_make(int64_t seed, int64_t make_some) {
   SmallChoice out;
   out.tag = make_some ? 1 : 0;
   out.payload.some.value = seed + 40;
+  return out;
+}
+
+int64_t tl_cabi_wrapped_small_score(WrappedSmall arg, int64_t bias) {
+  if (arg.choice.tag == 1) {
+    return (arg.choice.payload.some.value * 7) + bias;
+  }
+  return bias + 4000;
+}
+
+WrappedSmall tl_cabi_wrapped_small_make(int64_t seed) {
+  WrappedSmall out;
+  out.choice.tag = 1;
+  out.choice.payload.some.value = seed + 60;
   return out;
 }
 

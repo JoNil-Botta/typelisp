@@ -696,35 +696,6 @@
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
-(define (backend-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (let
-    [la : i64 (string-length a)]
-    [lb : i64 (string-length b)]
-    [lc : i64 (string-length c)]
-    [ld : i64 (string-length d)]
-    [le : i64 (string-length e)]
-    [total : i64 (+ la (+ lb (+ lc (+ ld le))))]
-    (if (= total 0)
-      ""
-      (let
-        [out : (Array u8) (make-array u8 total)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (text-buf-copy-chunk-into (& a) dst 0)
-          (text-buf-copy-chunk-into (& b) dst la)
-          (text-buf-copy-chunk-into (& c) dst (+ la lb))
-          (text-buf-copy-chunk-into (& d) dst (+ la (+ lb lc)))
-          (text-buf-copy-chunk-into (& e) dst (+ la (+ lb (+ lc ld))))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
-
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a b c d))
 
@@ -3446,12 +3417,7 @@
   (let
     [forward-src : i64 (compiler-backend-forwarded-addr-of-src var-id)]
     (if (>= forward-src 0)
-      (backend-cat5
-        "    leaq "
-        (compiler-backend-slot forward-src)
-        ", "
-        reg
-        "\n")
+      (str-cat "    leaq " (compiler-backend-slot forward-src) ", " reg "\n")
       (match (compiler-reg-assignment-lookup assignments var-id)
         [(CompilerRegSomeLocation location)
           (match location
@@ -18752,14 +18718,12 @@
                         base-save
                         (string-append
                           func-asm
-                          (backend-cat5
+                          (str-cat
                             "    call *%rax\n"
                             (compiler-backend-emit-c-abi-return-stores
                               call-space
                               slots)
-                            (compiler-backend-emit-call-space-add total-space)
-                            ""
-                            ""))))))]
+                            (compiler-backend-emit-call-space-add total-space)))))))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]

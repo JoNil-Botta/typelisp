@@ -5820,6 +5820,70 @@
     ([i : i64 0 n])
     (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
+(define (compiler-backend-lane-id-rodata-source) : String
+  "(define (fill [out : (Array i64)] [other : (Array i64)] [n : i64]) : unit
+  (begin
+    (foreach
+      ([i : i64 0 n])
+      (array-set! out i (program-index)))
+    (foreach
+      ([j : i64 0 n])
+      (array-set! other j (program-index)))))")
+
+(define (compiler-backend-lane-id-rodata-shape-ok?
+  [lower-mode : CompilerLowerMode]
+  [backend-mode : CompilerBackendMode]
+  [label : String]
+  [align : String]
+  [load : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-lane-id-rodata-source)
+    lower-mode)
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        backend-mode
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains?
+                asm
+                (str-cat "    .section .rodata\n" align label ":\n"))
+              (= (compiler-backend-string-count asm (str-cat label ":\n")) 1)
+              (>=
+                (compiler-backend-string-count
+                  asm
+                  (str-cat load " " label "(%rip), "))
+                2)
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  (str-cat label ":\n" load))))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-lane-id-rodata-ok?) : bool
+  (and
+    (compiler-backend-lane-id-rodata-shape-ok?
+      (CompilerLowerAvx2)
+      (BackendModeAvx2)
+      (compiler-backend-avx2-i64-lane-id-label)
+      "    .balign 32\n"
+      "    vmovdqa")
+    (compiler-backend-lane-id-rodata-shape-ok?
+      (CompilerLowerAvx512)
+      (BackendModeAvx512)
+      (compiler-backend-avx512-i64-lane-id-label)
+      "    .balign 64\n"
+      "    vmovdqa64")))
+
 (define (compiler-backend-avx2-map-asm-contains?
   [elem : String]
   [move : String]
@@ -6143,7 +6207,12 @@
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
               (compiler-backend-string-contains? asm "    vpaddq ")
-              (compiler-backend-string-contains? asm "    vmovdqu64 "))
+              (compiler-backend-string-contains?
+                asm
+                (str-cat
+                  "    vmovdqa64 "
+                  (compiler-backend-avx512-i64-lane-id-label)
+                  "(%rip), ")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -6172,7 +6241,12 @@
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
               (compiler-backend-string-contains? asm "    vpandq ")
-              (compiler-backend-string-contains? asm "    vmovdqu64 "))
+              (compiler-backend-string-contains?
+                asm
+                (str-cat
+                  "    vmovdqa64 "
+                  (compiler-backend-avx512-i64-lane-id-label)
+                  "(%rip), ")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -7057,6 +7131,7 @@
   (and
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
+    (compiler-backend-lane-id-rodata-ok?)
     (compiler-backend-avx2-uniform-vector-map-ok?)
     (compiler-backend-avx512-uniform-vector-map-ok?)
     (compiler-backend-avx512-masked-if-ok?)

@@ -1051,8 +1051,9 @@ not by ad hoc compiler-only handles. The declarations live in the stdlib
 comptime module and are ordinary `defenum`/`defstruct` declarations, but the
 compiler treats them as **well-known types**: their module identity, type names,
 variant names, field names, field order, arity, payload types, and
-compile-time-only marker are pinned by this SPEC and verified when the stdlib is
-loaded.
+compile-time-only behavior are pinned by this SPEC and verified when the stdlib
+is loaded. The marker is the verified `stdlib.comptime` module/type contract;
+wrapping these declarations in deprecated `comptime-decl` metadata is rejected.
 
 The well-known set for the first stdlib-owned surface is:
 
@@ -1135,7 +1136,8 @@ implementation lands:
 - `ExprList` or reflection sequence declarations that expose a cons-list shape
   instead of the dense sequence contract.
 - Runtime-usable declarations for comptime-only types.
-- A stale stdlib root whose well-known type version does not match the compiler.
+- A stale stdlib root whose well-known declaration contract does not match the
+  compiler.
 
 The compiler may use the verified stdlib declarations as its real macro-time
 representation. CTFE interpretation and compiled comptime execution must observe

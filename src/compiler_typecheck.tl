@@ -250,11 +250,13 @@
     (compiler-cfg-enable
       (compiler-cfg-enable
         (compiler-cfg-enable
-          (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-          "feature-str-view")
-        "feature-private-string-intrinsics")
-      "feature-compiler-private-string-intrinsics")
-    "array-helper-intrinsics"))
+          (compiler-cfg-enable
+            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
+      "array-helper-intrinsics")
+    "feature-plain-comptime-well-known"))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let
@@ -6016,38 +6018,7 @@
       "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
 
 (define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
-  "(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr
-    (ExprBool bool)
-    (ExprInt i64)
-    (ExprVar String)
-    (ExprSplice (Box Expr))
-    (ExprIf (Box Expr) (Box Expr) (Box Expr))
-    (ExprCall (Box Expr) ExprList)
-    (ExprBegin ExprList)
-    (ExprQuote (Box Expr))
-    (ExprQuasiquote (Box Expr))
-    (ExprUnquote (Box Expr))
-    (ExprUnquoteSplicing (Box Expr))))")
-
-(define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
-  "(module stdlib.comptime)
-(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr
-    (ExprInt i64)))")
-
-(define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
-  (str-cat
-    "(module stdlib.comptime)\n"
-    (compiler-typecheck-stdlib-comptime-expr-decl-source)
-    "\n(comptime-decl (:generated stdlib/comptime-well-known ExprList \"v0\")
-  (defenum ExprList
-    (ExprListNil)
-    (ExprListCons Expr (Box ExprList))))"))
-
-(define (compiler-typecheck-stdlib-comptime-plain-expr-source) : String
-  "(module stdlib.comptime)
-(defenum Expr
+  "(defenum Expr
   (ExprBool bool)
   (ExprInt i64)
   (ExprVar String)
@@ -6060,9 +6031,22 @@
   (ExprUnquote (Box Expr))
   (ExprUnquoteSplicing (Box Expr)))")
 
-(define (compiler-typecheck-stdlib-comptime-stale-expr-source) : String
+(define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
   "(module stdlib.comptime)
-(comptime-decl (:generated stdlib/comptime-well-known Expr \"v1\")
+(defenum Expr
+  (ExprInt i64))")
+
+(define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
+  (str-cat
+    "(module stdlib.comptime)\n"
+    (compiler-typecheck-stdlib-comptime-expr-decl-source)
+    "\n(defenum ExprList
+  (ExprListNil)
+  (ExprListCons Expr (Box ExprList)))"))
+
+(define (compiler-typecheck-stdlib-comptime-wrapper-expr-source) : String
+  "(module stdlib.comptime)
+(comptime-decl
   (defenum Expr
     (ExprBool bool)
     (ExprInt i64)
@@ -6085,11 +6069,8 @@
       (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
       "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-stdlib-comptime-plain-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-stdlib-comptime-stale-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")))
+      (compiler-typecheck-stdlib-comptime-wrapper-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected plain stdlib.comptime well-known declaration")))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and

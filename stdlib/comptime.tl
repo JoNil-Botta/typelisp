@@ -9,9 +9,12 @@
 ;# to them before their placeholder bodies are evaluated.
 (module stdlib.comptime)
 
+;# `feature-plain-comptime-well-known` is the end-state source surface. The
+;# inverse cfg branch is a temporary bridge for published stage0 compilers whose
+;# verifier still requires legacy generated metadata.
 ;: Syntax value passed to and returned from expression macros.
-(comptime-decl
-  (:generated stdlib/comptime-well-known Expr "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defenum Expr
     (ExprBool bool)
     (ExprInt i64)
@@ -25,108 +28,238 @@
     (ExprUnquote (Box Expr))
     (ExprUnquoteSplicing (Box Expr))))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known Expr "v0")
+    (defenum Expr
+      (ExprBool bool)
+      (ExprInt i64)
+      (ExprVar String)
+      (ExprSplice (Box Expr))
+      (ExprIf (Box Expr) (Box Expr) (Box Expr))
+      (ExprCall (Box Expr) ExprList)
+      (ExprBegin ExprList)
+      (ExprQuote (Box Expr))
+      (ExprQuasiquote (Box Expr))
+      (ExprUnquote (Box Expr))
+      (ExprUnquoteSplicing (Box Expr)))))
+
 ;: Dense ordered sequence of syntax expressions.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprList
     (items (Array Expr))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprList "v0")
+    (defstruct ExprList
+      (items (Array Expr))
+      (len i64))))
+
 ;: Pair of expressions used by clause-oriented macro forms.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprClause "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprClause
     (first Expr)
     (second Expr)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprClause "v0")
+    (defstruct ExprClause
+      (first Expr)
+      (second Expr))))
+
 ;: Dense ordered sequence of expression clauses.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprClauseList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprClauseList
     (items (Array ExprClause))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprClauseList "v0")
+    (defstruct ExprClauseList
+      (items (Array ExprClause))
+      (len i64))))
+
 ;: Let-like binding clause used by binding-introducing macro forms.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprBindingClause "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprBindingClause
     (name String)
     (has-type bool)
     (ty Expr)
     (init Expr)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprBindingClause "v0")
+    (defstruct ExprBindingClause
+      (name String)
+      (has-type bool)
+      (ty Expr)
+      (init Expr))))
+
 ;: Dense ordered sequence of binding clauses.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprBindingClauseList
     (items (Array ExprBindingClause))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
+    (defstruct ExprBindingClauseList
+      (items (Array ExprBindingClause))
+      (len i64))))
+
 ;: Dense ordered sequence of reflected type descriptors.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeInfoList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeInfoList
     (items (Array TypeInfo))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeInfoList "v0")
+    (defstruct TypeInfoList
+      (items (Array TypeInfo))
+      (len i64))))
+
 ;: Reflected struct field name and type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeField "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeField
     (name String)
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeField "v0")
+    (defstruct TypeField
+      (name String)
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected struct fields.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeFieldList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeFieldList
     (items (Array TypeField))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeFieldList "v0")
+    (defstruct TypeFieldList
+      (items (Array TypeField))
+      (len i64))))
+
 ;: Reflected enum variant payload type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantPayload "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantPayload
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantPayload "v0")
+    (defstruct TypeVariantPayload
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected enum variant payloads.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantPayloadList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantPayloadList
     (items (Array TypeVariantPayload))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantPayloadList "v0")
+    (defstruct TypeVariantPayloadList
+      (items (Array TypeVariantPayload))
+      (len i64))))
+
 ;: Reflected enum variant name and payload list.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariant "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariant
     (name String)
     (payloads TypeVariantPayloadList)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariant "v0")
+    (defstruct TypeVariant
+      (name String)
+      (payloads TypeVariantPayloadList))))
+
 ;: Dense ordered sequence of reflected enum variants.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantList
     (items (Array TypeVariant))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantList "v0")
+    (defstruct TypeVariantList
+      (items (Array TypeVariant))
+      (len i64))))
+
 ;: Reflected nominal type parameter name and resolved type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeParam "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeParam
     (name String)
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeParam "v0")
+    (defstruct TypeParam
+      (name String)
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected nominal type parameters.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeParamList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeParamList
     (items (Array TypeParam))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeParamList "v0")
+    (defstruct TypeParamList
+      (items (Array TypeParam))
+      (len i64))))
+
 ;: Compile-time reflection descriptor for a TypeLisp type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeInfo "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defenum TypeInfo
     (TypeInfoBuiltin String)
     (TypeInfoArray (Box TypeInfo) i64)
@@ -136,6 +269,20 @@
     (TypeInfoStruct String TypeFieldList)
     (TypeInfoEnum String TypeVariantList)
     (TypeInfoOpaque String)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeInfo "v0")
+    (defenum TypeInfo
+      (TypeInfoBuiltin String)
+      (TypeInfoArray (Box TypeInfo) i64)
+      (TypeInfoDynArray (Box TypeInfo))
+      (TypeInfoFunction TypeInfoList (Box TypeInfo))
+      (TypeInfoTuple TypeInfoList)
+      (TypeInfoStruct String TypeFieldList)
+      (TypeInfoEnum String TypeVariantList)
+      (TypeInfoOpaque String))))
 
 ;: Build a bool literal expression during macro CTFE.
 (define (expr-bool [value : bool]) : Expr

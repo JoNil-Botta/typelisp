@@ -462,11 +462,13 @@
     (compiler-cfg-enable
       (compiler-cfg-enable
         (compiler-cfg-enable
-          (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-          "feature-str-view")
-        "feature-private-string-intrinsics")
-      "feature-compiler-private-string-intrinsics")
-    "array-helper-intrinsics"))
+          (compiler-cfg-enable
+            (compiler-cfg-enable cfgs "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
+      "array-helper-intrinsics")
+    "feature-plain-comptime-well-known"))
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]

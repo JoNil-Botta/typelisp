@@ -3535,9 +3535,7 @@
 
 (define (compiler-symbols-comptime-root-helper-alias-source) : String
   "(module stdlib.comptime)
-(comptime-decl
-  (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr (ExprBool bool)))
+(defenum Expr (ExprBool bool))
 (define (int->string [value : i64]) : String \"\")
 (define (string-append [left : String] [right : String]) : String left)
 (define (string-concat [left : String] [right : String]) : String left)

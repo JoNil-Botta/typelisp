@@ -426,9 +426,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+        (panic (format-source-error-message err)))]))
 
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -471,9 +469,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+        (panic (format-source-error-message err)))]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -547,9 +543,7 @@
     [(OkFmtI64 end) end]
     [(ErrFmtI64 err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+        (panic (format-source-error-message err)))]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -833,6 +827,4 @@
     [(OkFormatTokenStream stream) stream]
     [(ErrFormatTokenStream err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (format-empty-token-stream))]))
+        (panic (format-source-error-message err)))]))

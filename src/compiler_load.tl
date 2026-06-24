@@ -7454,394 +7454,284 @@
       (compiler-load-normalize-ok?)
       (return
         (begin
-          (panic "compiler-load: normalize smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: normalize smoke mismatch"))))
     (unless
       (compiler-load-relative-resolution-ok?)
       (return
         (begin
-          (panic "compiler-load: relative resolution smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: relative resolution smoke mismatch"))))
     (unless
       (compiler-load-package-owner-paths-ok?)
       (return
         (begin
-          (panic "compiler-load: package owner path smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: package owner path smoke mismatch"))))
     (unless
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
         (begin
-          (panic "compiler-load: package owner extern symbol smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: package owner extern symbol smoke mismatch"))))
     (unless
       (compiler-load-source-provenance-ok?)
       (return
         (begin
-          (panic "compiler-load: source provenance smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: source provenance smoke mismatch"))))
     (unless
       (compiler-load-entry-moduled-main-ok?)
       (return
         (begin
-          (panic "compiler-load: entry moduled main smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: entry moduled main smoke mismatch"))))
     (unless
       (compiler-load-expected-module-conflict-ok?)
       (return
         (begin
-          (panic "compiler-load: expected module smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: expected module smoke mismatch"))))
     (unless
       (compiler-load-duplicate-module-ok?)
       (return
         (begin
-          (panic "compiler-load: duplicate module smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: duplicate module smoke mismatch"))))
     (unless
       (compiler-load-seen-module-ok?)
       (return
         (begin
-          (panic "compiler-load: seen module smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: seen module smoke mismatch"))))
     (unless
       (compiler-load-cfg-import-ok?)
       (return
         (begin
-          (panic "compiler-load: cfg import smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: cfg import smoke mismatch"))))
     (unless
       (compiler-load-session-cache-common-dep-ok?)
       (return
         (begin
-          (panic "compiler-load: session cache common dep smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: session cache common dep smoke mismatch"))))
     (unless
       (compiler-load-session-cache-root-isolation-ok?)
       (return
         (begin
-          (panic "compiler-load: session cache root isolation smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: session cache root isolation smoke mismatch"))))
     (unless
       (compiler-load-session-cache-entry-cold-ok?)
       (return
         (begin
-          (panic "compiler-load: session cache entry cold smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: session cache entry cold smoke mismatch"))))
     (unless
       (compiler-load-session-program-cache-disable-persistent-off-ok?)
       (return
         (begin
           (panic
-            "compiler-load: disabled program cache left persistent intern storage on")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: disabled program cache left persistent intern storage on"))))
     (unless
       (compiler-load-session-cache-enable-persistent-off-ok?)
       (return
         (begin
           (panic
-            "compiler-load: session cache enable left persistent intern storage on")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: session cache enable left persistent intern storage on"))))
     (unless
       (compiler-load-session-persistent-floor-interns-ok?)
       (return
         (begin
           (panic
-            "compiler-load: session cache intern floor kept scratch storage")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: session cache intern floor kept scratch storage"))))
     (unless
       (compiler-load-session-cache-local-common-dep-ok?)
       (return
         (begin
-          (panic "compiler-load: session cache local common dep smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: session cache local common dep smoke mismatch"))))
     (unless
       (compiler-load-session-cache-package-common-dep-ok?)
       (return
         (begin
           (panic
-            "compiler-load: session cache package common dep smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: session cache package common dep smoke mismatch"))))
     (unless
       (compiler-load-file-import-dedup-cycle-ok?)
       (return
         (begin
-          (panic "compiler-load: import dedup/cycle smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: import dedup/cycle smoke mismatch"))))
     (unless
       (compiler-load-file-fallback-path-dedup-ok?)
       (return
         (begin
-          (panic "compiler-load: fallback path dedup smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: fallback path dedup smoke mismatch"))))
     (unless
       (compiler-load-import-module-restore-ok?)
       (return
         (begin
-          (panic "compiler-load: import module restore smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: import module restore smoke mismatch"))))
     (unless
       (compiler-load-import-alias-preserved-ok?)
       (return
         (begin
-          (panic "compiler-load: import alias preservation smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: import alias preservation smoke mismatch"))))
     (unless
       (compiler-load-legacy-path-module-flat-alias-ok?)
       (return
         (begin
-          (panic "compiler-load: legacy path module flat alias smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: legacy path module flat alias smoke mismatch"))))
     (unless
       (compiler-load-seen-legacy-path-module-flat-alias-ok?)
       (return
         (begin
           (panic
-            "compiler-load: seen legacy path module flat alias smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: seen legacy path module flat alias smoke mismatch"))))
     (unless
       (compiler-load-package-legacy-path-module-flat-alias-ok?)
       (return
         (begin
           (panic
-            "compiler-load: package legacy path module flat alias smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: package legacy path module flat alias smoke mismatch"))))
     (unless
       (compiler-load-package-seen-legacy-path-module-flat-alias-ok?)
       (return
         (begin
           (panic
-            "compiler-load: package seen legacy path module flat alias smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: package seen legacy path module flat alias smoke mismatch"))))
     (unless
       (compiler-load-dotted-import-duplicate-alias-ok?)
       (return
         (begin
-          (panic "compiler-load: dotted import duplicate alias smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: dotted import duplicate alias smoke mismatch"))))
     (unless
       (compiler-load-dotted-import-resolution-ok?)
       (return
         (begin
-          (panic "compiler-load: dotted import resolution smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: dotted import resolution smoke mismatch"))))
     (unless
       (compiler-load-dotted-source-root-ok?)
       (return
         (begin
-          (panic "compiler-load: dotted source root smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: dotted source root smoke mismatch"))))
     (unless
       (compiler-load-package-dotted-import-resolution-ok?)
       (return
         (begin
           (panic
-            "compiler-load: package dotted import resolution smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: package dotted import resolution smoke mismatch"))))
     (unless
       (compiler-load-generated-meta-preserved-ok?)
       (return
         (begin
           (panic
-            "compiler-load: generated metadata preservation smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+            "compiler-load: generated metadata preservation smoke mismatch"))))
     (unless
       (compiler-load-diamond-import-ok?)
       (return
         (begin
-          (panic "compiler-load: diamond import smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: diamond import smoke mismatch"))))
     (unless
       (compiler-load-transitive-import-ok?)
       (return
         (begin
-          (panic "compiler-load: transitive import smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: transitive import smoke mismatch"))))
     (unless
       (compiler-load-missing-import-ok?)
       (return
         (begin
-          (panic "compiler-load: missing import smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: missing import smoke mismatch"))))
     (unless
       (compiler-load-include-str-relative-ok?)
       (return
         (begin
-          (panic "compiler-load: include-str relative smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: include-str relative smoke mismatch"))))
     (unless
       (compiler-load-include-str-stdlib-root-ok?)
       (return
         (begin
-          (panic "compiler-load: include-str stdlib root smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: include-str stdlib root smoke mismatch"))))
     (unless
       (compiler-load-missing-include-str-ok?)
       (return
         (begin
-          (panic "compiler-load: missing include-str smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: missing include-str smoke mismatch"))))
     (unless
       (compiler-load-include-str-raw-text-ok?)
       (return
         (begin
-          (panic "compiler-load: include-str raw text smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: include-str raw text smoke mismatch"))))
     (unless
       (compiler-load-include-bin-relative-ok?)
       (return
         (begin
-          (panic "compiler-load: include-bin relative smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: include-bin relative smoke mismatch"))))
     (unless
       (compiler-load-missing-include-bin-ok?)
       (return
         (begin
-          (panic "compiler-load: missing include-bin smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: missing include-bin smoke mismatch"))))
     (unless
       (compiler-load-embedded-stdlib-lookup-ok?)
       (return
         (begin
-          (panic "compiler-load: embedded stdlib lookup smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: embedded stdlib lookup smoke mismatch"))))
     (unless
       (compiler-load-embedded-stdlib-missing-ok?)
       (return
         (begin
-          (panic "compiler-load: embedded stdlib missing smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: embedded stdlib missing smoke mismatch"))))
     (unless
       (compiler-load-embedded-stdlib-escape-rejected-ok?)
       (return
         (begin
-          (panic "compiler-load: embedded stdlib escape smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: embedded stdlib escape smoke mismatch"))))
     (unless
       (compiler-load-imported-parse-error-path-ok?)
       (return
         (begin
-          (panic "compiler-load: imported parse error path smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: imported parse error path smoke mismatch"))))
     (unless
       (compiler-load-imported-duplicate-module-path-ok?)
       (return
         (begin
-          (panic "compiler-load: imported duplicate module path smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: imported duplicate module path smoke mismatch"))))
     (unless
       (compiler-load-stdlib-root-fallback-ok?)
       (return
         (begin
-          (panic "compiler-load: stdlib root fallback smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: stdlib root fallback smoke mismatch"))))
     (unless
       (compiler-load-stdlib-searched-root-ok?)
       (return
         (begin
-          (panic "compiler-load: stdlib searched root smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: stdlib searched root smoke mismatch"))))
     (unless
       (compiler-load-stdlib-unresolved-ok?)
       (return
         (begin
-          (panic "compiler-load: stdlib unresolved smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: stdlib unresolved smoke mismatch"))))
     (unless
       (compiler-load-stdlib-root-escape-rejected-ok?)
       (return
         (begin
-          (panic "compiler-load: stdlib root escape smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: stdlib root escape smoke mismatch"))))
     (unless
       (compiler-load-pkg-manifest-ok?)
       (return
         (begin
-          (panic "compiler-load: pkg manifest smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: pkg manifest smoke mismatch"))))
     (unless
       (compiler-load-manifest-path-inference-ok?)
       (return
         (begin
-          (panic "compiler-load: manifest path inference smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: manifest path inference smoke mismatch"))))
     (unless
       (compiler-load-pkg-resolve-ok?)
       (return
         (begin
-          (panic "compiler-load: pkg resolve smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: pkg resolve smoke mismatch"))))
     (unless
       (compiler-load-pkg-parent-dir-ok?)
       (return
         (begin
-          (panic "compiler-load: pkg parent-dir smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: pkg parent-dir smoke mismatch"))))
     (unless
       (compiler-load-string-vec-roots-ok?)
       (return
         (begin
-          (panic "compiler-load: string vec roots smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: string vec roots smoke mismatch"))))
     (unless
       (compiler-load-boxed-pkg-dep-list-ok?)
       (return
         (begin
-          (panic "compiler-load: boxed pkg-dep-list smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "compiler-load: boxed pkg-dep-list smoke mismatch"))))
     42))

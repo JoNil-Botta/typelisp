@@ -689,30 +689,22 @@
             "Module title\nsecond module line\nlater module")
           (return
             (begin
-              (panic "doc-extract: module doc smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-extract: module doc smoke mismatch"))))
         (unless
           (= (doc-item-list-count items) 6)
           (return
             (begin
-              (panic "doc-extract: item count smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-extract: item count smoke mismatch"))))
         (unless
           (doc-extract-smoke-items-ok? items)
           (return
             (begin
-              (panic "doc-extract: item doc smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-extract: item doc smoke mismatch"))))
         (unless
           (doc-extract-generated-smoke-ok?)
           (return
             (begin
-              (panic "doc-extract: generated item mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-extract: generated item mismatch"))))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)
             (begin
@@ -720,16 +712,12 @@
                 (string-eq legacy-module "Legacy module")
                 (return
                   (begin
-                    (panic "doc-extract: legacy module doc mismatch")
-                    ;; lint-allow: unreachable-code
-                    0)))
+                    (panic "doc-extract: legacy module doc mismatch"))))
               (unless
                 (= (doc-item-list-count legacy-items) 1)
                 (return
                   (begin
-                    (panic "doc-extract: legacy item count mismatch")
-                    ;; lint-allow: unreachable-code
-                    0)))
+                    (panic "doc-extract: legacy item count mismatch"))))
               (match legacy-items
                 [(DocItemCons legacy legacy-rest)
                   (match (box-get legacy-rest)
@@ -744,9 +732,7 @@
                             "(define legacy : i64 1)")
                           (return
                             (begin
-                              (panic "doc-extract: legacy item mismatch")
-                              ;; lint-allow: unreachable-code
-                              0)))
+                              (panic "doc-extract: legacy item mismatch"))))
                         42)]
                     [_ 0])]
                 [_ 0]))]))]))

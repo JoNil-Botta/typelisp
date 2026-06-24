@@ -91,6 +91,34 @@
     ;; lint-allow: unreachable-code
     2))")
 
+(define (lint-driver-smoke-divergence-padding-source) : String
+  "(define (main [flag : bool]) : i64
+  (begin
+    (begin
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      0)
+    (unsafe
+      (error \"stop\")
+      ;; lint-allow: unreachable-code
+      1)
+    (with-arena scratch
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      2)
+    (if flag
+      (begin
+        (panic \"stop\")
+        ;; lint-allow: unreachable-code
+        3)
+      4)))")
+
+(define (lint-driver-smoke-clean-divergence-source) : String
+  "(define (main [flag : bool]) : i64
+  (if flag
+    (panic \"stop\")
+    4))")
+
 (define (lint-driver-smoke-unused-variable-source) : String
   "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
   `(quoted-only ,used-macro))
@@ -329,15 +357,56 @@
         (string-vec-new)
         true)]
     (cond
-      [(not (= (lint-findings-count reported) 5)) 40]
+      [(not (= (lint-findings-count reported) 7)) 40]
       [(not
-          (lint-driver-smoke-finding-rule-ok?
-            reported
-            0
-            (lint-rule-unreachable-code-id)))
+          (=
+            (selfhost-lint-findings-rule-count
+              reported
+              (lint-rule-unreachable-code-id))
+            5))
         41]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              reported
+              (lint-rule-redundant-divergence-padding-id))
+            2))
+        43]
       [(not (= (lint-findings-count clean) 0)) 44]
       [(not (= (lint-findings-count suppressed) 0)) 45]
+      [else 42])))
+
+(define (lint-driver-smoke-divergence-padding-self-test) : i64
+  (let
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_divergence_padding.tl"
+        (lint-driver-smoke-divergence-padding-source)
+        (string-vec-new)
+        true)]
+    [clean : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_divergence_padding_clean.tl"
+        (lint-driver-smoke-clean-divergence-source)
+        (string-vec-new)
+        true)]
+    (cond
+      [(not (= (lint-findings-count reported) 4)) 46]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              reported
+              (lint-rule-redundant-divergence-padding-id))
+            4))
+        47]
+      [(not
+          (lint-driver-smoke-finding-rule-line-ok?
+            reported
+            0
+            (lint-rule-redundant-divergence-padding-id)
+            4))
+        48]
+      [(not (= (lint-findings-count clean) 0)) 49]
       [else 42])))
 
 (define (lint-driver-smoke-unused-variable-self-test) : i64
@@ -519,11 +588,16 @@
                                 (lint-driver-smoke-unreachable-self-test)]
                               (if (= unreachable-result 42)
                                 (let
-                                  [unused-variable-result : i64
-                                    (lint-driver-smoke-unused-variable-self-test)]
-                                  (if (= unused-variable-result 42)
-                                    (lint-driver-smoke-unused-unsafe-self-test)
-                                    unused-variable-result))
+                                  [divergence-result : i64
+                                    (lint-driver-smoke-divergence-padding-self-test)]
+                                  (if (= divergence-result 42)
+                                    (let
+                                      [unused-variable-result : i64
+                                        (lint-driver-smoke-unused-variable-self-test)]
+                                      (if (= unused-variable-result 42)
+                                        (lint-driver-smoke-unused-unsafe-self-test)
+                                        unused-variable-result))
+                                    divergence-result))
                                 unreachable-result))
                             no-effect-result))
                         concat-result))

@@ -108,9 +108,7 @@
     [(= c ')') TRParen]
     [else
       (begin
-        (panic "lexer: unexpected character")
-        ;; lint-allow: unreachable-code
-        TEnd)]))
+        (panic "lexer: unexpected character"))]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is the shape of a real lexer: a cursor over the input, a
@@ -207,10 +205,7 @@
               (expect toks cur (tag-rparen))
               inner)))
         (begin
-          (panic "parser: expected an integer or '('")
-          ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
-          ;; lint-allow: unreachable-code
-          (ENum 0))))))
+          (panic "parser: expected an integer or '('"))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `EMul`/`EDiv` nodes over the

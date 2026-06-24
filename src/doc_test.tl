@@ -2355,58 +2355,42 @@
           (= (doc-test-error-list-count errors) 0)
           (return
             (begin
-              (panic "doc-test: unexpected extraction error")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: unexpected extraction error"))))
         (unless
           (= (doc-test-example-list-count examples) 2)
           (return
             (begin
-              (panic "doc-test: example count mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: example count mismatch"))))
         (unless
           (doc-test-smoke-examples-ok? examples)
           (return
             (begin
-              (panic "doc-test: example metadata mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: example metadata mismatch"))))
         (unless
           (doc-test-ordinary-comments-ok?)
           (return
             (begin
-              (panic "doc-test: ordinary comment smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: ordinary comment smoke mismatch"))))
         (unless
           (doc-test-legacy-item-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: legacy item smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: legacy item smoke mismatch"))))
         (unless
           (doc-test-malformed-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: malformed smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: malformed smoke mismatch"))))
         (unless
           (doc-test-runnable-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: runnable smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: runnable smoke mismatch"))))
         (unless
           (doc-test-runnable-malformed-smoke-ok?)
           (return
             (begin
-              (panic "doc-test: runnable malformed smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+              (panic "doc-test: runnable malformed smoke mismatch"))))
         42)]))
 
 ;; --- runner self-test (#724) ------------------------------------------------
@@ -2776,93 +2760,67 @@ typecheck: return type mismatch"))]
       (doc-test-run-smoke-pass-ok?)
       (return
         (begin
-          (panic "doc-test-run: pass-case mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: pass-case mismatch"))))
     (unless
       (doc-test-run-smoke-unexpected-error-ok?)
       (return
         (begin
-          (panic "doc-test-run: unexpected-error mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: unexpected-error mismatch"))))
     (unless
       (doc-test-run-smoke-unexpected-pass-ok?)
       (return
         (begin
-          (panic "doc-test-run: unexpected-pass mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: unexpected-pass mismatch"))))
     (unless
       (doc-test-run-smoke-malformed-ok?)
       (return
         (begin
-          (panic "doc-test-run: malformed mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: malformed mismatch"))))
     (unless
       (doc-test-run-smoke-empty-ok?)
       (return
         (begin
-          (panic "doc-test-run: empty-source mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: empty-source mismatch"))))
     (unless
       (doc-test-run-smoke-runnable-ok?)
       (return
         (begin
-          (panic "doc-test-run: runnable execution mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: runnable execution mismatch"))))
     (unless
       (doc-test-typecheck-smoke-runnable-only-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: runnable typecheck mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-typecheck: runnable typecheck mismatch"))))
     (unless
       (doc-test-typecheck-smoke-unexpected-pass-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: unexpected-pass mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-typecheck: unexpected-pass mismatch"))))
     (unless
       (doc-test-typecheck-smoke-malformed-ok?)
       (return
         (begin
-          (panic "doc-test-typecheck: malformed mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-typecheck: malformed mismatch"))))
     (unless
       (doc-test-public-diagnostic-render-smoke-ok?)
       (return
         (begin
-          (panic "doc-test-run: public diagnostic render mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: public diagnostic render mismatch"))))
     (unless
       (doc-test-run-smoke-render-ok?)
       (return
         (begin
-          (panic "doc-test-run: render mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: render mismatch"))))
     (unless
       (doc-test-run-smoke-report-render-ok?)
       (return
         (begin
-          (panic "doc-test-run: report render mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: report render mismatch"))))
     (unless
       (doc-test-session-cache-smoke-ok?)
       (return
         (begin
-          (panic "doc-test-run: session cache smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test-run: session cache smoke mismatch"))))
     42))
 
 ;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both
@@ -2873,50 +2831,36 @@ typecheck: return type mismatch"))]
       (= (doc-test-smoke) 42)
       (return
         (begin
-          (panic "doc-test: extraction smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "doc-test: extraction smoke regressed"))))
     (unless
       (source-tool-link-inputs-dedupe-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: link input dedupe smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "source-tool: link input dedupe smoke regressed"))))
     (unless
       (source-tool-windows-stack-reserve-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: windows stack reserve smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "source-tool: windows stack reserve smoke regressed"))))
     (unless
       (source-tool-linux-direct-object-linkability-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: linux direct object smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "source-tool: linux direct object smoke regressed"))))
     (unless
       (source-tool-windows-direct-object-linkability-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: windows direct object smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "source-tool: windows direct object smoke regressed"))))
     (unless
       (source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
       (return
         (begin
-          (panic "source-tool: windows direct object fallback smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+          (panic "source-tool: windows direct object fallback smoke regressed"))))
     (unless
       (source-tool-windows-direct-object-relocation-gate-smoke-ok?)
       (return
         (begin
           (panic
-            "source-tool: windows direct object relocation gate smoke regressed")
-          ;; lint-allow: unreachable-code
-          0)))
+            "source-tool: windows direct object relocation gate smoke regressed"))))
     (doc-test-run-smoke)))

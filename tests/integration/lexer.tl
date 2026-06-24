@@ -98,9 +98,7 @@
     [(= c ')') TRParen]
     [else
       (begin
-        (panic "lexer: unexpected character")
-        ;; lint-allow: unreachable-code
-        TEnd)]))
+        (panic "lexer: unexpected character"))]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.

@@ -14779,9 +14779,7 @@
     (compiler-regalloc-storage-self-test?))
     42
     (begin
-      (panic "regalloc: smoke mismatch")
-      ;; lint-allow: unreachable-code
-      0)))
+      (panic "regalloc: smoke mismatch"))))
 
 (cfg
   test

@@ -1336,6 +1336,73 @@
 (define (compiler-typecheck-smoke-type-macro-param-tests-ok?) : bool
   (compiler-typecheck-ok? (compiler-typecheck-smoke-type-macro-param-source)))
 
+(define (compiler-typecheck-smoke-decls-macro-generated-reuse-source) : String
+  "(defmacro (bundle [T : type] [version : String]) : Decls
+  `(begin
+    (defstruct BundleBox (value ,T))
+    (defenum BundleMaybe (BundleNone) (BundleSome ,T))
+    (define (bundle-score [value : BundleMaybe]) : i64 1)))
+(bundle String \"v1\")
+(bundle String \"v1\")
+(define (main) : i64 (bundle-score (BundleSome \"x\")))")
+
+(define (compiler-typecheck-smoke-decls-macro-generated-incompatible-source) : String
+  "(defmacro (bundle [key : Expr]) : Decls
+  (match key
+    [(ExprCall _ _)
+      `(defstruct BundleBox (value i64))]
+    [_
+      `(defstruct BundleBox (value String))]))
+(bundle \"same\")
+(bundle (string-append \"sa\" \"me\"))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String
+  "(module bundle.family)
+(defmacro (bundle [version : String]) : Decls
+  `(begin
+    (defstruct BundleBox (value String))
+    (defenum BundleMaybe (BundleNone) (BundleSome String))))
+(bundle \"v1\")
+(module app)
+(module bundle.family)
+(bundle \"v1\")")
+
+(define (compiler-typecheck-smoke-decls-macro-expr-name-key-source) : String
+  "(defmacro (box-family [T : type] [box-name : Expr] [ctor-name : Expr]) : Decls
+  `(begin
+    (defstruct ,box-name (value ,T))
+    (define (,ctor-name [value : ,T]) : ,box-name
+      (,box-name value))))
+(box-family i64 IntBox int-box)
+(box-family i64 IntBox int-box)
+(define (main) : i64
+  (struct-get (int-box 42) value))")
+
+(define (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source) : String
+  "(module bundle.left)
+(defmacro (bundle [version : String]) : Decls
+  `(defstruct BundleBox (value String)))
+(bundle \"v1\")
+(module bundle.right)
+(defmacro (bundle [version : String]) : Decls
+  `(defstruct BundleBox (value String)))
+(bundle \"v1\")")
+
+(define (compiler-typecheck-smoke-decls-macro-generated-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-generated-reuse-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-decls-macro-generated-incompatible-source)
+      "generated-decl: duplicate generated key for BundleBox has incompatible payload")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-expr-name-key-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source))))
+
 (define (compiler-typecheck-smoke-decl-macro-body-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-smoke-decls-macro-body-source))
@@ -1684,6 +1751,9 @@
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (panic "typecheck: declaration macro body smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-decls-macro-generated-tests-ok?)
+      (panic "typecheck: declaration macro generated identity smoke failed"))
     (unless
       (compiler-typecheck-smoke-type-macro-param-tests-ok?)
       (panic "typecheck: type macro param smoke failed"))

@@ -196,10 +196,6 @@
   (OkAstGeneratedDeclMeta AstGeneratedDeclMeta)
   (ErrAstGeneratedDeclMeta String))
 
-(defenum ResultAstDeclName
-  (OkAstDeclName String)
-  (ErrAstDeclName String))
-
 (defenum ResultAstDecl
   (OkAstDecl AstDecl)
   (ErrAstDecl String))
@@ -4677,8 +4673,7 @@
       (ErrAstExpr
         "parse: comptime-decl is only valid as a top-level declaration")]
     [(= tag (compiler-parse-tag-decl-comptime-decls))
-      (ErrAstExpr
-        "parse: comptime-decls is only valid as a top-level declaration")]
+      (ErrAstExpr (parse-ast-comptime-decls-removed-message))]
     [else (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-list-expr
@@ -6202,6 +6197,9 @@
 (define (parse-ast-comptime-decl-payload-message) : String
   "parse: comptime-decl accepts only defstruct, defenum, or define")
 
+(define (parse-ast-comptime-decls-removed-message) : String
+  "parse: comptime-decls is removed; use a declaration-emitting macro instead")
+
 (define (parse-ast-generated-decl-meta
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
@@ -6320,129 +6318,6 @@
       (ErrAstDecl
         "parse: comptime-decl expects one template or generated metadata plus one template")]))
 
-(define (parse-ast-generated-decls-meta
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : SpannedSexpr]) : ResultAstGeneratedDeclMeta
-  (match meta
-    [(SpSCons head-node meta-rest _)
-      (match (sp-node-get head-node)
-        [(SpSSym head _)
-          (if (string-eq head ":generated")
-            (match (sp-node-get meta-rest)
-              [(SpSCons generator-node arg-key-forms _)
-                (match (sp-node-get generator-node)
-                  [(SpSSym generator-name _)
-                    (match (parse-ast-expr-list
-                      dispatch
-                      pools
-                      (sp-node-get arg-key-forms))
-                      [(OkAstExprList arg-keys)
-                        (OkAstGeneratedDeclMeta
-                          (AstSomeGeneratedDeclMeta
-                            generator-name
-                            ""
-                            arg-keys
-                            ""))]
-                      [(ErrAstExprList message)
-                        (ErrAstGeneratedDeclMeta message)])]
-                  [_
-                    (ErrAstGeneratedDeclMeta
-                      "parse: :generated metadata expects generator name and argument key expressions")])]
-              [_
-                (ErrAstGeneratedDeclMeta
-                  "parse: :generated metadata expects generator name and argument key expressions")])
-            (ErrAstGeneratedDeclMeta
-              "parse: comptime-decls metadata must be :generated"))]
-        [_
-          (ErrAstGeneratedDeclMeta
-            "parse: comptime-decls metadata must be :generated")])]
-    [_
-      (ErrAstGeneratedDeclMeta
-        "parse: comptime-decls metadata must be :generated")]))
-
-(define (parse-ast-generated-payload-name [decl : AstDecl]) : ResultAstDeclName
-  (match decl
-    [(AstDeclDef name _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefEnum name _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName (intern-str name))]
-    [_
-      (ErrAstDeclName
-        "parse: comptime-decls payload must declare a visible item")]))
-
-(define (parse-ast-comptime-decls-wrap
-  [meta : AstGeneratedDeclMeta]
-  [template : AstDecl]) : ResultAstDecl
-  (match meta
-    [(AstSomeGeneratedDeclMeta generator-name _ arg-keys _)
-      (match (parse-ast-generated-payload-name template)
-        [(OkAstDeclName item-name)
-          (OkAstDecl
-            (ast-decl-comptime-decl-with-meta
-              (AstSomeGeneratedDeclMeta generator-name item-name arg-keys "")
-              template))]
-        [(ErrAstDeclName message) (ErrAstDecl message)])]
-    [(AstNoGeneratedDeclMeta)
-      (ErrAstDecl "parse: comptime-decls metadata must be :generated")]))
-
-(define (parse-ast-comptime-decls-payloads
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : AstGeneratedDeclMeta]
-  [templates : SpannedSexpr]) : ResultAstDeclList
-  (match templates
-    [(SpSNil _) (OkAstDeclList AstDeclNil)]
-    [(SpSCons template rest _)
-      (match (parse-ast-comptime-decl-payload
-        dispatch
-        pools
-        (sp-node-get template))
-        [(OkAstDecl parsed-template)
-          (match (parse-ast-comptime-decls-wrap meta parsed-template)
-            [(OkAstDecl wrapped)
-              (match (parse-ast-comptime-decls-payloads
-                dispatch
-                pools
-                meta
-                (sp-node-get rest))
-                [(OkAstDeclList wrapped-rest)
-                  (OkAstDeclList (ast-decl-cons wrapped wrapped-rest))]
-                [(ErrAstDeclList message) (ErrAstDeclList message)])]
-            [(ErrAstDecl message) (ErrAstDeclList message)])]
-        [(ErrAstDecl message) (ErrAstDeclList message)])]
-    [_
-      (ErrAstDeclList
-        "parse: comptime-decls expects generated metadata plus one or more templates")]))
-
-(define (parse-ast-comptime-decls
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [rest : SpannedSexpr]) : ResultAstDeclList
-  (match rest
-    [(SpSCons meta payloads _)
-      (match (sp-node-get payloads)
-        [(SpSNil _)
-          (ErrAstDeclList
-            "parse: comptime-decls expects generated metadata plus one or more templates")]
-        [_
-          (match (parse-ast-generated-decls-meta
-            dispatch
-            pools
-            (sp-node-get meta))
-            [(OkAstGeneratedDeclMeta parsed-meta)
-              (parse-ast-comptime-decls-payloads
-                dispatch
-                pools
-                parsed-meta
-                (sp-node-get payloads))]
-            [(ErrAstGeneratedDeclMeta message) (ErrAstDeclList message)])])]
-    [_
-      (ErrAstDeclList
-        "parse: comptime-decls expects generated metadata plus one or more templates")]))
-
 (define (parse-ast-unsafe-decl
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
@@ -6519,6 +6394,8 @@
                 (parse-ast-module (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-comptime-decl))
                 (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
+              [(= tag (compiler-parse-tag-decl-comptime-decls))
+                (ErrAstDecl (parse-ast-comptime-decls-removed-message))]
               [(= tag (compiler-parse-tag-expr-unsafe))
                 (parse-ast-unsafe-decl dispatch pools (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-test))
@@ -6569,12 +6446,7 @@
             (if (=
               (compiler-parse-dispatch-tag dispatch head)
               (compiler-parse-tag-decl-comptime-decls))
-              (match (parse-ast-comptime-decls
-                dispatch
-                pools
-                (sp-node-get rest))
-                [(OkAstDeclList decls) (OkAstDecls decls)]
-                [(ErrAstDeclList message) (ErrAstMaybeDecl message)])
+              (ErrAstMaybeDecl (parse-ast-comptime-decls-removed-message))
               (match (parse-ast-decl dispatch pools s)
                 [(OkAstDecl decl) (OkAstSomeDecl decl)]
                 [(ErrAstDecl message) (ErrAstMaybeDecl message)])))]
@@ -8480,84 +8352,6 @@
           [_ false]))]
     [(ErrAstProgram _) false]))
 
-(define (compiler-parse-comptime-decls-source) : String
-  "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleChoice (BundleNone) (BundleSome String))
-  (define (bundle-score [value : BundleChoice]) : i64 1))")
-
-(define (compiler-parse-comptime-decls-struct-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok? meta "bundle-family" "BundleBox" 2)
-        (match (box-get template-box)
-          [(AstDeclDefStruct name _ _ fields)
-            (and
-              (= name (intern "BundleBox"))
-              (= (compiler-parse-field-count fields) 1))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-enum-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok?
-          meta
-          "bundle-family"
-          "BundleChoice"
-          2)
-        (match (box-get template-box)
-          [(AstDeclDefEnum name _ _) (= name (intern "BundleChoice"))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-fn-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok?
-          meta
-          "bundle-family"
-          "bundle-score"
-          2)
-        (match (box-get template-box)
-          [(AstDeclDefFn name _ (AstTyI64) _ _)
-            (= name (intern "bundle-score"))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-decls-source))
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons first rest1-box)
-            (let
-              [rest1 : AstDeclList (box-get rest1-box)]
-              (match rest1
-                [(AstDeclCons second rest2-box)
-                  (let
-                    [rest2 : AstDeclList (box-get rest2-box)]
-                    (match rest2
-                      [(AstDeclCons third rest3-box)
-                        (let
-                          [rest3 : AstDeclList (box-get rest3-box)]
-                          (match rest3
-                            [(AstDeclNil)
-                              (and
-                                (= (ast-decl-list-count decls) 3)
-                                (compiler-parse-comptime-decls-struct-ok? first)
-                                (compiler-parse-comptime-decls-enum-ok? second)
-                                (compiler-parse-comptime-decls-fn-ok? third))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ErrAstProgram _) false]))
-
 (define (compiler-parse-unsafe-decl-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (unsafe (extern (raw-call [arg0 : i64]) : i64))")
@@ -8990,19 +8784,19 @@
   (and
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-expression-source)
-      "parse: comptime-decls is only valid as a top-level declaration")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-empty-source)
-      "parse: comptime-decls expects generated metadata plus one or more templates")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-bad-metadata-source)
-      "parse: comptime-decls metadata must be :generated")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-malformed-metadata-source)
-      "parse: :generated metadata expects generator name and argument key expressions")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-bad-payload-source)
-      (parse-ast-comptime-decl-payload-message))))
+      (parse-ast-comptime-decls-removed-message))))
 
 (define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
   (and
@@ -9957,7 +9751,6 @@
 (define (compiler-parse-shape-tests-middle-ok?) : bool
   (and
     (compiler-parse-comptime-decl-ok?)
-    (compiler-parse-comptime-decls-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)
     (compiler-parse-import-metadata-ok?)

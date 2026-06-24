@@ -36447,14 +36447,16 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : StringVec]
-  [cache-scope : String]) : ResultCompilerLower
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
+    (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
     (let
       [needs-specialization : bool (compiler-specialize-needed? program)]
@@ -36469,10 +36471,11 @@
               [decls : AstDeclList (box-get decls-box)]
               (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
       (match (if needs-specialization
-        (compiler-specialize-program program)
+        (compiler-specialize-program-with-pools program pools)
         (OkSpecProgram program))
         [(OkSpecProgram specialized)
           (begin
+            (ast-node-pool-context-install! pools)
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (cfg compile-profile (compiler-lower-profile-start))
             (let
@@ -36500,11 +36503,11 @@
                       compile-profile
                       (compiler-lower-profile-finish "prune"))
                     (cfg compile-profile (compiler-lower-profile-start))
+                    (ast-node-pool-context-capture-active! pools)
                     (let
-                      [pools : AstNodePoolContext
-                        (ast-node-pool-context-capture-active)]
+                      [clone-pools : AstNodePoolContext pools]
                       (match (lower-reachable-clone-roots
-                        pools
+                        clone-pools
                         base-program
                         base-paths
                         prune-names)
@@ -36517,7 +36520,7 @@
                             (let
                               [checked-program : AstProgram
                                 (clone-augment-program-with-roots-and-pools
-                                  pools
+                                  clone-pools
                                   base-program
                                   clone-roots)]
                               [checked-paths : AstDeclPathList base-paths]
@@ -36545,7 +36548,7 @@
                                           names))])
                                   checked-names)]
                               (begin
-                                (ast-node-pool-context-install! pools)
+                                (ast-node-pool-context-install! clone-pools)
                                 (cfg
                                   compile-profile
                                   (compiler-lower-profile-finish
@@ -36553,13 +36556,16 @@
                                 (cfg
                                   compile-profile
                                   (compiler-lower-profile-start))
-                                (match (typecheck-compiler-specialized-program-with-paths-checked-cache
+                                (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
                                   checked-program
                                   checked-paths
                                   stdlib-roots
-                                  cache-scope)
+                                  cache-scope
+                                  clone-pools)
                                   [(OkCompilerTypecheckChecked _ ctx top-env)
                                     (begin
+                                      (ast-node-pool-context-install!
+                                        clone-pools)
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-finish
@@ -36608,6 +36614,22 @@
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))))
 
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
+
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache
   [entry-path : String]
   [program : AstProgram]
@@ -36637,6 +36659,37 @@
           (lower-entry-main-selection-restore! prev-active prev-module)
           result)))))
 
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (begin
+    (ast-node-pool-context-install! pools)
+    (let
+      [prev-active : bool lower-entry-main-module-active]
+      [prev-module : String lower-entry-main-module]
+      [selection : LowerMaybeEntryMainModule
+        (lower-entry-main-selection-for-program entry-path program paths)]
+      (begin
+        (lower-entry-main-selection-install! selection)
+        (let
+          [result : ResultCompilerLower
+            (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+              entry-path
+              program
+              paths
+              mode
+              stdlib-roots
+              cache-scope
+              pools)]
+          (begin
+            (lower-entry-main-selection-restore! prev-active prev-module)
+            result))))))
+
 (define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
   [program : AstProgram]
@@ -36657,32 +36710,61 @@
   [mode : CompilerLowerMode]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
+
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
+    (ast-node-pool-context-install! pools)
     (cfg compile-profile (compiler-lower-profile-start))
     (tc-agg-caches-reset!)
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).
-    (match (gen-normalize-program-with-paths program paths entry-path)
+    (match (gen-normalize-program-with-paths-and-pools
+      program
+      paths
+      entry-path
+      pools)
       [(OkGenProgramWithPaths generated generated-paths)
-        (match (macro-expand-program-with-paths generated generated-paths)
-          [(OkMacroExpand expanded expanded-paths)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-lower-profile-finish "macro_expand"))
-              (lower-compiler-expanded-program-with-decl-paths-mode-cache
-                entry-path
-                expanded
-                expanded-paths
-                mode
-                stdlib-roots
-                cache-scope))]
-          [(ErrMacroExpand diag)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-lower-profile-finish "macro_expand"))
-              (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])]
+        (begin
+          (ast-node-pool-context-install! pools)
+          (match (macro-expand-program-with-paths-and-pools
+            generated
+            generated-paths
+            pools)
+            [(OkMacroExpand expanded expanded-paths)
+              (begin
+                (ast-node-pool-context-install! pools)
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-finish "macro_expand"))
+                (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+                  entry-path
+                  expanded
+                  expanded-paths
+                  mode
+                  stdlib-roots
+                  cache-scope
+                  pools))]
+            [(ErrMacroExpand diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-finish "macro_expand"))
+                (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))]
       [(ErrGenProgramWithPaths diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))

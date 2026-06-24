@@ -3062,6 +3062,16 @@
     [(AstExprSpanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
     [_ expr]))
 
+(define (ast-expr-unspan-with-pools
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner-id _)
+      (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools inner-id))]
+    [_ expr]))
+
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDeclDef _ _ _) 1]

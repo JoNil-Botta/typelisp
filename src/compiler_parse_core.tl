@@ -2665,7 +2665,8 @@
                         pools
                         (sp-node-get target-node))
                         [(OkAstExpr parsed-target)
-                          (match (ast-expr-unspan
+                          (match (ast-expr-unspan-with-pools
+                            pools
                             (ast-node-pool-context-expr-get pools parsed-target))
                             [(AstExprStructGet receiver-box field)
                               (OkAstExpr
@@ -5991,7 +5992,9 @@
   [span : AstSourceSpan]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools call-form)
     [(OkAstExpr call-expr)
-      (match (ast-expr-unspan (ast-node-pool-context-expr-get pools call-expr))
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools call-expr))
         [(AstExprCall _ _)
           (match tail
             [(SpSNil _)
@@ -6346,7 +6349,9 @@
   [form : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools form)
     [(OkAstExpr call-expr)
-      (match (ast-expr-unspan (ast-node-pool-context-expr-get pools call-expr))
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools call-expr))
         [(AstExprCall _ _)
           (parse-ast-import-spec
             (AstImportMacroDecls call-expr AstNoModuleName)

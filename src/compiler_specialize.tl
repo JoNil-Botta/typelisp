@@ -880,54 +880,6 @@
         [(AstFnExport b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
-(define (gen-export-item-eq? [a : AstExportItem] [b : AstExportItem]) : bool
-  (match a
-    [(AstExportValue a-name)
-      (match b
-        [(AstExportValue b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportType a-name)
-      (match b
-        [(AstExportType b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportMacro a-name)
-      (match b
-        [(AstExportMacro b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportConstructor a-name)
-      (match b
-        [(AstExportConstructor b-name) (string-eq a-name b-name)]
-        [_ false])]
-    [(AstExportField a-type a-field)
-      (match b
-        [(AstExportField b-type b-field)
-          (and (string-eq a-type b-type) (string-eq a-field b-field))]
-        [_ false])]
-    [(AstExportVariant a-name)
-      (match b
-        [(AstExportVariant b-name) (string-eq a-name b-name)]
-        [_ false])]))
-
-(define (gen-export-item-list-eq?
-  [a : AstExportItemList]
-  [b : AstExportItemList]) : bool
-  (match a
-    [(AstExportItemNil)
-      (match b
-        [(AstExportItemNil) true]
-        [_ false])]
-    [(AstExportItemCons a-head a-rest)
-      (let
-        [a-rest : AstExportItemList (box-get a-rest)]
-        (match b
-          [(AstExportItemCons b-head b-rest)
-            (let
-              [b-rest : AstExportItemList (box-get b-rest)]
-              (and
-                (gen-export-item-eq? a-head b-head)
-                (gen-export-item-list-eq? a-rest b-rest)))]
-          [_ false]))]))
-
 (define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
   (match a
     [(AstImportPath)
@@ -1080,10 +1032,6 @@
         [(AstDeclIncludeBin b-name b-path)
           (and (string-eq a-name b-name) (string-eq a-path b-path))]
         [_ false])]
-    [(AstDeclExport a-items)
-      (match b
-        [(AstDeclExport b-items) (gen-export-item-list-eq? a-items b-items)]
-        [_ false])]
     [(AstDeclTest a-name a-body-box _)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
@@ -1154,6 +1102,31 @@
           (string-append
             ":"
             (string-append (spec-string-key item) (string-append ":" arg-key))))))))
+
+(define (gen-key-prefix? [key : String] [prefix : String]) : bool
+  (let
+    [prefix-len : i64 (string-length prefix)]
+    (if (< (string-length key) prefix-len)
+      false
+      (string-eq (substring key 0 prefix-len) prefix))))
+
+(define (gen-full-key? [key : String]) : bool
+  (gen-key-prefix? key "generated:"))
+
+(define (gen-decls-macro-key? [key : String]) : bool
+  (gen-key-prefix? key "decls:"))
+
+(define (gen-metadata-key-normalizable? [key : String]) : bool
+  (or (string-eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
+
+(define (gen-registration-key
+  [module : String]
+  [generator : String]
+  [item : String]
+  [arg-key : String]) : String
+  (if (gen-full-key? arg-key)
+    arg-key
+    (gen-full-key module generator item arg-key)))
 
 (define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start
@@ -5602,7 +5575,7 @@
   [arg-key : String]
   [registry : GenRegistry]) : ResultGenDecl
   (let
-    [key : String (gen-full-key module generator item arg-key)]
+    [key : String (gen-registration-key module generator item arg-key)]
     (match (gen-registry-lookup registry key)
       [(GenNoEntry)
         (OkGenDecl
@@ -5681,7 +5654,7 @@
   [arg-key : String]
   [registry : GenRegistry]) : ResultGenDecl
   (let
-    [key : String (gen-full-key module generator item arg-key)]
+    [key : String (gen-registration-key module generator item arg-key)]
     (match (gen-registry-lookup registry key)
       [(GenNoEntry)
         (OkGenDecl
@@ -5747,6 +5720,14 @@
                     rest-module)]
                 [(ErrGenDecl diag) (ErrGenDecl diag)])]
             [(ErrGenDecl diag) (ErrGenDecl diag)])])]))
+
+(define (gen-metadata-arg-key
+  [meta-key : String]
+  [args : AstExprList]
+  [env : CtfeEnv]) : ResultGenKey
+  (if (> (string-length meta-key) 0)
+    (OkGenKey meta-key (ctfe-fuel-limit))
+    (gen-key-exprs args env (ctfe-fuel-limit))))
 
 (define (gen-hashmap-expand-family
   [map-name : String]
@@ -5830,69 +5811,71 @@
         (match meta
           [(AstNoGeneratedDeclMeta)
             (OkGenDecl (gen-single-decl-list decl) registry module)]
-          [(AstSomeGeneratedDeclMeta generator item args _)
-            (match (gen-decl-visible-name template)
-              [(SpecNoString)
-                (ErrGenDecl
-                  (compiler-diagnostic-at-start
-                    ""
-                    "generated-decl: generated payload must declare a visible item"))]
-              [(SpecSomeString actual)
-                (if (not (string-eq item actual))
-                  (ErrGenDecl (gen-item-mismatch-diag item actual))
-                  (match (gen-key-exprs args env (ctfe-fuel-limit))
-                    [(OkGenKey arg-key _)
-                      (cond
-                        [(string-eq generator "stdlib/hashmap-family")
-                          (match (gen-hashmap-family-marker-name template)
-                            [(SpecSomeString map-name)
-                              (gen-hashmap-expand-family
-                                map-name
-                                module
-                                generator
-                                args
-                                arg-key
-                                registry
-                                env)]
-                            [(SpecNoString)
-                              (gen-register-generated-decl
-                                template
-                                module
-                                generator
-                                item
-                                args
-                                arg-key
-                                registry)])]
-                        [(string-eq generator "stdlib/json-derive")
-                          (match (gen-json-derive-marker-name template)
-                            [(SpecSomeString request-name)
-                              (gen-json-expand-family
-                                request-name
-                                module
-                                generator
-                                args
-                                arg-key
-                                registry
-                                env)]
-                            [(SpecNoString)
-                              (gen-register-generated-decl
-                                template
-                                module
-                                generator
-                                item
-                                args
-                                arg-key
-                                registry)])]
-                        [else
-                          (gen-register-generated-decl
-                            template
-                            module
-                            generator
-                            item
-                            args
-                            arg-key
-                            registry)])]
-                    [(ErrGenKey diag) (ErrGenDecl diag)]))])]))]
+          [(AstSomeGeneratedDeclMeta generator item args meta-key)
+            (if (not (gen-metadata-key-normalizable? meta-key))
+              (OkGenDecl (gen-single-decl-list decl) registry module)
+              (match (gen-decl-visible-name template)
+                [(SpecNoString)
+                  (ErrGenDecl
+                    (compiler-diagnostic-at-start
+                      ""
+                      "generated-decl: generated payload must declare a visible item"))]
+                [(SpecSomeString actual)
+                  (if (not (string-eq item actual))
+                    (ErrGenDecl (gen-item-mismatch-diag item actual))
+                    (match (gen-metadata-arg-key meta-key args env)
+                      [(OkGenKey arg-key _)
+                        (cond
+                          [(string-eq generator "stdlib/hashmap-family")
+                            (match (gen-hashmap-family-marker-name template)
+                              [(SpecSomeString map-name)
+                                (gen-hashmap-expand-family
+                                  map-name
+                                  module
+                                  generator
+                                  args
+                                  arg-key
+                                  registry
+                                  env)]
+                              [(SpecNoString)
+                                (gen-register-generated-decl
+                                  template
+                                  module
+                                  generator
+                                  item
+                                  args
+                                  arg-key
+                                  registry)])]
+                          [(string-eq generator "stdlib/json-derive")
+                            (match (gen-json-derive-marker-name template)
+                              [(SpecSomeString request-name)
+                                (gen-json-expand-family
+                                  request-name
+                                  module
+                                  generator
+                                  args
+                                  arg-key
+                                  registry
+                                  env)]
+                              [(SpecNoString)
+                                (gen-register-generated-decl
+                                  template
+                                  module
+                                  generator
+                                  item
+                                  args
+                                  arg-key
+                                  registry)])]
+                          [else
+                            (gen-register-generated-decl
+                              template
+                              module
+                              generator
+                              item
+                              args
+                              arg-key
+                              registry)])]
+                      [(ErrGenKey diag) (ErrGenDecl diag)]))]))]))]
     [_ (OkGenDecl (gen-single-decl-list decl) registry module)]))
 
 (define (gen-rewrite-decls
@@ -6069,10 +6052,13 @@
 
 (define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta _)
+    [(AstDeclUnsafe inner-box) (gen-decl-needs-normalize? (box-get inner-box))]
+    [(AstDeclComptimeDecl meta template-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
-        [(AstNoGeneratedDeclMeta) false])]
+        [(AstSomeGeneratedDeclMeta _ _ _ key)
+          (gen-metadata-key-normalizable? key)]
+        [(AstNoGeneratedDeclMeta)
+          (gen-decl-needs-normalize? (box-get template-box))])]
     [_ false]))
 
 (define (gen-decls-needed? [decls : AstDeclList]) : bool
@@ -9698,53 +9684,40 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-reuse-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-function-reuse-source) : String
-  "(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option-string [value : String]) : String value))
-(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option-string [value : String]) : String value))")
+  "(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box-string [value : String]) : String value))
+(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box-string [value : String]) : String value))")
 
 (define (compiler-generated-decl-incompatible-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value i64)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value i64)))")
 
 (define (compiler-generated-decl-item-mismatch-source) : String
-  "(comptime-decl (:generated option-family Expected \"String\")
+  "(comptime-decl (:generated sample-family Expected \"String\")
   (defstruct Actual (value String)))")
 
 (define (compiler-generated-decl-non-string-key-source) : String
-  "(comptime-decl (:generated option-family Option_String 7)
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String 7)
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-duplicate-visible-source) : String
-  "(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(comptime-decl (:generated option-family Option_String \"Bytes\")
-  (defstruct Option_String (value String)))")
+  "(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(comptime-decl (:generated sample-family Box_String \"Bytes\")
+  (defstruct Box_String (value String)))")
 
-(define (compiler-generated-option-result-family-source) : String
+(define (compiler-generated-result-family-source) : String
   "(defstruct Payload (value i64))
 (defenum Status (StatusOk) (StatusBad i64))
-(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
-(comptime-decl (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
-(comptime-decl (:generated stdlib/option-family option-string-some? (type-key (type String)))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
 (comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
   (defenum Result_I64_String
     (Ok_I64_String i64)
@@ -9763,67 +9736,31 @@
     (Ok_Payload_Status Payload)
     (Err_Payload_Status Status)))
 (define (main) : i64
-  (+ (if (option-string-some? (Some_String \"x\")) 1 0)
-     (result-i64-string-value-or (Ok_I64_String 41) 0)))")
-
-(define (compiler-generated-decl-bundle-source) : String
-  "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleMaybe (BundleNone) (BundleSome String))
-  (define (bundle-score [value : BundleMaybe]) : i64 1))
-(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleMaybe (BundleNone) (BundleSome String))
-  (define (bundle-score [value : BundleMaybe]) : i64 1))")
-
-(define (compiler-generated-decl-bundle-incompatible-source) : String
-  "(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value String)))
-(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value i64)))")
-
-(define (compiler-generated-decl-bundle-cross-module-reuse-source) : String
-  "(module bundle.family)
-(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleMaybe (BundleNone) (BundleSome String)))
-(module app)
-(module bundle.family)
-(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleMaybe (BundleNone) (BundleSome String)))")
-
-(define (compiler-generated-decl-bundle-cross-module-distinct-source) : String
-  "(module bundle.left)
-(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value String)))
-(module bundle.right)
-(comptime-decls (:generated bundle-family \"v1\")
-  (defstruct BundleBox (value String)))")
+  (result-i64-string-value-or (Ok_I64_String 41) 0))")
 
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
     ""
-    "option-family"
-    "Option_String"
+    "sample-family"
+    "Box_String"
     (string-append (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-cross-module-reuse-source) : String
-  "(module option.family)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
+  "(module sample.family)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
 (module app)
-(module option.family)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+(module sample.family)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-decl-cross-module-distinct-source) : String
-  "(module option.left)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))
-(module option.right)
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defstruct Option_String (value String)))")
+  "(module sample.left)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))
+(module sample.right)
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String (value String)))")
 
 (define (compiler-generated-hashmap-descriptor-distinct-source) : String
   "(comptime-decl (:generated stdlib/hashmap-family HashMapSlot (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
@@ -9911,7 +9848,7 @@
                   (=
                     (compiler-specialize-decl-list-count-visible
                       decls
-                      "Option_String")
+                      "Box_String")
                     1))])]
           [(ErrSpecProgram _) false]))]
     [(ErrAstProgram _) false]))
@@ -9928,7 +9865,7 @@
                 (=
                   (compiler-specialize-decl-list-count-defs
                     decls
-                    "make-option-string")
+                    "make-box-string")
                   1))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
@@ -9985,13 +9922,13 @@
                 (=
                   (compiler-specialize-decl-list-count-visible
                     decls
-                    "Option_String")
+                    "Box_String")
                   2))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
-(define (compiler-generated-option-result-family-ok?) : bool
-  (match (parse-ast-source (compiler-generated-option-result-family-source))
+(define (compiler-generated-result-family-ok?) : bool
+  (match (parse-ast-source (compiler-generated-result-family-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
         [(OkSpecProgram normalized)
@@ -9999,14 +9936,6 @@
             [(AstProgram decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
-                [option-count : i64
-                  (compiler-specialize-decl-list-count-visible
-                    decls
-                    "Option_String")]
-                [option-helper-count : i64
-                  (compiler-specialize-decl-list-count-defs
-                    decls
-                    "option-string-some?")]
                 [result-count : i64
                   (compiler-specialize-decl-list-count-visible
                     decls
@@ -10020,75 +9949,24 @@
                     decls
                     "Result_Payload_Status")]
                 (and
-                  (= option-count 1)
-                  (= option-helper-count 1)
                   (= result-count 1)
                   (= result-helper-count 1)
                   (= nominal-result-count 1)))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
-(define (compiler-generated-decl-bundle-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-bundle-source))
-    [(OkAstProgram program)
-      (and
-        (compiler-specialize-needed? program)
-        (match (compiler-specialize-program program)
-          [(OkSpecProgram normalized)
-            (match normalized
-              [(AstProgram decls-box)
-                (let
-                  [decls : AstDeclList (box-get decls-box)]
-                  [box-count : i64
-                    (compiler-specialize-decl-list-count-visible
-                      decls
-                      "BundleBox")]
-                  [maybe-count : i64
-                    (compiler-specialize-decl-list-count-visible
-                      decls
-                      "BundleMaybe")]
-                  [score-count : i64
-                    (compiler-specialize-decl-list-count-defs
-                      decls
-                      "bundle-score")]
-                  (and (= box-count 1) (= maybe-count 1) (= score-count 1)))])]
-          [(ErrSpecProgram _) false]))]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-generated-decl-bundle-incompatible-rejected?) : bool
-  (match (parse-ast-source (compiler-generated-decl-bundle-incompatible-source))
-    [(OkAstProgram program)
-      (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram _) true])]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-generated-decl-bundle-cross-module-reuse-ok?) : bool
-  (=
-    (compiler-generated-decl-visible-count
-      (compiler-generated-decl-bundle-cross-module-reuse-source)
-      "BundleBox")
-    1))
-
-(define (compiler-generated-decl-bundle-cross-module-distinct-ok?) : bool
-  (=
-    (compiler-generated-decl-visible-count
-      (compiler-generated-decl-bundle-cross-module-distinct-source)
-      "BundleBox")
-    2))
-
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
       (compiler-generated-decl-cross-module-reuse-source)
-      "Option_String")
+      "Box_String")
     1))
 
 (define (compiler-generated-decl-cross-module-distinct-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
       (compiler-generated-decl-cross-module-distinct-source)
-      "Option_String")
+      "Box_String")
     2))
 
 (define (compiler-generated-hashmap-descriptor-distinct-ok?) : bool
@@ -10529,15 +10407,15 @@
                         (match meta
                           [(AstSomeGeneratedDeclMeta generator item _ key)
                             (and
-                              (string-eq generator "option-family")
-                              (string-eq item "Option_String")
+                              (string-eq generator "sample-family")
+                              (string-eq item "Box_String")
                               (string-eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)
-                            (string-eq (intern-str name) "Option_String")]
+                            (string-eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]
@@ -10581,13 +10459,7 @@
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
-    (unless (compiler-generated-option-result-family-ok?) (return 0))
-    (unless (compiler-generated-decl-bundle-ok?) (return 0))
-    (unless (compiler-generated-decl-bundle-incompatible-rejected?) (return 0))
-    (unless (compiler-generated-decl-bundle-cross-module-reuse-ok?) (return 0))
-    (unless
-      (compiler-generated-decl-bundle-cross-module-distinct-ok?)
-      (return 0))
+    (unless (compiler-generated-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))

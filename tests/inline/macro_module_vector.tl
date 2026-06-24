@@ -2,10 +2,10 @@
 ;; that generate runnable functions with private helper calls (#3302).
 ;;
 ;; A `: Module` macro emits a growable i64 vector family, then this file imports
-;; it with an alias. The generated module exports only the public API; `new`
-;; calls the private `with-capacity` helper, and `push` calls the private
-;; `grow` helper. Lowering must therefore keep and resolve generated module
-;; bodies, including private unqualified helper calls inside the generated
+;; it with an alias. The generated module's public API and internal helpers
+;; are visible by default; `new` calls the `with-capacity` helper, and `push`
+;; calls the `grow` helper. Lowering must therefore keep and resolve generated
+;; module bodies, including unqualified helper calls inside the generated
 ;; module, rather than pruning those bodies after typecheck succeeds.
 (import "stdlib/test.tl")
 
@@ -64,17 +64,7 @@
       (match value
         [0 10]
         [1 20]
-        [_ 30]))
-    (export (type IntVec))
-    (export (constructor IntVec))
-    (export (value int-vec-new))
-    (export (value int-vec-len))
-    (export (value int-vec-capacity))
-    (export (value int-vec-get))
-    (export (value int-vec-set))
-    (export (value int-vec-push))
-    (export (value int-vec-fixed-array-probe))
-    (export (value int-vec-scalar-probe-score))))
+        [_ 30]))))
 
 (import (int-vector-module) as iv)
 

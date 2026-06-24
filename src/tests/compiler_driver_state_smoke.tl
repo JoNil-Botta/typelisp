@@ -675,6 +675,132 @@
             [(ErrCtfe _) (set! ok false)])
           ok)))))
 
+(define (compiler-driver-state-smoke-typecheck-macro-source [n : i64]) : String
+  (string-append
+    "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (use-macro) : i64 (if (and2 true true) "
+    (string-append (int->string n) " 0))")))
+
+(define (compiler-driver-state-smoke-typecheck-macro-with-pools
+  [path : String]
+  [source : String]
+  [pools : AstNodePoolContext]
+  [body-cell : (Array i64)]
+  [type-cell : (Array i64)]
+  [before-cell : (Array i64)]
+  [after-cell : (Array i64)]) : bool
+  (match (parse-ast-source-diagnostic-with-cfg-and-pools
+    path
+    source
+    (compiler-cfg-empty)
+    pools)
+    [(OkAstProgramDiagnostic program)
+      (if (compiler-driver-state-smoke-note-main-ptr-u8!
+        pools
+        program
+        body-cell
+        type-cell)
+        (begin
+          (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
+          (match (typecheck-compiler-program-with-paths-cache-and-pools
+            program
+            AstDeclPathNil
+            (string-vec-new)
+            (tc-prefix-default-cache-scope)
+            pools)
+            [(OkCompilerTypecheck _)
+              (begin
+                (array-set! after-cell 0 (ast-node-pool-context-expr-len pools))
+                true)]
+            [(ErrCompilerTypecheck _) false]))
+        false)]
+    [(ErrAstProgramDiagnostic _) false]))
+
+(define (compiler-driver-state-smoke-typecheck-macro-pools-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [body-a-cell : (Array i64) (make-array i64 1)]
+    [type-a-cell : (Array i64) (make-array i64 1)]
+    [before-a-cell : (Array i64) (make-array i64 1)]
+    [after-a-cell : (Array i64) (make-array i64 1)]
+    [body-b-cell : (Array i64) (make-array i64 1)]
+    [type-b-cell : (Array i64) (make-array i64 1)]
+    [before-b-cell : (Array i64) (make-array i64 1)]
+    [after-b-cell : (Array i64) (make-array i64 1)]
+    [ok : bool true]
+    (begin
+      (array-set! body-a-cell 0 (- 0 1))
+      (array-set! type-a-cell 0 (- 0 1))
+      (array-set! before-a-cell 0 (- 0 1))
+      (array-set! after-a-cell 0 (- 0 1))
+      (array-set! body-b-cell 0 (- 0 1))
+      (array-set! type-b-cell 0 (- 0 1))
+      (array-set! before-b-cell 0 (- 0 1))
+      (array-set! after-b-cell 0 (- 0 1))
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        (begin
+          (compiler-driver-state-install-pools! state-b)
+          (unless
+            (compiler-driver-state-smoke-typecheck-macro-with-pools
+              "tc-state-a.tl"
+              (compiler-driver-state-smoke-typecheck-macro-source 7)
+              pools-a
+              body-a-cell
+              type-a-cell
+              before-a-cell
+              after-a-cell)
+            (set! ok false))
+          (compiler-driver-state-reset-file-state! state-b)
+          (unless
+            (compiler-driver-state-smoke-context-type-u8?
+              pools-a
+              (array-ref type-a-cell 0))
+            (set! ok false))
+          (unless
+            (compiler-driver-state-smoke-context-ptr-null-u8?
+              pools-a
+              (array-ref body-a-cell 0))
+            (set! ok false))
+          (unless
+            (> (array-ref after-a-cell 0) (array-ref before-a-cell 0))
+            (set! ok false))
+          (compiler-driver-state-install-pools! state-a)
+          (unless
+            (compiler-driver-state-smoke-typecheck-macro-with-pools
+              "tc-state-b.tl"
+              (compiler-driver-state-smoke-typecheck-macro-source 11)
+              pools-b
+              body-b-cell
+              type-b-cell
+              before-b-cell
+              after-b-cell)
+            (set! ok false))
+          (compiler-driver-state-capture-active-pools! state-b)
+          (compiler-driver-state-reset-file-state! state-b)
+          (unless
+            (compiler-driver-state-smoke-context-type-u8?
+              pools-a
+              (array-ref type-a-cell 0))
+            (set! ok false))
+          (unless
+            (compiler-driver-state-smoke-context-ptr-null-u8?
+              pools-a
+              (array-ref body-a-cell 0))
+            (set! ok false))
+          (unless
+            (> (array-ref after-b-cell 0) (array-ref before-b-cell 0))
+            (set! ok false))
+          ok)))))
+
 (define (compiler-driver-state-smoke-builtins-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -848,24 +974,27 @@
   [state : CompilerDriverState]
   [input-path : String]
   [stdlib-roots : StringVec]) : bool
-  (begin
-    (compiler-driver-state-reset-file-state! state)
-    (let
-      [ok : bool
-        (match (compiler-driver-load-and-lower-escaping-with-state
-          state
-          input-path
-          (BackendTargetLinux)
-          stdlib-roots
-          (BackendModeScalar)
-          (compiler-driver-target-cfgs
+  (let
+    [decoy-state : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state)
+      (compiler-driver-state-install-pools! decoy-state)
+      (let
+        [ok : bool
+          (match (compiler-driver-load-and-lower-escaping-with-state
+            state
+            input-path
             (BackendTargetLinux)
-            (compiler-cfg-empty)))
-          [(OkCompilerDriverLowered _ _ _ _) true]
-          [(ErrCompilerDriverLowered _) false])]
-      (begin
-        (compiler-driver-state-capture-session-floors! state)
-        ok))))
+            stdlib-roots
+            (BackendModeScalar)
+            (compiler-driver-target-cfgs
+              (BackendTargetLinux)
+              (compiler-cfg-empty)))
+            [(OkCompilerDriverLowered _ _ _ _) true]
+            [(ErrCompilerDriverLowered _) false])]
+        (begin
+          (compiler-driver-state-capture-session-floors! state)
+          ok)))))
 
 (define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
   (let
@@ -908,6 +1037,9 @@
       (return 15))
     (unless (compiler-driver-state-smoke-active-pools-isolated?) (return 7))
     (unless (compiler-driver-state-smoke-ctfe-pools-isolated?) (return 15))
+    (unless
+      (compiler-driver-state-smoke-typecheck-macro-pools-isolated?)
+      (return 16))
     (unless (compiler-driver-state-smoke-builtins-isolated?) (return 8))
     (unless
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)

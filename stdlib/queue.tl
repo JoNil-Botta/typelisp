@@ -184,27 +184,7 @@
             (begin
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) new-len)
-              (,pop-ok-name value)))))
-      (export
-        (type ,deque-name)
-        (constructor ,deque-name)
-        (type ,pop-name)
-        (variant Empty)
-        (variant Ok)
-        (value with-capacity)
-        (value new)
-        (value is-empty?)
-        (value len)
-        (value capacity)
-        (value get)
-        (value peek-front)
-        (value peek-back)
-        (value push-back)
-        (value push-front)
-        (value pop-front)
-        (value pop-back)))))
-
-(export (macro deque))
+              (,pop-ok-name value))))))))
 
 (cfg test (import "test.tl"))
 (cfg test (import (deque i64) as deque_i64))

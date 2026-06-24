@@ -2716,12 +2716,14 @@
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
   (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
 
-(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : ProcessStringList
+(define (build-package-graph-test-link-arg-target
+  [node : BuildPackageGraphNode]
+  [target : CompilerBackendTarget]) : ProcessStringList
   (process-args-single
-    (build-package-graph-node-artifact-path
-      node
-      (BuildProfileRelease)
-      (BackendTargetLinux))))
+    (build-package-graph-node-artifact-path node (BuildProfileRelease) target)))
+
+(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : ProcessStringList
+  (build-package-graph-test-link-arg-target node (BackendTargetLinux)))
 
 (define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : ProcessStringList
   (process-args-single
@@ -2748,6 +2750,11 @@
         nodes
         (BuildProfileRelease)
         (BackendTargetLinux))]
+    [windows-libs : ProcessStringList
+      (build-package-graph-link-libs
+        nodes
+        (BuildProfileRelease)
+        (BackendTargetWindows))]
     [tlcis : ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfileRelease))]
     [expected : ProcessStringList
@@ -2762,12 +2769,23 @@
           (build-package-graph-test-tlci-arg first)
           (build-package-graph-test-tlci-arg second))
         (build-package-graph-test-tlci-arg third))]
+    [expected-windows : ProcessStringList
+      (process-args-append
+        (process-args-append
+          (build-package-graph-test-link-arg-target
+            third
+            (BackendTargetWindows))
+          (build-package-graph-test-link-arg-target
+            second
+            (BackendTargetWindows)))
+        (build-package-graph-test-link-arg-target first (BackendTargetWindows)))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string-eq
         (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
         "root/first/typelisp.pkg")
       (source-tool-string-list-eq? libs expected)
+      (source-tool-string-list-eq? windows-libs expected-windows)
       (source-tool-string-list-eq? tlcis expected-tlcis))))
 
 (cfg
@@ -2861,20 +2879,6 @@
 (define build-package-tlci-compiler-build-hash : String
   "typelisp-selfhost-v1")
 
-(defstruct BuildPackageTlciExportState
-  (exports CompilerExports)
-  (tlci-exports TlciExportList))
-
-(defenum ResultBuildPackageTlciExportState
-  (OkBuildPackageTlciExportState BuildPackageTlciExportState)
-  (ErrBuildPackageTlciExportState String))
-
-(define (build-package-tlci-export-state-empty) : BuildPackageTlciExportState
-  (BuildPackageTlciExportState (compiler-exports-empty) TlciExportNil))
-
-(define (build-package-tlci-export-name [module : String] [name : String]) : String
-  (compiler-symbol-module-key module name))
-
 (define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
   (if (= (string-length owner) 0)
     false
@@ -2890,562 +2894,11 @@
     (compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
 
-(define (build-package-tlci-owned-path? [owner : String] [path : String]) : bool
-  (if (build-package-tlci-stdlib-path? owner path)
-    false
-    (if (= (string-length owner) 0)
-      true
-      (let
-        [prefix : String (str-cat owner "/")]
-        [prefix-len : i64 (string-length prefix)]
-        (and
-          (>= (string-length path) prefix-len)
-          (string-eq (substring path 0 prefix-len) prefix))))))
-
-(define (build-package-tlci-export-decl? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclExport _) true]
-    [(AstDeclUnsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (build-package-tlci-export-decl? inner))]
-    [_ false]))
-
-(define (build-package-tlci-path-head [paths : AstDeclPathList]) : String
-  (match paths
-    [(AstDeclPathCons path _) path]
-    [(AstDeclPathNil) ""]))
-
-(define (build-package-tlci-path-tail [paths : AstDeclPathList]) : AstDeclPathList
-  (match paths
-    [(AstDeclPathCons _ rest-box)
-      (let
-        [rest : AstDeclPathList (box-get rest-box)]
-        rest)]
-    [(AstDeclPathNil) AstDeclPathNil]))
-
-(define (build-package-tlci-export-present?
-  [state : BuildPackageTlciExportState]
-  [kind : String]
-  [module : String]
-  [name : String]) : bool
-  (match (compiler-exports-lookup (struct-get state exports) kind module name)
-    [(SomeI64 _) true]
-    [(NoneI64) false]))
-
-(define (build-package-tlci-render-type [ctx : TcContext] [ty : AstType]) : String
-  (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty))))
-
-(define (build-package-tlci-layout-render [layout : TcInlineAggregateLayout]) : String
-  (str-cat
-    "size="
-    (int->string (tc-inline-aggregate-layout-size layout))
-    " align="
-    (int->string (tc-inline-aggregate-layout-align layout))))
-
-(define (build-package-tlci-macro-param-render
-  [ctx : TcContext]
-  [param : AstMacroParam]) : String
-  (match param
-    [(AstMacroParam _ ty variadic)
-      (let
-        [rendered : String
-          (build-package-tlci-render-type ctx (tc-macro-signature-type ty))]
-        (if variadic
-          (str-cat rendered " ...")
-          rendered))]))
-
-(define (build-package-tlci-macro-params-render
-  [ctx : TcContext]
-  [params : AstMacroParamList]) : String
-  (match params
-    [(AstMacroParamNil) ""]
-    [(AstMacroParamCons param rest)
-      (let
-        [rest : AstMacroParamList (box-get rest)]
-        [head : String (build-package-tlci-macro-param-render ctx param)]
-        [tail : String (build-package-tlci-macro-params-render ctx rest)]
-        (if (string-eq tail "")
-          head
-          (str-cat head " " tail)))]))
-
-(define (build-package-tlci-macro-signature [ctx : TcContext] [decl : AstDecl]) : ResultTlciString
-  (match decl
-    [(AstDeclDefMacro _ params ret _)
-      (OkTlciString
-        (str-cat
-          "(macro ("
-          (build-package-tlci-macro-params-render ctx params)
-          ") -> "
-          (build-package-tlci-render-type ctx (tc-macro-signature-type ret))
-          ")"))]
-    [(AstDeclUnsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (build-package-tlci-macro-signature ctx inner))]
-    [(AstDeclComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (build-package-tlci-macro-signature ctx template))]
-    [_ (ErrTlciString "build: tlci macro export is not a macro declaration")]))
-
-(define (build-package-tlci-value-signature
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decl : AstDecl]) : ResultTlciString
-  (match (tc-top-decl-type-with-env ctx env decl)
-    [(OkTcType ty) (OkTlciString (tc-type-render (tc-type-without-regions ty)))]
-    [(ErrTcType message) (ErrTlciString message)]))
-
-(define (build-package-tlci-cleanup-value-signature
-  [module : String]
-  [handle : i64]
-  [decl : AstDecl]) : ResultTlciString
-  (match (tc-cleanup-value-handle-type module handle decl)
-    [(OkTcType ty) (OkTlciString (tc-type-render (tc-type-without-regions ty)))]
-    [(ErrTcType message) (ErrTlciString message)]))
-
-(define (build-package-tlci-value-signature-for-export
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [module : String]
-  [name : String]
-  [decl : AstDecl]) : ResultTlciString
-  (match (compiler-symbols-lookup-value-in-module
-    (tc-context-symbols ctx)
-    module
-    name)
-    [(SomeI64 handle)
-      (if (tc-cleanup-value-handle? handle)
-        (build-package-tlci-cleanup-value-signature module handle decl)
-        (build-package-tlci-value-signature ctx env decl))]
-    [(NoneI64)
-      (ErrTlciString
-        (compiler-export-unknown-message
-          (compiler-export-kind-value)
-          module
-          name))]))
-
-(define (build-package-tlci-type-layout
-  [ctx : TcContext]
-  [module : String]
-  [name : String]) : ResultTlciString
-  (match (tc-inline-aggregate-layout-for
-    (tc-context-with-module ctx module)
-    (build-package-tlci-export-name module name))
-    [(OkTcInlineAggregateLayout layout)
-      (OkTlciString (build-package-tlci-layout-render layout))]
-    [(ErrTcInlineAggregateLayout message) (ErrTlciString message)]))
-
-(define (build-package-tlci-decl-from-value-export
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultAstDecl
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 handle)
-      (if (compiler-export-value-handle? handle)
-        (compiler-symbols-decl-at-index
-          symbols
-          (compiler-symbol-handle-index handle))
-        (ErrAstDecl
-          (compiler-export-namespace-message
-            (compiler-export-kind-value)
-            module
-            name)))]
-    [(NoneI64)
-      (ErrAstDecl
-        (compiler-export-unknown-message
-          (compiler-export-kind-value)
-          module
-          name))]))
-
-(define (build-package-tlci-decl-from-macro-export
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultAstDecl
-  (match (compiler-symbols-lookup-macro-in-module symbols module name)
-    [(SomeI64 handle)
-      (compiler-symbols-decl-at-index
-        symbols
-        (compiler-symbol-handle-index handle))]
-    [(NoneI64)
-      (ErrAstDecl
-        (compiler-export-unknown-message
-          (compiler-export-kind-macro)
-          module
-          name))]))
-
-(define (build-package-tlci-insert-entry
-  [state : BuildPackageTlciExportState]
-  [exports : CompilerExports]
-  [already-present : bool]
-  [entry : TlciExport]) : ResultBuildPackageTlciExportState
-  (if already-present
-    (OkBuildPackageTlciExportState
-      (BuildPackageTlciExportState exports (struct-get state tlci-exports)))
-    (match (tlci-export-list-insert (struct-get state tlci-exports) entry)
-      [(OkTlciExportList tlci-exports)
-        (OkBuildPackageTlciExportState
-          (BuildPackageTlciExportState exports tlci-exports))]
-      [(ErrTlciExportList message) (ErrBuildPackageTlciExportState message)])))
-
-(define (build-package-tlci-add-value-export
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [symbols : CompilerSymbols]
-  [state : BuildPackageTlciExportState]
-  [module : String]
-  [name : String]) : ResultBuildPackageTlciExportState
-  (let
-    [already-present : bool
-      (build-package-tlci-export-present?
-        state
-        (compiler-export-kind-value)
-        module
-        name)]
-    (match (compiler-exports-add-value-item
-      (struct-get state exports)
-      symbols
-      module
-      name)
-      [(ErrCompilerExports message) (ErrBuildPackageTlciExportState message)]
-      [(OkCompilerExports next-exports)
-        (match (build-package-tlci-decl-from-value-export
-          (tc-context-symbols ctx)
-          module
-          name)
-          [(ErrAstDecl message) (ErrBuildPackageTlciExportState message)]
-          [(OkAstDecl decl)
-            (match (tc-module-local-env ctx top-env module)
-              [(ErrTcEnv message) (ErrBuildPackageTlciExportState message)]
-              [(OkTcEnv local-env)
-                (match (build-package-tlci-value-signature-for-export
-                  (tc-context-with-module ctx module)
-                  local-env
-                  module
-                  name
-                  decl)
-                  [(ErrTlciString message)
-                    (ErrBuildPackageTlciExportState message)]
-                  [(OkTlciString signature)
-                    (build-package-tlci-insert-entry
-                      state
-                      next-exports
-                      already-present
-                      (TlciExport
-                        (TlciExportValue)
-                        (build-package-tlci-export-name module name)
-                        signature
-                        ""))])])])])))
-
-(define (build-package-tlci-add-type-export
-  [ctx : TcContext]
-  [symbols : CompilerSymbols]
-  [state : BuildPackageTlciExportState]
-  [module : String]
-  [name : String]) : ResultBuildPackageTlciExportState
-  (let
-    [already-present : bool
-      (build-package-tlci-export-present?
-        state
-        (compiler-export-kind-type)
-        module
-        name)]
-    (match (compiler-exports-add-type-item
-      (struct-get state exports)
-      symbols
-      module
-      name)
-      [(ErrCompilerExports message) (ErrBuildPackageTlciExportState message)]
-      [(OkCompilerExports next-exports)
-        (match (build-package-tlci-type-layout ctx module name)
-          [(ErrTlciString message) (ErrBuildPackageTlciExportState message)]
-          [(OkTlciString layout)
-            (build-package-tlci-insert-entry
-              state
-              next-exports
-              already-present
-              (TlciExport
-                (TlciExportType)
-                (build-package-tlci-export-name module name)
-                ""
-                layout))])])))
-
-(define (build-package-tlci-add-macro-export
-  [ctx : TcContext]
-  [symbols : CompilerSymbols]
-  [state : BuildPackageTlciExportState]
-  [module : String]
-  [name : String]) : ResultBuildPackageTlciExportState
-  (let
-    [already-present : bool
-      (build-package-tlci-export-present?
-        state
-        (compiler-export-kind-macro)
-        module
-        name)]
-    (match (compiler-exports-add-macro-item
-      (struct-get state exports)
-      symbols
-      module
-      name)
-      [(ErrCompilerExports message) (ErrBuildPackageTlciExportState message)]
-      [(OkCompilerExports next-exports)
-        (match (build-package-tlci-decl-from-macro-export
-          (tc-context-symbols ctx)
-          module
-          name)
-          [(ErrAstDecl message) (ErrBuildPackageTlciExportState message)]
-          [(OkAstDecl decl)
-            (match (build-package-tlci-macro-signature
-              (tc-context-with-module ctx module)
-              decl)
-              [(ErrTlciString message) (ErrBuildPackageTlciExportState message)]
-              [(OkTlciString signature)
-                (build-package-tlci-insert-entry
-                  state
-                  next-exports
-                  already-present
-                  (TlciExport
-                    (TlciExportMacro)
-                    (build-package-tlci-export-name module name)
-                    signature
-                    ""))])])])))
-
-(define (build-package-tlci-add-export-item
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [symbols : CompilerSymbols]
-  [state : BuildPackageTlciExportState]
-  [module : String]
-  [item : AstExportItem]) : ResultBuildPackageTlciExportState
-  (match item
-    [(AstExportValue name)
-      (build-package-tlci-add-value-export
-        ctx
-        top-env
-        symbols
-        state
-        module
-        name)]
-    [(AstExportType name)
-      (build-package-tlci-add-type-export ctx symbols state module name)]
-    [(AstExportMacro name)
-      (build-package-tlci-add-macro-export ctx symbols state module name)]
-    ;; tlci metadata v1 cannot encode constructors, fields, or variants.
-    [(AstExportConstructor _) (OkBuildPackageTlciExportState state)]
-    [(AstExportField _ _) (OkBuildPackageTlciExportState state)]
-    [(AstExportVariant _) (OkBuildPackageTlciExportState state)]))
-
-(define (build-package-tlci-add-export-items
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [symbols : CompilerSymbols]
-  [state : BuildPackageTlciExportState]
-  [module : String]
-  [items : AstExportItemList]) : ResultBuildPackageTlciExportState
-  (match items
-    [(AstExportItemNil) (OkBuildPackageTlciExportState state)]
-    [(AstExportItemCons item rest)
-      (let
-        [rest : AstExportItemList (box-get rest)]
-        (match (build-package-tlci-add-export-item
-          ctx
-          top-env
-          symbols
-          state
-          module
-          item)
-          [(ErrBuildPackageTlciExportState message)
-            (ErrBuildPackageTlciExportState message)]
-          [(OkBuildPackageTlciExportState next-state)
-            (build-package-tlci-add-export-items
-              ctx
-              top-env
-              symbols
-              next-state
-              module
-              rest)]))]))
-
-(define (build-package-tlci-add-exports-in-module
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [symbols : CompilerSymbols]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [state : BuildPackageTlciExportState]
-  [owner : String]
-  [module : String]) : ResultBuildPackageTlciExportState
-  (match decls
-    [(AstDeclNil) (OkBuildPackageTlciExportState state)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String (build-package-tlci-path-head paths)]
-        [rest-paths : AstDeclPathList (build-package-tlci-path-tail paths)]
-        [owned : bool (build-package-tlci-owned-path? owner decl-path)]
-        (match decl
-          [(AstDeclModule next-module)
-            (build-package-tlci-add-exports-in-module
-              ctx
-              top-env
-              symbols
-              rest
-              rest-paths
-              state
-              owner
-              (intern-str next-module))]
-          [(AstDeclExport items)
-            (if owned
-              (match (build-package-tlci-add-export-items
-                ctx
-                top-env
-                symbols
-                state
-                module
-                items)
-                [(ErrBuildPackageTlciExportState message)
-                  (ErrBuildPackageTlciExportState message)]
-                [(OkBuildPackageTlciExportState next-state)
-                  (build-package-tlci-add-exports-in-module
-                    ctx
-                    top-env
-                    symbols
-                    rest
-                    rest-paths
-                    next-state
-                    owner
-                    module)])
-              (build-package-tlci-add-exports-in-module
-                ctx
-                top-env
-                symbols
-                rest
-                rest-paths
-                state
-                owner
-                module))]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclExport items)
-                  (if owned
-                    (match (build-package-tlci-add-export-items
-                      ctx
-                      top-env
-                      symbols
-                      state
-                      module
-                      items)
-                      [(ErrBuildPackageTlciExportState message)
-                        (ErrBuildPackageTlciExportState message)]
-                      [(OkBuildPackageTlciExportState next-state)
-                        (build-package-tlci-add-exports-in-module
-                          ctx
-                          top-env
-                          symbols
-                          rest
-                          rest-paths
-                          next-state
-                          owner
-                          module)])
-                    (build-package-tlci-add-exports-in-module
-                      ctx
-                      top-env
-                      symbols
-                      rest
-                      rest-paths
-                      state
-                      owner
-                      module))]
-                [_
-                  (build-package-tlci-add-exports-in-module
-                    ctx
-                    top-env
-                    symbols
-                    rest
-                    rest-paths
-                    state
-                    owner
-                    module)]))]
-          [_
-            (build-package-tlci-add-exports-in-module
-              ctx
-              top-env
-              symbols
-              rest
-              rest-paths
-              state
-              owner
-              module)]))]))
-
-(define (build-package-tlci-exports-from-checked
-  [owner : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]) : ResultTlciExportList
-  (match (build-compiler-local-symbols (tc-context-program ctx))
-    [(ErrCompilerSymbols message) (ErrTlciExportList message)]
-    [(OkCompilerSymbols local-symbols)
-      (match (build-package-tlci-add-exports-in-module
-        ctx
-        top-env
-        local-symbols
-        decls
-        paths
-        (build-package-tlci-export-state-empty)
-        owner
-        "")
-        [(ErrBuildPackageTlciExportState message) (ErrTlciExportList message)]
-        [(OkBuildPackageTlciExportState state)
-          (OkTlciExportList (struct-get state tlci-exports))])]))
-
-(define (build-package-tlci-has-owned-exports?
-  [owner : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String (build-package-tlci-path-head paths)]
-        [rest-paths : AstDeclPathList (build-package-tlci-path-tail paths)]
-        (if (and
-          (build-package-tlci-export-decl? decl)
-          (build-package-tlci-owned-path? owner decl-path))
-          true
-          (build-package-tlci-has-owned-exports? owner rest rest-paths)))]))
-
-(define (build-package-tlci-exports
-  [owner : String]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultTlciExportList
-  (if (not (build-package-tlci-has-owned-exports? owner decls paths))
-    (OkTlciExportList TlciExportNil)
-    (match (typecheck-compiler-program-with-paths-checked
-      (ast-program decls)
-      paths)
-      [(ErrCompilerTypecheckChecked diag)
-        (ErrTlciExportList (compiler-diagnostic-render diag))]
-      [(OkCompilerTypecheckChecked _ ctx top-env)
-        (build-package-tlci-exports-from-checked owner decls paths ctx top-env)])))
-
-(define (build-package-tlci-metadata
-  [manifest : CompilerPkgManifest]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultTlciMetadata
-  (match (build-package-tlci-exports (struct-get manifest name) decls paths)
-    [(ErrTlciExportList message) (ErrTlciMetadata message)]
-    [(OkTlciExportList exports)
-      (OkTlciMetadata
-        (TlciMetadata
-          tlci-metadata-version
-          (struct-get manifest name)
-          (struct-get manifest version)
-          exports))]))
+(define (build-package-tlci-metadata [manifest : CompilerPkgManifest]) : TlciMetadata
+  (TlciMetadata
+    tlci-metadata-version
+    (struct-get manifest name)
+    (struct-get manifest version)))
 
 (define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
   (TlciImage
@@ -3459,31 +2912,18 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
-(define (build-package-tlci-string-contains?
-  [haystack : String]
-  [needle : String]) : bool
-  (string-contains (& haystack) (& needle)))
-
 (defenum ResultBuildPackageTlciText
   (OkBuildPackageTlciText String)
   (ErrBuildPackageTlciText String))
 
-(define (build-package-tlci-text
-  [manifest : CompilerPkgManifest]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultBuildPackageTlciText
-  (match (build-package-tlci-metadata manifest decls paths)
-    [(ErrTlciMetadata message)
+(define (build-package-tlci-text [manifest : CompilerPkgManifest]) : ResultBuildPackageTlciText
+  (match (tlci-emit-image
+    (build-package-tlci-image (build-package-tlci-metadata manifest)))
+    [(ErrTlciBytes message)
       (ErrBuildPackageTlciText
-        (str-cat "build: failed to build package tlci metadata: " message))]
-    [(OkTlciMetadata metadata)
-      (match (tlci-emit-image (build-package-tlci-image metadata))
-        [(ErrTlciBytes message)
-          (ErrBuildPackageTlciText
-            (str-cat "build: failed to emit package tlci: " message))]
-        [(OkTlciBytes bytes)
-          (OkBuildPackageTlciText
-            (tlci-bytes->string bytes 0 (array-length bytes)))])]))
+        (str-cat "build: failed to emit package tlci: " message))]
+    [(OkTlciBytes bytes)
+      (OkBuildPackageTlciText (tlci-bytes->string bytes 0 (array-length bytes)))]))
 
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
@@ -3581,141 +3021,6 @@
         stdlib-roots
         manifest-dir
         deps)]))
-
-(define (build-package-tlci-export-test-source) : String
-  "(module stdlib.core_macros)
-(defmacro (implicit-macro [expr : Expr]) : Expr expr)
-(export (macro implicit-macro))
-(module pkg.meta)
-(define exported-value : i64 42)
-(defstruct ExportedPoint (x i64))
-(defenum ExportedTag
-  (TagA))
-(defmacro (exported-macro [expr : Expr]) : Expr expr)
-(define (close-fd [fd : i64]) : unit unit)
-(defstruct Guard
-  (:cleanup cleanup-guard)
-  (fd i64 (:cleanup close-fd)))
-(export
-  (macro exported-macro)
-  (variant TagA)
-  (field ExportedPoint x)
-  (constructor ExportedPoint)
-  (type ExportedPoint)
-  (value cleanup-guard)
-  (value exported-value))")
-
-(define (build-package-tlci-export-test-paths-repeat
-  [path : String]
-  [n : i64]
-  [rest : AstDeclPathList]) : AstDeclPathList
-  (if (<= n 0)
-    rest
-    (ast-decl-path-cons
-      path
-      (build-package-tlci-export-test-paths-repeat path (- n 1) rest))))
-
-(define (build-package-tlci-export-test-paths) : AstDeclPathList
-  (build-package-tlci-export-test-paths-repeat
-    "tlci_meta/stdlib/core_macros.tl"
-    3
-    (build-package-tlci-export-test-paths-repeat
-      "tlci_meta/src/lib.tl"
-      8
-      AstDeclPathNil)))
-
-(define (build-package-tlci-export-metadata-smoke-ok?) : bool
-  (match (parse-ast-source (build-package-tlci-export-test-source))
-    [(ErrAstProgram _) false]
-    [(OkAstProgram program)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (match (build-package-tlci-metadata
-              (build-package-graph-test-manifest "tlci_meta")
-              decls
-              (build-package-tlci-export-test-paths))
-              [(ErrTlciMetadata _) false]
-              [(OkTlciMetadata metadata)
-                (let
-                  [emitted : String (tlci-metadata-emit metadata)]
-                  (and
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(value (name \"pkg.meta/cleanup-guard\") (signature \"(-> pkg.meta/Guard unit)\")")
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
-                    (build-package-tlci-string-contains?
-                      emitted
-                      "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")
-                    (not (build-package-tlci-string-contains? emitted "TagA"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "constructor"))
-                    (not (build-package-tlci-string-contains? emitted "field"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "implicit-macro"))
-                    (not
-                      (build-package-tlci-string-contains?
-                        emitted
-                        "stdlib.core_macros"))))]))])]))
-
-(define (build-package-tlci-bin-metadata-exports-ok?) : bool
-  (match (parse-ast-source (build-package-tlci-export-test-source))
-    [(ErrAstProgram _) false]
-    [(OkAstProgram program)
-      (match program
-        [(AstProgram decls-box)
-          (match (build-package-tlci-metadata
-            (CompilerPkgManifest
-              "tlci_meta"
-              "0.1.0"
-              (CompilerPkgKindBin)
-              "src/main.tl"
-              (compiler-pkg-deps-empty)
-              (compiler-pkg-link-empty))
-            (box-get decls-box)
-            (build-package-tlci-export-test-paths))
-            [(ErrTlciMetadata _) false]
-            [(OkTlciMetadata metadata)
-              (let
-                [emitted : String (tlci-metadata-emit metadata)]
-                (and
-                  (build-package-tlci-string-contains?
-                    emitted
-                    "(package (name \"tlci_meta\")")
-                  (build-package-tlci-string-contains?
-                    emitted
-                    "(value (name \"pkg.meta/exported-value\") (signature \"i64\")")
-                  (build-package-tlci-string-contains?
-                    emitted
-                    "(value (name \"pkg.meta/cleanup-guard\") (signature \"(-> pkg.meta/Guard unit)\")")
-                  (build-package-tlci-string-contains?
-                    emitted
-                    "(type (name \"pkg.meta/ExportedPoint\") (layout \"size=8 align=8\")")
-                  (build-package-tlci-string-contains?
-                    emitted
-                    "(macro (name \"pkg.meta/exported-macro\") (signature \"(macro (Expr) -> Expr)\")")))])])]))
-
-(test
-  build-package-tlci-export-metadata-smoke
-  (unless
-    (build-package-tlci-export-metadata-smoke-ok?)
-    (panic "build package tlci export metadata smoke failed")))
-
-(test
-  build-package-tlci-bin-metadata-exports
-  (unless
-    (build-package-tlci-bin-metadata-exports-ok?)
-    (panic "build package tlci bin metadata exports failed")))
 
 (define (build-package-emit-one
   [manifest-path : String]
@@ -3817,7 +3122,7 @@
                 [(OkCompilerDriver asm)
                   (begin
                     (compiler-driver-release-lower-arenas-after-emit!)
-                    (match (build-package-tlci-text manifest decls owned-paths)
+                    (match (build-package-tlci-text manifest)
                       [(ErrBuildPackageTlciText message)
                         (begin
                           (print-error message)

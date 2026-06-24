@@ -115,8 +115,7 @@
                       (array-set! slots j (array-ref slots (- j 1)))
                       (set! j (- j 1))))
                   (array-set! slots j value)
-                  (set! i (+ i 1)))))))
-        (export (value sort!)))
+                  (set! i (+ i 1))))))))
       `(begin
         (module ,module-name)
         (define (sort! [v : (&mut v Vec)] [less? : (-> ,T ,T bool)]) : unit
@@ -136,14 +135,7 @@
                       (array-set! slots j (clone (array-ref slots (- j 1))))
                       (set! j (- j 1))))
                   (array-set! slots j value)
-                  (set! i (+ i 1)))))))
-        (export (value sort!))))))
-
-(export
-  (macro sort-vec)
-  (value sort-char-code-at)
-  (value string-less-borrowed?)
-  (value string-less?))
+                  (set! i (+ i 1)))))))))))
 
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).
 (cfg test (import stdlib.test))

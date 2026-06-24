@@ -196,18 +196,6 @@
   (OkAstGeneratedDeclMeta AstGeneratedDeclMeta)
   (ErrAstGeneratedDeclMeta String))
 
-(defenum ResultAstDeclName
-  (OkAstDeclName String)
-  (ErrAstDeclName String))
-
-(defenum ResultAstExportItem
-  (OkAstExportItem AstExportItem)
-  (ErrAstExportItem String))
-
-(defenum ResultAstExportItemList
-  (OkAstExportItemList AstExportItemList)
-  (ErrAstExportItemList String))
-
 (defenum ResultAstDecl
   (OkAstDecl AstDecl)
   (ErrAstDecl String))
@@ -528,6 +516,9 @@
 (define (compiler-parse-tag-ty-box) : i64
   138)
 
+(define (compiler-parse-tag-ty-dyn-array) : i64
+  139)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -762,9 +753,6 @@
 (define (compiler-parse-tag-decl-defmacro) : i64
   408)
 
-(define (compiler-parse-tag-decl-export) : i64
-  409)
-
 (define (compiler-parse-tag-decl-include-str) : i64
   410)
 
@@ -832,6 +820,9 @@
       (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
       (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
       (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
+      (set!
+        out
+        (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
       out)))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
@@ -1045,10 +1036,8 @@
     [e9 : SymI64Env (sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
     [e10 : SymI64Env
       (sym-i64-bind e9 "defmacro" (compiler-parse-tag-decl-defmacro))]
-    [e11 : SymI64Env
-      (sym-i64-bind e10 "export" (compiler-parse-tag-decl-export))]
     [e12 : SymI64Env
-      (sym-i64-bind e11 "include-str" (compiler-parse-tag-decl-include-str))]
+      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
     [e13 : SymI64Env
       (sym-i64-bind e12 "include-bin" (compiler-parse-tag-decl-include-bin))]
     (sym-i64-bind e13 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
@@ -1157,7 +1146,7 @@
           (<= tag (compiler-parse-tag-ty-bytes)))
         (and
           (>= tag (compiler-parse-tag-ty-func))
-          (<= tag (compiler-parse-tag-ty-box)))))))
+          (<= tag (compiler-parse-tag-ty-dyn-array)))))))
 
 (define (parse-ast-lifetime-list
   [dispatch : SymI64Env]
@@ -1369,6 +1358,22 @@
                           [_ (ErrAstType "parse: malformed array type")])]
                       [_ (ErrAstType "parse: malformed array type")])]
                   [_ (ErrAstType "parse: malformed array type")])]
+              [(= tag (compiler-parse-tag-ty-dyn-array))
+                (match rest
+                  [(SCons elem tail)
+                    (match (box-get tail)
+                      [(SNil)
+                        (match (parse-ast-type dispatch pools (box-get elem))
+                          [(OkAstType elem-ty)
+                            (OkAstType
+                              (ast-ty-dyn-array-with-pools pools elem-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [_
+                        (ErrAstType
+                          "parse: __tl_dyn-array expects exactly one type")])]
+                  [_
+                    (ErrAstType
+                      "parse: __tl_dyn-array expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match rest
                   [(SCons elem tail)
@@ -2682,7 +2687,8 @@
                         pools
                         (sp-node-get target-node))
                         [(OkAstExpr parsed-target)
-                          (match (ast-expr-unspan
+                          (match (ast-expr-unspan-with-pools
+                            pools
                             (ast-node-pool-context-expr-get pools parsed-target))
                             [(AstExprStructGet receiver-box field)
                               (OkAstExpr
@@ -4690,8 +4696,7 @@
       (ErrAstExpr
         "parse: comptime-decl is only valid as a top-level declaration")]
     [(= tag (compiler-parse-tag-decl-comptime-decls))
-      (ErrAstExpr
-        "parse: comptime-decls is only valid as a top-level declaration")]
+      (ErrAstExpr (parse-ast-comptime-decls-removed-message))]
     [else (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-list-expr
@@ -6009,7 +6014,9 @@
   [span : AstSourceSpan]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools call-form)
     [(OkAstExpr call-expr)
-      (match (ast-expr-unspan (ast-node-pool-context-expr-get pools call-expr))
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools call-expr))
         [(AstExprCall _ _)
           (match tail
             [(SpSNil _)
@@ -6175,112 +6182,6 @@
         [_ (ErrAstDecl "parse: include-bin name must be a symbol")])]
     [_ (ErrAstDecl "parse: malformed include-bin")]))
 
-(define (parse-ast-export-item [item : SpannedSexpr]) : ResultAstExportItem
-  (match item
-    [(SpSCons kind-node rest _)
-      (match (sp-node-get kind-node)
-        [(SpSSym kind _)
-          (cond
-            [(string-eq kind "value")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportValue name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "type")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _) (OkAstExportItem (AstExportType name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "macro")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportMacro name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "constructor")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportConstructor name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "field")
-              (match (sp-node-get rest)
-                [(SpSCons type-node field-tail _)
-                  (match (sp-node-get field-tail)
-                    [(SpSCons field-node end _)
-                      (match (sp-node-get end)
-                        [(SpSNil _)
-                          (match (sp-node-get type-node)
-                            [(SpSSym type-name _)
-                              (match (sp-node-get field-node)
-                                [(SpSSym field-name _)
-                                  (OkAstExportItem
-                                    (AstExportField type-name field-name))]
-                                [_
-                                  (ErrAstExportItem
-                                    "parse: malformed export item")])]
-                            [_
-                              (ErrAstExportItem "parse: malformed export item")])]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [(string-eq kind "variant")
-              (match (sp-node-get rest)
-                [(SpSCons name-node end _)
-                  (match (sp-node-get end)
-                    [(SpSNil _)
-                      (match (sp-node-get name-node)
-                        [(SpSSym name _)
-                          (OkAstExportItem (AstExportVariant name))]
-                        [_ (ErrAstExportItem "parse: malformed export item")])]
-                    [_ (ErrAstExportItem "parse: malformed export item")])]
-                [_ (ErrAstExportItem "parse: malformed export item")])]
-            [else (ErrAstExportItem "parse: unknown export item kind")])]
-        [_ (ErrAstExportItem "parse: malformed export item")])]
-    [_ (ErrAstExportItem "parse: malformed export item")]))
-
-(define (parse-ast-export-item-list [items : SpannedSexpr]) : ResultAstExportItemList
-  (match items
-    [(SpSNil _) (OkAstExportItemList AstExportItemNil)]
-    [(SpSCons item rest _)
-      (match (parse-ast-export-item (sp-node-get item))
-        [(OkAstExportItem parsed)
-          (match (parse-ast-export-item-list (sp-node-get rest))
-            [(OkAstExportItemList parsed-rest)
-              (OkAstExportItemList (ast-export-item-cons parsed parsed-rest))]
-            [(ErrAstExportItemList message) (ErrAstExportItemList message)])]
-        [(ErrAstExportItem message) (ErrAstExportItemList message)])]
-    [_ (ErrAstExportItemList "parse: malformed export item")]))
-
-(define (parse-ast-export [rest : SpannedSexpr]) : ResultAstDecl
-  (match rest
-    [(SpSNil _) (ErrAstDecl "parse: export needs at least one item")]
-    [_
-      (match (parse-ast-export-item-list rest)
-        [(OkAstExportItemList items) (OkAstDecl (AstDeclExport items))]
-        [(ErrAstExportItemList message) (ErrAstDecl message)])]))
-
 (define (parse-ast-test-body [pools : AstNodePoolContext] [exprs : AstExprList]) : i64
   (match exprs
     [(AstExprCons only rest)
@@ -6320,6 +6221,9 @@
 
 (define (parse-ast-comptime-decl-payload-message) : String
   "parse: comptime-decl accepts only defstruct, defenum, or define")
+
+(define (parse-ast-comptime-decls-removed-message) : String
+  "parse: comptime-decls is removed; use a declaration-emitting macro instead")
 
 (define (parse-ast-generated-decl-meta
   [dispatch : SymI64Env]
@@ -6439,129 +6343,6 @@
       (ErrAstDecl
         "parse: comptime-decl expects one template or generated metadata plus one template")]))
 
-(define (parse-ast-generated-decls-meta
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : SpannedSexpr]) : ResultAstGeneratedDeclMeta
-  (match meta
-    [(SpSCons head-node meta-rest _)
-      (match (sp-node-get head-node)
-        [(SpSSym head _)
-          (if (string-eq head ":generated")
-            (match (sp-node-get meta-rest)
-              [(SpSCons generator-node arg-key-forms _)
-                (match (sp-node-get generator-node)
-                  [(SpSSym generator-name _)
-                    (match (parse-ast-expr-list
-                      dispatch
-                      pools
-                      (sp-node-get arg-key-forms))
-                      [(OkAstExprList arg-keys)
-                        (OkAstGeneratedDeclMeta
-                          (AstSomeGeneratedDeclMeta
-                            generator-name
-                            ""
-                            arg-keys
-                            ""))]
-                      [(ErrAstExprList message)
-                        (ErrAstGeneratedDeclMeta message)])]
-                  [_
-                    (ErrAstGeneratedDeclMeta
-                      "parse: :generated metadata expects generator name and argument key expressions")])]
-              [_
-                (ErrAstGeneratedDeclMeta
-                  "parse: :generated metadata expects generator name and argument key expressions")])
-            (ErrAstGeneratedDeclMeta
-              "parse: comptime-decls metadata must be :generated"))]
-        [_
-          (ErrAstGeneratedDeclMeta
-            "parse: comptime-decls metadata must be :generated")])]
-    [_
-      (ErrAstGeneratedDeclMeta
-        "parse: comptime-decls metadata must be :generated")]))
-
-(define (parse-ast-generated-payload-name [decl : AstDecl]) : ResultAstDeclName
-  (match decl
-    [(AstDeclDef name _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefEnum name _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (OkAstDeclName (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _) (OkAstDeclName (intern-str name))]
-    [_
-      (ErrAstDeclName
-        "parse: comptime-decls payload must declare a visible item")]))
-
-(define (parse-ast-comptime-decls-wrap
-  [meta : AstGeneratedDeclMeta]
-  [template : AstDecl]) : ResultAstDecl
-  (match meta
-    [(AstSomeGeneratedDeclMeta generator-name _ arg-keys _)
-      (match (parse-ast-generated-payload-name template)
-        [(OkAstDeclName item-name)
-          (OkAstDecl
-            (ast-decl-comptime-decl-with-meta
-              (AstSomeGeneratedDeclMeta generator-name item-name arg-keys "")
-              template))]
-        [(ErrAstDeclName message) (ErrAstDecl message)])]
-    [(AstNoGeneratedDeclMeta)
-      (ErrAstDecl "parse: comptime-decls metadata must be :generated")]))
-
-(define (parse-ast-comptime-decls-payloads
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : AstGeneratedDeclMeta]
-  [templates : SpannedSexpr]) : ResultAstDeclList
-  (match templates
-    [(SpSNil _) (OkAstDeclList AstDeclNil)]
-    [(SpSCons template rest _)
-      (match (parse-ast-comptime-decl-payload
-        dispatch
-        pools
-        (sp-node-get template))
-        [(OkAstDecl parsed-template)
-          (match (parse-ast-comptime-decls-wrap meta parsed-template)
-            [(OkAstDecl wrapped)
-              (match (parse-ast-comptime-decls-payloads
-                dispatch
-                pools
-                meta
-                (sp-node-get rest))
-                [(OkAstDeclList wrapped-rest)
-                  (OkAstDeclList (ast-decl-cons wrapped wrapped-rest))]
-                [(ErrAstDeclList message) (ErrAstDeclList message)])]
-            [(ErrAstDecl message) (ErrAstDeclList message)])]
-        [(ErrAstDecl message) (ErrAstDeclList message)])]
-    [_
-      (ErrAstDeclList
-        "parse: comptime-decls expects generated metadata plus one or more templates")]))
-
-(define (parse-ast-comptime-decls
-  [dispatch : SymI64Env]
-  [pools : AstNodePoolContext]
-  [rest : SpannedSexpr]) : ResultAstDeclList
-  (match rest
-    [(SpSCons meta payloads _)
-      (match (sp-node-get payloads)
-        [(SpSNil _)
-          (ErrAstDeclList
-            "parse: comptime-decls expects generated metadata plus one or more templates")]
-        [_
-          (match (parse-ast-generated-decls-meta
-            dispatch
-            pools
-            (sp-node-get meta))
-            [(OkAstGeneratedDeclMeta parsed-meta)
-              (parse-ast-comptime-decls-payloads
-                dispatch
-                pools
-                parsed-meta
-                (sp-node-get payloads))]
-            [(ErrAstGeneratedDeclMeta message) (ErrAstDeclList message)])])]
-    [_
-      (ErrAstDeclList
-        "parse: comptime-decls expects generated metadata plus one or more templates")]))
-
 (define (parse-ast-unsafe-decl
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
@@ -6590,7 +6371,9 @@
   [form : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools form)
     [(OkAstExpr call-expr)
-      (match (ast-expr-unspan (ast-node-pool-context-expr-get pools call-expr))
+      (match (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools call-expr))
         [(AstExprCall _ _)
           (parse-ast-import-spec
             (AstImportMacroDecls call-expr AstNoModuleName)
@@ -6636,10 +6419,10 @@
                 (parse-ast-include-bin (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-module))
                 (parse-ast-module (sp-node-get rest))]
-              [(= tag (compiler-parse-tag-decl-export))
-                (parse-ast-export (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-comptime-decl))
                 (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
+              [(= tag (compiler-parse-tag-decl-comptime-decls))
+                (ErrAstDecl (parse-ast-comptime-decls-removed-message))]
               [(= tag (compiler-parse-tag-expr-unsafe))
                 (parse-ast-unsafe-decl dispatch pools (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-test))
@@ -6690,12 +6473,7 @@
             (if (=
               (compiler-parse-dispatch-tag dispatch head)
               (compiler-parse-tag-decl-comptime-decls))
-              (match (parse-ast-comptime-decls
-                dispatch
-                pools
-                (sp-node-get rest))
-                [(OkAstDeclList decls) (OkAstDecls decls)]
-                [(ErrAstDeclList message) (ErrAstMaybeDecl message)])
+              (ErrAstMaybeDecl (parse-ast-comptime-decls-removed-message))
               (match (parse-ast-decl dispatch pools s)
                 [(OkAstDecl decl) (OkAstSomeDecl decl)]
                 [(ErrAstDecl message) (ErrAstMaybeDecl message)])))]
@@ -7290,78 +7068,6 @@
     (compiler-parse-error-ok?
       "(include-bin payload)"
       "parse: include-bin expects name and string path")))
-
-(define (compiler-parse-export-items-shape-ok? [items : AstExportItemList]) : bool
-  (match items
-    [(AstExportItemCons (AstExportValue value-name) rest0)
-      (let
-        [rest0 : AstExportItemList (box-get rest0)]
-        (match rest0
-          [(AstExportItemCons (AstExportType type-name) rest1)
-            (let
-              [rest1 : AstExportItemList (box-get rest1)]
-              (match rest1
-                [(AstExportItemCons (AstExportMacro macro-name) rest2)
-                  (let
-                    [rest2 : AstExportItemList (box-get rest2)]
-                    (match rest2
-                      [(AstExportItemCons
-                          (AstExportConstructor ctor-name)
-                          rest3)
-                        (let
-                          [rest3 : AstExportItemList (box-get rest3)]
-                          (match rest3
-                            [(AstExportItemCons
-                                (AstExportField field-type field-name)
-                                rest4)
-                              (let
-                                [rest4 : AstExportItemList (box-get rest4)]
-                                (match rest4
-                                  [(AstExportItemCons
-                                      (AstExportVariant variant-name)
-                                      rest5)
-                                    (let
-                                      [rest5 : AstExportItemList
-                                        (box-get rest5)]
-                                      (match rest5
-                                        [(AstExportItemNil)
-                                          (and
-                                            (string-eq value-name "make-point")
-                                            (string-eq type-name "Point")
-                                            (string-eq macro-name "and2")
-                                            (string-eq ctor-name "Point")
-                                            (string-eq field-type "Point")
-                                            (string-eq field-name "x")
-                                            (string-eq variant-name "Some"))]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-export-decl-ok?) : bool
-  (match (parse-ast-source
-    "(export
-  (value make-point)
-  (type Point)
-  (macro and2)
-  (constructor Point)
-  (field Point x)
-  (variant Some))")
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons (AstDeclExport items) rest)
-            (let
-              [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclNil) (compiler-parse-export-items-shape-ok? items)]
-                [_ false]))]
-          [_ false]))]
-    [(ErrAstProgram _) false]))
 
 (define (compiler-parse-defdispatch-variants-ok?
   [variants : AstDispatchVariantList]) : bool
@@ -8543,10 +8249,10 @@
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (define option-size : i64 8))
-(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option [x : i64]) : i64 x))")
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (define box-size : i64 8))
+(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box [x : i64]) : i64 x))")
 
 (define (compiler-parse-no-generated-meta-ok? [meta : AstGeneratedDeclMeta]) : bool
   (match meta
@@ -8601,15 +8307,15 @@
         (and
           (compiler-parse-generated-meta-ok?
             meta
-            "option-family"
-            "Option_String"
+            "sample-family"
+            "Box_String"
             1)
           (match template
             [(AstDeclDef name _ value-box)
               (let
                 [value : AstExpr (ast-node-get value-box)]
                 (and
-                  (= name (intern "option-size"))
+                  (= name (intern "box-size"))
                   (match (ast-expr-unspan value)
                     [(AstExprLiteral (AstLitInt actual _)) (= actual 8)]
                     [_ false])))]
@@ -8625,11 +8331,10 @@
           (compiler-parse-generated-meta-ok?
             meta
             "function-family"
-            "make-option-string"
+            "make-box-string"
             1)
           (match template
-            [(AstDeclDefFn name _ (AstTyI64) _ _)
-              (= name (intern "make-option"))]
+            [(AstDeclDefFn name _ (AstTyI64) _ _) (= name (intern "make-box"))]
             [_ false])))]
     [_ false]))
 
@@ -8668,84 +8373,6 @@
                                       (compiler-parse-comptime-define-fn-ok?
                                         fourth))]
                                   [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-parse-comptime-decls-source) : String
-  "(comptime-decls (:generated bundle-family (type-key (type String)) \"v1\")
-  (defstruct BundleBox (value String))
-  (defenum BundleChoice (BundleNone) (BundleSome String))
-  (define (bundle-score [value : BundleChoice]) : i64 1))")
-
-(define (compiler-parse-comptime-decls-struct-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok? meta "bundle-family" "BundleBox" 2)
-        (match (box-get template-box)
-          [(AstDeclDefStruct name _ _ fields)
-            (and
-              (= name (intern "BundleBox"))
-              (= (compiler-parse-field-count fields) 1))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-enum-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok?
-          meta
-          "bundle-family"
-          "BundleChoice"
-          2)
-        (match (box-get template-box)
-          [(AstDeclDefEnum name _ _) (= name (intern "BundleChoice"))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-fn-ok? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDeclComptimeDecl meta template-box)
-      (and
-        (compiler-parse-generated-meta-ok?
-          meta
-          "bundle-family"
-          "bundle-score"
-          2)
-        (match (box-get template-box)
-          [(AstDeclDefFn name _ (AstTyI64) _ _)
-            (= name (intern "bundle-score"))]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-comptime-decls-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-decls-source))
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclCons first rest1-box)
-            (let
-              [rest1 : AstDeclList (box-get rest1-box)]
-              (match rest1
-                [(AstDeclCons second rest2-box)
-                  (let
-                    [rest2 : AstDeclList (box-get rest2-box)]
-                    (match rest2
-                      [(AstDeclCons third rest3-box)
-                        (let
-                          [rest3 : AstDeclList (box-get rest3-box)]
-                          (match rest3
-                            [(AstDeclNil)
-                              (and
-                                (= (ast-decl-list-count decls) 3)
-                                (compiler-parse-comptime-decls-struct-ok? first)
-                                (compiler-parse-comptime-decls-enum-ok? second)
-                                (compiler-parse-comptime-decls-fn-ok? third))]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -9037,15 +8664,15 @@
 
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl
-  (:generated option-family Option_String)
+  (:generated sample-family Box_String)
   (defstruct Point (x i64))
   (defenum Maybe (None)))")
 
 (define (compiler-parse-comptime-decl-bad-metadata-source) : String
-  "(comptime-decl (:bad option-family Option_String) (defstruct Point (x i64)))")
+  "(comptime-decl (:bad sample-family Box_String) (defstruct Point (x i64)))")
 
 (define (compiler-parse-comptime-decl-malformed-metadata-source) : String
-  "(comptime-decl (:generated option-family) (defstruct Point (x i64)))")
+  "(comptime-decl (:generated sample-family) (defstruct Point (x i64)))")
 
 (define (compiler-parse-comptime-decls-expression-source) : String
   "(define (main) : i64
@@ -9077,8 +8704,6 @@
     (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (import \"x.tl\"))")
     (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (export (value x)))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (cfg feature (define x : i64 1)))")
     (compiler-parse-comptime-decl-invalid-payload-ok?
       "(comptime-decl (test t 1))")
@@ -9087,15 +8712,6 @@
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
-
-(define (compiler-parse-empty-export-source) : String
-  "(export)")
-
-(define (compiler-parse-malformed-export-item-source) : String
-  "(export (field Point))")
-
-(define (compiler-parse-unknown-export-kind-source) : String
-  "(export (namespace x))")
 
 (define (compiler-parse-malformed-import-source) : String
   "(import \"stdlib/io.tl\" as)")
@@ -9195,19 +8811,19 @@
   (and
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-expression-source)
-      "parse: comptime-decls is only valid as a top-level declaration")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-empty-source)
-      "parse: comptime-decls expects generated metadata plus one or more templates")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-bad-metadata-source)
-      "parse: comptime-decls metadata must be :generated")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-malformed-metadata-source)
-      "parse: :generated metadata expects generator name and argument key expressions")
+      (parse-ast-comptime-decls-removed-message))
     (compiler-parse-error-ok?
       (compiler-parse-comptime-decls-bad-payload-source)
-      (parse-ast-comptime-decl-payload-message))))
+      (parse-ast-comptime-decls-removed-message))))
 
 (define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
   (and
@@ -9223,18 +8839,6 @@
     (compiler-parse-error-ok?
       "(unsafe (extern (a) : i64) (extern (b) : i64))"
       "parse: unsafe declaration expects exactly one declaration")))
-
-(define (compiler-parse-export-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      (compiler-parse-empty-export-source)
-      "parse: export needs at least one item")
-    (compiler-parse-error-ok?
-      (compiler-parse-malformed-export-item-source)
-      "parse: malformed export item")
-    (compiler-parse-error-ok?
-      (compiler-parse-unknown-export-kind-source)
-      "parse: unknown export item kind")))
 
 (define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
   (and
@@ -9735,7 +9339,12 @@
   (and
     (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
+      "parse: __tl_dyn-array expects exactly one type")
     (compiler-parse-error-ok?
       "(define (main) : i64 (type))"
       "parse: type expects exactly one type")
@@ -10174,13 +9783,11 @@
 (define (compiler-parse-shape-tests-middle-ok?) : bool
   (and
     (compiler-parse-comptime-decl-ok?)
-    (compiler-parse-comptime-decls-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)
     (compiler-parse-import-metadata-ok?)
     (compiler-parse-dotted-import-metadata-ok?)
     (compiler-parse-module-macro-surface-ok?)
-    (compiler-parse-export-decl-ok?)
     (compiler-parse-defdispatch-tests-ok?)
     (compiler-parse-flat-let-call-body-ok?)
     (compiler-parse-inline-test-ok?)
@@ -10212,7 +9819,6 @@
     (compiler-parse-with-scratch-tests-ok?)
     (compiler-parse-in-arena-tests-ok?)
     (compiler-parse-quote-syntax-tests-ok?)
-    (compiler-parse-export-error-tests-ok?)
     (compiler-parse-define-export-metadata-error-tests-ok?)
     (compiler-parse-dotted-import-errors-ok?)))
 
@@ -10313,7 +9919,6 @@
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)
-        (compiler-parse-export-decl-ok?)
         (compiler-parse-defdispatch-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
         (compiler-parse-inline-test-ok?)
@@ -10353,7 +9958,6 @@
           (compiler-parse-defmacro-tests-ok?)
           (compiler-parse-resource-with-tests-ok?)
           (compiler-parse-quote-syntax-tests-ok?)
-          (compiler-parse-export-error-tests-ok?)
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42

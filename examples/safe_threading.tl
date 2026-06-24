@@ -2,14 +2,15 @@
 (import "stdlib/str_cat.tl")
 (import "stdlib/string.tl")
 (import "stdlib/thread.tl")
+(import (thread-handle i64) as thread_i64)
 
 (define (safe-threading-box [base : i64]) : (Box i64)
   (box (+ base 22)))
 
-(define (safe-threading-join-i64 [thread : ThreadI64] [failure : i64]) : i64
-  (match (thread-join-i64 thread)
-    [(ThreadI64JoinOk value) value]
-    [(ThreadI64JoinErr _) failure]))
+(define (safe-threading-join-i64 [thread : thread_i64.Handle] [failure : i64]) : i64
+  (match (thread_i64.join thread)
+    [(thread_i64.I64JoinOk value) value]
+    [(thread_i64.I64JoinErr _) failure]))
 
 (define (safe-threading-join-box-value [thread : ThreadBoxI64] [failure : i64]) : i64
   (match (thread-join-box-i64 thread)
@@ -22,7 +23,7 @@
     [(ThreadStringJoinErr _) false]))
 
 (define (safe-threading-finish
-  [number : ThreadI64]
+  [number : thread_i64.Handle]
   [cell : ThreadBoxI64]
   [text : ThreadString]) : i64
   (let
@@ -39,11 +40,11 @@
   (let
     [base : i64 20]
     [owner : Arena (arena-make-atomic)]
-    (match (thread-spawn-i64
+    (match (thread_i64.spawn
       (lambda () : i64
         (+ base 1)))
-      [(ThreadI64SpawnErr _) 4]
-      [(ThreadI64SpawnOk number)
+      [(thread_i64.I64SpawnErr _) 4]
+      [(thread_i64.I64SpawnOk number)
         (match (thread-spawn-box-i64
           (lambda () : (Box i64)
             (in-arena owner (safe-threading-box 20))))

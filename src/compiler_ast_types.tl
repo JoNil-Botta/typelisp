@@ -1594,6 +1594,18 @@
         (array-ref (struct-get pools type-pool) 0)
         type-mark))))
 
+;; Clear the type-node dedup index on a captured pool context without
+;; truncating any live nodes. Pushes after this rebuild the index from the
+;; current node prefix, so a stale dedup entry inherited from a prior batch
+;; entry's pool snapshot can never resolve to an id whose slot now holds an
+;; unrelated node (#3677).
+(define (ast-node-pool-context-type-dedup-clear! [pools : AstNodePoolContext]) : unit
+  (array-set!
+    (struct-get pools type-pool)
+    0
+    (ast-type-node-pool-state-dedup-clear
+      (array-ref (struct-get pools type-pool) 0))))
+
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
@@ -1691,18 +1703,6 @@
     AstMaybeImportAlias
     AstSourceSpan))
 
-(defenum AstExportItem
-  (AstExportValue String)
-  (AstExportType String)
-  (AstExportMacro String)
-  (AstExportConstructor String)
-  (AstExportField String String)
-  (AstExportVariant String))
-
-(defenum AstExportItemList
-  (AstExportItemNil)
-  (AstExportItemCons AstExportItem (Box AstExportItemList)))
-
 (defenum AstDispatchIsa
   (AstDispatchScalar)
   (AstDispatchAvx2)
@@ -1737,7 +1737,6 @@
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
   (AstDeclIncludeBin String String)
-  (AstDeclExport AstExportItemList)
   (AstDeclDefDispatch i64 AstDispatchVariantList)
   (AstDeclTest i64 i64 AstSourceSpan)
   (AstDeclUnsafe (Box AstDecl))
@@ -2772,9 +2771,6 @@
   [args : AstExprList]) : i64
   (ast-node-pool-context-expr-push pools (AstExprSyscall args)))
 
-(define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
-  (AstExportItemCons head (box rest)))
-
 (define (ast-dispatch-variant-cons
   [head : AstDispatchVariant]
   [rest : AstDispatchVariantList]) : AstDispatchVariantList
@@ -3066,6 +3062,16 @@
     [(AstExprSpanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
     [_ expr]))
 
+(define (ast-expr-unspan-with-pools
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner-id _)
+      (ast-expr-unspan-with-pools
+        pools
+        (ast-node-pool-context-expr-get pools inner-id))]
+    [_ expr]))
+
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDeclDef _ _ _) 1]
@@ -3078,7 +3084,6 @@
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _ _) 8]
     [(AstDeclModule _) 9]
-    [(AstDeclExport _) 11]
     [(AstDeclIncludeStr _ _) 12]
     [(AstDeclUnsafe _) 13]
     [(AstDeclDefEnumLifetimes _ _ _ _) 14]

@@ -30,13 +30,6 @@
   (OkCompilerRegistries CompilerRegistries)
   (ErrCompilerRegistries String))
 
-(defenum CompilerExports
-  (CompilerExports I64I64Map))
-
-(defenum ResultCompilerExports
-  (OkCompilerExports CompilerExports)
-  (ErrCompilerExports String))
-
 (define (compiler-symbol-kind-value-define) : i64
   1)
 
@@ -151,7 +144,6 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport _) (compiler-decl-list-index-count rest)]
-          [(AstDeclExport _) (compiler-decl-list-index-count rest)]
           [(AstDeclModule _) (compiler-decl-list-index-count rest)]
           [(AstDeclTest _ _ _) (compiler-decl-list-index-count rest)]
           [_ (+ 1 (compiler-decl-list-index-count rest))]))]))
@@ -169,71 +161,6 @@
 
 (define (compiler-registries-empty) : CompilerRegistries
   (CompilerRegistries (compiler-symbol-map-empty) (compiler-symbol-map-empty)))
-
-(define (compiler-exports-empty) : CompilerExports
-  (CompilerExports (compiler-symbol-map-empty)))
-
-(define (compiler-exports-lookup
-  [exports : CompilerExports]
-  [kind : String]
-  [module : String]
-  [name : String]) : MaybeI64
-  (compiler-exports-lookup-id
-    exports
-    (intern kind)
-    (intern module)
-    (intern name)))
-
-(define (compiler-exports-lookup-id
-  [exports : CompilerExports]
-  [kind-id : i64]
-  [module-id : i64]
-  [name-id : i64]) : MaybeI64
-  (match exports
-    [(CompilerExports exported)
-      (compiler-symbol-map-lookup-id
-        exported
-        (compiler-export-key-id-by-id module-id kind-id name-id))]))
-
-(define (compiler-exports-add
-  [exports : CompilerExports]
-  [kind : String]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultCompilerExports
-  (compiler-exports-add-id
-    exports
-    (intern kind)
-    (intern module)
-    (intern name)
-    kind
-    module
-    name
-    handle))
-
-(define (compiler-exports-add-id
-  [exports : CompilerExports]
-  [kind-id : i64]
-  [module-id : i64]
-  [name-id : i64]
-  [kind : String]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultCompilerExports
-  (match exports
-    [(CompilerExports exported)
-      (let
-        [key-id : i64 (compiler-export-key-id-by-id module-id kind-id name-id)]
-        (match (compiler-symbol-map-lookup-id exported key-id)
-          [(SomeI64 existing)
-            (if (= existing handle)
-              (OkCompilerExports exports)
-              (ErrCompilerExports
-                (compiler-export-duplicate-message kind module name)))]
-          [(NoneI64)
-            (OkCompilerExports
-              (CompilerExports
-                (compiler-symbol-map-bind-id exported key-id handle)))]))]))
 
 (define (compiler-symbols-lookup-value
   [symbols : CompilerSymbols]
@@ -390,77 +317,6 @@
   (match name
     [(CompilerQualifiedName module-id base-id)
       (compiler-symbol-module-key-id-by-id module-id base-id)]))
-
-(define (compiler-export-kind-value) : String
-  "value")
-
-(define (compiler-export-kind-type) : String
-  "type")
-
-(define (compiler-export-kind-macro) : String
-  "macro")
-
-(define (compiler-export-kind-constructor) : String
-  "constructor")
-
-(define (compiler-export-kind-field) : String
-  "field")
-
-(define (compiler-export-kind-variant) : String
-  "variant")
-
-(define (compiler-export-key [module : String] [kind : String] [name : String]) : String
-  (compiler-symbol-module-key
-    module
-    (string-append kind (string-append ":" name))))
-
-(define (compiler-export-key-id-by-id
-  [module-id : i64]
-  [kind-id : i64]
-  [name-id : i64]) : i64
-  (compiler-composite-triple-key-id module-id kind-id name-id))
-
-(define (compiler-export-key-id
-  [module : String]
-  [kind : String]
-  [name : String]) : i64
-  (compiler-export-key-id-by-id (intern module) (intern kind) (intern name)))
-
-(define (compiler-export-field-name [type-name : String] [field-name : String]) : String
-  (compiler-struct-field-key type-name field-name))
-
-(define (compiler-export-display-name [module : String] [name : String]) : String
-  (compiler-symbol-module-key module name))
-
-(define (compiler-export-unknown-message
-  [kind : String]
-  [module : String]
-  [name : String]) : String
-  (string-append
-    "symbols: cannot export unknown "
-    (string-append
-      kind
-      (string-append " " (compiler-export-display-name module name)))))
-
-(define (compiler-export-namespace-message
-  [kind : String]
-  [module : String]
-  [name : String]) : String
-  (string-append
-    "symbols: export namespace mismatch for "
-    (string-append
-      kind
-      (string-append " " (compiler-export-display-name module name)))))
-
-(define (compiler-export-duplicate-message
-  [kind : String]
-  [module : String]
-  [name : String]) : String
-  (string-append
-    "symbols: duplicate export "
-    (string-append
-      kind
-      (string-append " " (compiler-export-display-name module name)))))
 
 (define (compiler-symbols-add-value-alias
   [symbols : CompilerSymbols]
@@ -692,6 +548,49 @@
               decls
               owner-names))))]))
 
+(define (compiler-symbols-handle-from-nonroot-owner?
+  [symbols : CompilerSymbols]
+  [handle : i64]) : bool
+  (match (compiler-symbols-owner-name-at-index
+    symbols
+    (compiler-symbol-handle-index handle))
+    [(CompilerSomeString owner-name) (string-contains-char (& owner-name) '/')]
+    [(CompilerNoString) false]))
+
+(define (compiler-symbols-add-root-value-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup-id values name-id)
+        [(SomeI64 existing)
+          (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
+            (if (compiler-symbol-map-contains-id? macros name-id)
+              (ErrCompilerSymbols
+                (compiler-symbols-duplicate-macro-value-message display-name))
+              (OkCompilerSymbols
+                (CompilerSymbols
+                  (compiler-symbol-map-bind-id values name-id handle)
+                  types
+                  macros
+                  decls
+                  owner-names)))
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-value-message display-name)))]
+        [(NoneI64)
+          (if (compiler-symbol-map-contains-id? macros name-id)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-macro-value-message display-name))
+            (OkCompilerSymbols
+              (CompilerSymbols
+                (compiler-symbol-map-bind-id values name-id handle)
+                types
+                macros
+                decls
+                owner-names)))])]))
+
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -700,7 +599,9 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id module name)]
     [display-name : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-value-id symbols key-id display-name handle)
+    (match (if (string-eq module "")
+      (compiler-symbols-add-root-value-id symbols key-id display-name handle)
+      (compiler-symbols-add-value-id symbols key-id display-name handle))
       [(OkCompilerSymbols next)
         (if (compiler-symbols-comptime-module? module)
           (OkCompilerSymbols next)
@@ -810,33 +711,6 @@
         (OkCompilerSymbols (compiler-symbols-add-macro-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
 
-(define (compiler-export-value-handle? [handle : i64]) : bool
-  (let
-    [kind : i64 (compiler-symbol-handle-kind handle)]
-    (or
-      (= kind (compiler-symbol-kind-value-define))
-      (= kind (compiler-symbol-kind-function-define))
-      (= kind (compiler-symbol-kind-extern))
-      (= kind (compiler-symbol-kind-defdispatch))
-      (= kind (compiler-symbol-kind-struct-cleanup))
-      (= kind (compiler-symbol-kind-enum-cleanup)))))
-
-(define (compiler-export-type-handle? [handle : i64]) : bool
-  (let
-    [kind : i64 (compiler-symbol-handle-kind handle)]
-    (or
-      (= kind (compiler-symbol-kind-defenum))
-      (= kind (compiler-symbol-kind-defstruct)))))
-
-(define (compiler-export-constructor-handle? [handle : i64]) : bool
-  (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defstruct)))
-
-(define (compiler-export-variant-handle? [handle : i64]) : bool
-  (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-enum-variant)))
-
-(define (compiler-export-field-handle? [handle : i64]) : bool
-  (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-struct-field)))
-
 (define (compiler-symbols-lookup-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -918,282 +792,6 @@
           module-id
           type-name-id
           field-name-id))]))
-
-(define (compiler-export-type-or-macro-present?
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : bool
-  (match (compiler-symbols-lookup-type-in-module symbols module name)
-    [(SomeI64 _) true]
-    [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module symbols module name)
-        [(SomeI64 _) true]
-        [(NoneI64) false])]))
-
-(define (compiler-export-value-or-macro-present?
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : bool
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 _) true]
-    [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module symbols module name)
-        [(SomeI64 _) true]
-        [(NoneI64) false])]))
-
-(define (compiler-export-value-or-type-present?
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : bool
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 _) true]
-    [(NoneI64)
-      (match (compiler-symbols-lookup-type-in-module symbols module name)
-        [(SomeI64 _) true]
-        [(NoneI64) false])]))
-
-(define (compiler-exports-add-value-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultCompilerExports
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 handle)
-      (if (compiler-export-value-handle? handle)
-        (compiler-exports-add
-          exports
-          (compiler-export-kind-value)
-          module
-          name
-          handle)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-value)
-            module
-            name)))]
-    [(NoneI64)
-      (if (compiler-export-type-or-macro-present? symbols module name)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-value)
-            module
-            name))
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-value)
-            module
-            name)))]))
-
-(define (compiler-exports-add-type-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultCompilerExports
-  (match (compiler-symbols-lookup-type-in-module symbols module name)
-    [(SomeI64 handle)
-      (if (compiler-export-type-handle? handle)
-        (compiler-exports-add
-          exports
-          (compiler-export-kind-type)
-          module
-          name
-          handle)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-type)
-            module
-            name)))]
-    [(NoneI64)
-      (if (compiler-export-value-or-macro-present? symbols module name)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-type)
-            module
-            name))
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-type)
-            module
-            name)))]))
-
-(define (compiler-exports-add-macro-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultCompilerExports
-  (match (compiler-symbols-lookup-macro-in-module symbols module name)
-    [(SomeI64 handle)
-      (compiler-exports-add
-        exports
-        (compiler-export-kind-macro)
-        module
-        name
-        handle)]
-    [(NoneI64)
-      (if (compiler-export-value-or-type-present? symbols module name)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-macro)
-            module
-            name))
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-macro)
-            module
-            name)))]))
-
-(define (compiler-exports-add-constructor-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultCompilerExports
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 handle)
-      (if (compiler-export-constructor-handle? handle)
-        (compiler-exports-add
-          exports
-          (compiler-export-kind-constructor)
-          module
-          name
-          handle)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-constructor)
-            module
-            name)))]
-    [(NoneI64)
-      (if (compiler-export-type-or-macro-present? symbols module name)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-constructor)
-            module
-            name))
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-constructor)
-            module
-            name)))]))
-
-(define (compiler-exports-variant-qualified-name
-  [symbols : CompilerSymbols]
-  [handle : i64]
-  [variant-name : String]) : CompilerMaybeString
-  (match (compiler-symbols-owner-name-at-index
-    symbols
-    (compiler-registry-handle-owner-index handle))
-    [(CompilerSomeString owner)
-      (CompilerSomeString
-        (compiler-enum-qualified-variant-name
-          (intern-name-base owner)
-          variant-name))]
-    [(CompilerNoString) (CompilerNoString)]))
-
-(define (compiler-exports-add-qualified-variant-alias
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultCompilerExports
-  (if (intern-name-dotted? name)
-    (OkCompilerExports exports)
-    (match (compiler-exports-variant-qualified-name symbols handle name)
-      [(CompilerSomeString qualified-name)
-        (compiler-exports-add
-          exports
-          (compiler-export-kind-variant)
-          module
-          qualified-name
-          handle)]
-      [(CompilerNoString) (OkCompilerExports exports)])))
-
-(define (compiler-exports-add-variant-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [owner-symbols : CompilerSymbols]
-  [module : String]
-  [name : String]) : ResultCompilerExports
-  (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 handle)
-      (if (compiler-export-variant-handle? handle)
-        (match (compiler-exports-add
-          exports
-          (compiler-export-kind-variant)
-          module
-          name
-          handle)
-          [(OkCompilerExports next)
-            (compiler-exports-add-qualified-variant-alias
-              next
-              owner-symbols
-              module
-              name
-              handle)]
-          [(ErrCompilerExports message) (ErrCompilerExports message)])
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-variant)
-            module
-            name)))]
-    [(NoneI64)
-      (if (compiler-export-type-or-macro-present? symbols module name)
-        (ErrCompilerExports
-          (compiler-export-namespace-message
-            (compiler-export-kind-variant)
-            module
-            name))
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-variant)
-            module
-            name)))]))
-
-(define (compiler-exports-add-field-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [registries : CompilerRegistries]
-  [module : String]
-  [type-name : String]
-  [field-name : String]) : ResultCompilerExports
-  (let
-    [display-name : String (compiler-export-field-name type-name field-name)]
-    (match (compiler-symbols-lookup-type-in-module symbols module type-name)
-      [(SomeI64 type-handle)
-        (if (compiler-export-constructor-handle? type-handle)
-          (match (compiler-registries-lookup-field-in-module
-            registries
-            module
-            type-name
-            field-name)
-            [(SomeI64 handle)
-              (if (compiler-export-field-handle? handle)
-                (compiler-exports-add
-                  exports
-                  (compiler-export-kind-field)
-                  module
-                  display-name
-                  handle)
-                (ErrCompilerExports
-                  (compiler-export-namespace-message
-                    (compiler-export-kind-field)
-                    module
-                    display-name)))]
-            [(NoneI64)
-              (ErrCompilerExports
-                (compiler-export-unknown-message
-                  (compiler-export-kind-field)
-                  module
-                  display-name))])
-          (ErrCompilerExports
-            (compiler-export-namespace-message
-              (compiler-export-kind-field)
-              module
-              display-name)))]
-      [(NoneI64)
-        (ErrCompilerExports
-          (compiler-export-unknown-message
-            (compiler-export-kind-field)
-            module
-            display-name))])))
 
 (define (compiler-symbols-add-decl
   [symbols : CompilerSymbols]
@@ -1373,7 +971,6 @@
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
     [(AstDeclIncludeBin _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
-    [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
     [(AstDeclUnsafe inner-box)
@@ -1622,7 +1219,6 @@
     [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
     [(AstDeclIncludeBin _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
-    [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
     [(AstDeclUnsafe inner-box)
@@ -1859,13 +1455,6 @@
               target-module
               index
               module)]
-          [(AstDeclExport _)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module
-              index
-              module)]
           [(AstDeclModule next-module)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
@@ -1934,14 +1523,6 @@
               index
               module)]
           [(AstDeclIncludeBin _ _)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module
-              alias
-              index
-              module)]
-          [(AstDeclExport _)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
@@ -2056,7 +1637,6 @@
     [(AstDeclImport _) false]
     [(AstDeclIncludeStr _ _) false]
     [(AstDeclIncludeBin _ _) false]
-    [(AstDeclExport _) false]
     [(AstDeclModule _) false]
     [(AstDeclTest _ _ _) false]
     [_ true]))
@@ -2113,18 +1693,22 @@
   [decl-path : String]) : CompilerMaybeString
   (match (compiler-symbols-lookup-value-in-module symbols module name)
     [(SomeI64 existing)
-      (let
-        [first-path : String
-          (compiler-symbol-path-at-index
-            all-decls
-            all-paths
-            (compiler-symbol-handle-index existing)
-            0)]
-        [display-name : String (compiler-symbol-module-key module name)]
-        (CompilerSomeString
-          (string-append
-            (compiler-symbols-duplicate-value-message display-name)
-            (compiler-symbols-duplicate-location-suffix first-path decl-path))))]
+      (if (and
+        (string-eq module "")
+        (compiler-symbols-handle-from-nonroot-owner? symbols existing))
+        CompilerNoString
+        (let
+          [first-path : String
+            (compiler-symbol-path-at-index
+              all-decls
+              all-paths
+              (compiler-symbol-handle-index existing)
+              0)]
+          [display-name : String (compiler-symbol-module-key module name)]
+          (CompilerSomeString
+            (string-append
+              (compiler-symbols-duplicate-value-message display-name)
+              (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
     [(NoneI64) CompilerNoString]))
 
 (define (compiler-symbols-duplicate-value-message-for-decl-with-paths
@@ -2210,6 +1794,14 @@
 
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
+    [(AstDeclDef name _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclExtern name _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnum name _ _)
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnumLifetimes name _ _ _)
@@ -2274,13 +1866,6 @@
               index
               module)]
           [(AstDeclIncludeBin _ _)
-            (build-compiler-symbol-list-in-module
-              all-decls
-              rest
-              symbols
-              index
-              module)]
-          [(AstDeclExport _)
             (build-compiler-symbol-list-in-module
               all-decls
               rest
@@ -2364,15 +1949,6 @@
               index
               module)]
           [(AstDeclIncludeBin _ _)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              module)]
-          [(AstDeclExport _)
             (build-compiler-symbol-list-with-paths-in-module
               all-decls
               all-paths
@@ -2470,78 +2046,6 @@
   (match (parse-ast-source src)
     [(OkAstProgram program) (build-compiler-symbols program)]
     [(ErrAstProgram message) (ErrCompilerSymbols message)]))
-
-(define (build-compiler-local-symbol-list-in-module
-  [decls : AstDeclList]
-  [symbols : CompilerSymbols]
-  [index : i64]
-  [module : String]) : ResultCompilerSymbols
-  (match decls
-    [(AstDeclNil) (OkCompilerSymbols symbols)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclImport _)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              module)]
-          [(AstDeclExport _)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              module)]
-          [(AstDeclModule next-module)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              (intern-str next-module))]
-          [(AstDeclTest _ _ _)
-            (build-compiler-local-symbol-list-in-module
-              rest
-              symbols
-              index
-              module)]
-          [_
-            (match (compiler-symbols-add-local-decl-in-module
-              symbols
-              module
-              decl
-              index)
-              [(OkCompilerSymbols next-symbols)
-                (build-compiler-local-symbol-list-in-module
-                  rest
-                  next-symbols
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
-
-(define (build-compiler-local-symbols [program : AstProgram]) : ResultCompilerSymbols
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (build-compiler-local-symbol-list-in-module
-          decls
-          (compiler-symbols-empty)
-          0
-          ""))]))
 
 (define (compiler-registries-lookup-variant
   [registries : CompilerRegistries]
@@ -2837,14 +2341,6 @@
               alias
               index
               module)]
-          [(AstDeclExport _)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              module)]
           [(AstDeclModule next-module)
             (compiler-registries-add-module-aliases-list
               registries
@@ -3047,12 +2543,6 @@
               registries
               index
               module)]
-          [(AstDeclExport _)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              module)]
           [(AstDeclModule next-module)
             (build-compiler-registry-list-in-module
               rest
@@ -3233,201 +2723,6 @@
     [(OkAstProgram program) (build-compiler-registries program)]
     [(ErrAstProgram message) (ErrCompilerRegistries message)]))
 
-(define (build-compiler-export-item
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [owner-symbols : CompilerSymbols]
-  [registries : CompilerRegistries]
-  [module : String]
-  [item : AstExportItem]) : ResultCompilerExports
-  (match item
-    [(AstExportValue name)
-      (compiler-exports-add-value-item exports symbols module name)]
-    [(AstExportType name)
-      (compiler-exports-add-type-item exports symbols module name)]
-    [(AstExportMacro name)
-      (compiler-exports-add-macro-item exports symbols module name)]
-    [(AstExportConstructor name)
-      (compiler-exports-add-constructor-item exports symbols module name)]
-    [(AstExportField type-name field-name)
-      (compiler-exports-add-field-item
-        exports
-        symbols
-        registries
-        module
-        type-name
-        field-name)]
-    [(AstExportVariant name)
-      (compiler-exports-add-variant-item
-        exports
-        symbols
-        owner-symbols
-        module
-        name)]))
-
-(define (build-compiler-export-items
-  [exports : CompilerExports]
-  [symbols : CompilerSymbols]
-  [owner-symbols : CompilerSymbols]
-  [registries : CompilerRegistries]
-  [module : String]
-  [items : AstExportItemList]) : ResultCompilerExports
-  (match items
-    [(AstExportItemNil) (OkCompilerExports exports)]
-    [(AstExportItemCons item rest)
-      (let
-        [rest : AstExportItemList (box-get rest)]
-        (match (build-compiler-export-item
-          exports
-          symbols
-          owner-symbols
-          registries
-          module
-          item)
-          [(OkCompilerExports next-exports)
-            (build-compiler-export-items
-              next-exports
-              symbols
-              owner-symbols
-              registries
-              module
-              rest)]
-          [(ErrCompilerExports message) (ErrCompilerExports message)]))]))
-
-(define (build-compiler-export-list-in-module
-  [decls : AstDeclList]
-  [symbols : CompilerSymbols]
-  [owner-symbols : CompilerSymbols]
-  [registries : CompilerRegistries]
-  [exports : CompilerExports]
-  [module : String]) : ResultCompilerExports
-  (match decls
-    [(AstDeclNil) (OkCompilerExports exports)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (build-compiler-export-list-in-module
-              rest
-              symbols
-              owner-symbols
-              registries
-              exports
-              (intern-str next-module))]
-          [(AstDeclExport items)
-            (match (build-compiler-export-items
-              exports
-              symbols
-              owner-symbols
-              registries
-              module
-              items)
-              [(OkCompilerExports next-exports)
-                (build-compiler-export-list-in-module
-                  rest
-                  symbols
-                  owner-symbols
-                  registries
-                  next-exports
-                  module)]
-              [(ErrCompilerExports message) (ErrCompilerExports message)])]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclExport items)
-                  (match (build-compiler-export-items
-                    exports
-                    symbols
-                    owner-symbols
-                    registries
-                    module
-                    items)
-                    [(OkCompilerExports next-exports)
-                      (build-compiler-export-list-in-module
-                        rest
-                        symbols
-                        owner-symbols
-                        registries
-                        next-exports
-                        module)]
-                    [(ErrCompilerExports message) (ErrCompilerExports message)])]
-                [_
-                  (build-compiler-export-list-in-module
-                    rest
-                    symbols
-                    owner-symbols
-                    registries
-                    exports
-                    module)]))]
-          [_
-            (build-compiler-export-list-in-module
-              rest
-              symbols
-              owner-symbols
-              registries
-              exports
-              module)]))]))
-
-(define (compiler-decl-list-has-exports? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclExport _) true]
-          [(AstDeclComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDeclExport _) true]
-                [_ (compiler-decl-list-has-exports? rest)]))]
-          [_ (compiler-decl-list-has-exports? rest)]))]))
-
-(define (compiler-program-has-exports? [program : AstProgram]) : bool
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (compiler-decl-list-has-exports? decls))]))
-
-(define (build-compiler-exports-with
-  [program : AstProgram]
-  [symbols : CompilerSymbols]
-  [registries : CompilerRegistries]) : ResultCompilerExports
-  (if (compiler-program-has-exports? program)
-    (match (build-compiler-local-symbols program)
-      [(OkCompilerSymbols local-symbols)
-        (match program
-          [(AstProgram decls-box)
-            (let
-              [decls : AstDeclList (box-get decls-box)]
-              (build-compiler-export-list-in-module
-                decls
-                local-symbols
-                symbols
-                registries
-                (compiler-exports-empty)
-                ""))])]
-      [(ErrCompilerSymbols message) (ErrCompilerExports message)])
-    (OkCompilerExports (compiler-exports-empty))))
-
-(define (build-compiler-exports [program : AstProgram]) : ResultCompilerExports
-  (match (build-compiler-symbols program)
-    [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries-with-symbols program symbols)
-        [(OkCompilerRegistries registries)
-          (build-compiler-exports-with program symbols registries)]
-        [(ErrCompilerRegistries message) (ErrCompilerExports message)])]
-    [(ErrCompilerSymbols message) (ErrCompilerExports message)]))
-
-(define (build-compiler-exports-from-source [src : String]) : ResultCompilerExports
-  (match (parse-ast-source src)
-    [(OkAstProgram program) (build-compiler-exports program)]
-    [(ErrAstProgram message) (ErrCompilerExports message)]))
-
 (define (compiler-decl-list-at-index
   [decls : AstDeclList]
   [target : i64]
@@ -3443,7 +2738,6 @@
             (compiler-decl-list-at-index rest target index)]
           [(AstDeclIncludeBin _ _)
             (compiler-decl-list-at-index rest target index)]
-          [(AstDeclExport _) (compiler-decl-list-at-index rest target index)]
           [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]
           [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]
           [_
@@ -3958,311 +3252,6 @@
       (= (compiler-registry-handle-owner-index handle) 1234)
       (= (compiler-registry-handle-child-index handle) 5))))
 
-(define (compiler-exports-valid-source) : String
-  "(module data)
-(define answer : i64 1)
-(define (get) : i64 answer)
-(extern (raw) : i64)
-(defmacro (all [first : bool]) : bool first)
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64) (y i64))
-(define (close-fd [fd : i64]) : unit unit)
-(defstruct Resource
-  (:cleanup cleanup-resource)
-  (fd i64 (:cleanup close-fd)))
-(export
-  (value answer)
-  (value get)
-  (value raw)
-  (value cleanup-resource)
-  (macro all)
-  (type Maybe)
-  (type Point)
-  (constructor Point)
-  (field Point x)
-  (variant None)
-  (variant Some)
-  (value answer))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64 (d.get))")
-
-(define (compiler-export-symbol-score
-  [exports : CompilerExports]
-  [kind-name : String]
-  [module : String]
-  [name : String]
-  [want-kind : i64]
-  [want-index : i64]) : i64
-  (compiler-symbol-lookup-score
-    (compiler-exports-lookup exports kind-name module name)
-    want-kind
-    want-index))
-
-(define (compiler-export-registry-score
-  [exports : CompilerExports]
-  [kind-name : String]
-  [module : String]
-  [name : String]
-  [want-kind : i64]
-  [want-owner : i64]
-  [want-child : i64]) : i64
-  (compiler-registry-lookup-score
-    (compiler-exports-lookup exports kind-name module name)
-    want-kind
-    want-owner
-    want-child))
-
-(define (compiler-exports-valid-ok?) : bool
-  (match (parse-ast-source (compiler-exports-valid-source))
-    [(OkAstProgram program)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports exports)
-                  (let
-                    [ok : bool true]
-                    (begin
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-value)
-                          "data"
-                          "answer"
-                          (compiler-symbol-kind-value-define)
-                          0)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-value)
-                          "data"
-                          "get"
-                          (compiler-symbol-kind-function-define)
-                          1)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-value)
-                          "data"
-                          "raw"
-                          (compiler-symbol-kind-extern)
-                          2)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-value)
-                          "data"
-                          "cleanup-resource"
-                          (compiler-symbol-kind-struct-cleanup)
-                          7)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-macro)
-                          "data"
-                          "all"
-                          (compiler-symbol-kind-defmacro)
-                          3)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-type)
-                          "data"
-                          "Maybe"
-                          (compiler-symbol-kind-defenum)
-                          4)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-symbol-score
-                          exports
-                          (compiler-export-kind-constructor)
-                          "data"
-                          "Point"
-                          (compiler-symbol-kind-defstruct)
-                          5)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-registry-score
-                          exports
-                          (compiler-export-kind-field)
-                          "data"
-                          "Point.x"
-                          (compiler-symbol-kind-struct-field)
-                          5
-                          0)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-registry-score
-                          exports
-                          (compiler-export-kind-variant)
-                          "data"
-                          "Some"
-                          (compiler-symbol-kind-enum-variant)
-                          4
-                          1)
-                        1)
-                        unit
-                        (set! ok false))
-                      (if (=
-                        (compiler-export-registry-score
-                          exports
-                          (compiler-export-kind-variant)
-                          "data"
-                          "Maybe.Some"
-                          (compiler-symbol-kind-enum-variant)
-                          4
-                          1)
-                        1)
-                        unit
-                        (set! ok false))
-                      ok))]
-                [(ErrCompilerExports _) false])]
-            [(ErrCompilerRegistries _) false])]
-        [(ErrCompilerSymbols _) false])]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-exports-type-only-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(export (type Opaque))")
-
-(define (compiler-exports-type-only-ok?) : bool
-  (match (build-compiler-exports-from-source
-    (compiler-exports-type-only-source))
-    [(OkCompilerExports exports)
-      (and
-        (=
-          (compiler-export-symbol-score
-            exports
-            (compiler-export-kind-type)
-            "data"
-            "Opaque"
-            (compiler-symbol-kind-defstruct)
-            0)
-          1)
-        (=
-          (compiler-symbols-miss-score
-            (compiler-exports-lookup
-              exports
-              (compiler-export-kind-constructor)
-              "data"
-              "Opaque"))
-          1)
-        (=
-          (compiler-symbols-miss-score
-            (compiler-exports-lookup
-              exports
-              (compiler-export-kind-field)
-              "data"
-              "Opaque.value"))
-          1))]
-    [(ErrCompilerExports _) false]))
-
-(define (compiler-exports-error-ok? [src : String] [want : String]) : bool
-  (match (build-compiler-exports-from-source src)
-    [(ErrCompilerExports message) (string-eq message want)]
-    [(OkCompilerExports _) false]))
-
-(define (compiler-exports-unknown-value-ok?) : bool
-  (compiler-exports-error-ok?
-    "(module data)
-(export (value missing))"
-    (compiler-export-unknown-message
-      (compiler-export-kind-value)
-      "data"
-      "missing")))
-
-(define (compiler-exports-value-namespace-ok?) : bool
-  (compiler-exports-error-ok?
-    "(module data)
-(defstruct Point (x i64))
-(export (value Point))"
-    (compiler-export-namespace-message
-      (compiler-export-kind-value)
-      "data"
-      "Point")))
-
-(define (compiler-exports-field-unknown-ok?) : bool
-  (compiler-exports-error-ok?
-    "(module data)
-(defstruct Point (x i64))
-(export (field Point y))"
-    (compiler-export-unknown-message
-      (compiler-export-kind-field)
-      "data"
-      "Point.y")))
-
-(define (compiler-exports-variant-namespace-ok?) : bool
-  (compiler-exports-error-ok?
-    "(module data)
-(defenum Maybe (Some))
-(export (constructor Some))"
-    (compiler-export-namespace-message
-      (compiler-export-kind-constructor)
-      "data"
-      "Some")))
-
-(define (compiler-exports-imported-alias-reject-ok?) : bool
-  (and
-    (compiler-exports-error-ok?
-      "(module data)
-(define answer : i64 1)
-(module main)
-(import \"data.tl\" module data :as d)
-(export (value answer))"
-      (compiler-export-unknown-message
-        (compiler-export-kind-value)
-        "main"
-        "answer"))
-    (compiler-exports-error-ok?
-      "(import \"data.tl\" module data :as d)
-(export (value d/answer))
-(module data)
-(define answer : i64 1)"
-      (compiler-export-unknown-message
-        (compiler-export-kind-value)
-        ""
-        "d/answer"))
-    (compiler-exports-error-ok?
-      "(import \"data.tl\" module data :as d)
-(export (value answer))
-(module data)
-(define answer : i64 1)"
-      (compiler-export-unknown-message (compiler-export-kind-value) "" "answer"))))
-
-(define (compiler-exports-tests-ok?) : bool
-  (and
-    (compiler-exports-valid-ok?)
-    (compiler-exports-type-only-ok?)
-    (compiler-exports-unknown-value-ok?)
-    (compiler-exports-value-namespace-ok?)
-    (compiler-exports-field-unknown-ok?)
-    (compiler-exports-variant-namespace-ok?)
-    (compiler-exports-imported-alias-reject-ok?)))
-
 (define (compiler-symbols-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))
@@ -4546,9 +3535,7 @@
 
 (define (compiler-symbols-comptime-root-helper-alias-source) : String
   "(module stdlib.comptime)
-(comptime-decl
-  (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr (ExprBool bool)))
+(defenum Expr (ExprBool bool))
 (define (int->string [value : i64]) : String \"\")
 (define (string-append [left : String] [right : String]) : String left)
 (define (string-concat [left : String] [right : String]) : String left)
@@ -4697,9 +3684,6 @@
                     unit
                     (set! ok false))
                   (if (compiler-symbols-duplicate-macro-value-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-exports-tests-ok?)
                     unit
                     (set! ok false))
                   (if ok

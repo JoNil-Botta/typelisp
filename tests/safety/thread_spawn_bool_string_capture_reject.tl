@@ -1,17 +1,18 @@
 (import "stdlib/thread.tl")
+(import (thread-handle bool) as thread_bool)
 (import "stdlib/string.tl")
 
 (define (main) : i64
   (let
     [text : String "not-transferable"]
-    (match (thread-spawn-bool
+    (match (thread_bool.spawn
       (lambda () : bool
         (= (string-length text) 16)))
-      [(ThreadBoolSpawnErr _) 1]
-      [(ThreadBoolSpawnOk thread)
-        (match (thread-join-bool thread)
-          [(ThreadBoolJoinOk value)
+      [(thread_bool.BoolSpawnErr _) 1]
+      [(thread_bool.BoolSpawnOk thread)
+        (match (thread_bool.join thread)
+          [(thread_bool.BoolJoinOk value)
             (if value
               42
               3)]
-          [(ThreadBoolJoinErr _) 2])])))
+          [(thread_bool.BoolJoinErr _) 2])])))

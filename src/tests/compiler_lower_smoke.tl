@@ -12,11 +12,6 @@
   (if (< index (struct-get v len))
     (struct-get v first)
     fallback))
-(export
-  (type StringVec)
-  (value string-vec-new)
-  (value string-vec-push)
-  (value string-vec-get))
 (module stdlib.list)
 (import stdlib.vector)
 (defenum StringList (StringNil) (StringCons String (Box StringList)))
@@ -41,13 +36,6 @@
   (StringCons (vector.string-vec-get v 0 \"\") (box StringNil)))
 (define (string-list-roundtrip-count [items : StringList]) : i64
   (string-list-count (string-list-from-vec-single (string-list-to-vec items))))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-single)
-  (value string-list-count)
-  (value string-list-roundtrip-count))
 (module main)
 (import stdlib.list)
 (define (main) : i64
@@ -74,13 +62,7 @@
 (define (string-list-cons [value : String] [rest : StringList]) : StringList
   (StringCons value (box rest)))
 (define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-cons)
-  (value string-list-single))")
+  (StringCons value (box StringNil)))")
       (write-file
         entry
         "(import stdlib.list)
@@ -315,6 +297,12 @@
         (compiler-lower-fixed-array-access-source))
       (panic "lower: fixed array access smoke mismatch"))
     (unless
+      (compiler-lower-fixed-array-literal-stack-shape-ok?)
+      (panic "lower: fixed array stack literal smoke mismatch"))
+    (unless
+      (compiler-lower-fixed-array-aggregate-layout-shape-ok?)
+      (panic "lower: fixed array aggregate layout smoke mismatch"))
+    (unless
       (compiler-lower-array-access-shape-ok?
         (compiler-lower-mut-ref-array-access-source))
       (panic "lower: mutable ref array access smoke mismatch"))
@@ -443,10 +431,8 @@
       (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
       (panic "lower: windows enum aggregate C ABI smoke mismatch"))
     (unless
-      (compiler-lower-linux-error-ok?
-        (compiler-lower-c-abi-payload-enum-source)
-        "lower: unsupported linux-x86_64 C aggregate ABI for SmallChoice; this slice supports System V register-class structs up to 16 bytes, plus tag-only enums")
-      (panic "lower: linux unsupported C ABI diagnostic smoke mismatch"))
+      (compiler-lower-c-abi-linux-payload-enum-shape-ok?)
+      (panic "lower: linux payload enum C ABI smoke mismatch"))
     (unless
       (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
       (panic "lower: windows byref aggregate C ABI smoke mismatch"))

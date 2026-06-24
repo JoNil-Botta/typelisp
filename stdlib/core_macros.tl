@@ -182,13 +182,3 @@
         (begin
           (/ 1 0)
           unit)))))
-
-(export (macro and))
-
-(export (macro or))
-
-(export (macro when))
-
-(export (macro unless))
-
-(export (macro cond))

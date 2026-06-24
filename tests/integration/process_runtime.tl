@@ -134,6 +134,15 @@
       (string-vec-push (string-vec-with-capacity 2) "/C")
       "echo argv-vec=ok")))
 
+(define (windows-borrowed-argv-output [exe : String] [argv : String]) : ResultProcessOutput
+  (let
+    [args : (ProcessBorrowedStringList argv)
+      (process-borrowed-args-append
+        (process-borrowed-args-single (substring-view (& argv) 0 2))
+        (process-borrowed-args-single
+          (substring-view (& argv) 2 (- (string-length (& argv)) 2))))]
+    (process-borrowed-output (process-borrowed-command (& exe) args))))
+
 (define (windows-missing-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
@@ -168,6 +177,16 @@
         (string-vec-push (string-vec-with-capacity 3) "%s:%s")
         "argv")
       "vec")))
+
+(define (linux-borrowed-argv-output [exe : String] [argv : String]) : ResultProcessOutput
+  (let
+    [args : (ProcessBorrowedStringList argv)
+      (process-borrowed-args-append
+        (process-borrowed-args-single (substring-view (& argv) 0 5))
+        (process-borrowed-args-append
+          (process-borrowed-args-single (substring-view (& argv) 5 8))
+          (process-borrowed-args-single (substring-view (& argv) 13 4))))]
+    (process-borrowed-output (process-borrowed-command (& exe) args))))
 
 (define (linux-async-process-command [text : String]) : ProcessCommand
   (process-command "/usr/bin/printf" (process-args-single text)))
@@ -206,6 +225,13 @@
         0
         "argv-vec=ok\r\n"
         "")
+      (assert-process-output-result
+        (windows-borrowed-argv-output
+          "C:\\Windows\\System32\\cmd.exe"
+          "/Cecho borrowed-argv=ok")
+        0
+        "borrowed-argv=ok\r\n"
+        "")
       (assert-process-spawn-failed (process-output (windows-missing-command)))
       (assert-process-child-unsupported
         (process-start (windows-process-command)))
@@ -231,6 +257,11 @@
         (process-output (linux-argv-vec-command))
         0
         "argv:vec"
+        "")
+      (assert-process-output-result
+        (linux-borrowed-argv-output "/usr/bin/printf" "%s:%sborrowedargv")
+        0
+        "borrowed:argv"
         "")
       (assert-process-output-result
         (linux-borrowed-process-output "/usr/bin/printf" "borrowed-stdout=ok")

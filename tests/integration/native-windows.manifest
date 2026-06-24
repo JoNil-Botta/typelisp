@@ -9,6 +9,7 @@ ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
+implicit_scratch_loop|tests/integration/implicit_scratch_loop.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
 compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
 call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
@@ -30,7 +31,7 @@ clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
-generated_option_result_families|tests/integration/generated_option_result_families.tl|61|-|-|stdlib/string.tl
+generated_option_result_families|tests/integration/generated_option_result_families.tl|124|-|-|stdlib/string.tl stdlib/option.tl
 generated_string_vector_private_intrinsics|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
@@ -145,6 +146,7 @@ thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl stdlib
 atomic_intrinsics_thread_counter|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|requires-stage0-diagnostic:atomic-fetch-add!
 thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+thread_safe_unit|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_string|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_array_i64|tests/integration/thread_safe_array_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

@@ -191,6 +191,35 @@
 (define (main) : i64
   (step 20 22))")
 
+(define (compiler-backend-direct-tail-call-reordered-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (finish y x))
+(define (main) : i64
+  (step 20 22))")
+
+(define (compiler-backend-direct-tail-call-duplicated-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (finish x x))
+(define (main) : i64
+  (step 20 22))")
+
+(define (compiler-backend-direct-tail-call-nontrivial-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (let [z : i64 (+ x 1)]
+    (finish z y)))
+(define (main) : i64
+  (step 19 22))")
+
+(define (compiler-backend-direct-tail-call-f64-source) : String
+  "(define (finishf [x : f64] [y : f64]) : f64 (+ x y))
+(define (stepf [x : f64] [y : f64]) : f64
+  (finishf x y))
+(define (main) : i64
+  (if (< (stepf 20.0 22.0) 43.0) 42 1))")
+
 (define (compiler-backend-direct-tail-call-stack-source) : String
   "(define (finishstack
   [n : i64]
@@ -1352,6 +1381,12 @@
                   (ObjectSectionText)
                   ".L_tl_boot_alloc")
                 0)
+              (>=
+                (compiler-object-coff-section-label-offset
+                  image
+                  (ObjectSectionText)
+                  "tl_alloc")
+                0)
               (compiler-object-section-contains-label?
                 sections
                 (ObjectSectionPdata)
@@ -1365,7 +1400,6 @@
                 ".L_tl_boot_alloc"
                 (ObjectSymbolLocal)
                 (ObjectSymbolRuntime))
-              true
               true
               true)
             (backend-and8
@@ -1480,6 +1514,78 @@
                     0xc7)))]
             [(ErrCompilerObjectCoff _) false])
           false))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-unit-main-zero-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (main) : unit unit)"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (match (compiler-object-coff-render image)
+        [(OkCompilerObjectCoff obj)
+          (let
+            [text-header : i64
+              (compiler-object-coff-section-header-offset (ObjectSectionText))]
+            [text-ptr : i64
+              (compiler-object-coff-u32-at obj (+ text-header 20))]
+            [main-offset : i64
+              (compiler-object-coff-section-label-offset
+                image
+                (ObjectSectionText)
+                "main")]
+            [main-ptr : i64 (+ text-ptr main-offset)]
+            (if (< main-offset 0)
+              false
+              (backend-and8
+                (= (compiler-object-coff-u8-at obj main-ptr) 0x55)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
+                (= (compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
+        [(ErrCompilerObjectCoff _) false])]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (string_data_ptr [s : String]) : (Ptr u8)
+  (unsafe (string-data s)))
+(define (main) : i64
+  (unsafe (cast (ptr->int (string_data_ptr \"hi\")) : i64)))"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (and
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b00"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488945"))))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+  e)
+(define (main) : i64
+  (sum5 1 2 3 4 5))"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (backend-and4
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4889442420"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b4530"))
+          true
+          true))]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-implicit-main-source) : String
@@ -3686,6 +3792,7 @@
     [packed : CompilerBackendObjectParts
       (compiler-backend-object-instr
         (compiler-backend-object-parts-empty)
+        (BackendTargetLinux)
         "main"
         "main"
         "entry"
@@ -3695,6 +3802,7 @@
     [worded : CompilerBackendObjectParts
       (compiler-backend-object-instr
         packed
+        (BackendTargetLinux)
         "main"
         "main"
         "entry"
@@ -3879,8 +3987,12 @@
     movq %rax, %r9
     movq %r9, %r10
 "]
+    [direct : String
+      (compiler-backend-peephole-forward-frame-load-line
+        "    movq %r8, -24(%rbp)"
+        "    movq -24(%rbp), %r10")]
     [got : String (compiler-backend-peephole-asm input)]
-    (string-eq got want)))
+    (and (string-eq direct "    movq %r8, %r10") (string-eq got want))))
 
 (define (compiler-backend-rax-forward-chain-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -5737,6 +5849,70 @@
     ([i : i64 0 n])
     (array-set! out i (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))")
 
+(define (compiler-backend-lane-id-rodata-source) : String
+  "(define (fill [out : (Array i64)] [other : (Array i64)] [n : i64]) : unit
+  (begin
+    (foreach
+      ([i : i64 0 n])
+      (array-set! out i (program-index)))
+    (foreach
+      ([j : i64 0 n])
+      (array-set! other j (program-index)))))")
+
+(define (compiler-backend-lane-id-rodata-shape-ok?
+  [lower-mode : CompilerLowerMode]
+  [backend-mode : CompilerBackendMode]
+  [label : String]
+  [align : String]
+  [load : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-lane-id-rodata-source)
+    lower-mode)
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        backend-mode
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains?
+                asm
+                (str-cat "    .section .rodata\n" align label ":\n"))
+              (= (compiler-backend-string-count asm (str-cat label ":\n")) 1)
+              (>=
+                (compiler-backend-string-count
+                  asm
+                  (str-cat load " " label "(%rip), "))
+                2)
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  (str-cat label ":\n" load))))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-lane-id-rodata-ok?) : bool
+  (and
+    (compiler-backend-lane-id-rodata-shape-ok?
+      (CompilerLowerAvx2)
+      (BackendModeAvx2)
+      (compiler-backend-avx2-i64-lane-id-label)
+      "    .balign 32\n"
+      "    vmovdqa")
+    (compiler-backend-lane-id-rodata-shape-ok?
+      (CompilerLowerAvx512)
+      (BackendModeAvx512)
+      (compiler-backend-avx512-i64-lane-id-label)
+      "    .balign 64\n"
+      "    vmovdqa64")))
+
 (define (compiler-backend-avx2-map-asm-contains?
   [elem : String]
   [move : String]
@@ -6060,7 +6236,12 @@
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
               (compiler-backend-string-contains? asm "    vpaddq ")
-              (compiler-backend-string-contains? asm "    vmovdqu64 "))
+              (compiler-backend-string-contains?
+                asm
+                (str-cat
+                  "    vmovdqa64 "
+                  (compiler-backend-avx512-i64-lane-id-label)
+                  "(%rip), ")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -6089,7 +6270,12 @@
               (compiler-backend-string-contains? asm "tail_mask_")
               (compiler-backend-string-contains? asm "lane_id_")
               (compiler-backend-string-contains? asm "    vpandq ")
-              (compiler-backend-string-contains? asm "    vmovdqu64 "))
+              (compiler-backend-string-contains?
+                asm
+                (str-cat
+                  "    vmovdqa64 "
+                  (compiler-backend-avx512-i64-lane-id-label)
+                  "(%rip), ")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -6527,6 +6713,75 @@
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-avx512-tail-mask-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-avx512-tail-mask-emits?
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx512-tail-mask
+    "_tl_tail"
+    "entry"
+    (compiler-backend-avx512-tail-mask-assignments)
+    0
+    index
+    end-value
+    lanes
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
+  (match (compiler-backend-emit-avx512-tail-mask
+    "_tl_tail"
+    "entry"
+    (compiler-backend-avx512-tail-mask-assignments)
+    0
+    (IrValueVar 1)
+    (IrValueVar 2)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    kxorw %k1, %k1, %k1\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-tail-mask-ok?) : bool
+  (and
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 8)
+      (IrValueI64 8)
+      8
+      "    kxorw %k1, %k1, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 10)
+      (IrValueI64 13)
+      8
+      "    movl $7, %eax\n    kmovw %eax, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 0)
+      (IrValueI64 8)
+      8
+      "    movl $255, %eax\n    kmovw %eax, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 0)
+      (IrValueI64 3)
+      64
+      "    movq $7, %rax\n    kmovq %rax, %k1\n")
+    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)))
+
 (define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
@@ -6905,6 +7160,7 @@
   (and
     (compiler-backend-avx2-vector-map-ok?)
     (compiler-backend-avx512-vector-map-ok?)
+    (compiler-backend-lane-id-rodata-ok?)
     (compiler-backend-avx2-uniform-vector-map-ok?)
     (compiler-backend-avx512-uniform-vector-map-ok?)
     (compiler-backend-avx512-masked-if-ok?)
@@ -6912,6 +7168,7 @@
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-tail-mask-ok?)
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
@@ -8350,8 +8607,8 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Fixed-size array set/ref emit-shape coverage (#1416). The source takes the
-;; fixed array as a parameter because fixed-array literals still have separate
-;; lowerer coverage; this exercises backend emission for fixed-array indexing.
+;; fixed array as a parameter; a separate literal source below covers #3580's
+;; stack/local fixed-array storage path.
 (define (compiler-backend-fixed-array-source) : String
   "(define (use-fixed [a : (Array i64 3)]) : i64
   (begin
@@ -8381,6 +8638,24 @@
               asm
               "    leaq (%rax,%r8,8), %rax\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-fixed-array-literal-source) : String
+  "(define (main) : i64
+  (let
+    [a : (Array i64 3) (array 1 2 3)]
+    (array-ref a 2)))")
+
+(define (compiler-backend-fixed-array-literal-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-fixed-array-literal-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -10240,6 +10515,71 @@
     (compiler-backend-stack-windows-args-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
+(define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String
+  (let
+    [label : String (str-cat symbol ":\n")]
+    [start : i64 (compiler-backend-string-find-from asm label 0)]
+    (if (< start 0)
+      ""
+      (let
+        [body-start : i64 (+ start (string-length label))]
+        [next : i64
+          (compiler-backend-string-find-from asm "\n.globl " body-start)]
+        [body-end : i64
+          (if (< next 0)
+            (string-length asm)
+            next)]
+        (substring asm body-start (- body-end body-start))))))
+
+(define (compiler-backend-direct-tail-call-reg0
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "%rcx"
+    "%rdi"))
+
+(define (compiler-backend-direct-tail-call-reg1
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "%rdx"
+    "%rsi"))
+
+(define (compiler-backend-direct-tail-call-param-store
+  [reg : String]
+  [slot : String]) : String
+  (str-cat "    movq " reg ", " slot "\n"))
+
+(define (compiler-backend-direct-tail-call-param-load
+  [slot : String]
+  [reg : String]) : String
+  (str-cat "    movq " slot ", " reg "\n"))
+
+(define (compiler-backend-direct-tail-call-identity-elided?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (let
+    [body : String (compiler-backend-asm-function-body asm "_tl_step")]
+    [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
+    [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
+    (and
+      (compiler-backend-string-contains? body "    jmp _tl_finish\n")
+      (not (compiler-backend-string-contains? body "    call _tl_finish\n"))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)")))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)")))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1))))))
+
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool
   (match (compiler-backend-emit-source-for-target
@@ -10248,7 +10588,43 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    jmp _tl_finish\n")
-        (not (compiler-backend-string-contains? asm "    call _tl_finish\n")))]
+        (not (compiler-backend-string-contains? asm "    call _tl_finish\n"))
+        (compiler-backend-direct-tail-call-identity-elided? target asm))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-i64-keeps-spills?
+  [source : String]
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target source target)
+    [(OkCompilerBackend asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_step")]
+        [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
+        [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
+        (and
+          (compiler-backend-string-contains? body "    jmp _tl_finish\n")
+          (compiler-backend-string-contains?
+            body
+            (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)"))
+          (compiler-backend-string-contains?
+            body
+            (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-f64-keeps-spills?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-direct-tail-call-f64-source)
+    target)
+    [(OkCompilerBackend asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_stepf")]
+        (and
+          (compiler-backend-string-contains? body "    jmp _tl_finishf\n")
+          (compiler-backend-string-contains? body "    movsd %xmm0, -8(%rbp)\n")
+          (compiler-backend-string-contains?
+            body
+            "    movsd %xmm1, -16(%rbp)\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
@@ -10317,16 +10693,41 @@
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
   (and
-    (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
-    (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetWindows))
-    (compiler-backend-direct-tail-immediate-stack-target-ok?
-      (BackendTargetLinux))
-    (compiler-backend-direct-tail-immediate-stack-target-ok?
-      (BackendTargetWindows))
-    (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetWindows))))
+    (backend-and8
+      (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-stack-target-ok?
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-immediate-stack-target-ok?
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-immediate-stack-target-ok?
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-mixed-target-ok?
+        (BackendTargetWindows)))
+    (backend-and8
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-reordered-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-reordered-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-duplicated-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-duplicated-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-nontrivial-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-nontrivial-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-f64-keeps-spills? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-f64-keeps-spills?
+        (BackendTargetWindows)))))
 
 (define (compiler-backend-indirect-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -11326,6 +11727,9 @@
         (compiler-object-coff-text-smoke-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
+        (compiler-backend-windows-object-unit-main-zero-ok?)
+        (compiler-backend-windows-object-load-stores-dst-ok?)
+        (compiler-backend-windows-object-stack-param-spill-ok?)
         (compiler-object-elf-smoke-ok?)
         (compiler-object-elf-text-smoke-ok?)
         (compiler-backend-elf-renders-real-text-ok?)
@@ -11438,6 +11842,7 @@
       (compiler-backend-string-ref-shape-ok?)
       (compiler-backend-fixed-array-shape-ok?)
       (and
+        (compiler-backend-fixed-array-literal-shape-ok?)
         (compiler-backend-raw-pointer-fixture-shape-ok?)
         (compiler-backend-atomic-intrinsic-shape-ok?))
       (and

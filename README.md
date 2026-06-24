@@ -34,7 +34,7 @@ Language direction:
   selects. AVX2 emits an explicit masked-if diagnostic, and the remaining SPMD
   queue covers wider lane types (#2763), public vector/mask values (#2764),
   cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
-  flow (#2767), and varying-call ABI (#2768).
+  flow (#2767), and out-of-line varying-call ABI (#2852).
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
   generates concrete types, functions, and implementation bundles instead.
@@ -251,11 +251,12 @@ TypeLisp does not plan source-level generics, traits, interfaces, `impl`
 blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
 conversion. Library abstraction should come from Zig-style comptime generation:
 compile-time code inspects type values and emits concrete structs, enums,
-functions, and implementation bundles. V1 supports explicit
-`comptime-decl`-generated concrete declarations and `comptime-decls` bundles
-when several generated items share one request key; write hand-authored
-monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums
-when a generated family has not been requested. Use `(return expr)` for
+functions, and implementation bundles. New generated declarations should use
+declaration-emitting `defmacro` forms; the deprecated `comptime-decl`
+single-payload compatibility form remains only for legacy generated concrete
+declarations. Write hand-authored monomorphic declarations such as `MaybeI64`
+or domain-specific `Result*` enums when a generated family has not been
+requested. Use `(return expr)` for
 function-local early exits, `(when cond body)` /
 `(unless cond body)` for unit-valued guards, and `(try expr)` for the
 Lisp-shaped propagation form over compatible concrete Result-like enums.
@@ -269,9 +270,9 @@ generic/type-constructor work in #483 is superseded by that chain.
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
 `extern`, and `import`. The selfhost module/macro path also supports `module`
 and `defmacro` for typed expression macro workflows; every top-level item is
-exported by default, so the legacy `export` form is deprecated (still parsed but
-inert). The final stdlib-macro migration of parser-owned core forms remains
-separate.
+exported by default, and the legacy `export` form has been removed (it is no
+longer a recognized declaration). The final stdlib-macro migration of
+parser-owned core forms remains separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
@@ -343,8 +344,9 @@ same module can still be imported explicitly as
 qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
 `core.cond`.
 
-`typelisp compile` accepts `--cfg <name>` to enable source-level conditional
-compilation flags. Source may wrap a top-level declaration as
+`typelisp compile` and `typelisp run` accept `--cfg <name>` to enable
+source-level conditional compilation flags. Source may wrap a top-level
+declaration as
 `(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
 `(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
 not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
@@ -402,7 +404,7 @@ builds a static archive (`lib<name>.a` on Linux, `<name>.lib` on Windows).
 Assembly and object side artifacts use the same `target/<profile>/` directory.
 Package builds also emit a metadata-only comptime image named `<name>.tlci`
 beside the native artifact; `typelisp inspect <file.tlci>` renders the tlci
-header, section table, package metadata, and exports. The `.tlci` name is
+header, section table, and package metadata. The `.tlci` name is
 target-independent today because v1 images carry host compile-time metadata,
 not target runtime object code; cross-target package builds keep separate
 runtime artifacts while sharing the same host comptime image path.
@@ -744,16 +746,17 @@ handle is dead.
 
 ### Safe task threading
 
-Safe task threads use the typed closure wrappers in `stdlib/thread.tl`, such as
-`thread-spawn-i64`, `thread-spawn-string`, `thread-spawn-array-i64`, and their
-matching join functions. The checker validates the captured environment and
-joined result structurally: references, borrowed `str` views, scoped regions,
-ordinary first-class arenas, raw pointer ownership claims, live mutable aliases,
-and guards do not cross safe task-thread boundaries. Aggregate results that
-leave a worker must live in a spanning owner, or in a wrapper that explicitly
-copies them into one. `stdlib/sync.tl` provides the first concrete synchronized
-surfaces: `ChannelI64`, `ChannelI64PairChannel`, `ChannelString`, and
-`MutexI64`.
+Safe task threads use generated typed closure modules from `stdlib/thread.tl`,
+such as `(import (thread.thread-handle i64) as thread_i64)` with
+`thread_i64.spawn` / `thread_i64.join`, plus aggregate wrappers such as
+`thread-spawn-string` and their matching joins. The checker validates the
+captured environment and joined result structurally: references, borrowed `str`
+views, scoped regions, ordinary first-class arenas, raw pointer ownership
+claims, live mutable aliases, and guards do not cross safe task-thread
+boundaries. Aggregate results that leave a worker must live in a spanning
+owner, or in a wrapper that explicitly copies them into one. `stdlib/sync.tl`
+provides the first concrete synchronized surfaces: `ChannelI64`,
+`ChannelI64PairChannel`, `ChannelString`, and `MutexI64`.
 
 Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
 inside one task; task threading creates independently scheduled workers with
@@ -926,7 +929,7 @@ Commands:
 `check` is the public type-check command.
 
 `inspect <file.tlci>` reads a TypeLisp comptime image and prints stable header,
-section, package, and export metadata. Malformed images report tlci parse
+section, and package metadata. Malformed images report tlci parse
 diagnostics.
 
 Common options include `--target <target>`, `--backend-mode <mode>`,
@@ -959,12 +962,12 @@ reports the staged masked-if diagnostic.
 `(program-index)`/`(program-count)` lane identity forms are accepted in the
 SPMD scopes described by `SPEC.md` and are backend-mode observable.
 
-`compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
-predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
-forms. Without `--cfg`, named predicates are false, `(all ...)` is true only when
-all operands are true, `(any ...)` is true when any operand is true, and
-`(not ...)` negates one predicate. Target OS predicates are enabled implicitly
-from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
+`compile` and `run` accept repeated `--cfg <name>` flags. Enabled names control
+`(cfg predicate declaration)` and expression-level `(cfg predicate expr
+[else-expr])` forms. Without `--cfg`, named predicates are false, `(all ...)` is
+true only when all operands are true, `(any ...)` is true when any operand is
+true, and `(not ...)` negates one predicate. Target OS predicates are enabled
+implicitly from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
 `linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
 `windows-x86_64`.
 

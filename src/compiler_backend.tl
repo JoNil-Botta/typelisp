@@ -478,6 +478,8 @@
   (compiler-backend-empty-string-list))
 (define compiler-backend-current-phi-target-count : i64
   0)
+(define compiler-backend-identity-tail-forwarder-active : bool
+  false)
 
 (define (compiler-backend-string-list-contains?
   [items : BackendStringList]
@@ -502,6 +504,8 @@
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
+  (uses-avx2-i64-lane-id bool)
+  (uses-avx512-i64-lane-id bool)
   (uses-f64-neg bool))
 
 (defenum CompilerBackendCollectState
@@ -556,6 +560,8 @@
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
+    false
+    false
     false))
 
 (define (compiler-backend-program-collections-add-function
@@ -566,6 +572,8 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-string
@@ -576,6 +584,8 @@
     (compiler-backend-string-set-add (struct-get collections strings) text)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-float
@@ -587,6 +597,8 @@
     (struct-get collections strings)
     (compiler-backend-float-set-add (struct-get collections floats) ty bits)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-add-bytes
@@ -597,6 +609,30 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (compiler-backend-string-set-add (struct-get collections bytes) text)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
+    (struct-get collections uses-f64-neg)))
+
+(define (compiler-backend-program-collections-mark-avx2-i64-lane-id
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (struct-get collections bytes)
+    true
+    (struct-get collections uses-avx512-i64-lane-id)
+    (struct-get collections uses-f64-neg)))
+
+(define (compiler-backend-program-collections-mark-avx512-i64-lane-id
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (struct-get collections floats)
+    (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    true
     (struct-get collections uses-f64-neg)))
 
 (define (compiler-backend-program-collections-mark-f64-neg
@@ -606,6 +642,8 @@
     (struct-get collections strings)
     (struct-get collections floats)
     (struct-get collections bytes)
+    (struct-get collections uses-avx2-i64-lane-id)
+    (struct-get collections uses-avx512-i64-lane-id)
     true))
 
 ;; Concatenate fixed string groups with one allocation and one linear copy per
@@ -1626,15 +1664,16 @@
     [(AstTyF32) "vcmpps"]
     [_ ""]))
 
-(define (compiler-backend-avx512-compare-imm [op : CompilerIrBinOp]) : i64
+(define (compiler-backend-avx512-compare-predicate-separator
+  [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinEq) 0]
-    [(IrBinLt) 1]
-    [(IrBinLe) 2]
-    [(IrBinNe) 4]
-    [(IrBinGe) 5]
-    [(IrBinGt) 6]
-    [_ -1]))
+    [(IrBinEq) " $0, "]
+    [(IrBinLt) " $1, "]
+    [(IrBinLe) " $2, "]
+    [(IrBinNe) " $4, "]
+    [(IrBinGe) " $5, "]
+    [(IrBinGt) " $6, "]
+    [_ ""]))
 
 (define (compiler-backend-avx512-splat-load
   [assignments : CompilerRegAssignmentList]
@@ -1785,6 +1824,9 @@
 (define (compiler-backend-avx512-mask-xor-mnemonic [lanes : i64]) : String
   (string-append "xor" (compiler-backend-avx512-mask-int-suffix lanes)))
 
+(define (compiler-backend-avx512-mask-kxor-mnemonic [lanes : i64]) : String
+  (string-append "kxor" (compiler-backend-avx512-mask-op-suffix lanes)))
+
 (define (compiler-backend-avx512-mask-kortest-mnemonic [lanes : i64]) : String
   (string-append "kortest" (compiler-backend-avx512-mask-op-suffix lanes)))
 
@@ -1800,14 +1842,11 @@
     function
     (str-cat "tail_mask_" current-label "_v" (int->string dst) suffix)))
 
-(define (compiler-backend-lane-id-label
-  [function : String]
-  [current-label : String]
-  [dst : i64]
-  [suffix : String]) : String
-  (compiler-backend-asm-label
-    function
-    (str-cat "lane_id_" current-label "_v" (int->string dst) suffix)))
+(define (compiler-backend-avx2-i64-lane-id-label) : String
+  ".L_tl_lane_id_i64x4")
+
+(define (compiler-backend-avx512-i64-lane-id-label) : String
+  ".L_tl_lane_id_i64x8")
 
 (define (compiler-backend-lane-id-avx512-i64-shape-ok?
   [elem-ty : AstType]
@@ -1843,9 +1882,40 @@
     .quad 3
 ")
 
+(define (compiler-backend-emit-avx2-i64-lane-id-rodata-into [buf : TextBuf]) : TextBuf
+  (text-buf-append
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append buf "    .section .rodata\n    .balign 32\n")
+        (compiler-backend-avx2-i64-lane-id-label))
+      ":\n")
+    (compiler-backend-avx2-i64-lane-id-data)))
+
+(define (compiler-backend-emit-avx512-i64-lane-id-rodata-into [buf : TextBuf]) : TextBuf
+  (text-buf-append
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append buf "    .section .rodata\n    .balign 64\n")
+        (compiler-backend-avx512-i64-lane-id-label))
+      ":\n")
+    (compiler-backend-avx512-i64-lane-id-data)))
+
+(define (compiler-backend-emit-lane-id-rodata-into
+  [uses-avx2-i64-lane-id : bool]
+  [uses-avx512-i64-lane-id : bool]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [avx2-buf : TextBuf
+      (if uses-avx2-i64-lane-id
+        (compiler-backend-emit-avx2-i64-lane-id-rodata-into buf)
+        buf)]
+    (if uses-avx512-i64-lane-id
+      (compiler-backend-emit-avx512-i64-lane-id-rodata-into avx2-buf)
+      avx2-buf)))
+
 (define (compiler-backend-emit-vector-lane-id
-  [function : String]
-  [current-label : String]
+  [_function : String]
+  [_current-label : String]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [lanes : i64]
@@ -1855,18 +1925,9 @@
     (match (compiler-backend-vector-var-reg assignments dst "lane id dst" "zmm")
       [(OkBackendReg dst-reg)
         (let
-          [data-label : String
-            (compiler-backend-lane-id-label function current-label dst "_data")]
-          [done-label : String
-            (compiler-backend-lane-id-label function current-label dst "_done")]
+          [data-label : String (compiler-backend-avx512-i64-lane-id-label)]
           (OkCompilerBackend
-            (string-append
-              (str-cat "    jmp " done-label "\n" data-label ":\n")
-              (string-append
-                (compiler-backend-avx512-i64-lane-id-data)
-                (string-append
-                  (str-cat done-label ":\n    vmovdqu64 " data-label "(%rip), ")
-                  (str-cat dst-reg "\n"))))))]
+            (str-cat "    vmovdqa64 " data-label "(%rip), " dst-reg "\n")))]
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])
@@ -1878,26 +1939,9 @@
         "ymm")
         [(OkBackendReg dst-reg)
           (let
-            [data-label : String
-              (compiler-backend-lane-id-label
-                function
-                current-label
-                dst
-                "_data")]
-            [done-label : String
-              (compiler-backend-lane-id-label
-                function
-                current-label
-                dst
-                "_done")]
+            [data-label : String (compiler-backend-avx2-i64-lane-id-label)]
             (OkCompilerBackend
-              (string-append
-                (str-cat "    jmp " done-label "\n" data-label ":\n")
-                (string-append
-                  (compiler-backend-avx2-i64-lane-id-data)
-                  (string-append
-                    (str-cat done-label ":\n    vmovdqu " data-label "(%rip), ")
-                    (str-cat dst-reg "\n"))))))]
+              (str-cat "    vmovdqa " data-label "(%rip), " dst-reg "\n")))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
             (compiler-diagnostic-with-message instr-diag message))])
@@ -2099,8 +2143,11 @@
     (let
       [mnemonic : String
         (compiler-backend-avx512-vector-compare-mnemonic elem-ty)]
-      [predicate : i64 (compiler-backend-avx512-compare-imm op)]
-      (if (or (= (string-length mnemonic) 0) (< predicate 0))
+      [predicate-separator : String
+        (compiler-backend-avx512-compare-predicate-separator op)]
+      (if (or
+        (= (string-length mnemonic) 0)
+        (= (string-length predicate-separator) 0))
         (ErrCompilerBackend
           (compiler-diagnostic-with-message
             instr-diag
@@ -2118,16 +2165,16 @@
                 (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
                   [(OkBackendReg dst-reg)
                     (OkCompilerBackend
-                      (string-append
-                        (str-cat
-                          "    "
-                          mnemonic
-                          " $"
-                          (int->string predicate)
-                          ", ")
-                        (string-append
-                          (str-cat rhs-reg ", " lhs-reg ", ")
-                          (str-cat dst-reg "\n"))))]
+                      (str-cat
+                        "    "
+                        mnemonic
+                        predicate-separator
+                        rhs-reg
+                        ", "
+                        lhs-reg
+                        ", "
+                        dst-reg
+                        "\n"))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message instr-diag message))])]
@@ -2310,6 +2357,55 @@
       [(CompilerBackendSomeVectorMemFold _) true]
       [(CompilerBackendNoVectorMemFold) false])))
 
+(define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
+  (let
+    [i : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< i active-lanes)
+        (begin
+          (set! mask (bit-or mask (shl 1 i)))
+          (set! i (+ i 1))))
+      mask)))
+
+(define (compiler-backend-avx512-tail-mask-immediate
+  [index : i64]
+  [end-value : i64]
+  [lanes : i64]) : i64
+  (let
+    [active-lanes : i64 (- end-value index)]
+    (cond
+      [(<= active-lanes 0) 0]
+      [(>= active-lanes lanes) (compiler-backend-avx512-lane-mask lanes)]
+      [else (compiler-backend-avx512-partial-mask active-lanes)])))
+
+(define (compiler-backend-emit-avx512-mask-immediate
+  [dst-reg : String]
+  [mask : i64]
+  [lanes : i64]) : String
+  (if (= mask 0)
+    (let
+      [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
+      (str-cat "    " kxor " " dst-reg ", " dst-reg ", " dst-reg "\n"))
+    (let
+      [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+      [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
+      [mov-imm : String (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
+      (str-cat
+        "    "
+        mov-imm
+        " $"
+        (int->string mask)
+        ", "
+        mask-gpr
+        "\n    "
+        mask-move
+        " "
+        mask-gpr
+        ", "
+        dst-reg
+        "\n"))))
+
 (define (compiler-backend-emit-vector-reduce
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -2362,6 +2458,113 @@
       elem-ty
       instr-diag)))
 
+(define (compiler-backend-emit-avx512-tail-mask-dynamic
+  [function : String]
+  [current-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [dst-reg : String]
+  [dst : i64]
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+      [(OkCompilerBackend index-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          end-value
+          "%rcx")
+          [(OkCompilerBackend end-asm)
+            (let
+              [full-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_full")]
+              [zero-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_zero")]
+              [done-label : String
+                (compiler-backend-avx512-mask-label
+                  function
+                  current-label
+                  dst
+                  "_done")]
+              [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
+              [mask-move : String
+                (compiler-backend-avx512-mask-move-mnemonic lanes)]
+              [mov-imm : String
+                (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
+              [shift : String (compiler-backend-avx512-mask-shl-mnemonic lanes)]
+              [sub : String (compiler-backend-avx512-mask-sub-mnemonic lanes)]
+              [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
+              [body-range : String
+                (str-cat
+                  "    subq %rax, %rcx\n    cmpq $"
+                  (int->string lanes)
+                  ", %rcx\n    jge "
+                  full-label
+                  "\n")]
+              [body-nonzero-a : String
+                (str-cat
+                  "    testq %rcx, %rcx\n    jle "
+                  zero-label
+                  "\n    "
+                  mov-imm
+                  " $1, ")]
+              [body-nonzero-b : String
+                (str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
+              [body-mask-a : String
+                (str-cat "    " sub " $1, " mask-gpr "\n    ")]
+              [body-mask-b : String
+                (str-cat mask-move " " mask-gpr ", " dst-reg)]
+              [body-mask-c : String
+                (str-cat "\n    jmp " done-label "\n" full-label ":\n    ")]
+              [body-full-a : String
+                (str-cat mov-imm " $" (int->string full-mask) ", " mask-gpr)]
+              [body-full-b : String
+                (str-cat "\n    " mask-move " " mask-gpr ", ")]
+              [body-full-c : String
+                (str-cat dst-reg "\n    jmp " done-label "\n" zero-label ":\n")]
+              [body-zero : String
+                (str-cat
+                  "    "
+                  kxor
+                  " "
+                  dst-reg
+                  ", "
+                  dst-reg
+                  ", "
+                  dst-reg
+                  "\n"
+                  done-label
+                  ":\n")]
+              [body-asm : String
+                (str-cat
+                  body-range
+                  body-nonzero-a
+                  body-nonzero-b
+                  body-mask-a
+                  body-mask-b
+                  body-mask-c
+                  body-full-a
+                  body-full-b
+                  body-full-c
+                  body-zero)]
+              (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+
 (define (compiler-backend-emit-avx512-tail-mask
   [function : String]
   [current-label : String]
@@ -2375,119 +2578,40 @@
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "tail mask dst")
       [(OkBackendReg dst-reg)
-        (let
-          [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            index
-            "%rax")
-            [(OkCompilerBackend index-asm)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                end-value
-                "%rcx")
-                [(OkCompilerBackend end-asm)
-                  (let
-                    [full-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_full")]
-                    [zero-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_zero")]
-                    [done-label : String
-                      (compiler-backend-avx512-mask-label
-                        function
-                        current-label
-                        dst
-                        "_done")]
-                    [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
-                    [mask-move : String
-                      (compiler-backend-avx512-mask-move-mnemonic lanes)]
-                    [mov-imm : String
-                      (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
-                    [shift : String
-                      (compiler-backend-avx512-mask-shl-mnemonic lanes)]
-                    [sub : String
-                      (compiler-backend-avx512-mask-sub-mnemonic lanes)]
-                    [xor : String
-                      (compiler-backend-avx512-mask-xor-mnemonic lanes)]
-                    [body-range : String
-                      (str-cat
-                        "    subq %rax, %rcx\n    cmpq $"
-                        (int->string lanes)
-                        ", %rcx\n    jge "
-                        full-label
-                        "\n")]
-                    [body-nonzero-a : String
-                      (str-cat
-                        "    testq %rcx, %rcx\n    jle "
-                        zero-label
-                        "\n    "
-                        mov-imm
-                        " $1, ")]
-                    [body-nonzero-b : String
-                      (str-cat mask-gpr "\n    " shift " %cl, " mask-gpr "\n")]
-                    [body-mask-a : String
-                      (str-cat "    " sub " $1, " mask-gpr "\n    ")]
-                    [body-mask-b : String
-                      (str-cat mask-move " " mask-gpr ", " dst-reg)]
-                    [body-mask-c : String
-                      (str-cat
-                        "\n    jmp "
-                        done-label
-                        "\n"
-                        full-label
-                        ":\n    ")]
-                    [body-full-a : String
-                      (str-cat
-                        mov-imm
-                        " $"
-                        (int->string full-mask)
-                        ", "
-                        mask-gpr)]
-                    [body-full-b : String
-                      (str-cat "\n    " mask-move " " mask-gpr ", ")]
-                    [body-full-c : String
-                      (str-cat
-                        dst-reg
-                        "\n    jmp "
-                        done-label
-                        "\n"
-                        zero-label
-                        ":\n")]
-                    [body-zero-a : String
-                      (str-cat "    " xor " " mask-gpr ", ")]
-                    [body-zero-b : String
-                      (str-cat mask-gpr "\n    " mask-move " " mask-gpr)]
-                    [body-zero-c : String
-                      (str-cat ", " dst-reg "\n" done-label ":\n")]
-                    [body-asm : String
-                      (str-cat
-                        body-range
-                        body-nonzero-a
-                        body-nonzero-b
-                        body-mask-a
-                        body-mask-b
-                        body-mask-c
-                        body-full-a
-                        body-full-b
-                        body-full-c
-                        body-zero-a
-                        body-zero-b
-                        body-zero-c)]
-                    (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+        (match index
+          [(IrValueI64 index-imm)
+            (match end-value
+              [(IrValueI64 end-imm)
+                (OkCompilerBackend
+                  (compiler-backend-emit-avx512-mask-immediate
+                    dst-reg
+                    (compiler-backend-avx512-tail-mask-immediate
+                      index-imm
+                      end-imm
+                      lanes)
+                    lanes))]
+              [_
+                (compiler-backend-emit-avx512-tail-mask-dynamic
+                  function
+                  current-label
+                  assignments
+                  dst-reg
+                  dst
+                  index
+                  end-value
+                  lanes
+                  instr-diag)])]
+          [_
+            (compiler-backend-emit-avx512-tail-mask-dynamic
+              function
+              current-label
+              assignments
+              dst-reg
+              dst
+              index
+              end-value
+              lanes
+              instr-diag)])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])))
@@ -11335,6 +11459,142 @@
         (= tail-stack 0)
         (not (compiler-backend-type-list-has-group? types program-index))))))
 
+(define (compiler-backend-identity-tail-forwarder-type-ok?
+  [program-index : CompilerBackendProgramIndex]
+  [ty : AstType]) : bool
+  (and
+    (= (compiler-backend-type-size ty) 8)
+    (not (compiler-backend-float-type? ty))
+    (not (compiler-backend-group-type? program-index ty))))
+
+(define (compiler-backend-identity-tail-forwarder-args?
+  [target : CompilerBackendTarget]
+  [params : CompilerIrParamList]
+  [args : CompilerIrCallArgs]
+  [target-types : AstTypeList]
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    (match params
+      [(IrParamNil)
+        (match target-types
+          [(AstTypeNil) true]
+          [_ false])]
+      [_ false])
+    (match params
+      [(IrParamNil) false]
+      [(IrParamCons param rest)
+        (match target-types
+          [(AstTypeNil) false]
+          [(AstTypeCons target-ty target-rest)
+            (match param
+              [(IrParam _ source-ty var-id)
+                (let
+                  [callee-ty : AstType (ty-node-get target-ty)]
+                  (match (compiler-backend-call-arg-at args arg-index)
+                    [(IrValueVar arg-var)
+                      (and
+                        (= arg-var var-id)
+                        (compiler-backend-identity-tail-forwarder-type-ok?
+                          program-index
+                          source-ty)
+                        (compiler-backend-identity-tail-forwarder-type-ok?
+                          program-index
+                          callee-ty)
+                        (not
+                          (compiler-backend-stack-call-arg-for-banks?
+                            target
+                            false
+                            int-idx
+                            float-idx
+                            position))
+                        (compiler-backend-identity-tail-forwarder-args?
+                          target
+                          (box-get rest)
+                          args
+                          (box-get target-rest)
+                          (+ arg-index 1)
+                          (+ int-idx 1)
+                          float-idx
+                          (+ position 1)
+                          program-index))]
+                    [_ false]))])])])))
+
+(define (compiler-backend-identity-tail-forwarder-call?
+  [target : CompilerBackendTarget]
+  [_source-function : String]
+  [params : CompilerIrParamList]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (if (compiler-backend-index-function-defines? program-index name)
+    (let
+      [target-types : AstTypeList
+        (compiler-backend-call-param-types-index name program-index)]
+      (compiler-backend-identity-tail-forwarder-args?
+        target
+        params
+        args
+        target-types
+        0
+        0
+        0
+        0
+        program-index))
+    false))
+
+(define (compiler-backend-identity-tail-forwarder-block?
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [params : CompilerIrParamList]
+  [block : CompilerIrBlock]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (if (= (compiler-ir-instr-seq-count instrs) 1)
+        (match (compiler-ir-instr-seq-ref instrs 0)
+          [(IrInstrTailCall name args _)
+            (compiler-backend-identity-tail-forwarder-call?
+              target
+              source-function
+              params
+              name
+              args
+              program-index)]
+          [_ false])
+        false)]))
+
+(define (compiler-backend-identity-tail-forwarder?
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match (box-get rest)
+        [(IrBlockNil)
+          (compiler-backend-identity-tail-forwarder-block?
+            target
+            source-function
+            params
+            block
+            program-index)]
+        [_ false])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (compiler-backend-identity-tail-forwarder-block?
+          target
+          source-function
+          params
+          (compiler-ir-block-seq-ref seq 0)
+          program-index)
+        false)]))
+
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
 ;; this is 0 whenever every arg fits in registers.
@@ -13448,27 +13708,29 @@
       args
       param-types
       program-index)
-      (match (if (= tail-stack-count 0)
-        (compiler-backend-emit-call-args
-          target
-          assignments
-          args
-          param-types
-          c-abi?
-          0
-          0
-          0
-          0
-          0
-          instr-diag
-          program-index
-          vars)
-        (compiler-backend-emit-direct-tail-call-args
-          target
-          assignments
-          args
-          param-types
-          instr-diag))
+      (match (if compiler-backend-identity-tail-forwarder-active
+        (OkCompilerBackend "")
+        (if (= tail-stack-count 0)
+          (compiler-backend-emit-call-args
+            target
+            assignments
+            args
+            param-types
+            c-abi?
+            0
+            0
+            0
+            0
+            0
+            instr-diag
+            program-index
+            vars)
+          (compiler-backend-emit-direct-tail-call-args
+            target
+            assignments
+            args
+            param-types
+            instr-diag)))
         [(OkCompilerBackend args-asm)
           (OkCompilerBackend
             (string-append
@@ -21564,6 +21826,13 @@
           (compiler-backend-function-symbol-index program-index name)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts remat-vars emit-blocks-list)]
+        [identity-tail-forwarder? : bool
+          (compiler-backend-identity-tail-forwarder?
+            target
+            name
+            params
+            emit-blocks-list
+            program-index)]
         (if (compiler-backend-atomic-call-name? symbol)
           (OkCompilerBackend
             (compiler-backend-emit-atomic-helper-function target symbol))
@@ -21572,16 +21841,18 @@
               (set!
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
-            (match (compiler-backend-emit-param-spills
-              target
-              assignments
-              params
-              0
-              0
-              0
-              0
-              program-index
-              slot-vars)
+            (match (if identity-tail-forwarder?
+              (OkCompilerBackend "")
+              (compiler-backend-emit-param-spills
+                target
+                assignments
+                params
+                0
+                0
+                0
+                0
+                program-index
+                slot-vars))
               [(OkCompilerBackend spills)
                 (let
                   [label-scope : String
@@ -21596,6 +21867,10 @@
                       remat-vars
                       use-counts
                       emit-blocks-list)]
+                  [_identity-tail-forwarder : unit
+                    (set!
+                      compiler-backend-identity-tail-forwarder-active
+                      identity-tail-forwarder?)]
                   (match (compiler-backend-emit-blocks
                     target
                     label-scope
@@ -21629,6 +21904,9 @@
                               program-index))]
                         [_addr-forward-done : unit
                           (begin
+                            (set!
+                              compiler-backend-identity-tail-forwarder-active
+                              false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
                         (OkCompilerBackend
@@ -21683,6 +21961,9 @@
                       (let
                         [_addr-forward-done : unit
                           (begin
+                            (set!
+                              compiler-backend-identity-tail-forwarder-active
+                              false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
                         (ErrCompilerBackend message))]))]
@@ -22348,6 +22629,14 @@
   [collections : CompilerBackendProgramCollections]) : BackendStringList
   (compiler-backend-string-set-list (struct-get collections bytes)))
 
+(define (compiler-backend-program-collections-uses-avx2-i64-lane-id?
+  [collections : CompilerBackendProgramCollections]) : bool
+  (struct-get collections uses-avx2-i64-lane-id))
+
+(define (compiler-backend-program-collections-uses-avx512-i64-lane-id?
+  [collections : CompilerBackendProgramCollections]) : bool
+  (struct-get collections uses-avx512-i64-lane-id))
+
 (define (compiler-backend-program-collections-uses-f64-neg?
   [collections : CompilerBackendProgramCollections]) : bool
   (struct-get collections uses-f64-neg))
@@ -22359,6 +22648,16 @@
     (compiler-backend-program-collections-add-float collections (AstTyF64) bits)
     (AstTyF32)
     bits))
+
+(define (compiler-backend-collect-lane-id-collections
+  [collections : CompilerBackendProgramCollections]
+  [lanes : i64]
+  [elem-ty : AstType]) : CompilerBackendProgramCollections
+  (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
+    (compiler-backend-program-collections-mark-avx512-i64-lane-id collections)
+    (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
+      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)
+      collections)))
 
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]
@@ -22592,7 +22891,8 @@
         args)]
     [(IrInstrAlloc _ _) collections]
     [(IrInstrAddrOf _ _) collections]
-    [(IrInstrLaneId _ _ _) collections]
+    [(IrInstrLaneId _ lanes elem-ty)
+      (compiler-backend-collect-lane-id-collections collections lanes elem-ty)]
     [(IrInstrEntryArgc _) collections]
     [(IrInstrEntryArgv _) collections]
     [(IrInstrEntryEnvp _) collections]
@@ -26730,6 +27030,8 @@ tl_memcpy:
   [strings : BackendStringList]
   [bytes : BackendStringList]
   [floats : BackendFloatList]
+  [uses-avx2-i64-lane-id : bool]
+  [uses-avx512-i64-lane-id : bool]
   [uses-f64-neg : bool]
   [globals-buf : TextBuf]
   [emit-entry : bool]
@@ -26757,6 +27059,11 @@ tl_memcpy:
               (compiler-backend-emit-f64-sign-bit-rodata-into
                 uses-f64-neg
                 float-literals-buf)]
+            [lane-id-buf : TextBuf
+              (compiler-backend-emit-lane-id-rodata-into
+                uses-avx2-i64-lane-id
+                uses-avx512-i64-lane-id
+                f64-buf)]
             (begin
               (cfg
                 compile-profile
@@ -26769,7 +27076,7 @@ tl_memcpy:
                     entry-functions
                     externs
                     program-index
-                    f64-buf)]
+                    lane-id-buf)]
                 (begin
                   (cfg
                     compile-profile
@@ -26863,6 +27170,11 @@ tl_memcpy:
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
+    [uses-avx2-i64-lane-id : bool
+      (compiler-backend-program-collections-uses-avx2-i64-lane-id? collections)]
+    [uses-avx512-i64-lane-id : bool
+      (compiler-backend-program-collections-uses-avx512-i64-lane-id?
+        collections)]
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg? collections)]
     [span-index : CompilerBackendSourceSpanIndex
@@ -26885,6 +27197,8 @@ tl_memcpy:
             strings
             bytes
             floats
+            uses-avx2-i64-lane-id
+            uses-avx512-i64-lane-id
             uses-f64-neg
             globals-buf
             emit-entry
@@ -27507,10 +27821,11 @@ tl_memcpy:
 (define (compiler-backend-object-disp8? [disp : i64]) : bool
   (and (>= disp -128) (<= disp 127)))
 
-(define (compiler-backend-object-load-slot-bytes [var-id : i64] [reg : String]) : String
+(define (compiler-backend-object-load-rbp-disp-bytes
+  [disp : i64]
+  [reg : String]) : String
   (let
     [out : (Array u8) (make-array u8 0)]
-    [disp : i64 (compiler-backend-object-slot-disp var-id)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -27625,6 +27940,73 @@ tl_memcpy:
 (define (compiler-backend-object-leave-ret-bytes) : String
   (compiler-backend-object-bytes-from-hex "c9c3"))
 
+(define (compiler-backend-object-zero-eax-bytes) : String
+  (compiler-backend-object-bytes-from-hex "31c0"))
+
+(define (compiler-backend-object-rsp-imm-bytes [opcode : i64] [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (if (<= value 127)
+        (begin
+          (compiler-backend-object-push-u8! out 0x48)
+          (compiler-backend-object-push-u8! out 0x83)
+          (compiler-backend-object-push-u8! out opcode)
+          (compiler-backend-object-push-u8! out value))
+        (begin
+          (compiler-backend-object-push-u8! out 0x48)
+          (compiler-backend-object-push-u8! out 0x81)
+          (compiler-backend-object-push-u8! out opcode)
+          (compiler-backend-object-push-u32! out value)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-sub-rsp-bytes [value : i64]) : String
+  (if (= value 0)
+    ""
+    (compiler-backend-object-rsp-imm-bytes 0xec value)))
+
+(define (compiler-backend-object-add-rsp-bytes [value : i64]) : String
+  (if (= value 0)
+    ""
+    (compiler-backend-object-rsp-imm-bytes 0xc4 value)))
+
+(define (compiler-backend-object-store-rax-rsp-bytes [disp : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x89)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! out 0x44)
+          (compiler-backend-object-push-u8! out 0x24)
+          (compiler-backend-object-push-u8! out disp))
+        (begin
+          (compiler-backend-object-push-u8! out 0x84)
+          (compiler-backend-object-push-u8! out 0x24)
+          (compiler-backend-object-push-u32! out disp)))
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-load-rax-pointee-bytes [ty : AstType]) : String
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
+    [signed : bool (compiler-backend-type-signed? ty)]
+    (cond
+      [(= size 8) (compiler-backend-object-bytes-from-hex "488b00")]
+      [(= size 4)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "486300")
+          (compiler-backend-object-bytes-from-hex "8b00"))]
+      [(= size 2)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "480fbf00")
+          (compiler-backend-object-bytes-from-hex "0fb700"))]
+      [(= size 1)
+        (if signed
+          (compiler-backend-object-bytes-from-hex "480fbe00")
+          (compiler-backend-object-bytes-from-hex "0fb600"))]
+      [else (compiler-backend-object-bytes-from-hex "488b00")])))
+
 (define (compiler-backend-object-leave-bytes) : String
   (compiler-backend-object-bytes-from-hex "c9"))
 
@@ -27637,7 +28019,9 @@ tl_memcpy:
     [(IrValueVar id)
       (compiler-backend-object-add-nonempty-bytes
         parts
-        (compiler-backend-object-load-slot-bytes id reg))]
+        (compiler-backend-object-load-rbp-disp-bytes
+          (compiler-backend-object-slot-disp id)
+          reg))]
     [(IrValueI64 n)
       (compiler-backend-object-add-nonempty-bytes
         parts
@@ -27722,6 +28106,19 @@ tl_memcpy:
     dst
     "%rax"))
 
+(define (compiler-backend-object-load-ptr-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]) : CompilerBackendObjectParts
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-load-value-to-reg parts site src "%rax")
+      (compiler-backend-object-load-rax-pointee-bytes ty))
+    dst
+    "%rax"))
+
 (define (compiler-backend-object-sub-imm32-rax-bytes [value : i64]) : String
   (let
     [out : (Array u8) (make-array u8 0)]
@@ -27730,6 +28127,67 @@ tl_memcpy:
       (compiler-backend-object-push-u8! out 0x2d)
       (compiler-backend-object-push-u32! out value)
       (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-add-imm32-rax-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x05)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-imul-imm32-r8-bytes [value : i64]) : String
+  (let
+    [out : (Array u8) (make-array u8 0)]
+    (begin
+      (compiler-backend-object-push-u8! out 0x4d)
+      (compiler-backend-object-push-u8! out 0x69)
+      (compiler-backend-object-push-u8! out 0xc0)
+      (compiler-backend-object-push-u32! out value)
+      (compiler-backend-object-bytes-finish out))))
+
+(define (compiler-backend-object-add-r8-rax-bytes) : String
+  (compiler-backend-object-bytes-from-hex "4c01c0"))
+
+(define (compiler-backend-object-gep-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]) : CompilerBackendObjectParts
+  (let
+    [elem-size : i64 (compiler-backend-type-size elem-ty)]
+    [with-base : CompilerBackendObjectParts
+      (compiler-backend-object-load-value-to-reg parts site base "%rax")]
+    [with-offset : CompilerBackendObjectParts
+      (match offset
+        [(IrValueI64 n)
+          (let
+            [disp : i64 (* n elem-size)]
+            (if (= disp 0)
+              with-base
+              (compiler-backend-object-add-nonempty-bytes
+                with-base
+                (compiler-backend-object-add-imm32-rax-bytes disp))))]
+        [_
+          (compiler-backend-object-add-nonempty-bytes
+            (if (= elem-size 1)
+              (compiler-backend-object-load-value-to-reg
+                with-base
+                site
+                offset
+                "%r8")
+              (compiler-backend-object-add-nonempty-bytes
+                (compiler-backend-object-load-value-to-reg
+                  with-base
+                  site
+                  offset
+                  "%r8")
+                (compiler-backend-object-imul-imm32-r8-bytes elem-size)))
+            (compiler-backend-object-add-r8-rax-bytes))])]
+    (compiler-backend-object-store-reg-to-var with-offset dst "%rax")))
 
 (define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
   (let
@@ -27916,32 +28374,113 @@ tl_memcpy:
         dst
         "%rax"))))
 
-(define (compiler-backend-object-call-arg-reg [index : i64]) : String
-  (match (compiler-backend-arg-reg index)
+(define (compiler-backend-object-call-arg-reg
+  [target : CompilerBackendTarget]
+  [index : i64]) : String
+  (match (compiler-backend-target-arg-reg target index)
     [(OkBackendReg reg) reg]
     [(ErrBackendReg _) "%rax"]))
 
+(define (compiler-backend-object-call-reg-count
+  [target : CompilerBackendTarget]) : i64
+  (match target
+    [(BackendTargetLinux) 6]
+    [(BackendTargetWindows) 4]))
+
+(define (compiler-backend-object-call-stack-word-count
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : i64
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    [regs : i64 (compiler-backend-object-call-reg-count target)]
+    (if (> count regs)
+      (- count regs)
+      0)))
+
+(define (compiler-backend-object-call-space
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows)
+      (compiler-backend-round-up-16
+        (+
+          (compiler-backend-outgoing-shadow-space target)
+          (* 8 (compiler-backend-object-call-stack-word-count target args))))]))
+
+(define (compiler-backend-object-call-stack-arg
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [site : String]
+  [value : CompilerIrValue]
+  [stack-index : i64]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-nonempty-bytes
+    (compiler-backend-object-load-value-to-reg parts site value "%rax")
+    (compiler-backend-object-store-rax-rsp-bytes
+      (compiler-backend-outgoing-stack-arg-offset target stack-index))))
+
 (define (compiler-backend-object-call-arg-moves
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [site : String]
   [args : CompilerIrCallArgs]
   [index : i64]) : CompilerBackendObjectParts
   (if (>= index (compiler-backend-call-args-count args))
     parts
-    (if (>= index 6)
-      parts
+    (if (>= index (compiler-backend-object-call-reg-count target))
+      (match target
+        [(BackendTargetLinux) parts]
+        [(BackendTargetWindows)
+          (compiler-backend-object-call-arg-moves
+            (compiler-backend-object-call-stack-arg
+              parts
+              target
+              site
+              (compiler-backend-call-arg-at args index)
+              (- index (compiler-backend-object-call-reg-count target)))
+            target
+            site
+            args
+            (+ index 1))])
       (compiler-backend-object-call-arg-moves
         (compiler-backend-object-load-value-to-reg
           parts
           site
           (compiler-backend-call-arg-at args index)
-          (compiler-backend-object-call-arg-reg index))
+          (compiler-backend-object-call-arg-reg target index))
+        target
         site
         args
         (+ index 1)))))
 
+(define (compiler-backend-object-direct-call
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [site : String]
+  [symbol : String]
+  [args : CompilerIrCallArgs]) : CompilerBackendObjectParts
+  (let
+    [space : i64 (compiler-backend-object-call-space target args)]
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-relocation
+          (compiler-backend-object-call-arg-moves
+            (compiler-backend-object-add-nonempty-bytes
+              parts
+              (compiler-backend-object-sub-rsp-bytes space))
+            target
+            site
+            args
+            0)
+          site
+          (ObjectRelocCall)
+          symbol)
+        (ObjectX64Call symbol))
+      (compiler-backend-object-add-rsp-bytes space))))
+
 (define (compiler-backend-object-param-spills
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [int-index : i64]) : CompilerBackendObjectParts
   (match params
@@ -27952,23 +28491,41 @@ tl_memcpy:
           (if (compiler-backend-float-type? ty)
             (compiler-backend-object-param-spills
               parts
+              target
               (box-get rest)
               int-index)
-            (if (>= int-index 6)
+            (if (>= int-index (compiler-backend-object-call-reg-count target))
               (compiler-backend-object-param-spills
-                parts
+                (match target
+                  [(BackendTargetLinux) parts]
+                  [(BackendTargetWindows)
+                    (compiler-backend-object-store-reg-to-var
+                      (compiler-backend-object-add-nonempty-bytes
+                        parts
+                        (compiler-backend-object-load-rbp-disp-bytes
+                          (compiler-backend-incoming-stack-arg-offset
+                            target
+                            (-
+                              int-index
+                              (compiler-backend-object-call-reg-count target)))
+                          "%rax"))
+                      var-id
+                      "%rax")])
+                target
                 (box-get rest)
                 (+ int-index 1))
               (compiler-backend-object-param-spills
                 (compiler-backend-object-store-reg-to-var
                   parts
                   var-id
-                  (compiler-backend-object-call-arg-reg int-index))
+                  (compiler-backend-object-call-arg-reg target int-index))
+                target
                 (box-get rest)
                 (+ int-index 1))))])]))
 
 (define (compiler-backend-object-instr
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
   [current-label : String]
@@ -27997,16 +28554,15 @@ tl_memcpy:
           [_ with-src]))]
     [(IrInstrCall dst name args _)
       (let
-        [target : String
+        [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-store-reg-to-var
-          (compiler-backend-object-add-text
-            (compiler-backend-object-add-text-relocation
-              (compiler-backend-object-call-arg-moves parts function args 0)
-              function
-              (ObjectRelocCall)
-              target)
-            (ObjectX64Call target))
+          (compiler-backend-object-direct-call
+            parts
+            target
+            function
+            call-target
+            args)
           dst
           "%rax"))]
     [(IrInstrCallIndirect _ callee args _)
@@ -28025,19 +28581,14 @@ tl_memcpy:
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
           (let
-            [target : String
+            [call-target : String
               (compiler-backend-call-symbol-index name plan program-index)]
-            (compiler-backend-object-add-text
-              (compiler-backend-object-add-text-relocation
-                (compiler-backend-object-call-args
-                  (compiler-backend-object-value-ref parts function base)
-                  function
-                  args
-                  0)
-                function
-                (ObjectRelocCall)
-                target)
-              (ObjectX64Call target)))])]
+            (compiler-backend-object-direct-call
+              (compiler-backend-object-value-ref parts function base)
+              target
+              function
+              call-target
+              args))])]
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
@@ -28051,17 +28602,22 @@ tl_memcpy:
             0)])]
     [(IrInstrTailCall name args _)
       (let
-        [target : String
+        [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             (compiler-backend-object-add-nonempty-bytes
-              (compiler-backend-object-call-arg-moves parts function args 0)
+              (compiler-backend-object-call-arg-moves
+                parts
+                target
+                function
+                args
+                0)
               (compiler-backend-object-leave-bytes))
             function
             (ObjectRelocTailCall)
-            target)
-          (ObjectX64TailCall target)))]
+            call-target)
+          (ObjectX64TailCall call-target)))]
     [(IrInstrStore name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -28106,7 +28662,12 @@ tl_memcpy:
     [(IrInstrReturn value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
-          [(IrNoValue) parts]
+          [(IrNoValue)
+            (if (string-eq function "main")
+              (compiler-backend-object-add-nonempty-bytes
+                parts
+                (compiler-backend-object-zero-eax-bytes))
+              parts)]
           [(IrSomeValue inner)
             (compiler-backend-object-load-value-to-reg
               parts
@@ -28116,13 +28677,16 @@ tl_memcpy:
         (compiler-backend-object-leave-ret-bytes))]
     [(IrInstrPhi _ inputs ty)
       (compiler-backend-object-phi-inputs-with-type parts function inputs ty)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-object-value-ref
-        (compiler-backend-object-value-ref parts function base)
+    [(IrInstrGep dst base offset elem-ty)
+      (compiler-backend-object-gep-to-var
+        parts
         function
-        offset)]
-    [(IrInstrLoad _ src _)
-      (compiler-backend-object-value-ref parts function src)]
+        dst
+        base
+        offset
+        elem-ty)]
+    [(IrInstrLoad dst src ty)
+      (compiler-backend-object-load-ptr-to-var parts function dst src ty)]
     [(IrInstrStorePtr dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref parts function dst)
@@ -28139,10 +28703,10 @@ tl_memcpy:
         (compiler-backend-object-value-ref parts function index)
         function
         length)]
-    [(IrInstrCast _ src from-ty _)
-      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
-    [(IrInstrBitcast _ src from-ty _)
-      (compiler-backend-object-value-ref-with-type parts function src from-ty)]
+    [(IrInstrCast dst src from-ty _)
+      (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
+    [(IrInstrBitcast dst src from-ty _)
+      (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
     [(IrInstrSplat _ value _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
     [(IrInstrVectorBinOp payload-box)
@@ -28276,6 +28840,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-instr-seq
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
   [current-label : String]
@@ -28288,12 +28853,14 @@ tl_memcpy:
     (compiler-backend-object-instr-seq
       (compiler-backend-object-instr
         parts
+        target
         function
         label-scope
         current-label
         (compiler-ir-instr-seq-ref instrs index)
         plan
         program-index)
+      target
       function
       label-scope
       current-label
@@ -28304,6 +28871,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-blocks
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [function-symbol : String]
   [label-scope : String]
   [blocks : CompilerIrBlockList]
@@ -28326,6 +28894,7 @@ tl_memcpy:
                     (ObjectSectionText)
                     (ObjectSymbolFunction))
                   (ObjectX64Label block-label))
+                target
                 function-symbol
                 label-scope
                 label
@@ -28333,6 +28902,7 @@ tl_memcpy:
                 plan
                 program-index
                 0)
+              target
               function-symbol
               label-scope
               (box-get rest)
@@ -28341,6 +28911,7 @@ tl_memcpy:
     [(IrBlockArray seq)
       (compiler-backend-object-blocks
         parts
+        target
         function-symbol
         label-scope
         (compiler-ir-block-seq-to-list seq)
@@ -28349,6 +28920,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-functions
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
@@ -28375,19 +28947,23 @@ tl_memcpy:
                       (ObjectX64Label symbol))
                     (compiler-backend-object-prologue-bytes
                       (compiler-backend-frame-size vars)))
+                  target
                   params
                   0)
+                target
                 symbol
                 label-scope
                 blocks
                 plan
                 program-index)
+              target
               (box-get rest)
               plan
               program-index))])]
     [(IrFunctionArray seq)
       (compiler-backend-object-functions
         parts
+        target
         (compiler-ir-function-seq-to-list seq)
         plan
         program-index)]))
@@ -29036,9 +29612,13 @@ tl_memcpy:
       (compiler-backend-object-add-text-bytes
         with-argv-store
         (compiler-backend-object-windows-setup-epilogue-bytes))]
-    [with-boot-label : CompilerBackendObjectParts
+    [with-boot-public-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-setup-end
+        (ObjectX64Label "tl_alloc"))]
+    [with-boot-label : CompilerBackendObjectParts
+      (compiler-backend-object-add-text
+        with-boot-public-label
         (ObjectX64Label ".L_tl_boot_alloc"))]
     [with-boot-off-load : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
@@ -29368,6 +29948,7 @@ tl_memcpy:
                       (compiler-backend-object-globals
                         (compiler-backend-object-functions
                           (compiler-backend-object-parts-empty)
+                          target
                           entry-functions
                           plan
                           program-index)
@@ -29724,7 +30305,7 @@ tl_memcpy:
             dst
             next-src
             next-dst)
-            (backend-cat4 "    movq " src ", " next-dst)
+            (str-cat "    movq " src ", " next-dst)
             next)]
         [(CompilerBackendPeepholeNoMove) next])]
     [(CompilerBackendPeepholeNoMove) next]))
@@ -29863,7 +30444,7 @@ tl_memcpy:
             dst
             next-src
             next-dst)
-            (backend-cat4 "    movq " src ", " next-dst)
+            (str-cat "    movq " src ", " next-dst)
             (substring asm next-start (- next-end next-start)))]
         [(CompilerBackendPeepholeNoMove)
           (substring asm next-start (- next-end next-start))])]

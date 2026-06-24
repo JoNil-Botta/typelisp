@@ -229,20 +229,3 @@
       (if (not (stdlib.math.math-f64-negative? 0.0))
         unit
         (fail)))))
-
-(export
-  (value math-i64-abs)
-  (value math-i64-abs-or)
-  (value math-i64-min)
-  (value math-i64-max)
-  (value math-i64-clamp)
-  (value math-i64-negative?)
-  (value math-i64-zero?)
-  (value math-i64-positive?)
-  (value math-f64-abs)
-  (value math-f64-min)
-  (value math-f64-max)
-  (value math-f64-clamp)
-  (value math-f64-negative?)
-  (value math-f64-zero?)
-  (value math-f64-positive?))

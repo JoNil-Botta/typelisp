@@ -1,4 +1,5 @@
 (import "stdlib/thread.tl")
+(import (thread-handle i64) as thread_i64)
 
 (defstruct SafeThreadPair
   (left i64)
@@ -19,7 +20,7 @@
     [items : (Array i64 2) (array 1 2)]
     [choice : SafeThreadChoice (SafeThreadSome (SafeThreadPair 3 4))]
     [coords : (Tuple i64 i64) (tuple 5 6)]
-    (match (thread-spawn-i64
+    (match (thread_i64.spawn
       (lambda () : i64
         (+
           (struct-get pair left)
@@ -28,8 +29,8 @@
             (+
               (choice-score choice)
               (+ (tuple-ref coords 0) (tuple-ref coords 1)))))))
-      [(ThreadI64SpawnErr _) 1]
-      [(ThreadI64SpawnOk thread)
-        (match (thread-join-i64 thread)
-          [(ThreadI64JoinOk value) value]
-          [(ThreadI64JoinErr _) 2])])))
+      [(thread_i64.I64SpawnErr _) 1]
+      [(thread_i64.I64SpawnOk thread)
+        (match (thread_i64.join thread)
+          [(thread_i64.I64JoinOk value) value]
+          [(thread_i64.I64JoinErr _) 2])])))

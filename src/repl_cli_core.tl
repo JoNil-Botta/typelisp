@@ -481,6 +481,7 @@
                   source-path
                   (source-tool-default-target)
                   (string-vec-new)
+                  (string-vec-new)
                   (process-args-empty)
                   (compiler-optimize-default-level)
                   (BackendModeScalar)

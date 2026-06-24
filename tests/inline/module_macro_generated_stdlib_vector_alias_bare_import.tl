@@ -28,8 +28,7 @@
               (begin
                 (vec.get (& items) 0 fallback)
                 42)
-              0))))
-      (export (value score)))))
+              0)))))))
 
 (import (vector-user i64) as user)
 (import (vector-user String) as string-user)

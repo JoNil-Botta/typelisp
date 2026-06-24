@@ -333,6 +333,10 @@ semantics are deferred to a future feature.
   `ByteBuf`/`bytes` adoption completes (#2782), FFI/runtime buffers, and
   compiler-internal pools. Final rejection/removal of public unsized
   `(Array T)` is tracked by #3581.
+- Compiler and stdlib internals may use a compiler-private dynamic-buffer
+  spelling for vector backing while the migration is active. That spelling is
+  not a public source type and must not be documented or used as an application
+  API.
 - Collection APIs should inspect existing storage through immutable borrows and
   mutate through `&mut` where possible. Mutating collection operations should
   update storage in place instead of returning copied whole collections.
@@ -598,7 +602,10 @@ classifying a synthetic aggregate view consisting of the 8-byte tag followed by
 the max-sized payload union. Tag-only enums are scalar register aggregates;
 payload enum arguments larger than 8 bytes are passed by hidden reference and
 payload enum returns larger than 8 bytes use sret. The Linux x86_64 System V
-C ABI path currently accepts tag-only enum externs only.
+C ABI path uses the same synthetic enum view and classifies it with the shared
+System V aggregate classifier: register-class enum arguments/returns use the
+normal integer/SSE register slots, larger enum arguments are MEMORY-class
+stack copies, and larger enum returns use sret.
 
 Supported v1 targets use an x86_64 data model: fixed-width integer and floating
 types use their explicit sizes; `bool` and `char` are one byte; raw pointers are
@@ -629,7 +636,7 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-#### 3.7.1 Comptime-generated declarations (v1 design, deprecated)
+#### 3.7.1 Comptime-generated declarations (v1 compatibility, deprecated)
 
 V1 generated declarations are concrete top-level declarations produced during
 compile time. They are TypeLisp's replacement for source-level generics and
@@ -637,59 +644,42 @@ traits: a generator inspects compile-time metadata such as `(type T)` and
 `(type-key (type T))`, then requests or emits ordinary monomorphic
 `defstruct`, `defenum`, and `define` declarations.
 
-`comptime-decl` and `comptime-decls` are deprecated compatibility surface.
-New declaration generation should be expressed as declaration-emitting
-`defmacro` declarations (section 3.7.2): use `: Module` for generated module
-families bound by `import`, and `: Decls` for declarations spliced into the
-current module. Existing checked-in uses may remain while the stdlib and
-compiler-side generator families migrate; removal is tracked by #3077.
+`comptime-decl` is deprecated compatibility surface. New declaration
+generation should be expressed as declaration-emitting `defmacro` declarations
+(section 3.7.2): use `: Module` for generated module families bound by
+`import`, and `: Decls` for declarations spliced into the current module.
+Existing checked-in single-payload uses may remain while the stdlib migrates;
+full removal is tracked by #3077. The former `comptime-decls` bundle surface is
+removed; use `: Decls` macros for multi-declaration generation.
 
 The deprecated source surface is the top-level `comptime-decl` declaration for
-a single payload, or `comptime-decls` when a generator request emits a bundle
-whose payloads share the same generator and argument keys:
+a single payload:
 
 ```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
 (comptime-decl
-  (:generated stdlib/option-family Option_String (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
+  (:generated sample-family Box_String (type-key (type String)))
+  (defstruct Box_String
+    (value String)))
 
 (comptime-decl
-  (:generated stdlib/option-family option-string-some? (type-key (type String)))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
+  (:generated sample-family box-string-value (type-key (type String)))
+  (define (box-string-value [value : Box_String]) : String
+    (struct-get value value)))
 
-(comptime-decls
-  (:generated stdlib/option-family (type-key (type String)))
-  (defenum Option_String
-    (None_String)
-    (Some_String String))
-  (define (option-string-some? [value : Option_String]) : bool
-    (match value
-      [(Some_String _) true]
-      [(None_String) false])))
 ```
 
-`comptime-decl` and `comptime-decls` are valid only at top level, after
-`module`/`import` resolution and before ordinary typechecking/lowering.
-`comptime-decl` carries one generated declaration template. `comptime-decls`
-carries one or more generated declaration templates and expands them as if each
-payload had been written as a separate `comptime-decl` with the same generator
-and argument keys. V1 accepts only `defstruct`, `defenum`, and `define`
-payloads. `define` covers both value and function declarations. Generated
-`extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`, and nested
-`comptime-decl`/`comptime-decls` payloads are rejected in v1.
+`comptime-decl` is valid only at top level, after `module`/`import` resolution
+and before ordinary typechecking/lowering. `comptime-decl` carries one
+generated declaration template. V1 accepts only `defstruct`, `defenum`, and
+`define` payloads. `define` covers both value and function declarations.
+Generated `extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`,
+and nested `comptime-decl` payloads are rejected in v1.
 
 The `(:generated generator-name generated-item-name arg-key-expr*)` metadata is
 required for reusable single-payload `comptime-decl` declarations. The
-`comptime-decls` bundle form uses `(:generated generator-name arg-key-expr*)`;
-the generated item name is derived from each payload's visible declaration name.
-The parser may continue accepting legacy literal `(comptime-decl (defstruct
-...))` / `(comptime-decl (defenum ...))` templates during migration, but
-reusable #893 generation must use a metadata form.
+parser may continue accepting legacy literal `(comptime-decl (defstruct ...))`
+/ `(comptime-decl (defenum ...))` templates during migration, but reusable #893
+generation must use a metadata form.
 
 Conceptually, each payload creates one generated-declaration request. The
 compiler API for comptime generator code uses the same request record: generator
@@ -991,7 +981,7 @@ compiler diagnostic.
 #### 3.7.2.1 Comptime purity for macros and generated declarations
 
 `defmacro` bodies, declaration-emitting macro output, and deprecated
-`comptime-decl`/`comptime-decls` generated declaration templates are safe
+`comptime-decl` generated declaration templates are safe
 compile-time TypeLisp. The checked comptime path is a deterministic transformer
 over compiler-owned syntax and metadata, not a way to perform host I/O or call
 target FFI during compilation.
@@ -1055,8 +1045,8 @@ Local `defmacro` declarations are visible throughout their module regardless of
 source order, matching functions, values, and types. A macro may therefore be
 called before its declaration, and one macro may expand to a call of another
 macro declared later in the same module. Compatibility declarations produced by
-deprecated `comptime-decl` / `comptime-decls` are materialized before macro
-expansion. Declarations produced by `: Decls` or `: Module` macros participate
+deprecated `comptime-decl` are materialized before macro expansion.
+Declarations produced by `: Decls` or `: Module` macros participate
 in the module-wide macro table for subsequent fixed-point expansion and
 ordinary typechecking, but a macro emitted by a declaration-emitting macro is
 not visible while evaluating the macro that emits it.
@@ -1068,8 +1058,9 @@ not by ad hoc compiler-only handles. The declarations live in the stdlib
 comptime module and are ordinary `defenum`/`defstruct` declarations, but the
 compiler treats them as **well-known types**: their module identity, type names,
 variant names, field names, field order, arity, payload types, and
-compile-time-only marker are pinned by this SPEC and verified when the stdlib is
-loaded.
+compile-time-only behavior are pinned by this SPEC and verified when the stdlib
+is loaded. The marker is the verified `stdlib.comptime` module/type contract;
+wrapping these declarations in deprecated `comptime-decl` metadata is rejected.
 
 The well-known set for the first stdlib-owned surface is:
 
@@ -1152,7 +1143,8 @@ implementation lands:
 - `ExprList` or reflection sequence declarations that expose a cons-list shape
   instead of the dense sequence contract.
 - Runtime-usable declarations for comptime-only types.
-- A stale stdlib root whose well-known type version does not match the compiler.
+- A stale stdlib root whose well-known declaration contract does not match the
+  compiler.
 
 The compiler may use the verified stdlib declarations as its real macro-time
 representation. CTFE interpretation and compiled comptime execution must observe
@@ -2377,13 +2369,12 @@ is still a source-located error; there is no separate private/exported check.
 ;; module that imports `geometry`.
 ```
 
-> **Deprecation (transitional).** Earlier revisions gated visibility with an
-> explicit top-level `(export (value ...) (type ...) (macro ...)
-> (constructor ...) (field ...) (variant ...))` form, and modules were private
-> by default. That form is deprecated: it is still parsed and accepted for
-> source compatibility, but it no longer affects visibility (everything is
-> exported by default) and is scheduled for removal together with its
-> module-metadata and reflection surfaces. New code must not use it.
+> **Removed.** Earlier revisions gated visibility with an explicit top-level
+> `(export (value ...) (type ...) (macro ...) (constructor ...) (field ...)
+> (variant ...))` form, and modules were private by default. That form has been
+> removed: it is no longer a recognized declaration, and there is no
+> private/public distinction. Its module-metadata and compile-time reflection
+> surfaces were removed with it.
 
 #### 4.4.3 Qualified lookup
 
@@ -2422,13 +2413,11 @@ Example with colliding local names:
 ```lisp test=ignore name=qualified-colliding-modules reason="selfhost qualified imports are tracked by #952"
 ;; left.tl
 (module left)
-(export (value get))
 (define same : i64 20)
 (define (get) : i64 same)
 
 ;; right.tl
 (module right)
-(export (value get))
 (define same : i64 22)
 (define (get) : i64 same)
 
@@ -2438,7 +2427,7 @@ Example with colliding local names:
 (define (main) : i64 (+ (left.get) (right.get)))
 ```
 
-#### 4.4.4 Macro export/import and expansion ordering
+#### 4.4.4 Macro import and expansion ordering
 
 Macro-bearing modules use the same loader identity and path-resolution rules as
 ordinary imports. Relative paths, canonical module identities, stdlib-root
@@ -2480,7 +2469,7 @@ the general module-cycle policy is tightened.
 
 Diagnostics required by v1:
 
-- Missing macro export: a qualified macro head names an imported module but that
+- Missing macro: a qualified macro head names an imported module but that
   module declares no macro of that name.
 - Duplicate macro: two distinct macro declarations share the same
   `(module, macro-name)` identity.
@@ -2490,7 +2479,7 @@ Diagnostics required by v1:
 
 Cross-module macro use:
 
-```lisp test=ignore name=module-exported-macro-use reason="macro export/import expansion is tracked by #1140"
+```lisp test=ignore name=module-imported-macro-use reason="macro import expansion is tracked by #1140"
 ;; bool_macros.tl
 (module bool-macros)
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -3735,9 +3724,11 @@ Uniform and varying rules:
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
-- Calls with varying arguments are rejected until an SPMD function ABI is
-  designed, except for the explicit `stdlib/atomic.tl` integer element helpers.
-  The implemented non-atomic slice permits built-in arithmetic/comparison
+- Non-inlineable calls with varying arguments or varying returns are rejected
+  until an out-of-line SPMD function ABI is designed (#2852). The implemented
+  exceptions are the explicit `stdlib/atomic.tl` integer element helpers,
+  direct source-known non-dispatch helper calls that can be inlined within the
+  current SPMD-safe expression subset, and built-in arithmetic/comparison
   operators and array operations over supported lane types.
 - `while` conditions must be uniform. Varying `if` is admitted with the
   restrictions below.
@@ -4376,30 +4367,6 @@ V1 primitive names and signatures are fixed as follows:
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
 
-Module export reflection is also compile-time-only metadata. It deliberately
-uses canonical module identity strings, such as the result of
-`type-nominal-module`, and does not introduce runtime `Module` handles.
-
-> **Deprecation (transitional).** These `module-export-*` queries are tied to the
-> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
-> item is exported by default they are redundant, and they are scheduled for
-> removal together with the export form. New code must not rely on them.
-
-| Primitive | Result | Notes |
-| --- | --- | --- |
-| `(module-export-value? module-expr name-expr)` | `bool` | True when `module-expr` exports a value named `name-expr`. Constructors, variants, and fields remain separate export kinds and are not reported as ordinary values. |
-| `(module-export-type? module-expr name-expr)` | `bool` | True when the module exports a nominal type with that name. |
-| `(module-export-macro? module-expr name-expr)` | `bool` | True when the module exports a macro with that name. |
-| `(module-export-value-type module-expr name-expr)` | `type` | Exported value type; function values reflect as function types that can be inspected with `function-param-*` and `function-return-type`. Missing exports are diagnostics. |
-| `(module-export-type module-expr name-expr)` | `type` | Exported nominal type. Missing exports are diagnostics. |
-| `(module-export-macro-type module-expr name-expr)` | `type` | Exported macro signature represented as a function type over macro operand types and produced type. Missing exports are diagnostics. |
-
-`module-expr` and `name-expr` must evaluate to compile-time `String` values.
-Missing-export diagnostics name the queried module, export kind, and export
-name. The boolean query forms are the non-panicking path for probing optional
-APIs; the `*-type` forms are assertion-style queries for code generators that
-need to validate a required shape.
-
 Selfhost v1 implements this surface in CTFE for explicit `(comptime ...)` folds
 and comptime parameter evaluation. `String` and `type` metadata remain
 compile-time-only; programs may compare or compose them in CTFE, but direct
@@ -4571,65 +4538,189 @@ convention:
 | 1 | pointer-sized integer | Address of a writable image registration record |
 | return | `i64` status | `0` on successful registration; nonzero values are reserved diagnostics |
 
-No callback slots are assigned in v1. The callback table begins with a fixed
-48-byte header, and any bytes after `byte-size` are outside the record:
+The callback table begins with the original fixed 48-byte header and appends
+two required function-pointer slots. Any bytes after `byte-size` are outside the
+record:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIHOST` |
 | 8 | 8 | Host callback ABI version, currently `1` |
-| 16 | 8 | Callback table byte size; must be at least `48` |
+| 16 | 8 | Callback table byte size; must be at least `64` |
 | 24 | 8 | Opaque host context pointer, or `0` |
 | 32 | 8 | Reserved, must be `0` in v1 |
 | 40 | 8 | Reserved, must be `0` in v1 |
+| 48 | 8 | Required `invoke` callback function pointer |
+| 56 | 8 | Required `abort` callback function pointer |
+
+The `invoke` callback is the only stdlib/comptime operation dispatcher in v1.
+It uses the host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque host context from the table |
+| 1 | pointer-sized integer | Opaque expansion/session context passed to the macro entry |
+| 2 | `i64` | Callback operation id from the catalog below |
+| 3 | pointer-sized integer | Address of an array of 64-bit argument handles/scalars, or `0` for no arguments |
+| 4 | `i64` | Argument count |
+| 5 | pointer-sized integer | Address of one writable 64-bit result slot, or `0` for unit/no result |
+| return | `i64` status | `0` on success; nonzero status values are listed below |
+
+The `abort` callback is for native image failures that cannot be represented as
+a normal macro diagnostic. It uses the same host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque host context from the table |
+| 1 | pointer-sized integer | Opaque expansion/session context, or `0` before macro dispatch |
+| 2 | `i64` | Abort reason/status code |
+| 3 | pointer-sized integer | Optional message byte pointer |
+| 4 | `i64` | Message byte length |
+| 5 | `i64` | Optional tlci symbol-table id/offset for symbolized native failures, or `0` |
+| return | `i64` status | `0` when the host recorded the abort |
+
+Callback status values are fixed:
+
+| Value | Meaning |
+| ---: | --- |
+| 0 | Success |
+| 1 | Macro diagnostic was reported |
+| 2 | Macro fuel exhausted |
+| 3 | Native macro panic/abort |
+| 4 | Bad callback request or malformed arguments |
+
+Callback operation ids are append-only. IDs `1` through `99` are host-control
+operations; IDs `100` and above mirror the current exported
+`stdlib.comptime` helper surface. V1 assigns:
+
+| ID | Operation |
+| ---: | --- |
+| 1 | `fuel-check` |
+| 2 | `diagnostic` |
+| 3 | `scratch-alloc` |
+| 4 | `scratch-reset` |
+| 100 | `expr-bool` |
+| 101 | `expr-int` |
+| 102 | `expr-var` |
+| 103 | `string-concat` |
+| 104 | `string-append` |
+| 105 | `int->string` |
+| 106 | `expr-splice` |
+| 107 | `expr-if` |
+| 108 | `expr-type` |
+| 109 | `module-export-value?` |
+| 110 | `module-export-type?` |
+| 111 | `module-export-macro?` |
+| 112 | `module-export-value-type` |
+| 113 | `module-export-type` |
+| 114 | `module-export-macro-type` |
+| 115 | `expr-bool?` |
+| 116 | `expr-bool-value` |
+| 117 | `expr-if?` |
+| 118 | `expr-if-cond` |
+| 119 | `expr-if-then` |
+| 120 | `expr-if-else` |
+| 121 | `expr-list-empty?` |
+| 122 | `expr-list-length` |
+| 123 | `expr-list-head` |
+| 124 | `expr-list-tail` |
+| 125 | `expr-list-nth` |
+| 126 | `expr-clause-first` |
+| 127 | `expr-clause-second` |
+| 128 | `expr-clause-list-empty?` |
+| 129 | `expr-clause-list-length` |
+| 130 | `expr-clause-list-head` |
+| 131 | `expr-clause-list-tail` |
+| 132 | `expr-clause-list-nth` |
+| 133 | `expr-clause-list->expr-list` |
+| 134 | `expr-binding-clause-name` |
+| 135 | `expr-binding-clause-has-type?` |
+| 136 | `expr-binding-clause-type` |
+| 137 | `expr-binding-clause-init` |
+| 138 | `expr-binding-clause-list-empty?` |
+| 139 | `expr-binding-clause-list-length` |
+| 140 | `expr-binding-clause-list-head` |
+| 141 | `expr-binding-clause-list-tail` |
+| 142 | `expr-binding-clause-list-nth` |
+| 143 | `expr-binding-clause-list->expr-list` |
+
+The operation catalog deliberately does not assign `TypeInfo` constructor or
+reflection helper operations yet. `TypeInfo` value shapes are public, but the
+remaining #2653 migration still decides which helpers become ordinary stdlib
+functions and which bridge operations stay intrinsic. Those future operations
+must be appended without reusing the IDs above.
 
 The image fills the writable registration record before returning success. The
-v1 registration record is also 48 bytes:
+v1 registration record keeps the original 48-byte header and appends the macro
+entry table:
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIIMAG` |
 | 8 | 8 | Host callback ABI version used by the image, currently `1` |
-| 16 | 8 | Registration record byte size; must be at least `48` |
+| 16 | 8 | Registration record byte size; must be at least `64` |
 | 24 | 8 | Opaque image context pointer for later dispatch, or `0` |
 | 32 | 8 | Reserved, must be `0` in v1 |
 | 40 | 8 | Reserved, must be `0` in v1 |
+| 48 | 8 | Macro entry table pointer, or `0` when the image registers no macros |
+| 56 | 8 | Macro entry record count; must be `0` when the table pointer is `0` |
+
+Each macro entry record is 32 bytes and is owned by the image for the lifetime
+of the mapped tlci image:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Macro name byte pointer |
+| 8 | 8 | Macro name byte length |
+| 16 | 8 | Macro entry function pointer |
+| 24 | 8 | Reserved, must be `0` in v1 |
+
+A macro entry function uses the host C ABI:
+
+| Position | Type | Meaning |
+| ---: | --- | --- |
+| 0 | pointer-sized integer | Opaque image context from registration |
+| 1 | pointer-sized integer | Opaque host context from the callback table |
+| 2 | pointer-sized integer | Opaque expansion/session context |
+| 3 | pointer-sized integer | Address of an array of operand handles |
+| 4 | `i64` | Operand count |
+| 5 | pointer-sized integer | Address of one writable result-handle slot |
+| return | `i64` status | Same status values as the host callbacks |
+
+Macro operands, generated `Expr` values, reflected metadata values, and strings
+cross this boundary only as host-owned opaque handles or scalar values. Native
+macro code must construct public `Expr`/reflection values through the callback
+catalog above and must not mutate compiler AST/typechecker structures directly.
+The host creates a fresh expansion session/scratch arena for one macro
+invocation. On diagnostic, fuel exhaustion, native abort, or any nonzero status,
+the host discards that session state; only diagnostics already recorded through
+callbacks survive. Successful expansion commits exactly the result handle
+written by the macro entry.
 
 Compatibility is append-only. Future ABI versions may require larger byte-size
-values and assign callback or registration fields after the v1 header, but they
-must not reinterpret the v1 offsets above. A v1 loader accepts larger records
-when the magic, ABI version, minimum byte size, and reserved-zero fields are
-valid, and ignores the tail. The v1 skeleton does not execute callbacks, load
-dependent images, enforce macro fuel, or dispatch compiled macros; those are
-later loader and stdlib macro-surface slices.
+values and assign callback, operation, macro-entry, or registration fields
+after the v1 ranges above, but they must not reinterpret the v1 offsets or
+operation ids. A v1 loader accepts larger records when the magic, ABI version,
+minimum byte size, required callback pointers, macro table/count consistency,
+and reserved-zero fields are valid, and ignores unknown tails. This section
+specifies the contract only; loading mapped pages, invoking macro entries,
+enforcing fuel, embedding stdlib tlci, and package dependency dispatch remain
+the #2657/#2658/#2659 implementation slices.
 
 The metadata section is UTF-8/ASCII S-expression text with stable field order:
 
 ```lisp test=ignore name=tlci-metadata-schema reason="tlci metadata S-expression, not TypeLisp source"
 (typelisp-tlci-metadata
   (version "v1")
-  (package (name "pkg-name") (version "0.1.0"))
-  (exports
-    (value (name "answer") (signature "(-> i64)"))
-    (type (name "Point") (layout "size=16 align=8"))
-    (macro (name "with-temp") (signature "(Expr)->Expr"))))
+  (package (name "pkg-name") (version "0.1.0")))
 ```
 
 `version` gates the schema. `package` gives the package identity as it appears
-in `typelisp.pkg`. `exports` is sorted deterministically by kind
-(`value`, `type`, `macro`) and then by name. Value and macro exports require a
-`signature` string; type exports require a `layout` string. The strings are
-compiler-owned schema payloads: consumers compare them for equality and use
-future schema versions to understand richer structure, but v1 helpers do not
-interpret the signature/layout languages. Duplicate `(kind, name)` exports,
-unknown fields, unsupported versions, malformed S-expressions, empty required
-sections, bad magic/version/arch/ABI/hash, and truncated section ranges are
-diagnostics.
-
-> **Deprecation (transitional).** The `exports` section currently mirrors the
-> deprecated `(export ...)` form (see section 4.4.2). Now that every top-level
-> item is exported by default, the section's contents and its role in the image
-> schema are scheduled to be reworked or removed alongside the export form.
+in `typelisp.pkg`. Unknown fields, unsupported versions, malformed
+S-expressions, empty required sections, bad magic/version/arch/ABI/hash, and
+truncated section ranges are diagnostics. (Earlier revisions also carried an
+`exports` section mirroring the removed `(export ...)` form; it no longer
+exists.)
 
 Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
 are all empty. Code-bearing tlci files are valid with synthetic payload bytes
@@ -4637,9 +4728,8 @@ before real PIC code generation lands; the emitted layout and content hash must
 round-trip byte-identically.
 
 `typelisp inspect <file.tlci>` parses a tlci image with the same validation
-path as loaders and prints a stable human-readable header, section table,
-package metadata, and export list. Malformed images surface the tlci parse
-diagnostic.
+path as loaders and prints a stable human-readable header, section table, and
+package metadata. Malformed images surface the tlci parse diagnostic.
 
 ### 5.18 Layout queries (specified, selfhost metadata implemented)
 
@@ -6012,29 +6102,31 @@ Function-local early exit uses the Lisp-shaped `(return expr)` form:
 Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
 functions, traits, trait objects, vtables, or runtime type-erased dispatch for
-recoverable errors. Reuse comes from comptime-generated concrete declarations:
-the generator emits nominal enum types and helper functions for the requested
-payload/error type keys.
+recoverable errors. Reuse comes from module-emitting stdlib macros and
+remaining comptime-generated concrete result declarations: the generator emits
+nominal enum types and helper functions for the requested payload/error type
+keys.
 
 The generated-family identity is a stable key, not a runtime type object:
 
-- Absence-only family key: `option:<payload-type-key>`.
+- Absence-only family key: `stdlib.option.generated.<payload-type-key>`.
 - Recoverable-error family key:
   `result:<success-type-key>:<error-type-key>`.
-- Generated declaration keys also include the generator module identity and
-  generator identity from #893, so repeated requests for the same family reuse
-  the same concrete declarations or report a precise duplicate according to the
-  generated-declaration policy.
-- Display names are deterministic ASCII identifiers derived from those keys,
-  for example `Option_String`, `Result_String_IoError`, `Some_String`,
-  `None_String`, `Ok_String_IoError`, and `Err_String_IoError`. Exact
-  mangling is compiler-owned, but generated names must be stable, readable in
-  diagnostics/docs, and collision-free within the value/type namespaces.
+- Module-macro generated option keys include the macro identity and
+  `type-key`, so repeated imports of `(option T)` reuse the same concrete
+  module and type.
+- Display names are deterministic ASCII identifiers derived from those keys.
+  Options expose module-relative names such as `option_i64.Option`,
+  `option_i64.some`, `option_i64.none`, `option_i64.is-some?`,
+  `option_i64.value-or`, and `option_i64.map`; result-family compatibility
+  declarations keep names such as `Result_String_IoError`,
+  `Ok_String_IoError`, and `Err_String_IoError`.
 
-Until the generator lands, hand-written monomorphic enums are the source
-equivalent. Use `Maybe*` or `Option*` names for absence-only APIs and `Result*`
-names for APIs that distinguish success from an error value. Matches must be
-exhaustive; omitted variants are rejected by the type checker.
+Where no stdlib module macro or generated result family is available,
+hand-written monomorphic enums are the source equivalent. Use `Maybe*` or
+`Option*` names for absence-only APIs and `Result*` names for APIs that
+distinguish success from an error value. Matches must be exhaustive; omitted
+variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
 (import "stdlib/str_cat.tl")
@@ -6074,15 +6166,15 @@ exhaustive; omitted variants are rejected by the type checker.
 ```
 
 Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
-`?` or Zig `try`, but it operates on concrete generated families rather than
-generic traits or implicit conversions.
+`?` or Zig `try`, but it operates on concrete option/result families rather
+than generic traits or implicit conversions.
 
 - For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
   success variant it unwraps and yields the success payload. On the error
   variant it returns from the enclosing function with the compatible error
   variant carrying the same error payload.
-- For an absence-only option, `(try expr)` unwraps `Some*` and returns the
-  enclosing compatible `None*` on absence.
+- For an absence-only option, `(try expr)` unwraps `Some`/`Some*` and returns
+  the enclosing compatible `None`/`None*` on absence.
 - V1 compatibility is exact-family compatibility. There is no trait-like
   `From` conversion, no cross-family conversion, and no implicit
   Option-to-Result conversion; explicit conversion helpers may be generated by
@@ -6204,7 +6296,7 @@ Selected Command Forms:
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
   typelisp inspect <file.tlci>
-  typelisp run <file.tl> [-- <args>...]
+  typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
   typelisp test [<file.tl>] [--check]
@@ -6437,7 +6529,6 @@ program       ::= top-level*
 top-level     ::= define-var
                 | cfg-decl
                 | comptime-decl
-                | comptime-decls
                 | define-func
                 | unsafe-decl
                 | dispatch-decl
@@ -6445,7 +6536,6 @@ top-level     ::= define-var
                 | extern-decl
                 | module-decl
                 | import-decl
-                | export-decl
                 | include-str-decl
                 | include-bin-decl
                 | defenum
@@ -6459,9 +6549,7 @@ cfg-predicate ::= ident
                 | "(" "any" cfg-predicate* ")"
                 | "(" "not" cfg-predicate ")"
 comptime-decl ::= "(" "comptime-decl" generated-meta? generated-payload ")"
-comptime-decls ::= "(" "comptime-decls" generated-bundle-meta generated-payload+ ")"
 generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
-generated-bundle-meta ::= "(" ":generated" qualified-name expr* ")"
 generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 include-str-decl ::= "(" "include-str" ident string ")"
@@ -6495,13 +6583,6 @@ import-decl   ::= "(" "import" string ["module" module-ident] [import-alias] ")"
                 | "(" "import" macro-call [item-suffix] [import-alias] ")"
 item-suffix   ::= ".*" | "." ident
 import-alias  ::= ("as" | ":as") ident
-export-decl   ::= "(" "export" export-item+ ")"
-export-item   ::= "(" "value" ident ")"
-                | "(" "type" ident ")"
-                | "(" "macro" ident ")"
-                | "(" "constructor" ident ")"
-                | "(" "field" ident ident ")"
-                | "(" "variant" ident ")"
 defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
@@ -6650,16 +6731,18 @@ Import grammar constraints:
 
 - A bare `module-ident` import binds the final-segment default alias and gives
   qualified access only.
-- `.*` imports all exported items unqualified and cannot combine with `as`.
-- `.item` imports that single exported item unqualified and may combine with
+- `.*` imports all visible top-level items unqualified and cannot combine with
+  `as`.
+- `.item` imports that single visible top-level item unqualified and may combine
+  with
   `as` to rename the bound item.
 - A `macro-call` whole-module import requires `as alias`; otherwise it must use
   `.*` or `.item`. Bare `(import (macro args))` is rejected, and `.item` may
   combine with `as` to rename the selected item.
 - For named modules, item resolution uses the longest module prefix; a single
-  remaining segment is the selected exported item. For macro-call imports, the
+  remaining segment is the selected visible item. For macro-call imports, the
   parenthesized macro call is the module expression and an optional suffix
-  selects items from its exports.
+  selects items from its generated declarations.
 - Multi-segment item paths and multi-item `:only` selected imports are
   rejected/reserved.
 

@@ -136,32 +136,3 @@
         (stdlib.profile.profile-test-assert (>= after-total before-total))
         (stdlib.profile.profile-test-assert (>= after-live before-live))
         (stdlib.profile.profile-test-assert (>= peak after-live))))))
-
-(cfg
-  windows
-  (export
-    (value profile-win-query-performance-counter)
-    (value profile-win-query-performance-frequency)
-    (value profile-windows-now-ms)))
-
-(cfg
-  test
-  (export
-    (value profile-test-fail)
-    (value profile-test-assert)
-    (value profile-test-allocation)))
-
-(export
-  (value profile-now-scratch)
-  (value tl_profile_alloc_total)
-  (value tl_profile_alloc_live)
-  (value tl_profile_alloc_peak)
-  (value tl_profile_alloc_reset_peak)
-  (value profile-scratch-ptr)
-  (value profile-scratch-addr)
-  (value profile-linux-now-ms)
-  (value profile-now-ms)
-  (value profile-alloc-total)
-  (value profile-alloc-live)
-  (value profile-alloc-peak)
-  (value profile-alloc-reset-peak))

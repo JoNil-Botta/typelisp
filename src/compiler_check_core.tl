@@ -42,11 +42,15 @@
     (compiler-cfg-enable
       (compiler-cfg-enable
         (compiler-cfg-enable
-          (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-          "feature-str-view")
-        "feature-private-string-intrinsics")
-      "feature-compiler-private-string-intrinsics")
-    "array-helper-intrinsics"))
+          (compiler-cfg-enable
+            (compiler-cfg-enable
+              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "feature-compiler-private-dynamic-buffer")
+      "array-helper-intrinsics")
+    "feature-plain-comptime-well-known"))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
@@ -394,13 +398,7 @@
   (match selected [(AstTyI64) 42] [_ 0]))")
 
 (define (compiler-check-export-source) : String
-  "(export
-  (value answer)
-  (type Pair)
-  (constructor Pair)
-  (field Pair left)
-  (variant Present))
-(defstruct Pair (left i64))
+  "(defstruct Pair (left i64))
 (defenum Maybe (Present i64))
 (define answer : i64 42)
 (define (main) : i64 answer)")
@@ -442,7 +440,6 @@
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
-(export (value x))
 (define x : i64 1)
 (module b)
 (import a)
@@ -503,6 +500,17 @@
        (+ (profile-alloc-total)
           (+ (profile-alloc-live) (profile-alloc-peak))))))")
 
+(define (compiler-check-private-dynamic-buffer-vector-source) : String
+  "(import stdlib.vector as vector)
+(import (vector.vector i64) as i64vec)
+(define (main) : i64
+  (let
+    [items : i64vec.Vec (i64vec.with-capacity 2)]
+    (begin
+      (i64vec.push (&mut items) 41)
+      (i64vec.push (&mut items) 1)
+      (i64vec.len (& items)))))")
+
 (define (compiler-check-virtual-import-ok?) : bool
   (match (compiler-check-source
     "src/virtual_entry.tl"
@@ -529,37 +537,23 @@
           [(OkCompilerSymbols symbols)
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
-                (match (build-compiler-exports-with program symbols registries)
-                  [(OkCompilerExports exports)
-                    (let
-                      [ctx : TcContext
-                        (TcContext
-                          program
-                          symbols
-                          registries
-                          exports
-                          ""
-                          (ast-node-pool-context-capture-active))]
-                      (and
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstTypeList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstExprList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstPatternList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstDeclList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstParamList")
-                        (compiler-check-inline-layout-name-ok?
-                          ctx
-                          "AstVariantDefList")))]
-                  [(ErrCompilerExports _) false])]
+                (let
+                  [ctx : TcContext
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (ast-node-pool-context-capture-active))]
+                  (and
+                    (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstExprList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstPatternList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstDeclList")
+                    (compiler-check-inline-layout-name-ok? ctx "AstParamList")
+                    (compiler-check-inline-layout-name-ok?
+                      ctx
+                      "AstVariantDefList")))]
               [(ErrCompilerRegistries _) false])]
           [(ErrCompilerSymbols _) false]))]
     [(ErrCompilerLoadWithPaths _) false]))
@@ -576,9 +570,8 @@
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_exported.tl"
       (compiler-check-qualified-export-cache-exported-source))
-    ;; Everything is exported by default: a value omitted from a legacy export
-    ;; list is now reachable across modules, so this previously-private access
-    ;; type-checks.
+    ;; There is no export list: values are reachable across modules through the
+    ;; module symbol table, so this previously-private access type-checks.
     (compiler-check-direct-source-ok?
       "tests/qualified_export_cache_private.tl"
       (compiler-check-qualified-export-cache-private-source))))
@@ -666,6 +659,11 @@
     (compiler-check-runtime-stdlib-boundary-no-import-ok?)
     (compiler-check-runtime-stdlib-boundary-import-ok?)))
 
+(define (compiler-check-private-dynamic-buffer-vector-ok?) : bool
+  (compiler-check-source-ok?
+    "tests/private_dynamic_buffer_vector.tl"
+    (compiler-check-private-dynamic-buffer-vector-source)))
+
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?
     "tests/implicit_core_prelude_check.tl"
@@ -748,6 +746,13 @@
       (return
         (begin
           (panic "compiler-check: runtime stdlib boundary smoke mismatch")
+          ;; lint-allow: unreachable-code
+          0)))
+    (unless
+      (compiler-check-private-dynamic-buffer-vector-ok?)
+      (return
+        (begin
+          (panic "compiler-check: private dynamic-buffer vector smoke mismatch")
           ;; lint-allow: unreachable-code
           0)))
     (unless

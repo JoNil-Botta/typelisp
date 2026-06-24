@@ -21,7 +21,4 @@
               (begin
                 (vec.get (& items) 0 fallback)
                 42)
-              0))))
-      (export (value score)))))
-
-(export (macro vector-user))
+              0)))))))

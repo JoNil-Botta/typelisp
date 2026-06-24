@@ -153,9 +153,16 @@
         [_ `false])]
     `(begin
       (module ,module-name)
-      (defstruct ,vec-name
-        (slots (Array ,T))
-        (len i64))
+      (cfg
+        feature-compiler-private-dynamic-buffer
+        (defstruct ,vec-name
+          (slots (__tl_dyn-array ,T))
+          (len i64)))
+      (cfg
+        (not feature-compiler-private-dynamic-buffer)
+        (defstruct ,vec-name
+          (slots (Array ,T))
+          (len i64)))
       (defenum ,pop-name
         (Empty)
         (Ok ,T))
@@ -328,48 +335,25 @@
             true
             (contains-from? v x (+ index 1)))))
       (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
-        (contains-from? v x 0))
-      (export
-        (type ,vec-name)
-        (constructor ,vec-name)
-        (type ,pop-name)
-        (variant Empty)
-        (variant Ok)
-        (value slots)
-        (value slots-mut)
-        (value len)
-        (value len-mut)
-        (value capacity)
-        (value is-empty?)
-        (value with-capacity)
-        (value new)
-        (value get)
-        (value last)
-        (value set)
-        (value push)
-        (value pop)
-        (value from-array)
-        (value to-array)
-        (value extend-from)
-        (value extend)
-        (value reverse!)
-        (value fold-from)
-        (value fold)
-        (value map-build-from)
-        (value map-from)
-        (value map)
-        (value contains-from?)
-        (value contains?)))))
-
-(export (macro vector))
+        (contains-from? v x 0)))))
 
 ;: A growable `i64` sequence: the backing array and the number of live
 ;: elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
-(comptime-decl
-  (:generated vector-family I64Vec "i64")
-  (defstruct I64Vec
-    (slots (Array i64))
-    (len i64)))
+(cfg
+  feature-compiler-private-dynamic-buffer
+  (comptime-decl
+    (:generated vector-family I64Vec "i64")
+    (defstruct I64Vec
+      (slots (__tl_dyn-array i64))
+      (len i64))))
+
+(cfg
+  (not feature-compiler-private-dynamic-buffer)
+  (comptime-decl
+    (:generated vector-family I64Vec "i64")
+    (defstruct I64Vec
+      (slots (Array i64))
+      (len i64))))
 
 ;: Result of `i64-vec-pop`: the removed last element together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.
@@ -675,11 +659,21 @@
 
 ;: A growable `String` sequence generated from the same vector template as
 ;: `I64Vec`.
-(comptime-decl
-  (:generated vector-family StringVec "String")
-  (defstruct StringVec
-    (slots (Array String))
-    (len i64)))
+(cfg
+  feature-compiler-private-dynamic-buffer
+  (comptime-decl
+    (:generated vector-family StringVec "String")
+    (defstruct StringVec
+      (slots (__tl_dyn-array String))
+      (len i64))))
+
+(cfg
+  (not feature-compiler-private-dynamic-buffer)
+  (comptime-decl
+    (:generated vector-family StringVec "String")
+    (defstruct StringVec
+      (slots (Array String))
+      (len i64))))
 
 ;: Result of `string-vec-pop`: the removed last string together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.
@@ -1910,69 +1904,3 @@
   (test
     vector-api
     (test.assert-i64-eq (vector-test-main) 42 "vector-api fixture result")))
-
-(export
-  (value i64-vec-slots)
-  (value i64-vec-len)
-  (value i64-vec-capacity)
-  (value i64-vec-is-empty?)
-  (value i64-vec-with-capacity)
-  (value i64-vec-new)
-  (value i64-vec-get)
-  (value i64-vec-last)
-  (value i64-vec-set!)
-  (value i64-vec-copy-range)
-  (value i64-vec-grow)
-  (value i64-vec-push)
-  (value i64-vec-pop)
-  (value i64-vec-from-array)
-  (value i64-vec-to-array)
-  (value i64-vec-extend-from)
-  (value i64-vec-extend)
-  (value i64-vec-reverse-range!)
-  (value i64-vec-reverse!)
-  (value i64-vec-fold-from)
-  (value i64-vec-fold)
-  (value i64-vec-map-build-from)
-  (value i64-vec-map-from)
-  (value i64-vec-map)
-  (value i64-vec-sum-from)
-  (value i64-vec-sum)
-  (value i64-vec-contains-from?)
-  (value i64-vec-contains?)
-  (value string-vec-slots)
-  (value string-vec-len)
-  (value string-vec-capacity)
-  (value string-vec-is-empty?)
-  (value string-vec-with-capacity)
-  (value string-vec-new)
-  (value string-vec-get)
-  (value string-vec-last)
-  (value string-vec-set!)
-  (value string-vec-copy-range)
-  (value string-vec-grow)
-  (value string-vec-push)
-  (value string-vec-pop)
-  (value string-vec-pop-rest-or)
-  (value string-vec-from-array)
-  (value string-vec-to-array)
-  (value string-vec-extend-from)
-  (value string-vec-extend)
-  (value string-vec-reverse-range!)
-  (value string-vec-reverse!)
-  (value string-vec-contains-from?)
-  (value string-vec-contains?)
-  (type I64Vec)
-  (type I64VecPop)
-  (type StringVec)
-  (type StringVecPop)
-  (constructor I64Vec)
-  (constructor StringVec)
-  (field I64Vec slots)
-  (field I64Vec len)
-  (field StringVec slots)
-  (field StringVec len)
-  (variant I64VecPopEmpty)
-  (variant I64VecPopOk)
-  (variant StringVecPopEmpty)
-  (variant StringVecPopOk))

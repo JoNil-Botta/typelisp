@@ -48,7 +48,6 @@ that need storage migration.
 | `ResultAstResourceBindingList` | `src/compiler_parse_core.tl:163` | `OkAstResourceBindingList` / `ErrAstResourceBindingList` | Wrapper for ordered resource bindings. | Cold. | `not-a-cons-migration-target` | Follows `AstResourceBindingList` in #3427. |
 | `ResultAstMatchArmList` | `src/compiler_parse_core.tl:175` | `OkAstMatchArmList` / `ErrAstMatchArmList` | Wrapper for ordered match arms. | Parser path. | `not-a-cons-migration-target` | Follows `AstMatchArmList` in #3427. |
 | `ResultAstExprList` | `src/compiler_parse_core.tl:191` | `OkAstExprList` / `ErrAstExprList` | Wrapper for ordered expression lists. | Parser hot path. | `not-a-cons-migration-target` | Follows `AstExprList` in #3427. |
-| `ResultAstExportItemList` | `src/compiler_parse_core.tl:207` | `OkAstExportItemList` / `ErrAstExportItemList` | Wrapper for ordered export items. | Cold. | `not-a-cons-migration-target` | Follows `AstExportItemList` in #3427. |
 | `ResultAstDeclList` | `src/compiler_parse_core.tl:221` | `OkAstDeclList` / `ErrAstDeclList` | Wrapper for ordered declarations. | Parser hot path for full files. | `not-a-cons-migration-target` | Follows `AstDeclList` in #3427. |
 | `ResultAstDeclListDiagnostic` | `src/compiler_parse_core.tl:246` | `OkAstDeclListDiagnostic` / `ErrAstDeclListDiagnostic` | Diagnostic wrapper for declaration lists. | Parser/load path. | `not-a-cons-migration-target` | Follows `AstDeclList` in #3427. |
 
@@ -74,7 +73,6 @@ walkers, and any path-alignment logic change together.
 | `AstMatchArmList` | `src/compiler_ast_types.tl:373` | `AstMatchArmNil` / `AstMatchArmCons` | Ordered match arms; first-match semantics. | Hot in match-heavy code. | `convert-to-generated-vector` | #3427. |
 | `AstExprList` | `src/compiler_ast_types.tl:1518` | `AstExprNil` / `AstExprCons` | Ordered call/body/tuple/array exprs; frequent traversal and count. | Very hot. | `convert-to-generated-vector` | #3427. |
 | `AstExprClauseList` | `src/compiler_ast_types.tl:1526` | `AstExprClauseNil` / `AstExprClauseCons` | Ordered macro clause pairs. | Moderate in macro-heavy code. | `convert-to-generated-vector` | #3427. |
-| `AstExportItemList` | `src/compiler_ast_types.tl:1560` | `AstExportItemNil` / `AstExportItemCons` | Ordered exports; symbol/import scans. | Cold. | `convert-to-generated-vector` | #3427, but low priority. |
 | `AstDispatchVariantList` | `src/compiler_ast_types.tl:1572` | `AstDispatchVariantNil` / `AstDispatchVariantCons` | Ordered dispatch variants. | Cold. | `keep-persistent-cons` | Revisit only if dispatch metadata grows. |
 | `AstDeclList` | `src/compiler_ast_types.tl:1604` | `AstDeclNil` / `AstDeclCons` | Ordered declarations; prefix cache, symbol, typecheck, lower passes. | Very hot. | `convert-to-generated-vector` | #3427; migrate with `AstDeclPathList`. |
 | `AstDeclPathList` | `src/compiler_ast_types.tl:1608` | `AstDeclPathNil` / `AstDeclPathCons` | Parallel ordered paths for `AstDeclList`; lockstep traversal. | Hot wherever loaded programs are checked/lowered. | `convert-to-generated-vector` | #3427; must migrate with `AstDeclList`. |
@@ -100,7 +98,7 @@ layout/spec metadata, and wrappers around other data.
 | `TcModuleLocalEnvCache` | `src/compiler_typecheck_core.tl:168` | `TcModuleLocalEnvNil` / `TcModuleLocalEnvCons` | Small cache chain keyed by module, values are `TcTypeEnv`. | Moderate in multi-module programs. | `redesign-scope-stack` | #3428; follows env design. |
 | `ResultTcModuleLocalEnv` | `src/compiler_typecheck_core.tl:172` | `OkTcModuleLocalEnv` / `ErrTcModuleLocalEnv` | Wrapper for env cache result. | Error plumbing. | `not-a-cons-migration-target` | Follows `TcModuleLocalEnvCache`. |
 | `ResultTcEnv` | `src/compiler_typecheck_core.tl:176` | `OkTcEnv` / `ErrTcEnv` | Wrapper for `TcTypeEnv`. | Error plumbing. | `not-a-cons-migration-target` | Follows `TcTypeEnv` redesign. |
-| `TcSpmdEnv` | `src/compiler_typecheck_core.tl:200` | `TcSpmdEnvNil` / `TcSpmdEnvBind` | Persistent SPMD scope stack with pop/merge/mark-outer operations. | Hot in SPMD code. | `redesign-scope-stack` | #3428. |
+| `TcSpmdEnv` | `src/compiler_typecheck_core.tl:200` | `TcSpmdEnv` / `TcSpmdBinding` | Array-backed SPMD scoped-stack snapshot with explicit restore marks plus merge/mark-outer operations. | Hot in SPMD code. | `migrated-scoped-stack` | #3583. |
 | `TcSpmdExprListInfo` | `src/compiler_typecheck_core.tl:228` | `TcSpmdExprListInfo` | Summary for checking an expression list; not a list storage family. | SPMD expression checking. | `not-a-cons-migration-target` | No follow-up. |
 | `TcReprCFieldLayoutList` | `src/compiler_typecheck_core.tl:274` | `TcReprCFieldLayoutNil` / `TcReprCFieldLayoutCons` | Ordered field layout metadata. | Layout/C ABI paths. | `convert-to-bespoke-dense-builder` | #3429; measure before landing. |
 | `TcInlineFieldLayoutList` | `src/compiler_typecheck_core.tl:288` | `TcInlineFieldLayoutNil` / `TcInlineFieldLayoutCons` | Ordered inline field metadata; offset scans. | Layout/typecheck/lower paths. | `convert-to-bespoke-dense-builder` | #3429. |
@@ -142,9 +140,10 @@ inline aggregate recursion. They are not production storage families.
 
 - Do not convert parser result wrappers independently; they change only when
   their payload family changes.
-- Do not vectorize env chains mechanically. `TcTypeEnv`, `TcSpmdEnv`, and
-  `MacroHygieneEnv` need a scoped-stack design with explicit save/restore marks
-  and marker-scan semantics (#3428).
+- Do not vectorize env chains mechanically. `TcTypeEnv` and `MacroHygieneEnv`
+  need a scoped-stack design with explicit save/restore marks and marker-scan
+  semantics (#3428); `TcSpmdEnv` has already moved to an array-backed scoped
+  stack with snapshot marks (#3583).
 - Treat `AstDeclList` and `AstDeclPathList` as a paired migration; every caller
   that assumes lockstep traversal must update in one slice.
 - Measure before landing any conversion that claims speed or memory wins. The

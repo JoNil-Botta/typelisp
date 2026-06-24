@@ -1004,13 +1004,15 @@ cat > "$GITHUB_CACHE_CONFIG" <<EOF
 [url "$GITHUB_CACHE_REMOTE"]
     insteadOf = $GITHUB_CACHE_URL
 EOF
+# Native Windows typelisp.exe launches git.exe outside Git Bash path rewriting.
+GITHUB_CACHE_CONFIG_ENV=$(compiler_batch_path "$GITHUB_CACHE_CONFIG")
 GITHUB_CACHE_EXE="$GITHUB_CACHE_ROOT/target/release/gc_root"
 if [ "$HOST_OS" = windows ]; then
     GITHUB_CACHE_EXE="$GITHUB_CACHE_EXE.exe"
 fi
 
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-first.out" 2> "$WORKDIR/package-graph-github-cache-first.err"
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-first.out" 2> "$WORKDIR/package-graph-github-cache-first.err"
 status=$?
 set -e
 assert_status package-graph-github-cache-first "$status" 0
@@ -1032,7 +1034,7 @@ assert_contains package-graph-github-cache-first "$GITHUB_CACHE_LOCK" "(commit \
 
 mv "$GITHUB_CACHE_REMOTE" "$GITHUB_CACHE_REMOTE_OFFLINE"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-hit.out" 2> "$WORKDIR/package-graph-github-cache-hit.err"
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-hit.out" 2> "$WORKDIR/package-graph-github-cache-hit.err"
 status=$?
 set -e
 assert_status package-graph-github-cache-hit "$status" 0
@@ -1042,7 +1044,7 @@ assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-ca
 mv "$GITHUB_CACHE_REMOTE_OFFLINE" "$GITHUB_CACHE_REMOTE"
 printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' "$GITHUB_CACHE_URL" > "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-refetch.out" 2> "$WORKDIR/package-graph-github-cache-refetch.err"
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-cache-refetch.out" 2> "$WORKDIR/package-graph-github-cache-refetch.err"
 status=$?
 set -e
 assert_status package-graph-github-cache-refetch "$status" 0
@@ -1098,13 +1100,15 @@ cat > "$GITHUB_LOCK_CONFIG" <<EOF
 [url "$GITHUB_LOCK_REMOTE"]
     insteadOf = $GITHUB_LOCK_URL
 EOF
+# Native Windows typelisp.exe launches git.exe outside Git Bash path rewriting.
+GITHUB_LOCK_CONFIG_ENV=$(compiler_batch_path "$GITHUB_LOCK_CONFIG")
 GITHUB_LOCK_EXE="$GITHUB_LOCK_ROOT/target/release/gl_root"
 if [ "$HOST_OS" = windows ]; then
     GITHUB_LOCK_EXE="$GITHUB_LOCK_EXE.exe"
 fi
 
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-missing.out" 2> "$WORKDIR/package-graph-github-lock-missing.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-missing.out" 2> "$WORKDIR/package-graph-github-lock-missing.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-missing "$status" 1
@@ -1113,7 +1117,7 @@ assert_contains package-graph-github-lock-missing "$WORKDIR/package-graph-github
 [ ! -f "$GITHUB_LOCK_ROOT/typelisp.lock" ] || fail "locked missing package build wrote typelisp.lock"
 
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-first.out" 2> "$WORKDIR/package-graph-github-lock-first.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-first.out" 2> "$WORKDIR/package-graph-github-lock-first.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-first "$status" 0
@@ -1139,7 +1143,7 @@ git -C "$GITHUB_LOCK_REMOTE" \
 GITHUB_LOCK_REV2=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-replay.out" 2> "$WORKDIR/package-graph-github-lock-replay.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-replay.out" 2> "$WORKDIR/package-graph-github-lock-replay.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-replay "$status" 0
@@ -1158,7 +1162,7 @@ GITHUB_LOCK_REMOTE_OFFLINE="$GITHUB_LOCK_REMOTE.offline"
 rm -rf "$GITHUB_LOCK_REMOTE_OFFLINE"
 mv "$GITHUB_LOCK_REMOTE" "$GITHUB_LOCK_REMOTE_OFFLINE"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-locked.out" 2> "$WORKDIR/package-graph-github-lock-locked.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-locked.out" 2> "$WORKDIR/package-graph-github-lock-locked.err"
 status=$?
 set -e
 mv "$GITHUB_LOCK_REMOTE_OFFLINE" "$GITHUB_LOCK_REMOTE"
@@ -1185,7 +1189,7 @@ EOF
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
 cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/package-graph-github-lock-before-stale"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-stale.out" 2> "$WORKDIR/package-graph-github-lock-stale.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-lock-stale.out" 2> "$WORKDIR/package-graph-github-lock-stale.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-stale "$status" 1
@@ -1195,7 +1199,7 @@ cmp -s "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/type
 
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
 set +e
-GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
 status=$?
 set -e
 assert_status package-graph-github-lock-update "$status" 0

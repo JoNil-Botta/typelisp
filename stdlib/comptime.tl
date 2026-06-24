@@ -4,9 +4,13 @@
 ;# types described by SPEC 3.7.2.2. The current compiler still stores macro
 ;# syntax internally as `AstTyExpr` / `CtfeExpr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation while
-;# the CTFE value migration lands. The helper functions below are stdlib-owned
-;# signatures for the same compile-time-only bridge; macro CTFE intercepts calls
-;# to them before their placeholder bodies are evaluated.
+;# the CTFE value migration lands.
+;#
+;# CTFE still intercepts constructor, sequence, and reflection helper calls
+;# because it cannot yet interpret arbitrary stdlib function calls and several
+;# constructors attach compiler provenance. Simple `Expr`/`ExprClause`
+;# inspectors below are ordinary source bodies so macro code can migrate toward
+;# public pattern matching without growing the bridge surface.
 (module stdlib.comptime)
 
 ;# `feature-plain-comptime-well-known` is the end-state source surface. The
@@ -322,27 +326,39 @@
 
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
-  (expr-bool? value))
+  (match value
+    [(ExprBool _) true]
+    [_ false]))
 
 ;: Extract the bool literal payload from an expression.
 (define (expr-bool-value [value : Expr]) : bool
-  (expr-bool-value value))
+  (match value
+    [(ExprBool found) found]
+    [_ false]))
 
 ;: Return true when an expression is an if expression.
 (define (expr-if? [value : Expr]) : bool
-  (expr-if? value))
+  (match value
+    [(ExprIf _ _ _) true]
+    [_ false]))
 
 ;: Extract an if expression's condition.
 (define (expr-if-cond [value : Expr]) : Expr
-  (expr-if-cond value))
+  (match value
+    [(ExprIf cond _ _) cond]
+    [_ value]))
 
 ;: Extract an if expression's then branch.
 (define (expr-if-then [value : Expr]) : Expr
-  (expr-if-then value))
+  (match value
+    [(ExprIf _ then-expr _) then-expr]
+    [_ value]))
 
 ;: Extract an if expression's else branch.
 (define (expr-if-else [value : Expr]) : Expr
-  (expr-if-else value))
+  (match value
+    [(ExprIf _ _ else-expr) else-expr]
+    [_ value]))
 
 ;: Return true when an expression list has no items.
 (define (expr-list-empty? [items : ExprList]) : bool
@@ -366,11 +382,13 @@
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
-  (expr-clause-first clause))
+  (match clause
+    [(ExprClause first _) first]))
 
 ;: Return the second expression from a clause.
 (define (expr-clause-second [clause : ExprClause]) : Expr
-  (expr-clause-second clause))
+  (match clause
+    [(ExprClause _ second) second]))
 
 ;: Return true when a clause list has no items.
 (define (expr-clause-list-empty? [items : ExprClauseList]) : bool

@@ -3424,9 +3424,12 @@
               (ctfe-diagnostic-at-expr expr "int->string expects one i64"))]))]
     [_ (ErrCtfe (ctfe-diagnostic-at-expr expr "int->string expects one i64"))]))
 
-;; User-facing Expr constructors (#1135). They are CTFE-only builtins for macro
-;; bodies: they build checked code fragments while carrying each fragment's
-;; produced type internally.
+;; User-facing stdlib.comptime helpers. Constructors and dense sequence helpers
+;; remain CTFE bridge calls while CTFE lacks general stdlib function calls and
+;; syntax values still carry compiler-owned provenance/type metadata. Simple
+;; public inspectors may also have ordinary stdlib bodies; the intercepts keep
+;; existing macro code behavior-compatible until the representation migration is
+;; complete (#2653).
 (define (ctfe-stdlib-comptime-helper-name?
   [name : String]
   [qualified : bool]

@@ -137,6 +137,38 @@
             (set! i prefix-len)))
         ok))))
 
+
+;; Find the first occurrence of a substring within a string.
+;; Returns the starting index, or -1 if not found.
+(define (string-find [text : String] [pattern : String]) : i64
+  (let
+    [text-len : i64 (string-length text)]
+    [pat-len : i64 (string-length pattern)]
+    (if (= pat-len 0)
+      0
+      (if (> pat-len text-len)
+        -1
+        (let
+          [max-i : i64 (- text-len pat-len)]
+          [i : i64 0]
+          [found : i64 -1]
+          (begin
+            (while (and (<= i max-i) (= found -1))
+              (let
+                [j : i64 0]
+                [match : bool true]
+                (begin
+                  (while (and (< j pat-len) match)
+                    (if (= (string-ref text (+ i j)) (string-ref pattern j))
+                      (set! j (+ j 1))
+                      (begin
+                        (set! match false)
+                        (set! j pat-len))))
+                  (when match
+                    (set! found i))
+                  (set! i (+ i 1)))))
+            found))))))
+
 (define (lsp-frame-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
@@ -4650,6 +4682,24 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
+          (if (and (not handled) (string-eq method "tl/patch"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (set!
+                            result
+                            (lsp-handle-tl-patch id params docs))]
+                        [(json.JsonMissing)
+                          (lsp-write-error id -32600 "Missing params")]))]
+                  [(json.JsonMissing) unit])))
+            unit)
           (if (and (not handled) (string-eq method "tl/projectSearch"))
             (begin
               (set! handled true)
@@ -5285,6 +5335,74 @@
         (if found
           (OkLspEdit result)
           (ErrLspEdit "Declaration not found"))))))
+
+
+;; tl/patch - Find and replace text anywhere in the file, then validate
+(define (lsp-patch-text
+  [text : String]
+  [old-text : String]
+  [new-text : String]) : LspEditResult
+  (if (string-eq old-text "")
+    (ErrLspEdit "oldText cannot be empty")
+    (let
+      [idx : i64 (string-find text old-text)]
+      (if (= idx -1)
+        (ErrLspEdit "oldText not found in document")
+        (let
+          [before : String (substring text 0 idx)]
+          [after : String
+            (substring
+              text
+              (+ idx (string-length old-text))
+              (- (string-length text) (+ idx (string-length old-text))))]
+          [replaced : String (str-cat before new-text after)]
+          (if (not (lsp-text-is-valid-forms replaced))
+            (ErrLspEdit
+              (str-cat
+                "Patch produces invalid form(s): "
+                (lsp-validate-forms-error replaced)))
+            (OkLspEdit replaced)))))))
+
+;; tl/patch - Handler for find-and-replace patch
+(define (lsp-handle-tl-patch
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument path text _)
+      (match (lsp-json-string-field params "oldText")
+        [(OkLspJsonText old-text)
+          (match (lsp-json-string-field params "newText")
+            [(OkLspJsonText new-text)
+              (match (lsp-patch-text text old-text new-text)
+                [(OkLspEdit replaced)
+                  (let
+                    [formatted : String (lsp-format-edit-text replaced)]
+                    (begin
+                      (lsp-write-response
+                        id
+                        (lsp-json-object2
+                          "success"
+                          (json.JsonBool true)
+                          "text"
+                          (json.JsonString formatted)))
+                      (LspContinue docs)))]
+                [(ErrLspEdit message)
+                  (begin
+                    (lsp-write-error id -32600 message)
+                    (LspContinue docs))])]
+            [(MissingLspJsonText)
+              (begin
+                (lsp-write-error id -32600 "Missing newText parameter")
+                (LspContinue docs))])]
+        [(MissingLspJsonText)
+          (begin
+            (lsp-write-error id -32600 "Missing oldText parameter")
+            (LspContinue docs))])]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
 
 (test
   lsp-validate-forms-smoke

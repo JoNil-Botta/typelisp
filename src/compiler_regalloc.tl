@@ -4205,6 +4205,108 @@
               (box-get rest)
               clobber-points))])]))
 
+;; copy-hint biasing: copy-hints[root] is a move-neighbour root (or -1). If that
+;; neighbour is already assigned a register that lies in `regs` and does not
+;; conflict with `var` under the hole-aware segment test, prefer it so the copy
+;; var<->neighbour collapses to a self-move. Soundness rests entirely on the same
+;; compiler-reg-active-register-conflicts? test the first-free path uses; the hint
+;; only changes WHICH non-conflicting register is chosen.
+(define (compiler-reg-copy-hint-register
+  [assignments : CompilerRegAssignmentTable]
+  [active : CompilerRegActiveList]
+  [copy-hints : (Array i64)]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]
+  [regs : CompilerRegStringList]
+  [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegMaybeString
+  (if (if (< var 0)
+    true
+    (>= var (array-length copy-hints)))
+    (CompilerRegNoString)
+    (let
+      [hint : i64 (array-ref copy-hints var)]
+      (if (< hint 0)
+        (CompilerRegNoString)
+        (match (compiler-reg-assignment-table-lookup assignments hint)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister reg)
+                (if (if (compiler-reg-string-list-contains? regs reg)
+                  (not
+                    (compiler-reg-active-register-conflicts?
+                      active
+                      reg
+                      interval-index
+                      var
+                      hole-aware-vars))
+                  false)
+                  (CompilerRegSomeString reg)
+                  (CompilerRegNoString))]
+              [_ (CompilerRegNoString)])]
+          [(CompilerRegNoLocation) (CompilerRegNoString)])))))
+
+(define (compiler-reg-copy-hints-add-move!
+  [hints : (Array i64)]
+  [parents : (Array i64)]
+  [src : i64]
+  [dst : i64]) : unit
+  (let
+    [n : i64 (array-length hints)]
+    [root-src : i64
+      (if (if (>= src 0)
+        (< src (array-length parents))
+        false)
+        (array-ref parents src)
+        src)]
+    [root-dst : i64
+      (if (if (>= dst 0)
+        (< dst (array-length parents))
+        false)
+        (array-ref parents dst)
+        dst)]
+    (if (or
+      (= root-src root-dst)
+      (< root-src 0)
+      (>= root-src n)
+      (< root-dst 0)
+      (>= root-dst n))
+      unit
+      (begin
+        (if (< (array-ref hints root-src) 0)
+          (array-set! hints root-src root-dst)
+          unit)
+        (if (< (array-ref hints root-dst) 0)
+          (array-set! hints root-dst root-src)
+          unit)
+        unit))))
+
+(define (compiler-reg-copy-hints-from-moves!
+  [hints : (Array i64)]
+  [parents : (Array i64)]
+  [moves : CompilerRegMoveList]) : unit
+  (match moves
+    [(CompilerRegMoveNil) unit]
+    [(CompilerRegMoveCons move rest)
+      (begin
+        (match move
+          [(CompilerRegMove src dst _)
+            (compiler-reg-copy-hints-add-move! hints parents src dst)])
+        (compiler-reg-copy-hints-from-moves! hints parents (box-get rest)))]))
+
+;; Build per-root copy hints from the move list, mapping each move endpoint to its
+;; coalesce root. The first move pairing a root with a distinct neighbour wins.
+(define (compiler-reg-function-copy-hints
+  [moves : CompilerRegMoveList]
+  [coalesce : CompilerRegCoalesceMap]
+  [n : i64]) : (Array i64)
+  (let
+    [hints : (Array i64) (make-array i64 n)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    (begin
+      (compiler-reg-fill-i64-array hints -1)
+      (compiler-reg-copy-hints-from-moves! hints parents moves)
+      hints)))
+
 (define (compiler-reg-assign-candidates
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
@@ -4217,7 +4319,8 @@
   [hole-aware-vars : CompilerLiveI64Set]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]) : CompilerRegAssignState
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]) : CompilerRegAssignState
   (match candidates
     [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
     [(CompilerRegIntervalCons interval rest)
@@ -4269,7 +4372,8 @@
                       hole-aware-vars
                       types
                       group-vars
-                      ref-counts)]
+                      ref-counts
+                      copy-hints)]
                   [(CompilerRegRegisterPair reg-a reg-b)
                     ;; #2386: a coalesced register-pair occupies both registers for
                     ;; the var's lifetime -- two active entries that expire together.
@@ -4292,7 +4396,8 @@
                       hole-aware-vars
                       types
                       group-vars
-                      ref-counts)]
+                      ref-counts
+                      copy-hints)]
                   [(CompilerRegSpill _)
                     (compiler-reg-assign-candidates
                       (box-get rest)
@@ -4309,7 +4414,8 @@
                       hole-aware-vars
                       types
                       group-vars
-                      ref-counts)])]
+                      ref-counts
+                      copy-hints)])]
               [(CompilerRegNoLocation)
                 (if (compiler-live-set-contains? group-vars var)
                   ;; #2386: a 2-word register-group var needs TWO free GP registers
@@ -4333,7 +4439,8 @@
                       hole-aware-vars
                       types
                       group-vars
-                      ref-counts)
+                      ref-counts
+                      copy-hints)
                     (if (>=
                       (-
                         (compiler-reg-string-list-count regs)
@@ -4365,7 +4472,8 @@
                           hole-aware-vars
                           types
                           group-vars
-                          ref-counts))
+                          ref-counts
+                          copy-hints))
                       ;; Fewer than two GP registers free: a group var cannot live in
                       ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
                       ;; (NoLocation). The backend then homes both words in the var's
@@ -4384,17 +4492,20 @@
                         hole-aware-vars
                         types
                         group-vars
-                        ref-counts)))
-                  ;; #3489 (PR4, hole-aware): take the first register no active
-                  ;; value's live SEGMENTS conflict with -- a value may reuse a
-                  ;; register during another value's hole (e.g. a merged loop
-                  ;; class's loop body). Spill only when every register is held by
-                  ;; an interfering value, not merely when the count is full.
-                  (match (compiler-reg-first-free-register-holes
-                    regs
+                        ref-counts
+                        copy-hints)))
+                  ;; copy-hint biasing: if var is move-related to a value already
+                  ;; assigned a register that is free for var (hole-aware), reuse
+                  ;; that register so the copy becomes a self-move. Sound because the
+                  ;; choice is gated by the same hole-aware conflict test as the
+                  ;; first-free fallback below.
+                  (match (compiler-reg-copy-hint-register
+                    assignments
                     expired
+                    copy-hints
                     interval-index
                     var
+                    regs
                     hole-aware-vars)
                     [(CompilerRegSomeString reg)
                       (compiler-reg-assign-candidates
@@ -4414,22 +4525,31 @@
                         hole-aware-vars
                         types
                         group-vars
-                        ref-counts)]
-                    [(CompilerRegNoString)
-                      (match (compiler-reg-spill-at-interval
-                        interval
-                        expired
-                        assignments
-                        group-vars
                         ref-counts
+                        copy-hints)]
+                    [(CompilerRegNoString)
+                      ;; #3489 (PR4, hole-aware): take the first register no active
+                      ;; value's live SEGMENTS conflict with -- a value may reuse a
+                      ;; register during another value's hole (e.g. a merged loop
+                      ;; class's loop body). Spill only when every register is held by
+                      ;; an interfering value, not merely when the count is full.
+                      (match (compiler-reg-first-free-register-holes
+                        regs
+                        expired
                         interval-index
+                        var
                         hole-aware-vars)
-                        [(CompilerRegAssignState next-active next-assignments)
+                        [(CompilerRegSomeString reg)
                           (compiler-reg-assign-candidates
                             (box-get rest)
                             regs
-                            next-active
-                            next-assignments
+                            (compiler-reg-active-insert
+                              expired
+                              (CompilerRegActive var end reg))
+                            (compiler-reg-assignment-table-insert
+                              assignments
+                              var
+                              (CompilerRegRegister reg))
                             moves
                             coalesce
                             use-fixpoint-coalesce
@@ -4437,7 +4557,34 @@
                             hole-aware-vars
                             types
                             group-vars
-                            ref-counts)])]))]))])]))
+                            ref-counts
+                            copy-hints)]
+                        [(CompilerRegNoString)
+                          (match (compiler-reg-spill-at-interval
+                            interval
+                            expired
+                            assignments
+                            group-vars
+                            ref-counts
+                            interval-index
+                            hole-aware-vars)
+                            [(CompilerRegAssignState
+                                next-active
+                                next-assignments)
+                              (compiler-reg-assign-candidates
+                                (box-get rest)
+                                regs
+                                next-active
+                                next-assignments
+                                moves
+                                coalesce
+                                use-fixpoint-coalesce
+                                interval-index
+                                hole-aware-vars
+                                types
+                                group-vars
+                                ref-counts
+                                copy-hints)])])]))]))])]))
 
 (define (compiler-reg-fixed-preferred-register
   [assignments : CompilerRegAssignmentTable]
@@ -7479,6 +7626,15 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-merged-root-set coalesce)
         (compiler-live-set-empty))]
+    ;; copy-hint biasing: per-root preferred move-neighbour for the integer pass.
+    ;; Only built on the scalar-opt2 path (empty elsewhere -> hint always -1).
+    [copy-hints : (Array i64)
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-copy-hints
+          moves
+          coalesce
+          (array-length (struct-get interval-index starts)))
+        (make-array i64 0))]
     ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -7590,7 +7746,8 @@
         hole-aware-vars
         type-info
         group-vars
-        eviction-ref-counts)]
+        eviction-ref-counts
+        copy-hints)]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -7643,6 +7800,7 @@
         hole-aware-vars
         type-info
         (compiler-live-set-empty)
+        (make-array i64 0)
         (make-array i64 0))]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state

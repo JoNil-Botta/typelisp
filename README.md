@@ -251,11 +251,12 @@ TypeLisp does not plan source-level generics, traits, interfaces, `impl`
 blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
 conversion. Library abstraction should come from Zig-style comptime generation:
 compile-time code inspects type values and emits concrete structs, enums,
-functions, and implementation bundles. V1 supports explicit
-`comptime-decl`-generated concrete declarations and `comptime-decls` bundles
-when several generated items share one request key; write hand-authored
-monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums
-when a generated family has not been requested. Use `(return expr)` for
+functions, and implementation bundles. New generated declarations should use
+declaration-emitting `defmacro` forms; the deprecated `comptime-decl`
+single-payload compatibility form remains only for legacy generated concrete
+declarations. Write hand-authored monomorphic declarations such as `MaybeI64`
+or domain-specific `Result*` enums when a generated family has not been
+requested. Use `(return expr)` for
 function-local early exits, `(when cond body)` /
 `(unless cond body)` for unit-valued guards, and `(try expr)` for the
 Lisp-shaped propagation form over compatible concrete Result-like enums.

@@ -68,30 +68,51 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (if (compiler-specialize-needed? expanded)
-                      (match (build-compiler-symbols-with-paths
+                      (match (gen-normalize-program-with-paths-and-pools
                         expanded
-                        expanded-paths)
-                        [(OkCompilerSymbols _)
+                        expanded-paths
+                        (tc-decl-path-list-last expanded-paths "")
+                        pools)
+                        [(OkGenProgramWithPaths normalized normalized-paths)
                           (begin
-                            (ast-node-pool-context-capture-active! pools)
-                            (match (compiler-specialize-program-with-paths-and-pools
-                              expanded
-                              expanded-paths
-                              (tc-decl-path-list-last expanded-paths "")
-                              pools)
-                              [(OkSpecProgramWithPaths
-                                  specialized
-                                  specialized-paths)
-                                (typecheck-compiler-specialized-program-with-paths-cache-and-pools
-                                  specialized
-                                  specialized-paths
-                                  stdlib-roots
-                                  cache-scope
-                                  pools)]
-                              [(ErrSpecProgramWithPaths diag)
-                                (ErrCompilerTypecheck diag)]))]
-                        [(ErrCompilerSymbols message)
-                          (ErrCompilerTypecheck (tc-diag-at-start message))])
+                            (ast-node-pool-context-install! pools)
+                            (if (compiler-specialize-needed? normalized)
+                              (match (build-compiler-symbols-with-paths
+                                normalized
+                                normalized-paths)
+                                [(OkCompilerSymbols _)
+                                  (begin
+                                    (ast-node-pool-context-capture-active!
+                                      pools)
+                                    (match (compiler-specialize-program-with-paths-and-pools
+                                      normalized
+                                      normalized-paths
+                                      (tc-decl-path-list-last
+                                        normalized-paths
+                                        "")
+                                      pools)
+                                      [(OkSpecProgramWithPaths
+                                          specialized
+                                          specialized-paths)
+                                        (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                          specialized
+                                          specialized-paths
+                                          stdlib-roots
+                                          cache-scope
+                                          pools)]
+                                      [(ErrSpecProgramWithPaths diag)
+                                        (ErrCompilerTypecheck diag)]))]
+                                [(ErrCompilerSymbols message)
+                                  (ErrCompilerTypecheck
+                                    (tc-diag-at-start message))])
+                              (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                normalized
+                                normalized-paths
+                                stdlib-roots
+                                cache-scope
+                                pools)))]
+                        [(ErrGenProgramWithPaths diag)
+                          (ErrCompilerTypecheck diag)])
                       (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                         expanded
                         expanded-paths
@@ -146,31 +167,51 @@
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (if (compiler-specialize-needed? expanded)
-                      (match (build-compiler-symbols-with-paths
+                      (match (gen-normalize-program-with-paths-and-pools
                         expanded
-                        expanded-paths)
-                        [(OkCompilerSymbols _)
+                        expanded-paths
+                        (tc-decl-path-list-last expanded-paths "")
+                        pools)
+                        [(OkGenProgramWithPaths normalized normalized-paths)
                           (begin
-                            (ast-node-pool-context-capture-active! pools)
-                            (match (compiler-specialize-program-with-paths-and-pools
-                              expanded
-                              expanded-paths
-                              (tc-decl-path-list-last expanded-paths "")
-                              pools)
-                              [(OkSpecProgramWithPaths
-                                  specialized
-                                  specialized-paths)
-                                (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
-                                  specialized
-                                  specialized-paths
-                                  stdlib-roots
-                                  cache-scope
-                                  pools)]
-                              [(ErrSpecProgramWithPaths diag)
-                                (ErrCompilerTypecheckChecked diag)]))]
-                        [(ErrCompilerSymbols message)
-                          (ErrCompilerTypecheckChecked
-                            (tc-diag-at-start message))])
+                            (ast-node-pool-context-install! pools)
+                            (if (compiler-specialize-needed? normalized)
+                              (match (build-compiler-symbols-with-paths
+                                normalized
+                                normalized-paths)
+                                [(OkCompilerSymbols _)
+                                  (begin
+                                    (ast-node-pool-context-capture-active!
+                                      pools)
+                                    (match (compiler-specialize-program-with-paths-and-pools
+                                      normalized
+                                      normalized-paths
+                                      (tc-decl-path-list-last
+                                        normalized-paths
+                                        "")
+                                      pools)
+                                      [(OkSpecProgramWithPaths
+                                          specialized
+                                          specialized-paths)
+                                        (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                          specialized
+                                          specialized-paths
+                                          stdlib-roots
+                                          cache-scope
+                                          pools)]
+                                      [(ErrSpecProgramWithPaths diag)
+                                        (ErrCompilerTypecheckChecked diag)]))]
+                                [(ErrCompilerSymbols message)
+                                  (ErrCompilerTypecheckChecked
+                                    (tc-diag-at-start message))])
+                              (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                normalized
+                                normalized-paths
+                                stdlib-roots
+                                cache-scope
+                                pools)))]
+                        [(ErrGenProgramWithPaths diag)
+                          (ErrCompilerTypecheckChecked diag)])
                       (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                         expanded
                         expanded-paths

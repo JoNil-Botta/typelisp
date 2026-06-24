@@ -33618,6 +33618,9 @@
       (OkGenKey (str-cat definition-module ":" macro-name "(" arg-key ")") fuel)]
     [(ErrGenKey diag) (ErrGenKey diag)]))
 
+(define (macro-decls-generated-key [identity : String]) : String
+  (string-append "decls:" identity))
+
 (define (macro-generated-meta
   [generator : String]
   [item : String]
@@ -33668,6 +33671,28 @@
       (ast-decl-cons
         (macro-wrap-generated-decl decl generator key)
         (macro-wrap-generated-decls (box-get rest) generator key))]))
+
+(define (macro-wrap-generated-decl-decls
+  [decl : AstDecl]
+  [generator : String]
+  [key : String]) : AstDecl
+  (match (gen-decl-visible-name decl)
+    [(SpecSomeString item)
+      (ast-decl-comptime-decl-with-meta
+        (macro-generated-meta generator item key)
+        decl)]
+    [(SpecNoString) decl]))
+
+(define (macro-wrap-generated-decls-decls
+  [decls : AstDeclList]
+  [generator : String]
+  [key : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (ast-decl-cons
+        (macro-wrap-generated-decl-decls decl generator key)
+        (macro-wrap-generated-decls-decls (box-get rest) generator key))]))
 
 (define (macro-generated-context-import-kind
   [kind : AstImportKind]
@@ -38019,32 +38044,58 @@
                 (match maybe-decl
                   [(MacroSomeDecl macro-name definition-module params ret body)
                     (if (tc-macro-result-decls? ret)
-                      (match (macro-eval-transformer
+                      (match (macro-expand-exprs
                         decl-ctx
                         global-env
                         orig-decls
-                        macro-name
-                        params
-                        body
-                        args
                         0
-                        call-expr)
-                        [(OkMacroValue value)
-                          (match (macro-decls-from-ctfe-value value call-expr)
-                            [(OkMacroParsedDecls generated)
-                              (let
-                                [contextual-generated : AstDeclList
-                                  (macro-generated-context-decls
-                                    generated
-                                    definition-module)]
-                                (OkMacroDeclExpansion
-                                  contextual-generated
-                                  (macro-paths-for-decls
-                                    contextual-generated
-                                    decl-path)))]
-                            [(ErrMacroParsedDecls diag)
-                              (ErrMacroDeclExpansion diag)])]
-                        [(ErrMacroValue diag) (ErrMacroDeclExpansion diag)])
+                        args)
+                        [(OkMacroExprList expanded-args)
+                          (match (macro-module-identity
+                            decl-ctx
+                            macro-name
+                            definition-module
+                            params
+                            expanded-args
+                            (tc-ctfe-env decl-ctx)
+                            call-expr)
+                            [(OkGenKey identity _)
+                              (match (macro-eval-transformer
+                                decl-ctx
+                                global-env
+                                orig-decls
+                                macro-name
+                                params
+                                body
+                                args
+                                0
+                                call-expr)
+                                [(OkMacroValue value)
+                                  (match (macro-decls-from-ctfe-value
+                                    value
+                                    call-expr)
+                                    [(OkMacroParsedDecls generated)
+                                      (let
+                                        [contextual-generated : AstDeclList
+                                          (macro-generated-context-decls
+                                            generated
+                                            definition-module)]
+                                        [wrapped : AstDeclList
+                                          (macro-wrap-generated-decls-decls
+                                            contextual-generated
+                                            macro-name
+                                            (macro-decls-generated-key identity))]
+                                        (OkMacroDeclExpansion
+                                          wrapped
+                                          (macro-paths-for-decls
+                                            wrapped
+                                            decl-path)))]
+                                    [(ErrMacroParsedDecls diag)
+                                      (ErrMacroDeclExpansion diag)])]
+                                [(ErrMacroValue diag)
+                                  (ErrMacroDeclExpansion diag)])]
+                            [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
+                        [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                       (if (tc-macro-result-module? ret)
                         (ErrMacroDeclExpansion
                           (ctfe-diagnostic-at-expr
@@ -39104,19 +39155,31 @@
         paths
         pools)
         [(OkMacroExpand expanded expanded-paths)
-          (match expanded
-            [(AstProgram decls-box)
-              (let
-                [decls : AstDeclList (box-get decls-box)]
-                (if (or
-                  had-placeholders
-                  (macro-program-has-module-placeholder? decls))
-                  (macro-expand-program-with-paths-loop-and-pools
-                    expanded
-                    expanded-paths
-                    pools
-                    (- fuel 1))
-                  (OkMacroExpand expanded expanded-paths)))])]
+          (let
+            [normalized-result : ResultGenProgramWithPaths
+              (if (compiler-specialize-needed? expanded)
+                (gen-normalize-program-with-paths-and-pools
+                  expanded
+                  expanded-paths
+                  (tc-decl-path-list-last expanded-paths "")
+                  pools)
+                (OkGenProgramWithPaths expanded expanded-paths))]
+            (match normalized-result
+              [(OkGenProgramWithPaths normalized normalized-paths)
+                (match normalized
+                  [(AstProgram decls-box)
+                    (let
+                      [decls : AstDeclList (box-get decls-box)]
+                      (if (or
+                        had-placeholders
+                        (macro-program-has-module-placeholder? decls))
+                        (macro-expand-program-with-paths-loop-and-pools
+                          normalized
+                          normalized-paths
+                          pools
+                          (- fuel 1))
+                        (OkMacroExpand normalized normalized-paths)))])]
+              [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
         [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
 
 (define (macro-expand-program-with-paths-loop

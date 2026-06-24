@@ -3690,14 +3690,7 @@
                     (set! ok false))
                   (if ok
                     42
-                    (begin
-                      (panic "symbols: smoke score mismatch")))))]
-            [(ErrCompilerRegistries message)
-              (begin
-                (panic message))])]
-        [(ErrCompilerSymbols message)
-          (begin
-            (panic message))])]
-    [(ErrAstProgram message)
-      (begin
-        (panic message))]))
+                    (panic "symbols: smoke score mismatch"))))]
+            [(ErrCompilerRegistries message) (panic message)])]
+        [(ErrCompilerSymbols message) (panic message)])]
+    [(ErrAstProgram message) (panic message)]))

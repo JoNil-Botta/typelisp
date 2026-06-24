@@ -8864,29 +8864,28 @@
         range-base
         range-size
         0)]
-    (begin
-      (if (= range-count 0)
-        from
-        (begin
-          (compiler-reg-color-fill-interval-bounds intervals starts ends)
-          (compiler-reg-color-propagate-roots blocks range-of-var roots invalid)
-          (compiler-reg-color-invalidate-blocks! blocks roots invalid)
-          (compiler-reg-color-range-liveness!
-            roots
-            starts
-            ends
-            range-starts
-            range-ends)
-          (compiler-reg-color-storage-ranges
-            slot-ends
-            remap
-            range-base
-            range-size
-            range-starts
-            range-ends
-            invalid
-            range-count
-            from))))))
+    (if (= range-count 0)
+      from
+      (begin
+        (compiler-reg-color-fill-interval-bounds intervals starts ends)
+        (compiler-reg-color-propagate-roots blocks range-of-var roots invalid)
+        (compiler-reg-color-invalidate-blocks! blocks roots invalid)
+        (compiler-reg-color-range-liveness!
+          roots
+          starts
+          ends
+          range-starts
+          range-ends)
+        (compiler-reg-color-storage-ranges
+          slot-ends
+          remap
+          range-base
+          range-size
+          range-starts
+          range-ends
+          invalid
+          range-count
+          from)))))
 
 ;; Rebuild the var-type table on remapped keys. Type and assignment lookups
 ;; early-exit on the ascending-id list invariant, so remapping keys in place
@@ -14778,8 +14777,7 @@
     (compiler-regalloc-scalar-self-test?)
     (compiler-regalloc-storage-self-test?))
     42
-    (begin
-      (panic "regalloc: smoke mismatch"))))
+    (panic "regalloc: smoke mismatch")))
 
 (cfg
   test

@@ -30673,22 +30673,21 @@ tl_memcpy:
             pending-end
             pending-line
             pending-owned?)))
-        (begin
-          (let
-            [emit : CompilerBackendPeepholeEmitResult
-              (compiler-backend-peephole-emit-pending-line
-                out
-                asm
-                asm-data
-                pending-start
-                pending-end
-                pending-line
-                pending-owned?
-                pending-newline
-                rax-owner)]
-            (begin
-              (set! out (struct-get emit buf))
-              (set! rax-owner (struct-get emit rax-owner)))))
+        (let
+          [emit : CompilerBackendPeepholeEmitResult
+            (compiler-backend-peephole-emit-pending-line
+              out
+              asm
+              asm-data
+              pending-start
+              pending-end
+              pending-line
+              pending-owned?
+              pending-newline
+              rax-owner)]
+          (begin
+            (set! out (struct-get emit buf))
+            (set! rax-owner (struct-get emit rax-owner))))
         unit)
       (text-buf-render out))))
 

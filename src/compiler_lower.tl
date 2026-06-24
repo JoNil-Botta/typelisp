@@ -46871,5 +46871,4 @@
     (compiler-lower-middle-tests-ok?)
     (compiler-lower-back-half-tests-ok?))
     42
-    (begin
-      (panic "lower: smoke score mismatch"))))
+    (panic "lower: smoke score mismatch")))

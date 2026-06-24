@@ -37,24 +37,18 @@
 (define (sexpr-head [s : Sexpr]) : SexprAtom
   (match s
     [(SCons h _) h]
-    [_
-      (begin
-        (panic "eval: car of a non-cons"))]))
+    [_ (panic "eval: car of a non-cons")]))
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
   (match s
     [(SCons _ t) (box-get t)]
-    [_
-      (begin
-        (panic "eval: cdr of a non-cons"))]))
+    [_ (panic "eval: cdr of a non-cons")]))
 
 (define (eval-atom [a : SexprAtom]) : i64
   (match a
     [(AInt n) n]
     [(AList nested) (eval-sexpr (box-get nested))]
-    [_
-      (begin
-        (panic "eval: not an evaluable atom"))]))
+    [_ (panic "eval: not an evaluable atom")]))
 
 ;; eval-sexpr: the tree-walking interpreter. The SCons arm uses the nested
 ;; pattern to bind the operator symbol `name` directly from the head's `SSym`.
@@ -74,15 +68,11 @@
           [(string-eq name "-") (- a b)]
           [(string-eq name "*") (* a b)]
           [(string-eq name "/") (/ a b)]
-          [else
-            (begin
-              (panic "eval: unknown operator"))]))]
+          [else (panic "eval: unknown operator")]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested SSym above did not match, so we land
     ;; here.
-    [_
-      (begin
-        (panic "eval: not an evaluable expression"))]))
+    [_ (panic "eval: not an evaluable expression")]))
 
 ;; Build `(+ 1 (* 2 3))` as an Sexpr tree:
 ;;   (SCons (SSym "+")

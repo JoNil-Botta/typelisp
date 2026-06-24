@@ -453,9 +453,7 @@
 (define (package-cache-expect-key [dep : String]) : PackageCacheKey
   (match (package-cache-key-from-normalized-remote dep)
     [(OkPackageCacheKey key) key]
-    [(ErrPackageCacheKey message)
-      (begin
-        (panic message))]))
+    [(ErrPackageCacheKey message) (panic message)]))
 
 (define (package-cache-expect-ok [result : ResultIoUnit] [message : String]) : unit
   (match result
@@ -466,11 +464,10 @@
   (match result
     [(OkIoString value) value]
     [(ErrIoString error)
-      (begin
-        (panic
-          (string-append
-            "package-cache: temp dir failed: "
-            (io-error-message error))))]))
+      (panic
+        (string-append
+          "package-cache: temp dir failed: "
+          (io-error-message error)))]))
 
 (define (package-cache-pure-self-test-ok?) : bool
   (let
@@ -586,8 +583,7 @@
     (package-cache-pure-self-test-ok?)
     (package-cache-filesystem-self-test-ok?))
     42
-    (begin
-      (panic "package-cache: self-test mismatch"))))
+    (panic "package-cache: self-test mismatch")))
 
 (test
   package-cache-parse-key-and-paths

@@ -1663,8 +1663,7 @@
         true
         (= status 20))
         false
-        (begin
-          (panic "tl: file-exists? failed\n"))))))
+        (panic "tl: file-exists? failed\n")))))
 
 ;: Return true when `raw` names an open stdlib file handle.
 (define (io-valid-handle? [raw : i64]) : bool
@@ -2338,9 +2337,7 @@
 (define (append-file [path : (& path str)] [contents : (& contents str)]) : unit
   (match (try-append-file path contents)
     [(OkIoUnit) unit]
-    [(ErrIoUnit error)
-      (begin
-        (panic (io-error-message error)))]))
+    [(ErrIoUnit error) (panic (io-error-message error))]))
 
 ;: Return true when `path` exists and its contents are non-empty.
 ;:

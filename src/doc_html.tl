@@ -669,5 +669,4 @@
   [message : String]) : bool
   (if (doc-string-contains? rendered needle)
     true
-    (begin
-      (panic message))))
+    (panic message)))

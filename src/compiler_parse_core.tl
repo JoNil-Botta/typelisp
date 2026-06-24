@@ -10003,10 +10003,6 @@
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42
-          (begin
-            (panic "parse: error-path self-tests failed")))
-        (begin
-          (panic "parse: compiler AST smoke score mismatch")))]
-    [(ErrAstProgram message)
-      (begin
-        (panic message))]))
+          (panic "parse: error-path self-tests failed"))
+        (panic "parse: compiler AST smoke score mismatch"))]
+    [(ErrAstProgram message) (panic message)]))

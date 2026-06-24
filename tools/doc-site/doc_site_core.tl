@@ -263,8 +263,7 @@
   (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
 
 (define (doc-site-panic-unit [message : String]) : unit
-  (begin
-    (panic message)))
+  (panic message))
 
 (define (doc-site-empty-docs) : DocExtraction
   (DocExtraction "" DocItemNil))
@@ -989,16 +988,14 @@ pre {
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (doc-extract-source (read-file source))
-      (begin
-        (panic (string-append "doc-site: missing input module: " source))))))
+      (panic (string-append "doc-site: missing input module: " source)))))
 
 (define (doc-site-read-markdown [source : String]) : String
   (let
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (read-file source)
-      (begin
-        (panic (string-append "doc-site: missing language reference: " source))))))
+      (panic (string-append "doc-site: missing language reference: " source)))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
@@ -1197,8 +1194,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
 (define (doc-site-require [ok : bool] [message : String]) : bool
   (if ok
     true
-    (begin
-      (panic message))))
+    (panic message)))
 
 (define (doc-site-smoke) : i64
   (let

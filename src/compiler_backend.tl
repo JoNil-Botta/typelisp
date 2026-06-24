@@ -1664,15 +1664,16 @@
     [(AstTyF32) "vcmpps"]
     [_ ""]))
 
-(define (compiler-backend-avx512-compare-imm [op : CompilerIrBinOp]) : i64
+(define (compiler-backend-avx512-compare-predicate-separator
+  [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinEq) 0]
-    [(IrBinLt) 1]
-    [(IrBinLe) 2]
-    [(IrBinNe) 4]
-    [(IrBinGe) 5]
-    [(IrBinGt) 6]
-    [_ -1]))
+    [(IrBinEq) " $0, "]
+    [(IrBinLt) " $1, "]
+    [(IrBinLe) " $2, "]
+    [(IrBinNe) " $4, "]
+    [(IrBinGe) " $5, "]
+    [(IrBinGt) " $6, "]
+    [_ ""]))
 
 (define (compiler-backend-avx512-splat-load
   [assignments : CompilerRegAssignmentList]
@@ -2142,8 +2143,11 @@
     (let
       [mnemonic : String
         (compiler-backend-avx512-vector-compare-mnemonic elem-ty)]
-      [predicate : i64 (compiler-backend-avx512-compare-imm op)]
-      (if (or (= (string-length mnemonic) 0) (< predicate 0))
+      [predicate-separator : String
+        (compiler-backend-avx512-compare-predicate-separator op)]
+      (if (or
+        (= (string-length mnemonic) 0)
+        (= (string-length predicate-separator) 0))
         (ErrCompilerBackend
           (compiler-diagnostic-with-message
             instr-diag
@@ -2161,16 +2165,16 @@
                 (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
                   [(OkBackendReg dst-reg)
                     (OkCompilerBackend
-                      (string-append
-                        (str-cat
-                          "    "
-                          mnemonic
-                          " $"
-                          (int->string predicate)
-                          ", ")
-                        (string-append
-                          (str-cat rhs-reg ", " lhs-reg ", ")
-                          (str-cat dst-reg "\n"))))]
+                      (str-cat
+                        "    "
+                        mnemonic
+                        predicate-separator
+                        rhs-reg
+                        ", "
+                        lhs-reg
+                        ", "
+                        dst-reg
+                        "\n"))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message instr-diag message))])]

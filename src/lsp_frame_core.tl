@@ -4650,6 +4650,22 @@
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
             unit)
+          (if (and (not handled) (string-eq method "tl/patch"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.json-object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.json-object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (set! result (lsp-handle-tl-patch id params docs))]
+                        [(json.JsonMissing)
+                          (lsp-write-error id -32600 "Missing params")]))]
+                  [(json.JsonMissing) unit])))
+            unit)
           (if (and (not handled) (string-eq method "tl/projectSearch"))
             (begin
               (set! handled true)
@@ -5285,6 +5301,120 @@
         (if found
           (OkLspEdit result)
           (ErrLspEdit "Declaration not found"))))))
+
+;; tl/patch - Find and replace text anywhere in the file, then validate
+(define (lsp-patch-text [text : String] [old-text : String] [new-text : String]) : LspEditResult
+  (if (string-eq old-text "")
+    (ErrLspEdit "oldText cannot be empty")
+    (let
+      [n : i64 (string-length text)]
+      [old-len : i64 (string-length old-text)]
+      [limit : i64 (- n old-len)]
+      [i : i64 0]
+      [found-at : i64 -1]
+      [matches : i64 0]
+      (begin
+        (while (<= i limit)
+          (begin
+            (when
+              (is-string-prefix-at (& text) (& old-text) i)
+              (begin
+                (when (= found-at -1) (set! found-at i))
+                (set! matches (+ matches 1))))
+            (set! i (+ i 1))))
+        (if (= matches 0)
+          (ErrLspEdit "oldText not found in document")
+          (if (> matches 1)
+            (ErrLspEdit "oldText occurs more than once in document")
+            (let
+              [before : String (substring text 0 found-at)]
+              [after-start : i64 (+ found-at old-len)]
+              [after : String (substring text after-start (- n after-start))]
+              [replaced : String (str-cat before new-text after)]
+              (if (not (lsp-text-is-valid-forms replaced))
+                (ErrLspEdit
+                  (str-cat
+                    "Patch produces invalid form(s): "
+                    (lsp-validate-forms-error replaced)))
+                (OkLspEdit replaced)))))))))
+
+;; tl/patch - Handler for find-and-replace patch
+(define (lsp-handle-tl-patch
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(FoundLspDocument path text _)
+      (match (lsp-json-string-field params "oldText")
+        [(OkLspJsonText old-text)
+          (match (lsp-json-string-field params "newText")
+            [(OkLspJsonText new-text)
+              (match (lsp-patch-text text old-text new-text)
+                [(OkLspEdit replaced)
+                  (let
+                    [formatted : String (lsp-format-edit-text replaced)]
+                    (begin
+                      (lsp-write-response
+                        id
+                        (lsp-json-object2
+                          "success"
+                          (json.JsonBool true)
+                          "text"
+                          (json.JsonString formatted)))
+                      (LspContinue docs)))]
+                [(ErrLspEdit message)
+                  (begin
+                    (lsp-write-error id -32600 message)
+                    (LspContinue docs))])]
+            [(MissingLspJsonText)
+              (begin
+                (lsp-write-error id -32600 "Missing newText parameter")
+                (LspContinue docs))])]
+        [(MissingLspJsonText)
+          (begin
+            (lsp-write-error id -32600 "Missing oldText parameter")
+            (LspContinue docs))])]
+    [(MissingLspDocument)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspContinue docs))]))
+
+(define (lsp-patch-text-smoke-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)"]
+    (match (lsp-patch-text text "1" "2")
+      [(OkLspEdit replaced) (string-eq replaced "(define (foo) : i64 2)")]
+      [(ErrLspEdit _) false])))
+
+(define (lsp-patch-text-duplicate-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)\n(define (bar) : i64 1)"]
+    [needle : String "more than once"]
+    (match (lsp-patch-text text "1" "2")
+      [(OkLspEdit _) false]
+      [(ErrLspEdit message) (string-contains (& message) (& needle))])))
+
+(define (lsp-patch-text-invalid-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)"]
+    [needle : String "invalid form"]
+    (match (lsp-patch-text text "1)" "1")
+      [(OkLspEdit _) false]
+      [(ErrLspEdit message) (string-contains (& message) (& needle))])))
+
+(test
+  lsp-patch-text-smoke
+  (unless (lsp-patch-text-smoke-ok?) (panic "lsp-patch-text-smoke failed")))
+
+(test
+  lsp-patch-text-duplicate
+  (unless
+    (lsp-patch-text-duplicate-ok?)
+    (panic "lsp-patch-text-duplicate failed")))
+
+(test
+  lsp-patch-text-invalid
+  (unless (lsp-patch-text-invalid-ok?) (panic "lsp-patch-text-invalid failed")))
 
 (test
   lsp-validate-forms-smoke

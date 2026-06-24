@@ -21812,7 +21812,13 @@
       (match (tc-result-variant-payload-type ctx err-name err-fields)
         [(OkTcType err-ty)
           (OkTcResultInfo
-            (TcResultInfo try-kind enum-name ok-name ok-ty err-name err-ty))]
+            (TcResultInfo
+              try-kind
+              enum-name
+              (tc-qualified-variant-name enum-name ok-name)
+              ok-ty
+              (tc-qualified-variant-name enum-name err-name)
+              err-ty))]
         [(ErrTcType message) (ErrTcResultInfo message)])]
     [(ErrTcType message) (ErrTcResultInfo message)]))
 
@@ -21842,9 +21848,9 @@
             (TcResultInfo
               TcTryOption
               enum-name
-              some-name
+              (tc-qualified-variant-name enum-name some-name)
               some-ty
-              none-name
+              (tc-qualified-variant-name enum-name none-name)
               none-ty))]
         [(ErrTcType message) (ErrTcResultInfo message)])]
     [(ErrTcType message) (ErrTcResultInfo message)]))

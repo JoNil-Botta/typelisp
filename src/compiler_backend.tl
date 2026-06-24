@@ -8637,11 +8637,28 @@
                 dst
                 "%xmm0"
                 ty)))
-          (string-append
-            ptr-asm
-            (string-append
-              (compiler-backend-emit-load-memory "(%r10)" ty)
-              (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))))]
+          (let
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
+            ;; vreg-model: when the loaded value already has a register home, load
+            ;; the memory straight into it instead of staging through %rax and
+            ;; copying (bucket f, ~16% of the move flood). A scalar load (size <=
+            ;; 8) never has a register-pair home, so a single dst-home register is
+            ;; the whole value. Spilled dsts keep the %rax + store path.
+            (if (if (string-eq dst-home "")
+              false
+              (<= (compiler-backend-type-size ty) 8))
+              (string-append
+                ptr-asm
+                (compiler-backend-emit-load-memory-to-reg "(%r10)" ty dst-home))
+              (string-append
+                ptr-asm
+                (string-append
+                  (compiler-backend-emit-load-memory "(%r10)" ty)
+                  (compiler-backend-emit-store-var-with-plan
+                    assignments
+                    dst
+                    "%rax")))))))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-r10-address [disp : i64]) : String

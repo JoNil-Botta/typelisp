@@ -39709,156 +39709,174 @@
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
+(define (macro-expand-program-pass-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultMacroExpand
+  (begin
+    (ast-node-pool-context-install! pools)
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          [has-defmacro : bool (macro-program-has-defmacro? decls)]
+          [expr-type-macro-names : TcStringList
+            (if has-defmacro
+              (macro-collect-expr-type-macro-names decls)
+              TcStringNil)]
+          [has-expr-type-macros : bool
+            (match expr-type-macro-names
+              [(TcStringNil) false]
+              [_ true])]
+          (begin
+            ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
+            ;; (or the next program in a multi-program process) never reuses a stale
+            ;; or another program's metadata. The cache is repopulated eagerly below.
+            (set! macro-expand-ctfe-env-ready false)
+            (cfg compile-profile (compiler-tc-macro-profile-reset))
+            ;; Same per-compile reset for the clone-able type set cache.
+            (tc-clone-able-cache-reset!)
+            ;; Same per-compile reset for the qualified-alias resolution cache:
+            ;; the (module, qualifier) -> target mapping is derived from this
+            ;; program's declarations.
+            (macro-alias-cache-reset!)
+            (set! macro-expand-expr-type-macro-names expr-type-macro-names)
+            ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
+            ;; the program actually contains a `(type T)` literal -- the sole entry
+            ;; point for every CTFE reflection/layout query.
+            (set!
+              ctfe-needs-metadata
+              (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
+            (if (or has-defmacro (macro-program-needs-expansion? decls))
+              (begin
+                (cfg compile-profile (compiler-tc-profile-start))
+                (match (build-compiler-symbols-with-paths program paths)
+                  [(OkCompilerSymbols symbols)
+                    (match (build-compiler-registries-with-symbols
+                      program
+                      symbols)
+                      [(OkCompilerRegistries registries)
+                        (match (build-compiler-exports-with
+                          program
+                          symbols
+                          registries)
+                          [(OkCompilerExports exports)
+                            (match (build-compiler-exports-with
+                              program
+                              symbols
+                              registries)
+                              [(OkCompilerExports ctx-exports)
+                                (begin
+                                  (set! macro-expand-exports-value exports)
+                                  (set! macro-expand-exports-ready true)
+                                  (set! macro-expand-active-module "")
+                                  (set!
+                                    macro-expand-macro-names
+                                    (macro-collect-macro-names
+                                      decls
+                                      (tc-string-list-add
+                                        (tc-string-list-add
+                                          (TcStringNil)
+                                          "when")
+                                        "unless")))
+                                  (let
+                                    [ctx : TcContext
+                                      (TcContext
+                                        program
+                                        symbols
+                                        registries
+                                        ctx-exports
+                                        ""
+                                        pools)]
+                                    (match (tc-stdlib-comptime-surface-ok ctx)
+                                      [(OkTcUnit)
+                                        (match (tc-build-top-env ctx program)
+                                          [(OkTcEnv top-env)
+                                            (begin
+                                              (tc-hygiene-reset-active-top-env!
+                                                top-env)
+                                              (tc-context-capture-active-pools!
+                                                ctx)
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-profile-finish
+                                                  "macro_setup"))
+                                              (set!
+                                                macro-expand-ctfe-env-value
+                                                (tc-ctfe-env ctx))
+                                              (set!
+                                                macro-expand-ctfe-env-ready
+                                                true)
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-profile-start))
+                                              (match (macro-expand-decls
+                                                ctx
+                                                top-env
+                                                decls
+                                                decls
+                                                paths
+                                                ""
+                                                (not has-defmacro))
+                                                [(OkMacroDeclsWithPaths
+                                                    ndecls
+                                                    npaths)
+                                                  (begin
+                                                    (tc-context-capture-active-pools!
+                                                      ctx)
+                                                    (cfg
+                                                      compile-profile
+                                                      (compiler-tc-profile-finish
+                                                        "macro_walk"))
+                                                    (cfg
+                                                      compile-profile
+                                                      (compiler-tc-macro-profile-emit))
+                                                    (OkMacroExpand
+                                                      (ast-program ndecls)
+                                                      npaths))]
+                                                [(ErrMacroDeclsWithPaths diag)
+                                                  (begin
+                                                    (tc-context-capture-active-pools!
+                                                      ctx)
+                                                    (cfg
+                                                      compile-profile
+                                                      (compiler-tc-profile-finish
+                                                        "macro_walk"))
+                                                    (cfg
+                                                      compile-profile
+                                                      (compiler-tc-macro-profile-emit))
+                                                    (ErrMacroExpand diag))]))]
+                                          [(ErrTcEnv message)
+                                            (ErrMacroExpand
+                                              (tc-diag-at-start message))])]
+                                      [(ErrTcUnit message)
+                                        (ErrMacroExpand
+                                          (tc-diag-at-start message))])))]
+                              [(ErrCompilerExports message)
+                                (ErrMacroExpand (tc-diag-at-start message))])]
+                          [(ErrCompilerExports message)
+                            (ErrMacroExpand (tc-diag-at-start message))])]
+                      [(ErrCompilerRegistries message)
+                        (ErrMacroExpand (tc-diag-at-start message))])]
+                  [(ErrCompilerSymbols message)
+                    (ErrMacroExpand (tc-diag-at-start message))]))
+              (OkMacroExpand program paths))))])))
+
 (define (macro-expand-program-pass-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultMacroExpand
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [has-defmacro : bool (macro-program-has-defmacro? decls)]
-        [expr-type-macro-names : TcStringList
-          (if has-defmacro
-            (macro-collect-expr-type-macro-names decls)
-            TcStringNil)]
-        [has-expr-type-macros : bool
-          (match expr-type-macro-names
-            [(TcStringNil) false]
-            [_ true])]
-        (begin
-          ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
-          ;; (or the next program in a multi-program process) never reuses a stale
-          ;; or another program's metadata. The cache is repopulated eagerly below.
-          (set! macro-expand-ctfe-env-ready false)
-          (cfg compile-profile (compiler-tc-macro-profile-reset))
-          ;; Same per-compile reset for the clone-able type set cache.
-          (tc-clone-able-cache-reset!)
-          ;; Same per-compile reset for the qualified-alias resolution cache:
-          ;; the (module, qualifier) -> target mapping is derived from this
-          ;; program's declarations.
-          (macro-alias-cache-reset!)
-          (set! macro-expand-expr-type-macro-names expr-type-macro-names)
-          ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
-          ;; the program actually contains a `(type T)` literal -- the sole entry
-          ;; point for every CTFE reflection/layout query.
-          (set!
-            ctfe-needs-metadata
-            (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
-          (if (or has-defmacro (macro-program-needs-expansion? decls))
-            (begin
-              (cfg compile-profile (compiler-tc-profile-start))
-              (match (build-compiler-symbols-with-paths program paths)
-                [(OkCompilerSymbols symbols)
-                  (match (build-compiler-registries-with-symbols
-                    program
-                    symbols)
-                    [(OkCompilerRegistries registries)
-                      (match (build-compiler-exports-with
-                        program
-                        symbols
-                        registries)
-                        [(OkCompilerExports exports)
-                          (match (build-compiler-exports-with
-                            program
-                            symbols
-                            registries)
-                            [(OkCompilerExports ctx-exports)
-                              (begin
-                                (set! macro-expand-exports-value exports)
-                                (set! macro-expand-exports-ready true)
-                                (set! macro-expand-active-module "")
-                                (set!
-                                  macro-expand-macro-names
-                                  (macro-collect-macro-names
-                                    decls
-                                    (tc-string-list-add
-                                      (tc-string-list-add (TcStringNil) "when")
-                                      "unless")))
-                                (let
-                                  [ctx : TcContext
-                                    (TcContext
-                                      program
-                                      symbols
-                                      registries
-                                      ctx-exports
-                                      ""
-                                      (ast-node-pool-context-capture-active))]
-                                  (match (tc-stdlib-comptime-surface-ok ctx)
-                                    [(OkTcUnit)
-                                      (match (tc-build-top-env ctx program)
-                                        [(OkTcEnv top-env)
-                                          (begin
-                                            (tc-hygiene-reset-active-top-env!
-                                              top-env)
-                                            (tc-context-capture-active-pools!
-                                              ctx)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-profile-finish
-                                                "macro_setup"))
-                                            (set!
-                                              macro-expand-ctfe-env-value
-                                              (tc-ctfe-env ctx))
-                                            (set!
-                                              macro-expand-ctfe-env-ready
-                                              true)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-profile-start))
-                                            (match (macro-expand-decls
-                                              ctx
-                                              top-env
-                                              decls
-                                              decls
-                                              paths
-                                              ""
-                                              (not has-defmacro))
-                                              [(OkMacroDeclsWithPaths
-                                                  ndecls
-                                                  npaths)
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-profile-finish
-                                                      "macro_walk"))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-macro-profile-emit))
-                                                  (OkMacroExpand
-                                                    (ast-program ndecls)
-                                                    npaths))]
-                                              [(ErrMacroDeclsWithPaths diag)
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-profile-finish
-                                                      "macro_walk"))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-macro-profile-emit))
-                                                  (ErrMacroExpand diag))]))]
-                                        [(ErrTcEnv message)
-                                          (ErrMacroExpand
-                                            (tc-diag-at-start message))])]
-                                    [(ErrTcUnit message)
-                                      (ErrMacroExpand
-                                        (tc-diag-at-start message))])))]
-                            [(ErrCompilerExports message)
-                              (ErrMacroExpand (tc-diag-at-start message))])]
-                        [(ErrCompilerExports message)
-                          (ErrMacroExpand (tc-diag-at-start message))])]
-                    [(ErrCompilerRegistries message)
-                      (ErrMacroExpand (tc-diag-at-start message))])]
-                [(ErrCompilerSymbols message)
-                  (ErrMacroExpand (tc-diag-at-start message))]))
-            (OkMacroExpand program paths))))]))
+  (macro-expand-program-pass-with-paths-and-pools
+    program
+    paths
+    (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-fixed-point-limit) : i64
   8)
 
-(define (macro-expand-program-with-paths-loop
+(define (macro-expand-program-with-paths-loop-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ErrMacroExpand
@@ -39869,7 +39887,10 @@
         (match program
           [(AstProgram input-decls-box)
             (macro-program-has-module-placeholder? (box-get input-decls-box))])]
-      (match (macro-expand-program-pass-with-paths program paths)
+      (match (macro-expand-program-pass-with-paths-and-pools
+        program
+        paths
+        pools)
         [(OkMacroExpand expanded expanded-paths)
           (match expanded
             [(AstProgram decls-box)
@@ -39878,20 +39899,41 @@
                 (if (or
                   had-placeholders
                   (macro-program-has-module-placeholder? decls))
-                  (macro-expand-program-with-paths-loop
+                  (macro-expand-program-with-paths-loop-and-pools
                     expanded
                     expanded-paths
+                    pools
                     (- fuel 1))
                   (OkMacroExpand expanded expanded-paths)))])]
         [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
 
+(define (macro-expand-program-with-paths-loop
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fuel : i64]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    (ast-node-pool-context-capture-active)
+    fuel))
+
+(define (macro-expand-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    pools
+    (macro-expand-fixed-point-limit)))
+
 (define (macro-expand-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop
+  (macro-expand-program-with-paths-and-pools
     program
     paths
-    (macro-expand-fixed-point-limit)))
+    (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (macro-expand-program-with-paths program AstDeclPathNil))
@@ -41092,76 +41134,85 @@
                         (ErrCompilerTypecheck
                           (tc-typecheck-diag-with-path decl decl-path message)))]))))]))]))
 
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (ast-node-pool-context-install! pools)
+    (match (build-compiler-symbols-with-paths program paths)
+      [(OkCompilerSymbols symbols)
+        (match (build-compiler-registries-with-symbols program symbols)
+          [(OkCompilerRegistries registries)
+            (match (build-compiler-exports-with program symbols registries)
+              [(OkCompilerExports exports)
+                (let
+                  [ctx : TcContext
+                    (TcContext program symbols registries exports "" pools)]
+                  (begin
+                    (match (tc-stdlib-comptime-surface-ok ctx)
+                      [(OkTcUnit)
+                        (match (tc-program-source-types-policy-ok ctx program)
+                          [(OkTcUnit)
+                            (match (tc-build-top-env ctx program)
+                              [(OkTcEnv top-env)
+                                (match program
+                                  [(AstProgram decls-box)
+                                    (let
+                                      [decls : AstDeclList (box-get decls-box)]
+                                      (begin
+                                        (tc-hygiene-reset-active-top-env!
+                                          top-env)
+                                        (tc-context-capture-active-pools! ctx)
+                                        (tc-clone-able-cache-populate! ctx)
+                                        (tc-macro-helper-env-cache-reset!)
+                                        (match (tc-check-decls-with-paths
+                                          ctx
+                                          top-env
+                                          decls
+                                          paths
+                                          (CompilerTypecheckSummary 0 0 0)
+                                          stdlib-roots
+                                          cache-scope)
+                                          [(OkCompilerTypecheck summary)
+                                            (begin
+                                              (tc-context-capture-active-pools!
+                                                ctx)
+                                              (OkCompilerTypecheckChecked
+                                                summary
+                                                ctx
+                                                top-env))]
+                                          [(ErrCompilerTypecheck diag)
+                                            (ErrCompilerTypecheckChecked diag)])))])]
+                              [(ErrTcEnv message)
+                                (ErrCompilerTypecheckChecked
+                                  (tc-diag-at-start message))])]
+                          [(ErrTcUnit message)
+                            (ErrCompilerTypecheckChecked
+                              (tc-diag-at-start message))])]
+                      [(ErrTcUnit message)
+                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))]
+              [(ErrCompilerExports message)
+                (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+          [(ErrCompilerRegistries message)
+            (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+      [(ErrCompilerSymbols message)
+        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))
+
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
-  (begin
-    (tc-nominal-owner-cache-reset!)
-    (let
-      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-      (match (build-compiler-symbols-with-paths program paths)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries-with-symbols program symbols)
-            [(OkCompilerRegistries registries)
-              (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports exports)
-                  (let
-                    [ctx : TcContext
-                      (TcContext program symbols registries exports "" pools)]
-                    (begin
-                      (ast-node-pool-context-install! pools)
-                      (match (tc-stdlib-comptime-surface-ok ctx)
-                        [(OkTcUnit)
-                          (match (tc-program-source-types-policy-ok ctx program)
-                            [(OkTcUnit)
-                              (match (tc-build-top-env ctx program)
-                                [(OkTcEnv top-env)
-                                  (match program
-                                    [(AstProgram decls-box)
-                                      (let
-                                        [decls : AstDeclList
-                                          (box-get decls-box)]
-                                        (begin
-                                          (tc-hygiene-reset-active-top-env!
-                                            top-env)
-                                          (tc-context-capture-active-pools! ctx)
-                                          (tc-clone-able-cache-populate! ctx)
-                                          (tc-macro-helper-env-cache-reset!)
-                                          (match (tc-check-decls-with-paths
-                                            ctx
-                                            top-env
-                                            decls
-                                            paths
-                                            (CompilerTypecheckSummary 0 0 0)
-                                            stdlib-roots
-                                            cache-scope)
-                                            [(OkCompilerTypecheck summary)
-                                              (begin
-                                                (tc-context-capture-active-pools!
-                                                  ctx)
-                                                (OkCompilerTypecheckChecked
-                                                  summary
-                                                  ctx
-                                                  top-env))]
-                                            [(ErrCompilerTypecheck diag)
-                                              (ErrCompilerTypecheckChecked diag)])))])]
-                                [(ErrTcEnv message)
-                                  (ErrCompilerTypecheckChecked
-                                    (tc-diag-at-start message))])]
-                            [(ErrTcUnit message)
-                              (ErrCompilerTypecheckChecked
-                                (tc-diag-at-start message))])]
-                        [(ErrTcUnit message)
-                          (ErrCompilerTypecheckChecked
-                            (tc-diag-at-start message))])))]
-                [(ErrCompilerExports message)
-                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-            [(ErrCompilerRegistries message)
-              (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-        [(ErrCompilerSymbols message)
-          (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))))
+  (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]
@@ -41174,6 +41225,20 @@
       paths
       stdlib-roots
       cache-scope)))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (tc-typecheck-checked-result-with-pool-check
+    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked
   [program : AstProgram]
@@ -41194,6 +41259,21 @@
     paths
     stdlib-roots
     cache-scope)
+    [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
+    [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
+
+(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools)
     [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
     [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
 

@@ -1664,9 +1664,7 @@
         (= status 20))
         false
         (begin
-          (panic "tl: file-exists? failed\n")
-          ;; lint-allow: unreachable-code
-          false)))))
+          (panic "tl: file-exists? failed\n"))))))
 
 ;: Return true when `raw` names an open stdlib file handle.
 (define (io-valid-handle? [raw : i64]) : bool
@@ -2342,9 +2340,7 @@
     [(OkIoUnit) unit]
     [(ErrIoUnit error)
       (begin
-        (panic (io-error-message error))
-        ;; lint-allow: unreachable-code
-        unit)]))
+        (panic (io-error-message error)))]))
 
 ;: Return true when `path` exists and its contents are non-empty.
 ;:

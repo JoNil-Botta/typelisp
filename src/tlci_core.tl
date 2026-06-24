@@ -1417,9 +1417,7 @@
   (if (= (tlci-core-self-test-status) 0)
     42
     (begin
-      (panic "tlci-core: self-test mismatch")
-      ;; lint-allow: unreachable-code
-      1)))
+      (panic "tlci-core: self-test mismatch"))))
 
 (test
   tlci-core-parse-emit-round-trip

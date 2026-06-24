@@ -82,6 +82,15 @@
 (define (lint-rule-unreachable-code-suggestion) : String
   "remove the unreachable expression or move it before the terminal expression")
 
+(define (lint-rule-redundant-divergence-padding-id) : String
+  "redundant-divergence-padding")
+
+(define (lint-rule-redundant-divergence-padding-message) : String
+  "redundant divergence padding: trailing expressions after panic/error are dead")
+
+(define (lint-rule-redundant-divergence-padding-suggestion) : String
+  "remove the trailing dead expression and the stale unreachable-code lint allow")
+
 (define (lint-rule-deprecated-string-concat-id) : String
   "deprecated-string-concat")
 
@@ -207,6 +216,12 @@
     (lint-rule-unreachable-code-message)
     (lint-rule-unreachable-code-suggestion)))
 
+(define (lint-rule-redundant-divergence-padding) : LintRule
+  (LintRule
+    (lint-rule-redundant-divergence-padding-id)
+    (lint-rule-redundant-divergence-padding-message)
+    (lint-rule-redundant-divergence-padding-suggestion)))
+
 (define (lint-rule-deprecated-string-concat) : LintRule
   (LintRule
     (lint-rule-deprecated-string-concat-id)
@@ -274,22 +289,24 @@
             (lint-rule-cons
               (lint-rule-unreachable-code)
               (lint-rule-cons
-                (lint-rule-deprecated-string-concat)
+                (lint-rule-redundant-divergence-padding)
                 (lint-rule-cons
-                  (lint-rule-nested-str-cat)
+                  (lint-rule-deprecated-string-concat)
                   (lint-rule-cons
-                    (lint-rule-cascading-and-or)
+                    (lint-rule-nested-str-cat)
                     (lint-rule-cons
-                      (lint-rule-unused-import)
+                      (lint-rule-cascading-and-or)
                       (lint-rule-cons
-                        (lint-rule-dead-code)
+                        (lint-rule-unused-import)
                         (lint-rule-cons
-                          (lint-rule-unused-assignment)
+                          (lint-rule-dead-code)
                           (lint-rule-cons
-                            (lint-rule-unused-variable)
+                            (lint-rule-unused-assignment)
                             (lint-rule-cons
-                              (lint-rule-unused-unsafe)
-                              LintRuleNil)))))))))))))))
+                              (lint-rule-unused-variable)
+                              (lint-rule-cons
+                                (lint-rule-unused-unsafe)
+                                LintRuleNil))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -561,6 +578,13 @@
     0
     span))
 
+(define (lint-redundant-divergence-padding-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-redundant-divergence-padding-id))
+    (lint-rule-redundant-divergence-padding-id)
+    0
+    span))
+
 (define (lint-dead-code-finding [name : String] [span : AstSourceSpan]) : LintFinding
   (LintFinding
     (string-append
@@ -630,6 +654,39 @@
         [func : AstExpr (ast-node-get func-box)]
         (lint-terminal-callee? func))]
     [_ false]))
+
+(define (lint-diverging-call-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-diverging-call-expr? inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-diverging-call-expr? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-diverging-call-expr? inner))]
+    [(AstExprCall func-box _)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (lint-terminal-callee? func))]
+    [_ false]))
+
+(define (lint-add-redundant-divergence-padding
+  [head : AstExpr]
+  [rest : AstExprList]
+  [acc : LintFindings]) : LintFindings
+  (match rest
+    [(AstExprNil) acc]
+    [_
+      (if (lint-diverging-call-expr? head)
+        (lint-findings-add
+          (lint-redundant-divergence-padding-finding (lint-no-effect-span head))
+          acc)
+        acc)]))
 
 (define (lint-no-effect-pure-binop? [op : AstBinOp]) : bool
   (match op
@@ -4008,7 +4065,10 @@
           (lint-walk-plain-sequence-expr-list-after-terminal
             rest
             threshold
-            (lint-walk-expr head threshold acc)
+            (lint-walk-expr
+              head
+              threshold
+              (lint-add-redundant-divergence-padding head rest acc))
             (lint-terminal-expr? head))))]))
 
 (define (lint-walk-discarded-nonsequence-expr
@@ -4069,10 +4129,12 @@
             (lint-unreachable-code-finding (lint-no-effect-span head))
             acc)
           (let
+            [with-padding : LintFindings
+              (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-expr head threshold acc)]
-                [_ (lint-walk-discarded-expr head threshold acc)])]
+                [(AstExprNil) (lint-walk-expr head threshold with-padding)]
+                [_ (lint-walk-discarded-expr head threshold with-padding)])]
             (lint-walk-value-sequence-expr-list-after-terminal
               rest
               threshold
@@ -4101,10 +4163,12 @@
             (lint-unreachable-code-finding (lint-no-effect-span head))
             acc)
           (let
+            [with-padding : LintFindings
+              (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
-                [_ (lint-walk-discarded-expr head threshold acc)])]
+                [(AstExprNil) (lint-walk-tail-expr head threshold with-padding)]
+                [_ (lint-walk-discarded-expr head threshold with-padding)])]
             (lint-walk-tail-sequence-expr-list-after-terminal
               rest
               threshold
@@ -4433,10 +4497,12 @@
             (lint-unreachable-code-finding (lint-no-effect-span head))
             acc)
           (let
+            [with-padding : LintFindings
+              (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
-                [_ (lint-walk-expr head threshold acc)])]
+                [(AstExprNil) (lint-walk-tail-expr head threshold with-padding)]
+                [_ (lint-walk-expr head threshold with-padding)])]
             (lint-walk-tail-expr-list-after-terminal
               rest
               threshold
@@ -5237,6 +5303,15 @@
               (ast-expr-cons vy AstExprNil)))))]
     [panic-call : i64
       (ast-expr-call (lint-test-var "panic") (ast-expr-cons one AstExprNil))]
+    [spanned-panic-call : i64
+      (ast-expr-spanned panic-call (AstSourceSpan 43 9 43 24))]
+    [redundant-padding-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons spanned-panic-call (ast-expr-cons vx AstExprNil))))]
+    [clean-panic-tail-begin : i64
+      (ast-node-push
+        (AstExprBegin (ast-expr-cons spanned-panic-call AstExprNil)))]
     [unreachable-panic-unsafe : i64
       (ast-node-push
         (AstExprUnsafe (ast-expr-cons panic-call (ast-expr-cons vx AstExprNil))))]
@@ -5670,9 +5745,47 @@
             unreachable-panic-unsafe
             (lint-default-ladder-threshold)
             (lint-findings-empty)))
-        1)
+        2)
         unit
-        (panic "lint: panic in unsafe should flag following unreachable code"))
+        (panic "lint: panic in unsafe should flag unreachable and padding"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            redundant-padding-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        2)
+        unit
+        (panic
+          "lint: redundant divergence padding should flag with unreachable"))
+      (match (lint-findings-get
+        (lint-test-walk-tail
+          redundant-padding-begin
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 43)
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-redundant-divergence-padding-id)))
+              unit
+              (panic
+                "lint: redundant divergence padding finding should carry rule id and span")))]
+        [(LintNoFinding)
+          (panic "lint: redundant divergence padding should produce a finding")])
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            clean-panic-tail-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: tail panic without padding should stay clean"))
       (if (=
         (lint-findings-count
           (lint-test-walk-tail
@@ -5745,6 +5858,18 @@
         "unreachable code: expression follows a terminal expression")
         unit
         (panic "lint: unreachable-code message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-redundant-divergence-padding-id))
+        "remove the trailing dead expression and the stale unreachable-code lint allow")
+        unit
+        (panic
+          "lint: redundant-divergence-padding suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-redundant-divergence-padding-id))
+        "redundant divergence padding: trailing expressions after panic/error are dead")
+        unit
+        (panic
+          "lint: redundant-divergence-padding message should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")

@@ -1866,6 +1866,42 @@
     (unless b (return 2))
     42))")
 
+(define (selfhost-lint-redundant-divergence-padding-source) : String
+  "(define (main [flag : bool]) : i64
+  (begin
+    (begin
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      0)
+    (unsafe
+      (error \"stop\")
+      ;; lint-allow: unreachable-code
+      1)
+    (with-arena scratch
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      2)
+    (if flag
+      (begin
+        (panic \"stop\")
+        ;; lint-allow: unreachable-code
+        3)
+      4)))")
+
+(define (selfhost-lint-clean-divergence-source) : String
+  "(define (main [flag : bool]) : i64
+  (if flag
+    (panic \"stop\")
+    4))")
+
+(define (selfhost-lint-suppressed-divergence-padding-source) : String
+  "(define (main) : i64
+  (begin
+    ;; lint-allow: redundant-divergence-padding
+    (panic \"stop\")
+    ;; lint-allow: unreachable-code
+    0))")
+
 ;; A clean source with no nested-`if` ladder - zero findings.
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
@@ -2470,6 +2506,32 @@
               (selfhost-lint-when-unless-source))
             0))
         15]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-redundant-divergence-padding-source)
+              (lint-rule-redundant-divergence-padding-id))
+            4))
+        29]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-redundant-divergence-padding-source))
+            4))
+        30]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-clean-divergence-source))
+            0))
+        31]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-suppressed-divergence-padding-source)
+              (lint-rule-redundant-divergence-padding-id))
+            0))
+        32]
       [(not
           (=
             (selfhost-lint-source-finding-count

@@ -3557,30 +3557,8 @@
       ": "
       detail)))
 
-(define (tc-stdlib-comptime-generated-metadata-message) : String
-  "expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
-
-(define (tc-stdlib-comptime-version-arg? [args : AstExprList]) : bool
-  (match args
-    [(AstExprCons head rest)
-      (match (box-get rest)
-        [(AstExprNil)
-          (match (ast-expr-unspan (ast-node-get head))
-            [(AstExprLiteral (AstLitString version)) (string-eq version "v0")]
-            [_ false])]
-        [_ false])]
-    [_ false]))
-
-(define (tc-stdlib-comptime-generated-meta-ok?
-  [type-name : String]
-  [meta : AstGeneratedDeclMeta]) : bool
-  (match meta
-    [(AstSomeGeneratedDeclMeta generator item args _)
-      (and
-        (string-eq generator "stdlib/comptime-well-known")
-        (string-eq item type-name)
-        (tc-stdlib-comptime-version-arg? args))]
-    [(AstNoGeneratedDeclMeta) false]))
+(define (tc-stdlib-comptime-plain-declaration-message) : String
+  "expected plain stdlib.comptime well-known declaration")
 
 (define (tc-stdlib-comptime-well-known-type? [type-name : String]) : bool
   (or
@@ -3613,15 +3591,14 @@
     [(AstDeclDefStructLifetimes name _ _ _ _) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
-(define (tc-stdlib-comptime-raw-meta-ok? [type-name : String] [decl : AstDecl]) : bool
+(define (tc-stdlib-comptime-raw-comptime-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta _)
-      (tc-stdlib-comptime-generated-meta-ok? type-name meta)]
+    [(AstDeclComptimeDecl _ _) true]
     [(AstDeclUnsafe inner-box)
-      (tc-stdlib-comptime-raw-meta-ok? type-name (box-get inner-box))]
+      (tc-stdlib-comptime-raw-comptime-decl? (box-get inner-box))]
     [_ false]))
 
-(define (tc-stdlib-check-comptime-metadata-decl
+(define (tc-stdlib-check-comptime-declaration-surface-decl
   [module : String]
   [decl : AstDecl]) : ResultTcUnit
   (if (not (string-eq module (tc-stdlib-comptime-module-name)))
@@ -3631,13 +3608,13 @@
       [(TcSomeString type-name)
         (if (not (tc-stdlib-comptime-well-known-type? type-name))
           OkTcUnit
-          (if (tc-stdlib-comptime-raw-meta-ok? type-name decl)
-            OkTcUnit
+          (if (tc-stdlib-comptime-raw-comptime-decl? decl)
             (tc-stdlib-well-known-mismatch
               type-name
-              (tc-stdlib-comptime-generated-metadata-message))))])))
+              (tc-stdlib-comptime-plain-declaration-message))
+            OkTcUnit))])))
 
-(define (tc-stdlib-check-comptime-metadata-list
+(define (tc-stdlib-check-comptime-declaration-surface-list
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
   (match decls
@@ -3647,16 +3624,21 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule module-id)
-            (tc-stdlib-check-comptime-metadata-list rest (intern-str module-id))]
+            (tc-stdlib-check-comptime-declaration-surface-list
+              rest
+              (intern-str module-id))]
           [_
-            (match (tc-stdlib-check-comptime-metadata-decl module decl)
-              [(OkTcUnit) (tc-stdlib-check-comptime-metadata-list rest module)]
+            (match (tc-stdlib-check-comptime-declaration-surface-decl
+              module
+              decl)
+              [(OkTcUnit)
+                (tc-stdlib-check-comptime-declaration-surface-list rest module)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
-(define (tc-stdlib-check-comptime-metadata [ctx : TcContext]) : ResultTcUnit
+(define (tc-stdlib-check-comptime-declaration-surface [ctx : TcContext]) : ResultTcUnit
   (match (tc-context-program ctx)
     [(AstProgram decls-box)
-      (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
+      (tc-stdlib-check-comptime-declaration-surface-list (box-get decls-box) "")]))
 
 (define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : AstType]) : AstType
   (match ty
@@ -4123,7 +4105,7 @@
   (if (not (tc-stdlib-comptime-present? ctx))
     OkTcUnit
     (let
-      [result : ResultTcUnit (tc-stdlib-check-comptime-metadata ctx)]
+      [result : ResultTcUnit (tc-stdlib-check-comptime-declaration-surface ctx)]
       (begin
         (set!
           result

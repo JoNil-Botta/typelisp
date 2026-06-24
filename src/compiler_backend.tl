@@ -9004,14 +9004,30 @@
                       dst
                       "%xmm0"
                       load-ty)))
-                (string-append
-                  base-asm
-                  (string-append
-                    (compiler-backend-emit-load-memory addr load-ty)
-                    (compiler-backend-emit-store-var-with-plan
-                      assignments
-                      dst
-                      "%rax")))))]
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home assignments dst)]
+                  ;; vreg-model: a register-homed fused field/array load goes
+                  ;; straight into its home (`mov disp(%r10),home`) instead of
+                  ;; staging through %rax and copying -- this fused-load path is a
+                  ;; large bucket-f source (~32% of moves in dispatch-loop code).
+                  (if (if (string-eq dst-home "")
+                    false
+                    (<= (compiler-backend-type-size load-ty) 8))
+                    (string-append
+                      base-asm
+                      (compiler-backend-emit-load-memory-to-reg
+                        addr
+                        load-ty
+                        dst-home))
+                    (string-append
+                      base-asm
+                      (string-append
+                        (compiler-backend-emit-load-memory addr load-ty)
+                        (compiler-backend-emit-store-var-with-plan
+                          assignments
+                          dst
+                          "%rax")))))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       (let

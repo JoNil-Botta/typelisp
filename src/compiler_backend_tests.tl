@@ -5999,7 +5999,9 @@
         [(OkCompilerBackend asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains? asm "    vpbroadcastq %xmm0, ")
+              (compiler-backend-string-contains?
+                asm
+                "    vpbroadcastq -48(%rbp), ")
               (compiler-backend-string-contains? asm "    vpmuludq ")
               (compiler-backend-string-contains? asm "    vpsllq $32, ")
               (compiler-backend-string-contains? asm "    vpaddq ")
@@ -6020,43 +6022,179 @@
       "i64"
       "    vmovdqu "
       "    vpaddq "
-      "    vpbroadcastq %xmm0, ")
+      "    vpbroadcastq -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i32"
       "    vmovdqu "
       "    vpaddd "
-      "    vpbroadcastd %xmm0, ")
+      "    vpbroadcastd -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw %xmm0, ")
+      "    vpbroadcastw -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw %xmm0, ")
+      "    vpbroadcastw -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd %xmm0, ")
+      "    vbroadcastsd -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss %xmm0, ")
+      "    vbroadcastss -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb %xmm0, ")
+      "    vpbroadcastb -40(%rbp), ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb %xmm0, ")
+      "    vpbroadcastb -40(%rbp), ")
     (compiler-backend-avx2-uniform-zip-ok?)))
+
+(define (compiler-backend-stack-splat-dst-only-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    CompilerRegAssignmentNil))
+
+(define (compiler-backend-stack-splat-spill-assignments [offset : i64]) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegSpill offset))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-stack-splat-register-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-stack-memory-operand-ok?) : bool
+  (and
+    (match (compiler-backend-stack-memory-operand
+      (compiler-backend-stack-splat-dst-only-assignments)
+      (IrValueVar 1))
+      [(CompilerBackendSomeStackOperand operand)
+        (string-eq operand "-16(%rbp)")]
+      [(CompilerBackendNoStackOperand) false])
+    (match (compiler-backend-stack-memory-operand
+      (compiler-backend-stack-splat-spill-assignments -40)
+      (IrValueVar 1))
+      [(CompilerBackendSomeStackOperand operand)
+        (string-eq operand "-40(%rbp)")]
+      [(CompilerBackendNoStackOperand) false])
+    (match (compiler-backend-stack-memory-operand
+      (compiler-backend-stack-splat-register-assignments)
+      (IrValueVar 1))
+      [(CompilerBackendSomeStackOperand _) false]
+      [(CompilerBackendNoStackOperand) true])
+    (match (compiler-backend-stack-memory-operand
+      (compiler-backend-stack-splat-dst-only-assignments)
+      (IrValueI64 7))
+      [(CompilerBackendSomeStackOperand _) false]
+      [(CompilerBackendNoStackOperand) true])))
+
+(define (compiler-backend-avx2-stack-splat-i64-ok?) : bool
+  (match (compiler-backend-emit-avx2-splat
+    (compiler-backend-stack-splat-dst-only-assignments)
+    0
+    (IrValueVar 1)
+    4
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (string-eq asm "    vpbroadcastq -16(%rbp), %ymm6\n")
+        (not (compiler-backend-string-contains? asm "%rax"))
+        (not (compiler-backend-string-contains? asm "%xmm0")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
+  (match (compiler-backend-emit-avx2-splat
+    (compiler-backend-stack-splat-spill-assignments -40)
+    0
+    (IrValueVar 1)
+    4
+    (AstTyF64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (string-eq asm "    vbroadcastsd -40(%rbp), %ymm6\n")
+        (not (compiler-backend-string-contains? asm "%xmm0")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
+  (match (compiler-backend-emit-avx512-splat
+    (compiler-backend-stack-splat-dst-only-assignments)
+    0
+    (IrValueVar 1)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (string-eq asm "    vpbroadcastq -16(%rbp), %zmm6\n")
+        (not (compiler-backend-string-contains? asm "%rax"))
+        (not (compiler-backend-string-contains? asm "%xmm0")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
+  (match (compiler-backend-emit-avx512-splat
+    (compiler-backend-stack-splat-spill-assignments -40)
+    0
+    (IrValueVar 1)
+    8
+    (AstTyF64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (string-eq asm "    vbroadcastsd -40(%rbp), %zmm6\n")
+        (not (compiler-backend-string-contains? asm "%xmm0")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-register-splat-fallback-ok?) : bool
+  (and
+    (match (compiler-backend-emit-avx2-splat
+      (compiler-backend-stack-splat-register-assignments)
+      0
+      (IrValueVar 1)
+      4
+      (AstTyI64)
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend asm)
+        (string-eq
+          asm
+          "    movq %r12, %rax\n    vmovq %rax, %xmm0\n    vpbroadcastq %xmm0, %ymm6\n")]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-avx512-splat
+      (compiler-backend-stack-splat-register-assignments)
+      0
+      (IrValueVar 1)
+      8
+      (AstTyI64)
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend asm)
+        (string-eq asm "    movq %r12, %rax\n    vpbroadcastq %rax, %zmm6\n")]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-stack-splat-broadcast-ok?) : bool
+  (and
+    (compiler-backend-stack-memory-operand-ok?)
+    (compiler-backend-avx2-stack-splat-i64-ok?)
+    (compiler-backend-avx2-stack-splat-f64-spill-ok?)
+    (compiler-backend-avx512-stack-splat-i64-ok?)
+    (compiler-backend-avx512-stack-splat-f64-spill-ok?)
+    (compiler-backend-register-splat-fallback-ok?)))
 
 (define (compiler-backend-avx512-masked-if-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
@@ -6423,7 +6561,9 @@
         [(OkCompilerBackend asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains? asm "    vpbroadcastq %rax, ")
+              (compiler-backend-string-contains?
+                asm
+                "    vpbroadcastq -48(%rbp), ")
               (compiler-backend-string-contains? asm "    vpmullq ")
               (compiler-backend-string-contains? asm "    vpaddq ")
               (compiler-backend-string-contains? asm "    vmovdqu64 ")
@@ -6444,42 +6584,42 @@
       "i64"
       "    vmovdqu64 "
       "    vpaddq "
-      "    vpbroadcastq %rax, ")
+      "    vpbroadcastq -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i32"
       "    vmovdqu32 "
       "    vpaddd "
-      "    vpbroadcastd %eax, ")
+      "    vpbroadcastd -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw %xmm0, ")
+      "    vpbroadcastw -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw %xmm0, ")
+      "    vpbroadcastw -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd %xmm0, ")
+      "    vbroadcastsd -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss %xmm0, ")
+      "    vbroadcastss -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb %xmm0, ")
+      "    vpbroadcastb -40(%rbp), ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb %xmm0, ")
+      "    vpbroadcastb -40(%rbp), ")
     (compiler-backend-avx512-uniform-zip-ok?)))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
@@ -7173,6 +7313,7 @@
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
+    (compiler-backend-stack-splat-broadcast-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))
 

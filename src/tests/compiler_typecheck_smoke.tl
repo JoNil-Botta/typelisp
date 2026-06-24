@@ -1174,13 +1174,9 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
       "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
-    ;; #3675: with the import-time collision pre-check removed, two unqualified
-    ;; generated imports of `answer` (distinct modules) currently resolve to one
-    ;; candidate rather than erroring, and a local `answer` shadows an imported
-    ;; one. Restoring this as a usage-time collision diagnostic is tracked
-    ;; separately; for now these type-check.
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-generated-collision-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-generated-collision-source)
+      "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-local-collision-source))
     (compiler-typecheck-ok?

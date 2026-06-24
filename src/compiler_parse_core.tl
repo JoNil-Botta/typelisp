@@ -8350,10 +8350,10 @@
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))
-(comptime-decl (:generated option-family Option_String \"String\")
-  (define option-size : i64 8))
-(comptime-decl (:generated function-family make-option-string \"String\")
-  (define (make-option [x : i64]) : i64 x))")
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (define box-size : i64 8))
+(comptime-decl (:generated function-family make-box-string \"String\")
+  (define (make-box [x : i64]) : i64 x))")
 
 (define (compiler-parse-no-generated-meta-ok? [meta : AstGeneratedDeclMeta]) : bool
   (match meta
@@ -8408,15 +8408,15 @@
         (and
           (compiler-parse-generated-meta-ok?
             meta
-            "option-family"
-            "Option_String"
+            "sample-family"
+            "Box_String"
             1)
           (match template
             [(AstDeclDef name _ value-box)
               (let
                 [value : AstExpr (ast-node-get value-box)]
                 (and
-                  (= name (intern "option-size"))
+                  (= name (intern "box-size"))
                   (match (ast-expr-unspan value)
                     [(AstExprLiteral (AstLitInt actual _)) (= actual 8)]
                     [_ false])))]
@@ -8432,11 +8432,10 @@
           (compiler-parse-generated-meta-ok?
             meta
             "function-family"
-            "make-option-string"
+            "make-box-string"
             1)
           (match template
-            [(AstDeclDefFn name _ (AstTyI64) _ _)
-              (= name (intern "make-option"))]
+            [(AstDeclDefFn name _ (AstTyI64) _ _) (= name (intern "make-box"))]
             [_ false])))]
     [_ false]))
 
@@ -8844,15 +8843,15 @@
 
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl
-  (:generated option-family Option_String)
+  (:generated sample-family Box_String)
   (defstruct Point (x i64))
   (defenum Maybe (None)))")
 
 (define (compiler-parse-comptime-decl-bad-metadata-source) : String
-  "(comptime-decl (:bad option-family Option_String) (defstruct Point (x i64)))")
+  "(comptime-decl (:bad sample-family Box_String) (defstruct Point (x i64)))")
 
 (define (compiler-parse-comptime-decl-malformed-metadata-source) : String
-  "(comptime-decl (:generated option-family) (defstruct Point (x i64)))")
+  "(comptime-decl (:generated sample-family) (defstruct Point (x i64)))")
 
 (define (compiler-parse-comptime-decls-expression-source) : String
   "(define (main) : i64

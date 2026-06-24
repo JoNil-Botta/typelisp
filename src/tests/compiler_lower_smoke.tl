@@ -425,10 +425,8 @@
       (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
       (panic "lower: windows enum aggregate C ABI smoke mismatch"))
     (unless
-      (compiler-lower-linux-error-ok?
-        (compiler-lower-c-abi-payload-enum-source)
-        "lower: unsupported linux-x86_64 C aggregate ABI for SmallChoice; this slice supports System V register-class structs up to 16 bytes, plus tag-only enums")
-      (panic "lower: linux unsupported C ABI diagnostic smoke mismatch"))
+      (compiler-lower-c-abi-linux-payload-enum-shape-ok?)
+      (panic "lower: linux payload enum C ABI smoke mismatch"))
     (unless
       (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
       (panic "lower: windows byref aggregate C ABI smoke mismatch"))

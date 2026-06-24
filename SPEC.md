@@ -598,7 +598,10 @@ classifying a synthetic aggregate view consisting of the 8-byte tag followed by
 the max-sized payload union. Tag-only enums are scalar register aggregates;
 payload enum arguments larger than 8 bytes are passed by hidden reference and
 payload enum returns larger than 8 bytes use sret. The Linux x86_64 System V
-C ABI path currently accepts tag-only enum externs only.
+C ABI path uses the same synthetic enum view and classifies it with the shared
+System V aggregate classifier: register-class enum arguments/returns use the
+normal integer/SSE register slots, larger enum arguments are MEMORY-class
+stack copies, and larger enum returns use sret.
 
 Supported v1 targets use an x86_64 data model: fixed-width integer and floating
 types use their explicit sizes; `bool` and `char` are one byte; raw pointers are

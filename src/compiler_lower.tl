@@ -17879,7 +17879,7 @@
 (define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
   (if (lower-mode-windows-c-abi? mode)
     "scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields"
-    "System V register-class structs up to 16 bytes, plus tag-only enums"))
+    "System V aggregate structs/enums, including register-class and MEMORY-class layouts"))
 
 (define (lower-c-abi-unsupported-message
   [mode : CompilerLowerMode]
@@ -18011,6 +18011,57 @@
           (+ base-offset (tc-inline-field-layout-offset field))
           slots))]))
 
+(define (lower-c-abi-sysv-classify-payloads
+  [ctx : TcContext]
+  [payloads : TcInlinePayloadLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match payloads
+    [(TcInlinePayloadLayoutNil) slots]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (lower-c-abi-sysv-classify-payloads
+        ctx
+        (box-get rest)
+        base-offset
+        (lower-c-abi-sysv-classify-type
+          ctx
+          (tc-inline-payload-layout-type payload)
+          (+ base-offset (tc-inline-payload-layout-offset payload))
+          slots))]))
+
+(define (lower-c-abi-sysv-classify-variants
+  [ctx : TcContext]
+  [variants : TcInlineVariantLayoutList]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match variants
+    [(TcInlineVariantLayoutNil) slots]
+    [(TcInlineVariantLayoutCons variant rest)
+      (match variant
+        [(TcInlineVariantLayout _ _ _ payloads)
+          (lower-c-abi-sysv-classify-variants
+            ctx
+            (box-get rest)
+            base-offset
+            (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots))])]))
+
+(define (lower-c-abi-sysv-classify-layout
+  [ctx : TcContext]
+  [layout : TcInlineAggregateLayout]
+  [base-offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match layout
+    [(TcInlineStructLayout _ _ fields)
+      (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
+    [(TcInlineEnumLayout _ _ variants)
+      ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
+      ;; payload overlaid in the union region starting at offset 8.
+      (lower-c-abi-sysv-classify-variants
+        ctx
+        variants
+        base-offset
+        (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
+
 (define (lower-c-abi-sysv-classify-struct-name
   [ctx : TcContext]
   [name : String]
@@ -18018,10 +18069,7 @@
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match (tc-inline-aggregate-layout-for ctx name)
     [(OkTcInlineAggregateLayout layout)
-      (match layout
-        [(TcInlineStructLayout _ _ fields)
-          (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
-        [(TcInlineEnumLayout _ _ _) (LowerCAbiSysvSlotsUnsupported)])]
+      (lower-c-abi-sysv-classify-layout ctx layout base-offset slots)]
     [(ErrTcInlineAggregateLayout _) (LowerCAbiSysvSlotsUnsupported)]))
 
 (define (lower-c-abi-sysv-classify-type
@@ -18039,6 +18087,18 @@
           offset
           slots)]
       [(AstTyStructArgs name _)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
+      [(AstTyEnum name)
+        (lower-c-abi-sysv-classify-struct-name
+          ctx
+          (intern-str name)
+          offset
+          slots)]
+      [(AstTyEnumArgs name _)
         (lower-c-abi-sysv-classify-struct-name
           ctx
           (intern-str name)
@@ -18089,12 +18149,11 @@
       (array-set! items 1 second)
       (LowerCAbiSlotList items 2))))
 
-(define (lower-c-abi-sysv-register-aggregate
-  [ctx : TcContext]
+(define (lower-c-abi-sysv-register-aggregate-from-slots
   [mode : CompilerLowerMode]
   [resolved : AstType]
   [size : i64]
-  [fields : TcInlineFieldLayoutList]
+  [slots : LowerCAbiSysvSlots]
   [allow-return? : bool]) : LowerCAbiAggregate
   (cond
     [(<= size 0)
@@ -18104,16 +18163,8 @@
       (if allow-return?
         (LowerCAbiSretAggregate size)
         (LowerCAbiMemoryAggregate size))]
-    [(and
-        (lower-c-abi-register-aggregate-size? mode size)
-        (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
-      (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
     [else
-      (match (lower-c-abi-sysv-classify-fields
-        ctx
-        fields
-        0
-        (LowerCAbiSysvSlots (LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteEmpty)))
+      (match slots
         [(LowerCAbiSysvSlots first second)
           (match first
             [(LowerCAbiEightbyteUnsupported)
@@ -18138,6 +18189,60 @@
         [(LowerCAbiSysvSlotsUnsupported)
           (LowerCAbiUnsupportedAggregate
             (lower-c-abi-unsupported-message mode resolved))])]))
+
+(define (lower-c-abi-sysv-register-aggregate
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : AstType]
+  [size : i64]
+  [fields : TcInlineFieldLayoutList]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (cond
+    [(<= size 0)
+      (LowerCAbiUnsupportedAggregate
+        (lower-c-abi-unsupported-message mode resolved))]
+    [(> size 16)
+      (if allow-return?
+        (LowerCAbiSretAggregate size)
+        (LowerCAbiMemoryAggregate size))]
+    [(and
+        (lower-c-abi-register-aggregate-size? mode size)
+        (lower-c-abi-register-aggregate-fields-ok? ctx mode fields))
+      (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)]
+    [else
+      (lower-c-abi-sysv-register-aggregate-from-slots
+        mode
+        resolved
+        size
+        (lower-c-abi-sysv-classify-fields
+          ctx
+          fields
+          0
+          (LowerCAbiSysvSlots
+            (LowerCAbiEightbyteEmpty)
+            (LowerCAbiEightbyteEmpty)))
+        allow-return?)]))
+
+(define (lower-c-abi-sysv-register-enum-aggregate
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [resolved : AstType]
+  [size : i64]
+  [align : i64]
+  [variants : TcInlineVariantLayoutList]
+  [allow-return? : bool]) : LowerCAbiAggregate
+  (if (tc-inline-enum-layout-tag-only? size variants)
+    (LowerCAbiIntegerAggregate (lower-c-abi-integer-scalar-type size) size)
+    (lower-c-abi-sysv-register-aggregate-from-slots
+      mode
+      resolved
+      size
+      (lower-c-abi-sysv-classify-layout
+        ctx
+        (TcInlineEnumLayout size align variants)
+        0
+        (LowerCAbiSysvSlots (LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteEmpty)))
+      allow-return?)))
 
 (define (lower-c-abi-win64-aggregate-class
   [mode : CompilerLowerMode]
@@ -18180,7 +18285,7 @@
           size
           fields
           allow-sret?))]
-    [(TcInlineEnumLayout size _ variants)
+    [(TcInlineEnumLayout size align variants)
       (if (lower-mode-windows-c-abi? mode)
         ;; Model the default enum layout as a synthetic C aggregate:
         ;; int64 tag at offset 0 plus the max-sized payload union at offset 8.
@@ -18191,12 +18296,15 @@
           (tc-inline-enum-layout-tag-only? size variants)
           allow-sret?
           allow-byref?)
-        (if (and
-          (lower-mode-linux-c-abi? mode)
-          (tc-inline-enum-layout-tag-only? size variants))
-          (LowerCAbiIntegerAggregate
-            (lower-c-abi-integer-scalar-type size)
-            size)
+        (if (lower-mode-linux-c-abi? mode)
+          (lower-c-abi-sysv-register-enum-aggregate
+            ctx
+            mode
+            resolved
+            size
+            align
+            variants
+            allow-sret?)
           (LowerCAbiUnsupportedAggregate
             (lower-c-abi-unsupported-message mode resolved))))]))
 
@@ -38620,6 +38728,12 @@
       (if (string-eq call-name name)
         1
         0)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ call-name _ _)
+          (if (string-eq call-name name)
+            1
+            0)])]
     [_ 0]))
 
 (define (lower-test-instr-cpuid-count [instr : CompilerIrInstr]) : i64
@@ -41794,9 +41908,40 @@
 
 (define (compiler-lower-c-abi-payload-enum-source) : String
   "(defenum SmallChoice (SmallNone) (SmallSome i64))
+(defstruct SmallBox (choice SmallChoice))
+(defenum WideChoice (WideNone) (WideSome u64 u64))
 (extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
+(extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (-> SmallChoice i64))
+(extern (box-score [arg : SmallBox]) : i64 (:symbol \"tl_cabi_box_score\"))
+(extern (box-make [seed : i64]) : SmallBox (:symbol \"tl_cabi_box_make\"))
+(extern (wide-make [seed : u64]) : WideChoice (:symbol \"tl_cabi_wide_make\"))
+(define (wide-score [w : WideChoice]) : i64
+  (match w
+    [WideNone 0]
+    [(WideSome lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
-  (small-score (SmallSome 11)))")
+  (let
+    [copy : (-> SmallChoice i64) small-score-ptr]
+    [boxed : SmallBox (box-make 5)]
+    [made : WideChoice (wide-make (cast 10 : u64))]
+    (+ (small-score (SmallSome 11)) (+ (copy (SmallNone)) (+ (box-score boxed) (wide-score made))))))")
+
+(define (compiler-lower-c-abi-linux-payload-enum-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-c-abi-payload-enum-source)
+    (CompilerLowerLinuxScalar))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "small-score")
+              1)
+            (= (lower-test-function-call-count functions "main" "box-score") 1)
+            (= (lower-test-function-call-count functions "main" "box-make") 1)
+            (= (lower-test-function-call-count functions "main" "wide-make") 1)
+            (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-c-abi-windows-enum-aggregate-source) : String
   "(defenum Status (Ready) (Done) (Failed))
@@ -46071,9 +46216,7 @@
       (if (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
         unit
         (set! ok false))
-      (if (compiler-lower-linux-error-ok?
-        (compiler-lower-c-abi-payload-enum-source)
-        "lower: unsupported linux-x86_64 C aggregate ABI for SmallChoice; this slice supports System V register-class structs up to 16 bytes, plus tag-only enums")
+      (if (compiler-lower-c-abi-linux-payload-enum-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)

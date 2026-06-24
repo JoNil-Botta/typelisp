@@ -548,6 +548,49 @@
               decls
               owner-names))))]))
 
+(define (compiler-symbols-handle-from-nonroot-owner?
+  [symbols : CompilerSymbols]
+  [handle : i64]) : bool
+  (match (compiler-symbols-owner-name-at-index
+    symbols
+    (compiler-symbol-handle-index handle))
+    [(CompilerSomeString owner-name) (string-contains-char (& owner-name) '/')]
+    [(CompilerNoString) false]))
+
+(define (compiler-symbols-add-root-value-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup-id values name-id)
+        [(SomeI64 existing)
+          (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
+            (if (compiler-symbol-map-contains-id? macros name-id)
+              (ErrCompilerSymbols
+                (compiler-symbols-duplicate-macro-value-message display-name))
+              (OkCompilerSymbols
+                (CompilerSymbols
+                  (compiler-symbol-map-bind-id values name-id handle)
+                  types
+                  macros
+                  decls
+                  owner-names)))
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-value-message display-name)))]
+        [(NoneI64)
+          (if (compiler-symbol-map-contains-id? macros name-id)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-macro-value-message display-name))
+            (OkCompilerSymbols
+              (CompilerSymbols
+                (compiler-symbol-map-bind-id values name-id handle)
+                types
+                macros
+                decls
+                owner-names)))])]))
+
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
@@ -556,7 +599,9 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id module name)]
     [display-name : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-value-id symbols key-id display-name handle)
+    (match (if (string-eq module "")
+      (compiler-symbols-add-root-value-id symbols key-id display-name handle)
+      (compiler-symbols-add-value-id symbols key-id display-name handle))
       [(OkCompilerSymbols next)
         (if (compiler-symbols-comptime-module? module)
           (OkCompilerSymbols next)
@@ -1648,18 +1693,22 @@
   [decl-path : String]) : CompilerMaybeString
   (match (compiler-symbols-lookup-value-in-module symbols module name)
     [(SomeI64 existing)
-      (let
-        [first-path : String
-          (compiler-symbol-path-at-index
-            all-decls
-            all-paths
-            (compiler-symbol-handle-index existing)
-            0)]
-        [display-name : String (compiler-symbol-module-key module name)]
-        (CompilerSomeString
-          (string-append
-            (compiler-symbols-duplicate-value-message display-name)
-            (compiler-symbols-duplicate-location-suffix first-path decl-path))))]
+      (if (and
+        (string-eq module "")
+        (compiler-symbols-handle-from-nonroot-owner? symbols existing))
+        CompilerNoString
+        (let
+          [first-path : String
+            (compiler-symbol-path-at-index
+              all-decls
+              all-paths
+              (compiler-symbol-handle-index existing)
+              0)]
+          [display-name : String (compiler-symbol-module-key module name)]
+          (CompilerSomeString
+            (string-append
+              (compiler-symbols-duplicate-value-message display-name)
+              (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
     [(NoneI64) CompilerNoString]))
 
 (define (compiler-symbols-duplicate-value-message-for-decl-with-paths
@@ -1745,6 +1794,14 @@
 
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
+    [(AstDeclDef name _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclExtern name _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnum name _ _)
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnumLifetimes name _ _ _)

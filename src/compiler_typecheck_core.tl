@@ -2400,6 +2400,156 @@
       (tc-name-id (compiler-symbol-module-key module (intern-str name)))
       ty)))
 
+(define tc-unqualified-import-owner-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-ambiguous-first-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-ambiguous-second-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-has-ambiguity : bool
+  false)
+
+(define (tc-unqualified-import-ambiguity-reset!) : unit
+  (begin
+    (set! tc-unqualified-import-owner-modules (sym-i64-empty))
+    (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
+    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
+    (set! tc-unqualified-import-has-ambiguity false)))
+
+(define (tc-unqualified-import-key-id
+  [importer-module : String]
+  [name-id : i64]) : i64
+  (if (string-eq importer-module "")
+    name-id
+    (compiler-symbol-module-key-id-by-name-id importer-module name-id)))
+
+(define (tc-unqualified-import-note-value!
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]) : unit
+  (if import-unqualified
+    (let
+      [key-id : i64 (tc-unqualified-import-key-id importer-module name-id)]
+      [source-id : i64 (intern source-module)]
+      [binding-id : i64 (tc-module-name-id alias name-id)]
+      (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
+        [(SomeI64 owner-id)
+          (if (= owner-id source-id)
+            unit
+            (match (sym-i64-lookup-id
+              tc-unqualified-import-ambiguous-first-modules
+              key-id)
+              [(SomeI64 _) unit]
+              [NoneI64
+                (begin
+                  (set! tc-unqualified-import-has-ambiguity true)
+                  (set!
+                    tc-unqualified-import-ambiguous-first-modules
+                    (sym-i64-bind-id
+                      tc-unqualified-import-ambiguous-first-modules
+                      key-id
+                      owner-id))
+                  (set!
+                    tc-unqualified-import-ambiguous-second-modules
+                    (sym-i64-bind-id
+                      tc-unqualified-import-ambiguous-second-modules
+                      key-id
+                      source-id)))]))]
+        [NoneI64
+          (if (tc-name-bound-id? env binding-id)
+            unit
+            (set!
+              tc-unqualified-import-owner-modules
+              (sym-i64-bind-id
+                tc-unqualified-import-owner-modules
+                key-id
+                source-id)))]))
+    unit))
+
+(define (tc-bind-import-alias-value-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-id env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-unsafe-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-unsafe-id env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-c-abi-fnptr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-id-c-abi-fnptr env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-unsafe-id-c-abi-fnptr env alias name-id ty)))
+
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
   (tc-fn1 struct-ty (AstTyUnit)))
 
@@ -2527,6 +2677,50 @@
       (tc-bind
         env
         (compiler-symbol-module-key alias (intern-str cleanup-name))
+        (tc-enum-cleanup-function-type enum-ty))]))
+
+(define (tc-bind-struct-cleanup-import-alias
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstStructNoCleanup) env]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-bind-import-alias-value-id
+        ctx
+        env
+        alias
+        importer-module
+        source-module
+        import-unqualified
+        cleanup-name
+        (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-import-alias
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind-import-alias-value-id
+        ctx
+        env
+        alias
+        importer-module
+        source-module
+        import-unqualified
+        cleanup-name
         (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-name) : String
@@ -4354,6 +4548,75 @@
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))
 
+(define (tc-name-bound-before-hygiene-global-boundary-id?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-name-bound-before-hygiene-global-boundary-id?
+          (box-get rest)
+          name-id)
+        false)]
+    [(TcTypeBind key _ rest)
+      (if (= key (tc-hygiene-global-boundary-id))
+        false
+        (if (= key name-id)
+          true
+          (tc-name-bound-before-hygiene-global-boundary-id?
+            (box-get rest)
+            name-id)))]))
+
+(define (tc-unqualified-import-ambiguity-message-for-key
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [_module : String]
+  [name : String]
+  [name-id : i64]
+  [key-id : i64]) : TcMaybeString
+  (match (sym-i64-lookup-id
+    tc-unqualified-import-ambiguous-first-modules
+    key-id)
+    [NoneI64 (TcNoString)]
+    [(SomeI64 first-module)
+      (if (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
+        (TcNoString)
+        (match (sym-i64-lookup-id
+          tc-unqualified-import-ambiguous-second-modules
+          key-id)
+          [NoneI64 (TcNoString)]
+          [(SomeI64 second-module)
+            (TcSomeString
+              (str-cat
+                "typecheck: ambiguous unqualified import for value "
+                name
+                " between modules "
+                (intern-str first-module)
+                " and "
+                (intern-str second-module)
+                "; use an explicit alias or qualified access"))]))]))
+
+(define (tc-unqualified-import-ambiguity-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : TcMaybeString
+  (if tc-unqualified-import-has-ambiguity
+    (let
+      [name : String (intern-str name-id)]
+      (if (tc-name-qualified? name)
+        (TcNoString)
+        (let
+          [module : String (tc-context-module ctx)]
+          (tc-unqualified-import-ambiguity-message-for-key
+            ctx
+            env
+            module
+            name
+            name-id
+            (tc-unqualified-import-key-id module name-id)))))
+    (TcNoString)))
+
 (define (tc-lookup-visible-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -4375,7 +4638,12 @@
                 [(OkTcType ty) (OkTcType ty)]
                 [(ErrTcType _) (ErrTcType message)])
               (ErrTcType message)))])]
-    found))
+    (match found
+      [(OkTcType ty)
+        (match (tc-unqualified-import-ambiguity-message ctx env name-id)
+          [(TcNoString) (OkTcType ty)]
+          [(TcSomeString message) (ErrTcType message)])]
+      [(ErrTcType message) (ErrTcType message)])))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-visible-id ctx env (tc-name-id name)))
@@ -10560,6 +10828,9 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
   [enum-name : String]
   [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
@@ -10579,11 +10850,24 @@
                   fields)]
               (tc-bind-enum-variant-aliases
                 ctx
-                (tc-bind-alias-id-if-free
-                  env
-                  (tc-module-name-id alias name)
-                  constructor-ty)
+                (let
+                  [_note : unit
+                    (tc-unqualified-import-note-value!
+                      ctx
+                      env
+                      alias
+                      importer-module
+                      source-module
+                      import-unqualified
+                      name)]
+                  (tc-bind-alias-id-if-free
+                    env
+                    (tc-module-name-id alias name)
+                    constructor-ty))
                 alias
+                importer-module
+                source-module
+                import-unqualified
                 enum-name
                 lifetimes
                 rest))]))]))
@@ -10592,6 +10876,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
@@ -10603,9 +10889,14 @@
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(OkTcType ty)
                 (OkTcEnv
-                  (tc-bind-unsafe
+                  (tc-bind-import-alias-value-unsafe-id
+                    ctx
                     env
-                    (compiler-symbol-module-key alias (intern-str name))
+                    alias
+                    importer-module
+                    module
+                    import-unqualified
+                    name
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name kind _ _)
@@ -10615,14 +10906,23 @@
                 [(OkTcType ty)
                   (OkTcEnv
                     (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                      (tc-bind-unsafe-c-abi-fnptr-id
+                      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
+                        ctx
                         env
-                        (tc-name-id
-                          (compiler-symbol-module-key alias (intern-str name)))
+                        alias
+                        importer-module
+                        module
+                        import-unqualified
+                        name
                         ty)
-                      (tc-bind-unsafe
+                      (tc-bind-import-alias-value-unsafe-id
+                        ctx
                         env
-                        (compiler-symbol-module-key alias (intern-str name))
+                        alias
+                        importer-module
+                        module
+                        import-unqualified
+                        name
                         ty)))]
                 [(ErrTcType message) (ErrTcEnv message)]))]
           [_ (OkTcEnv env)]))]
@@ -10630,27 +10930,42 @@
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclExtern name kind _ _)
@@ -10660,13 +10975,23 @@
           [(OkTcType ty)
             (OkTcEnv
               (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                (tc-bind-c-abi-fnptr
+                (tc-bind-import-alias-value-c-abi-fnptr-id
+                  ctx
                   env
-                  (compiler-symbol-module-key alias (intern-str name))
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
                   ty)
-                (tc-bind
+                (tc-bind-import-alias-value-id
+                  ctx
                   env
-                  (compiler-symbol-module-key alias (intern-str name))
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
                   ty)))]
           [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefEnum name cleanup variants)
@@ -10675,15 +11000,22 @@
         [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (AstTyEnum (intern scoped-name))]
         (OkTcEnv
-          (tc-bind-enum-cleanup-alias
+          (tc-bind-enum-cleanup-import-alias
+            ctx
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
+              importer-module
+              module
+              import-unqualified
               scoped-name
               AstLifetimeNil
               variants)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             enum-ty)))]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
@@ -10692,15 +11024,22 @@
         [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (ast-ty-enum-args (intern scoped-name) lifetimes)]
         (OkTcEnv
-          (tc-bind-enum-cleanup-alias
+          (tc-bind-enum-cleanup-import-alias
+            ctx
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
+              importer-module
+              module
+              import-unqualified
               scoped-name
               lifetimes
               variants)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
@@ -10713,12 +11052,21 @@
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             struct-ty)]
         (OkTcEnv
-          (tc-bind-struct-cleanup-alias
-            (tc-bind
+          (tc-bind-struct-cleanup-import-alias
+            ctx
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias name-str)
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               constructor-ty)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             struct-ty)))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
@@ -10733,18 +11081,34 @@
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             struct-ty)]
         (OkTcEnv
-          (tc-bind-struct-cleanup-alias
-            (tc-bind
+          (tc-bind-struct-cleanup-import-alias
+            ctx
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias name-str)
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               constructor-ty)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             struct-ty)))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (tc-bind-import-alias-decl-in-module ctx env alias module template))]
+        (tc-bind-import-alias-decl-in-module
+          ctx
+          env
+          alias
+          importer-module
+          import-unqualified
+          module
+          template))]
     [_ (OkTcEnv env)]))
 
 (define (tc-bind-import-alias-module-list
@@ -10753,6 +11117,8 @@
   [env : TcTypeEnv]
   [target-module : String]
   [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]
   [module : String]) : ResultTcEnv
   (match decls
     [(AstDeclNil) (OkTcEnv env)]
@@ -10767,6 +11133,8 @@
               env
               target-module
               alias
+              importer-module
+              import-unqualified
               (intern-str next-module))]
           [(AstDeclImport _)
             (tc-bind-import-alias-module-list
@@ -10775,6 +11143,8 @@
               env
               target-module
               alias
+              importer-module
+              import-unqualified
               module)]
           [(AstDeclIncludeStr _ _)
             (tc-bind-import-alias-module-list
@@ -10783,6 +11153,8 @@
               env
               target-module
               alias
+              importer-module
+              import-unqualified
               module)]
           [(AstDeclIncludeBin _ _)
             (tc-bind-import-alias-module-list
@@ -10791,6 +11163,8 @@
               env
               target-module
               alias
+              importer-module
+              import-unqualified
               module)]
           [(AstDeclTest _ _ _)
             (tc-bind-import-alias-module-list
@@ -10799,6 +11173,8 @@
               env
               target-module
               alias
+              importer-module
+              import-unqualified
               module)]
           [_
             (if (string-eq module target-module)
@@ -10806,6 +11182,8 @@
                 ctx
                 env
                 alias
+                importer-module
+                import-unqualified
                 module
                 decl)
                 [(OkTcEnv next-env)
@@ -10815,6 +11193,8 @@
                     next-env
                     target-module
                     alias
+                    importer-module
+                    import-unqualified
                     module)]
                 [(ErrTcEnv message) (ErrTcEnv message)])
               (tc-bind-import-alias-module-list
@@ -10823,6 +11203,8 @@
                 env
                 target-module
                 alias
+                importer-module
+                import-unqualified
                 module))]))]))
 
 (define (tc-bind-import-alias-module
@@ -10830,8 +11212,18 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [target-module : String]
-  [alias : String]) : ResultTcEnv
-  (tc-bind-import-alias-module-list ctx decls env target-module alias ""))
+  [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]) : ResultTcEnv
+  (tc-bind-import-alias-module-list
+    ctx
+    decls
+    env
+    target-module
+    alias
+    importer-module
+    import-unqualified
+    ""))
 
 (define (tc-build-top-env-aliases-list
   [ctx : TcContext]
@@ -10864,7 +11256,9 @@
               all-decls
               env
               target-module
-              (compiler-symbols-import-alias-key module alias))
+              (compiler-symbols-import-alias-key module alias)
+              module
+              (string-eq alias ""))
               [(OkTcEnv next-env)
                 (tc-build-top-env-aliases-list
                   ctx
@@ -10878,6 +11272,7 @@
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
     (tc-nominal-owner-cache-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
     (match program
       [(AstProgram decls-box)
         (let
@@ -11037,7 +11432,9 @@
             target-module
             (if (string-eq alias "")
               ""
-              (compiler-symbols-import-alias-key module alias)))])]
+              (compiler-symbols-import-alias-key module alias))
+            module
+            (string-eq alias ""))])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -25555,9 +25952,20 @@
                             ctx
                             name-text
                             lookup-name))
-                          [(OkTcUnit) (OkTcType ty)]
+                          [(OkTcUnit)
+                            (match (tc-unqualified-import-ambiguity-message
+                              ctx
+                              env
+                              name)
+                              [(TcNoString) (OkTcType ty)]
+                              [(TcSomeString message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])
-                        (OkTcType ty))]
+                        (match (tc-unqualified-import-ambiguity-message
+                          ctx
+                          env
+                          name)
+                          [(TcNoString) (OkTcType ty)]
+                          [(TcSomeString message) (ErrTcType message)]))]
                     [(ErrTcTypeUnsafe message)
                       (tc-variant-constructor-type-for-lookup-or
                         ctx
@@ -38313,18 +38721,12 @@
             identity)])]))
 
 (define (macro-check-generated-import-collisions
-  [all-decls : AstDeclList]
-  [generated-body : AstDeclList]
-  [import-module : String]
-  [alias : AstMaybeImportAlias]
-  [identity : String]) : CompilerMaybeString
-  (if (macro-module-import-request-unqualified? alias)
-    (macro-check-generated-import-collisions-in
-      all-decls
-      generated-body
-      import-module
-      identity)
-    CompilerNoString))
+  [_all-decls : AstDeclList]
+  [_generated-body : AstDeclList]
+  [_import-module : String]
+  [_alias : AstMaybeImportAlias]
+  [_identity : String]) : CompilerMaybeString
+  CompilerNoString)
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
@@ -40497,6 +40899,7 @@
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
     (macro-alias-cache-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)

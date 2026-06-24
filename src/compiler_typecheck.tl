@@ -6957,6 +6957,19 @@
 (import (gen-b))
 (define (main) : i64 (answer))")
 
+(define (compiler-typecheck-module-macro-import-distinct-collision-source) : String
+  "(defmacro (gen-a) : Module
+  `(begin
+    (module generated.a)
+    (define (answer) : i64 42)))
+(defmacro (gen-b) : Module
+  `(begin
+    (module generated.b)
+    (define (answer) : i64 99)))
+(import (gen-a))
+(import (gen-b))
+(define (main) : i64 (answer))")
+
 (define (compiler-typecheck-module-macro-import-missing-module-source) : String
   "(defmacro (gen) : Module
   `(define (answer) : i64 42))
@@ -7309,6 +7322,9 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
       "symbols: duplicate value declaration generated.module/answer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-import-distinct-collision-source)
+      "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-missing-module-source)
       "typecheck: Module macro output must include a module declaration")

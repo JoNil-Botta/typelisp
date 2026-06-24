@@ -35546,10 +35546,7 @@
   [macro-name : String]
   [definition-module : String]) : SymI64Env
   (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
-    (compiler-parse-dispatch-private-types
-      (compiler-cfg-enable
-        (compiler-parse-dispatch-env)
-        "feature-compiler-private-dynamic-buffer"))
+    (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
     (compiler-parse-dispatch-env)))
 
 (define (macro-parse-decl-sexpr
@@ -36452,11 +36449,8 @@
 ;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
-;; way macro-decl-from-decl does), so this returns the identical MacroSomeDecl the
-;; previous O(decls) macro-find-decl-by-index walk produced. Imported macro
-;; aliases may be looked up from the importing module, so prefer the indexed owner
-;; name when present to keep the original definition module attached to the
-;; transformer.
+;; way macro-decl-from-decl does), so direct module lookups return the identical
+;; MacroSomeDecl the previous O(decls) macro-find-decl-by-index walk produced.
 (define (macro-decl-owner-module-or
   [symbols : CompilerSymbols]
   [target : i64]
@@ -36469,6 +36463,17 @@
     [(CompilerNoString) fallback]))
 
 (define (macro-decl-at-index-in-module
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [module : String]) : MacroMaybeDecl
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(OkAstDecl decl) (macro-decl-from-decl decl module)]
+    [(ErrAstDecl _) (MacroNoDecl)]))
+
+;; Imported macro aliases can be looked up from the importing module. In that
+;; path, recover the indexed owner module so the transformer still runs as its
+;; original definition module.
+(define (macro-decl-at-index-with-owner-module
   [symbols : CompilerSymbols]
   [target : i64]
   [module : String]) : MacroMaybeDecl
@@ -37318,7 +37323,7 @@
     (intern module)
     (intern lookup-name))
     [(SomeI64 handle)
-      (match (macro-decl-at-index-in-module
+      (match (macro-decl-at-index-with-owner-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         module)

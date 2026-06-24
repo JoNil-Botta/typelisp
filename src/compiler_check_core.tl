@@ -739,10 +739,7 @@
     (unless
       (compiler-check-private-dynamic-buffer-public-rejected-ok?)
       (return
-        (begin
-          (panic "compiler-check: private dynamic-buffer public smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0)))
+        (panic "compiler-check: private dynamic-buffer public smoke mismatch")))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
       (return (panic "compiler-check: implicit core prelude smoke mismatch")))

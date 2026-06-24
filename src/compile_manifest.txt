@@ -605,17 +605,30 @@ contains|format cst: unclosed delimiter
 end
 
 case|selfhost_format_doc|src/format_doc.tl|assembly|skip|direct
-contains|_tl_doc_empty:
-contains|_tl_render_doc:
-contains|_tl_format_doc_self_test:
+contains|_tl_format_doc_doc_empty:
+contains|_tl_format_doc_render_doc:
+contains|_tl_format_doc_format_doc_self_test:
+end
+
+case|selfhost_format_render_buf|src/format_render_buf.tl|assembly|skip|direct
+contains|_tl_format_render_buf_fmt_render_buf_new:
+contains|_tl_format_render_buf_fmt_render_buf_append:
+contains|_tl_format_render_buf_fmt_render_buf_string:
+contains|_tl_format_render_buf_render_newline_into_bang:
 end
 
 case|selfhost_format_rules|src/format_rules.tl|assembly|skip|direct
-contains|_tl_format_rules_define_doc:
-contains|_tl_format_rules_let_binding_annotated_doc:
-contains|_tl_format_rules_let_doc:
-contains|_tl_format_rules_render_source_width:
-contains|_tl_format_rules_self_test:
+contains|_tl_format_rules_format_rules_layout_define:
+contains|_tl_format_rules_format_rules_render_node_fragment_into:
+contains|_tl_format_rules_format_rules_render_source_width:
+contains|_tl_format_rules_format_rules_self_test:
+end
+
+case|selfhost_format_rules_doc_compat|src/format_rules_doc_compat.tl|assembly|skip|direct
+contains|_tl_format_rules_doc_compat_format_rules_define_doc:
+contains|_tl_format_rules_doc_compat_format_rules_let_binding_annotated_doc:
+contains|_tl_format_rules_doc_compat_format_rules_let_doc:
+contains|_tl_format_rules_doc_compat_format_rules_doc_compat_self_test:
 end
 
 case|selfhost_format_tokens|src/format_tokens.tl|assembly|skip|direct

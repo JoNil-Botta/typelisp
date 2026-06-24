@@ -1165,6 +1165,30 @@
 (define (main) : i64
   (user.score (user.make 42)))")
 
+(define (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source) : String
+  "(import \"stdlib/vector.tl\")
+(defmacro (type-provider) : Module
+  `(begin
+    (module generated.qualified_type_vector_provider)
+    (defstruct T
+      (value i64))))
+(defmacro (vector-user) : Module
+  `(begin
+    (module generated.qualified_type_vector_user)
+    (import (type-provider) as provider)
+    (import (vector provider.T) as vec)
+    (define (make [value : i64]) : provider.T
+      (provider.T value))
+    (define (score [value : provider.T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (struct-get (vec.get (& items) 0 (provider.T 0)) value))))))
+(import (vector-user) as user)
+(define (main) : i64
+  (user.score (user.make 42)))")
+
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
   `(begin
@@ -1221,6 +1245,8 @@
       (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?

@@ -38960,31 +38960,30 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl lookup-module)
+            [(OkMacroCallDeclModule maybe-decl _)
               (let
-                [decl-ctx : TcContext
-                  (tc-context-with-module ctx lookup-module)]
+                [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
                   [(MacroSomeDecl macro-name definition-module params ret body)
                     (if (tc-macro-result-decls? ret)
                       (match (macro-expand-exprs
-                        decl-ctx
+                        call-ctx
                         global-env
                         orig-decls
                         0
                         args)
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
-                            decl-ctx
+                            call-ctx
                             macro-name
                             definition-module
                             params
                             expanded-args
-                            (tc-ctfe-env decl-ctx)
+                            (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer
-                                decl-ctx
+                                call-ctx
                                 global-env
                                 orig-decls
                                 macro-name
@@ -39062,31 +39061,30 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl lookup-module)
+            [(OkMacroCallDeclModule maybe-decl _)
               (let
-                [decl-ctx : TcContext
-                  (tc-context-with-module ctx lookup-module)]
+                [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
                   [(MacroSomeDecl macro-name definition-module params ret body)
                     (if (tc-macro-result-module? ret)
                       (match (macro-expand-exprs
-                        decl-ctx
+                        call-ctx
                         global-env
                         orig-decls
                         0
                         args)
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
-                            decl-ctx
+                            call-ctx
                             macro-name
                             definition-module
                             params
                             expanded-args
-                            (tc-ctfe-env decl-ctx)
+                            (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer
-                                decl-ctx
+                                call-ctx
                                 global-env
                                 orig-decls
                                 macro-name

@@ -961,7 +961,10 @@
           (ErrBackendReg
             (string-append
               "backend: vector spills are not implemented for "
-              role))])]
+              role))]
+        ;; A rematerialised value is an i64-class constant/address, never a vector.
+        [(CompilerRegRemat _)
+          (ErrBackendReg (compiler-backend-vector-home-unavailable role))])]
     [(CompilerRegNoLocation)
       (ErrBackendReg (compiler-backend-vector-home-unavailable role))]))
 
@@ -982,7 +985,10 @@
           (ErrBackendReg (compiler-backend-mask-home-unavailable role))]
         [(CompilerRegSpill _)
           (ErrBackendReg
-            (string-append "backend: mask spills are not implemented for " role))])]
+            (string-append "backend: mask spills are not implemented for " role))]
+        ;; A rematerialised value is i64-class, never a mask register.
+        [(CompilerRegRemat _)
+          (ErrBackendReg (compiler-backend-mask-home-unavailable role))])]
     [(CompilerRegNoLocation)
       (ErrBackendReg (compiler-backend-mask-home-unavailable role))]))
 
@@ -3277,7 +3283,16 @@
                 (compiler-backend-frame-offset offset)
                 ", "
                 reg
-                "\n")])]
+                "\n")]
+            ;; Rematerialise: recompute the value into `reg` instead of reloading
+            ;; from a slot. remat-recompute-value? guarantees this load succeeds.
+            [(CompilerRegRemat value)
+              (match (compiler-backend-emit-load-value-with-plan
+                CompilerRegAssignmentNil
+                value
+                reg)
+                [(OkCompilerBackend asm) asm]
+                [(ErrCompilerBackend _) ""])])]
         [(CompilerRegNoLocation)
           (str-cat "    movq " (compiler-backend-slot var-id) ", " reg "\n")]))))
 
@@ -3302,7 +3317,10 @@
             reg
             ", "
             (compiler-backend-frame-offset offset)
-            "\n")])]
+            "\n")]
+        ;; Rematerialised value: its single def store is dead (every use
+        ;; recomputes), so emit nothing.
+        [(CompilerRegRemat _) ""])]
     [(CompilerRegNoLocation) (compiler-backend-emit-store-var var-id reg)]))
 
 (define (compiler-backend-emit-load-float-var-with-plan
@@ -3329,7 +3347,10 @@
               (compiler-backend-frame-offset offset)
               ", "
               reg
-              "\n")])]
+              "\n")]
+          ;; A rematerialisable value is a constant/address (i64-class), never a
+          ;; float; unreachable here.
+          [(CompilerRegRemat _) ""])]
       [(CompilerRegNoLocation)
         (str-cat "    " mov " " (compiler-backend-slot var-id) ", " reg "\n")])))
 
@@ -3367,7 +3388,9 @@
               reg
               ", "
               (compiler-backend-frame-offset offset)
-              "\n")])]
+              "\n")]
+          ;; A rematerialised value is never float-class; unreachable.
+          [(CompilerRegRemat _) ""])]
       [(CompilerRegNoLocation)
         (compiler-backend-emit-store-float-var var-id reg ty)])))
 
@@ -4327,7 +4350,16 @@
           (compiler-backend-emit-load-memory-to-reg
             (compiler-backend-frame-offset offset)
             ty
-            reg)])]
+            reg)]
+        ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
+        ;; so the immediate/leaq materialisation is width-correct for any use).
+        [(CompilerRegRemat value)
+          (match (compiler-backend-emit-load-value-with-plan
+            CompilerRegAssignmentNil
+            value
+            reg)
+            [(OkCompilerBackend asm) asm]
+            [(ErrCompilerBackend _) ""])])]
     [(CompilerRegNoLocation)
       (compiler-backend-emit-load-memory-to-reg
         (compiler-backend-slot id)
@@ -4680,7 +4712,10 @@
                   imm
                   ", "
                   (compiler-backend-frame-offset offset)
-                  "\n"))])]
+                  "\n"))]
+            ;; Rematerialised dst: this immediate store IS its (single) def, and the
+            ;; value is recomputed at every use, so the store is dead -> emit nothing.
+            [(CompilerRegRemat _) (CompilerBackendSomeAsm "")])]
         [(CompilerRegNoLocation)
           (CompilerBackendSomeAsm
             (str-cat "    movq " imm ", " (compiler-backend-slot var-id) "\n"))])]
@@ -5287,7 +5322,12 @@
             (ErrCompilerBackend
               (compiler-diagnostic-at-start
                 ""
-                "backend: register-group var assigned scalar register home (#2386)"))])]
+                "backend: register-group var assigned scalar register home (#2386)"))]
+          [(CompilerRegRemat _)
+            (ErrCompilerBackend
+              (compiler-diagnostic-at-start
+                ""
+                "backend: register-group var rematerialised (#2386)"))])]
       [(CompilerRegNoLocation)
         (OkCompilerBackend
           (compiler-backend-frame-offset
@@ -5735,7 +5775,14 @@
                 (OkCompilerBackend
                   (compiler-backend-emit-load-memory
                     (compiler-backend-frame-offset offset)
-                    ty))])]
+                    ty))]
+              ;; Rematerialise into %rax (this loader's implicit destination, as the
+              ;; IrValueGlobalAddr arm below also uses).
+              [(CompilerRegRemat value)
+                (compiler-backend-emit-load-value-with-plan
+                  CompilerRegAssignmentNil
+                  value
+                  "%rax")])]
           [(CompilerRegNoLocation)
             (OkCompilerBackend
               (compiler-backend-emit-load-memory (compiler-backend-slot id) ty))])]
@@ -7818,7 +7865,18 @@
             (str-cat
               "    cmpq $0, "
               (compiler-backend-frame-offset offset)
-              "\n")])]
+              "\n")]
+          ;; Rematerialise into %rax, then test it (constant branch conditions are
+          ;; normally folded away, so this is rare but must stay correct).
+          [(CompilerRegRemat value)
+            (str-cat
+              (match (compiler-backend-emit-load-value-with-plan
+                CompilerRegAssignmentNil
+                value
+                "%rax")
+                [(OkCompilerBackend asm) asm]
+                [(ErrCompilerBackend _) ""])
+              "    testq %rax, %rax\n")])]
       [(CompilerRegNoLocation)
         (str-cat "    cmpq $0, " (compiler-backend-slot var-id) "\n")])))
 
@@ -8508,7 +8566,10 @@
                     (compiler-backend-frame-offset offset)
                     "\n"
                     ""
-                    ""))])]
+                    ""))]
+              ;; The address-of result is defined by IrInstrAddrOf, never a remat
+              ;; Mov; unreachable.
+              [(CompilerRegRemat _) ""])]
           [(CompilerRegNoLocation)
             (string-append
               (str-cat "    leaq " slot ", " "%rax" "\n")
@@ -12485,7 +12546,10 @@
                         (compiler-backend-frame-offset src-offset)
                         ", "
                         dst-home
-                        "\n"))])]
+                        "\n"))]
+                  ;; Remat src: no slot/register to copy from -> defer to the
+                  ;; load-store fallback, which recomputes it.
+                  [(CompilerRegRemat _) (CompilerBackendNoAsm)])]
               [(CompilerRegNoLocation)
                 (CompilerBackendSomeAsm
                   (str-cat
@@ -12495,6 +12559,7 @@
                     dst-home
                     "\n"))])]
           [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
+          [(CompilerRegRemat _) (CompilerBackendNoAsm)]
           [(CompilerRegSpill dst-offset)
             (match (compiler-reg-assignment-lookup assignments src-id)
               [(CompilerRegSomeLocation src-location)

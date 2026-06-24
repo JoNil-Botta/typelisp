@@ -23,7 +23,13 @@
   ;; represented as the ordinary CompilerRegSpill (the backend reads the second
   ;; word at offset-8 using the program word-count map).
   (CompilerRegRegisterPair String String)
-  (CompilerRegSpill i64))
+  (CompilerRegSpill i64)
+  ;; Rematerialization: a single-def value whose definition is a cheap static
+  ;; recompute (a constant or an address materialization `leaq label(%rip)`) is
+  ;; not spilled to a slot under pressure -- it is RECOMPUTED at each use and its
+  ;; defining store is dropped. The carried IrValue is exactly what the def Mov
+  ;; produced, so recomputing always yields the identical value.
+  (CompilerRegRemat CompilerIrValue))
 
 (defenum CompilerRegMaybeLocation
   (CompilerRegNoLocation)
@@ -3048,7 +3054,10 @@
     [(CompilerRegSpill left-offset)
       (match right
         [(CompilerRegSpill right-offset) (= left-offset right-offset)]
-        [_ false])]))
+        [_ false])]
+    ;; Conservative: distinct rematerialised values never alias, and treating two
+    ;; equal ones as different only forgoes a copy elision (never unsound).
+    [(CompilerRegRemat _) false]))
 
 (define (compiler-reg-interval-lookup
   [intervals : CompilerRegIntervalList]
@@ -4415,6 +4424,27 @@
                       types
                       group-vars
                       ref-counts
+                      copy-hints)]
+                  ;; Unreachable: rematerialisation is assigned in a post-allocation
+                  ;; pass, so coalesce-location never yields Remat here. Mirror the
+                  ;; spill arm for exhaustiveness.
+                  [(CompilerRegRemat _)
+                    (compiler-reg-assign-candidates
+                      (box-get rest)
+                      regs
+                      expired
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        var
+                        location)
+                      moves
+                      coalesce
+                      use-fixpoint-coalesce
+                      interval-index
+                      hole-aware-vars
+                      types
+                      group-vars
+                      ref-counts
                       copy-hints)])]
               [(CompilerRegNoLocation)
                 (if (compiler-live-set-contains? group-vars var)
@@ -5516,6 +5546,160 @@
 
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
+
+;; A value the backend can RECOMPUTE in one instruction at each use: a static
+;; address materialisation (`leaq label(%rip)`). Plain integer/bool/char constants
+;; are deliberately EXCLUDED: the optimiser's constant propagation already inlines
+;; them directly into their uses (so an optimised function never carries a constant
+;; in a spillable vreg), making constant remat moot on real code; addresses cannot
+;; always be folded into an instruction's immediate, so they are the case that
+;; genuinely benefits. IrValueGlobal (a LOAD of a mutable global) and IrValueF64
+;; (no scalar backend support) must never be rematerialised.
+(define (compiler-reg-remat-recompute-value? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueGlobalAddr _) true]
+    [(IrValueFunction _) true]
+    [(IrValueString _) true]
+    [(IrValueBytes _) true]
+    [_ false]))
+
+(define (compiler-reg-remat-init-vals!
+  [vals : (Array CompilerIrValue)]
+  [vars : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i vars)
+      (begin
+        (array-set! vals i (IrValueUnit))
+        (set! i (+ i 1))))))
+
+;; Record var -> rematerialisable value for every var whose SOLE definition is a
+;; Mov of a recomputable value.
+(define (compiler-reg-collect-remat-seq!
+  [instrs : CompilerIrInstrSeq]
+  [def-counts : (Array i64)]
+  [flags : (Array i64)]
+  [vals : (Array CompilerIrValue)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (array-ref slots index)
+          [(IrInstrMov dst value _)
+            ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
+            ;; must keep a real slot). A poisoned var never becomes remat.
+            (if (if (if (compiler-reg-remat-recompute-value? value)
+              (compiler-reg-sv-single-def? def-counts dst)
+              false)
+              (if (>= dst 0)
+                (if (< dst (array-length flags))
+                  (not (= (array-ref flags dst) 2))
+                  false)
+                false)
+              false)
+              (begin
+                (array-set! flags dst 1)
+                (array-set! vals dst value)
+                unit)
+              unit)]
+          ;; Taking a var's address needs its real storage; poison it so it is
+          ;; never rematerialised (its slot must hold the value).
+          [(IrInstrAddrOf _ src)
+            (if (if (>= src 0)
+              (< src (array-length flags))
+              false)
+              (begin
+                (array-set! flags src 2)
+                unit)
+              unit)]
+          [_ unit])
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-collect-remat-blocks!
+  [blocks : CompilerIrBlockList]
+  [def-counts : (Array i64)]
+  [flags : (Array i64)]
+  [vals : (Array CompilerIrValue)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
+        (compiler-reg-collect-remat-blocks!
+          (box-get rest)
+          def-counts
+          flags
+          vals))]
+    [(IrBlockArray seq)
+      (compiler-reg-collect-remat-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        def-counts
+        flags
+        vals)]))
+
+;; Post-allocation rewrite: a singleton (non-coalesced) rematerialisable var that
+;; the allocator chose to SPILL is converted to CompilerRegRemat instead -- its
+;; uses recompute the value and its def store is dropped (backend). Coalesced
+;; members are excluded so a class never half-remats. The already-reserved spill
+;; slot is simply left unused.
+(define (compiler-reg-rewrite-remat-assignments
+  [assignments : CompilerRegAssignmentTable]
+  [func : CompilerIrFunction]
+  [coalesce : CompilerRegCoalesceMap]
+  [shadows : CompilerLiveI64Set]
+  [vars : i64]) : CompilerRegAssignmentTable
+  (let
+    [def-counts : (Array i64) (compiler-reg-function-def-counts func)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [merged-roots : CompilerLiveI64Set
+      (compiler-reg-coalesce-merged-root-set coalesce)]
+    [flags : (Array i64) (make-array i64 vars)]
+    [vals : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
+    [v : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array flags 0)
+      (compiler-reg-remat-init-vals! vals vars)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-reg-collect-remat-blocks!
+            (compiler-ir-block-list-force-cons blocks)
+            def-counts
+            flags
+            vals)])
+      (while (< v vars)
+        (begin
+          ;; Skip vars the call-spanning saver shadows: those keep a real slot to
+          ;; restore from around calls, so they must not lose it to remat.
+          (if (if (< v (array-length flags))
+            (if (= (array-ref flags v) 1)
+              (if (compiler-live-set-contains? shadows v)
+                false
+                (not
+                  (compiler-reg-coalesce-var-nonsingleton?
+                    parents
+                    merged-roots
+                    v)))
+              false)
+            false)
+            (match (compiler-reg-assignment-table-lookup assignments v)
+              [(CompilerRegSomeLocation loc)
+                (match loc
+                  [(CompilerRegSpill _)
+                    (begin
+                      (compiler-reg-assignment-table-insert
+                        assignments
+                        v
+                        (CompilerRegRemat (array-ref vals v)))
+                      unit)]
+                  [_ unit])]
+              [(CompilerRegNoLocation) unit])
+            unit)
+          (set! v (+ v 1))))
+      assignments)))
 
 (define (compiler-reg-coalesce-var-nonsingleton?
   [parents : (Array i64)]
@@ -7842,10 +8026,15 @@
     ;; coalesce map, so this is the identity there.
     [final-assignments : CompilerRegAssignmentTable
       (if allow-caller-saved-zero-call
-        (compiler-reg-expand-class-assignments
-          assignments
+        (compiler-reg-rewrite-remat-assignments
+          (compiler-reg-expand-class-assignments
+            assignments
+            coalesce
+            (struct-get interval-index starts)
+            (array-length (struct-get interval-index starts)))
+          func
           coalesce
-          (struct-get interval-index starts)
+          call-save-shadows
           (array-length (struct-get interval-index starts)))
         assignments)]
     (CompilerRegPlan

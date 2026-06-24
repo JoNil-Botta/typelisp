@@ -300,6 +300,10 @@
 (define (expr-var [name : String]) : Expr
   (expr-var name))
 
+;: Build a struct field access expression during macro CTFE.
+(define (expr-struct-get [target : Expr] [field : String]) : Expr
+  (expr-struct-get target field))
+
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String
   left)

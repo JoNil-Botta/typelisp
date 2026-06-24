@@ -4353,6 +4353,9 @@
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
@@ -6817,6 +6820,7 @@
     (string-eq name "expr-bool")
     (string-eq name "expr-int")
     (string-eq name "expr-var")
+    (string-eq name "expr-struct-get")
     (string-eq name "expr-splice")
     (string-eq name "expr-if")
     (string-eq name "expr-type")
@@ -27505,6 +27509,7 @@
       [(string-eq call-name "expr-bool") true]
       [(string-eq call-name "expr-int") true]
       [(string-eq call-name "expr-var") true]
+      [(string-eq call-name "expr-struct-get") true]
       [(string-eq call-name "expr-splice") true]
       [(string-eq call-name "expr-if") true]
       [(string-eq call-name "expr-type") true]

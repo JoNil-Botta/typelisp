@@ -191,6 +191,35 @@
 (define (main) : i64
   (step 20 22))")
 
+(define (compiler-backend-direct-tail-call-reordered-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (finish y x))
+(define (main) : i64
+  (step 20 22))")
+
+(define (compiler-backend-direct-tail-call-duplicated-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (finish x x))
+(define (main) : i64
+  (step 20 22))")
+
+(define (compiler-backend-direct-tail-call-nontrivial-source) : String
+  "(define (finish [x : i64] [y : i64]) : i64 (+ x y))
+(define (step [x : i64] [y : i64]) : i64
+  (let [z : i64 (+ x 1)]
+    (finish z y)))
+(define (main) : i64
+  (step 19 22))")
+
+(define (compiler-backend-direct-tail-call-f64-source) : String
+  "(define (finishf [x : f64] [y : f64]) : f64 (+ x y))
+(define (stepf [x : f64] [y : f64]) : f64
+  (finishf x y))
+(define (main) : i64
+  (if (< (stepf 20.0 22.0) 43.0) 42 1))")
+
 (define (compiler-backend-direct-tail-call-stack-source) : String
   "(define (finishstack
   [n : i64]
@@ -10486,6 +10515,71 @@
     (compiler-backend-stack-windows-args-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
+(define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String
+  (let
+    [label : String (str-cat symbol ":\n")]
+    [start : i64 (compiler-backend-string-find-from asm label 0)]
+    (if (< start 0)
+      ""
+      (let
+        [body-start : i64 (+ start (string-length label))]
+        [next : i64
+          (compiler-backend-string-find-from asm "\n.globl " body-start)]
+        [body-end : i64
+          (if (< next 0)
+            (string-length asm)
+            next)]
+        (substring asm body-start (- body-end body-start))))))
+
+(define (compiler-backend-direct-tail-call-reg0
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "%rcx"
+    "%rdi"))
+
+(define (compiler-backend-direct-tail-call-reg1
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "%rdx"
+    "%rsi"))
+
+(define (compiler-backend-direct-tail-call-param-store
+  [reg : String]
+  [slot : String]) : String
+  (str-cat "    movq " reg ", " slot "\n"))
+
+(define (compiler-backend-direct-tail-call-param-load
+  [slot : String]
+  [reg : String]) : String
+  (str-cat "    movq " slot ", " reg "\n"))
+
+(define (compiler-backend-direct-tail-call-identity-elided?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (let
+    [body : String (compiler-backend-asm-function-body asm "_tl_step")]
+    [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
+    [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
+    (and
+      (compiler-backend-string-contains? body "    jmp _tl_finish\n")
+      (not (compiler-backend-string-contains? body "    call _tl_finish\n"))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)")))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)")))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-load "-8(%rbp)" reg0)))
+      (not
+        (compiler-backend-string-contains?
+          body
+          (compiler-backend-direct-tail-call-param-load "-16(%rbp)" reg1))))))
+
 (define (compiler-backend-direct-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool
   (match (compiler-backend-emit-source-for-target
@@ -10494,7 +10588,43 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    jmp _tl_finish\n")
-        (not (compiler-backend-string-contains? asm "    call _tl_finish\n")))]
+        (not (compiler-backend-string-contains? asm "    call _tl_finish\n"))
+        (compiler-backend-direct-tail-call-identity-elided? target asm))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-i64-keeps-spills?
+  [source : String]
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target source target)
+    [(OkCompilerBackend asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_step")]
+        [reg0 : String (compiler-backend-direct-tail-call-reg0 target)]
+        [reg1 : String (compiler-backend-direct-tail-call-reg1 target)]
+        (and
+          (compiler-backend-string-contains? body "    jmp _tl_finish\n")
+          (compiler-backend-string-contains?
+            body
+            (compiler-backend-direct-tail-call-param-store reg0 "-8(%rbp)"))
+          (compiler-backend-string-contains?
+            body
+            (compiler-backend-direct-tail-call-param-store reg1 "-16(%rbp)"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-direct-tail-call-f64-keeps-spills?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-direct-tail-call-f64-source)
+    target)
+    [(OkCompilerBackend asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_stepf")]
+        (and
+          (compiler-backend-string-contains? body "    jmp _tl_finishf\n")
+          (compiler-backend-string-contains? body "    movsd %xmm0, -8(%rbp)\n")
+          (compiler-backend-string-contains?
+            body
+            "    movsd %xmm1, -16(%rbp)\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-direct-tail-call-stack-slot
@@ -10563,16 +10693,41 @@
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
   (and
-    (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
-    (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetWindows))
-    (compiler-backend-direct-tail-immediate-stack-target-ok?
-      (BackendTargetLinux))
-    (compiler-backend-direct-tail-immediate-stack-target-ok?
-      (BackendTargetWindows))
-    (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetLinux))
-    (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetWindows))))
+    (backend-and8
+      (compiler-backend-direct-tail-call-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-target-ok? (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-stack-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-stack-target-ok?
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-immediate-stack-target-ok?
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-immediate-stack-target-ok?
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-mixed-target-ok? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-mixed-target-ok?
+        (BackendTargetWindows)))
+    (backend-and8
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-reordered-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-reordered-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-duplicated-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-duplicated-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-nontrivial-source)
+        (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-i64-keeps-spills?
+        (compiler-backend-direct-tail-call-nontrivial-source)
+        (BackendTargetWindows))
+      (compiler-backend-direct-tail-call-f64-keeps-spills? (BackendTargetLinux))
+      (compiler-backend-direct-tail-call-f64-keeps-spills?
+        (BackendTargetWindows)))))
 
 (define (compiler-backend-indirect-tail-call-target-ok?
   [target : CompilerBackendTarget]) : bool

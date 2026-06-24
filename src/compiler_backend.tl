@@ -478,6 +478,8 @@
   (compiler-backend-empty-string-list))
 (define compiler-backend-current-phi-target-count : i64
   0)
+(define compiler-backend-identity-tail-forwarder-active : bool
+  false)
 
 (define (compiler-backend-string-list-contains?
   [items : BackendStringList]
@@ -11453,6 +11455,142 @@
         (= tail-stack 0)
         (not (compiler-backend-type-list-has-group? types program-index))))))
 
+(define (compiler-backend-identity-tail-forwarder-type-ok?
+  [program-index : CompilerBackendProgramIndex]
+  [ty : AstType]) : bool
+  (and
+    (= (compiler-backend-type-size ty) 8)
+    (not (compiler-backend-float-type? ty))
+    (not (compiler-backend-group-type? program-index ty))))
+
+(define (compiler-backend-identity-tail-forwarder-args?
+  [target : CompilerBackendTarget]
+  [params : CompilerIrParamList]
+  [args : CompilerIrCallArgs]
+  [target-types : AstTypeList]
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    (match params
+      [(IrParamNil)
+        (match target-types
+          [(AstTypeNil) true]
+          [_ false])]
+      [_ false])
+    (match params
+      [(IrParamNil) false]
+      [(IrParamCons param rest)
+        (match target-types
+          [(AstTypeNil) false]
+          [(AstTypeCons target-ty target-rest)
+            (match param
+              [(IrParam _ source-ty var-id)
+                (let
+                  [callee-ty : AstType (ty-node-get target-ty)]
+                  (match (compiler-backend-call-arg-at args arg-index)
+                    [(IrValueVar arg-var)
+                      (and
+                        (= arg-var var-id)
+                        (compiler-backend-identity-tail-forwarder-type-ok?
+                          program-index
+                          source-ty)
+                        (compiler-backend-identity-tail-forwarder-type-ok?
+                          program-index
+                          callee-ty)
+                        (not
+                          (compiler-backend-stack-call-arg-for-banks?
+                            target
+                            false
+                            int-idx
+                            float-idx
+                            position))
+                        (compiler-backend-identity-tail-forwarder-args?
+                          target
+                          (box-get rest)
+                          args
+                          (box-get target-rest)
+                          (+ arg-index 1)
+                          (+ int-idx 1)
+                          float-idx
+                          (+ position 1)
+                          program-index))]
+                    [_ false]))])])])))
+
+(define (compiler-backend-identity-tail-forwarder-call?
+  [target : CompilerBackendTarget]
+  [_source-function : String]
+  [params : CompilerIrParamList]
+  [name : String]
+  [args : CompilerIrCallArgs]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (if (compiler-backend-index-function-defines? program-index name)
+    (let
+      [target-types : AstTypeList
+        (compiler-backend-call-param-types-index name program-index)]
+      (compiler-backend-identity-tail-forwarder-args?
+        target
+        params
+        args
+        target-types
+        0
+        0
+        0
+        0
+        program-index))
+    false))
+
+(define (compiler-backend-identity-tail-forwarder-block?
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [params : CompilerIrParamList]
+  [block : CompilerIrBlock]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (if (= (compiler-ir-instr-seq-count instrs) 1)
+        (match (compiler-ir-instr-seq-ref instrs 0)
+          [(IrInstrTailCall name args _)
+            (compiler-backend-identity-tail-forwarder-call?
+              target
+              source-function
+              params
+              name
+              args
+              program-index)]
+          [_ false])
+        false)]))
+
+(define (compiler-backend-identity-tail-forwarder?
+  [target : CompilerBackendTarget]
+  [source-function : String]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match (box-get rest)
+        [(IrBlockNil)
+          (compiler-backend-identity-tail-forwarder-block?
+            target
+            source-function
+            params
+            block
+            program-index)]
+        [_ false])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (compiler-backend-identity-tail-forwarder-block?
+          target
+          source-function
+          params
+          (compiler-ir-block-seq-ref seq 0)
+          program-index)
+        false)]))
+
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
 ;; this is 0 whenever every arg fits in registers.
@@ -13566,27 +13704,29 @@
       args
       param-types
       program-index)
-      (match (if (= tail-stack-count 0)
-        (compiler-backend-emit-call-args
-          target
-          assignments
-          args
-          param-types
-          c-abi?
-          0
-          0
-          0
-          0
-          0
-          instr-diag
-          program-index
-          vars)
-        (compiler-backend-emit-direct-tail-call-args
-          target
-          assignments
-          args
-          param-types
-          instr-diag))
+      (match (if compiler-backend-identity-tail-forwarder-active
+        (OkCompilerBackend "")
+        (if (= tail-stack-count 0)
+          (compiler-backend-emit-call-args
+            target
+            assignments
+            args
+            param-types
+            c-abi?
+            0
+            0
+            0
+            0
+            0
+            instr-diag
+            program-index
+            vars)
+          (compiler-backend-emit-direct-tail-call-args
+            target
+            assignments
+            args
+            param-types
+            instr-diag)))
         [(OkCompilerBackend args-asm)
           (OkCompilerBackend
             (string-append
@@ -21682,6 +21822,13 @@
           (compiler-backend-function-symbol-index program-index name)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts remat-vars emit-blocks-list)]
+        [identity-tail-forwarder? : bool
+          (compiler-backend-identity-tail-forwarder?
+            target
+            name
+            params
+            emit-blocks-list
+            program-index)]
         (if (compiler-backend-atomic-call-name? symbol)
           (OkCompilerBackend
             (compiler-backend-emit-atomic-helper-function target symbol))
@@ -21690,16 +21837,18 @@
               (set!
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
-            (match (compiler-backend-emit-param-spills
-              target
-              assignments
-              params
-              0
-              0
-              0
-              0
-              program-index
-              slot-vars)
+            (match (if identity-tail-forwarder?
+              (OkCompilerBackend "")
+              (compiler-backend-emit-param-spills
+                target
+                assignments
+                params
+                0
+                0
+                0
+                0
+                program-index
+                slot-vars))
               [(OkCompilerBackend spills)
                 (let
                   [label-scope : String
@@ -21714,6 +21863,10 @@
                       remat-vars
                       use-counts
                       emit-blocks-list)]
+                  [_identity-tail-forwarder : unit
+                    (set!
+                      compiler-backend-identity-tail-forwarder-active
+                      identity-tail-forwarder?)]
                   (match (compiler-backend-emit-blocks
                     target
                     label-scope
@@ -21747,6 +21900,9 @@
                               program-index))]
                         [_addr-forward-done : unit
                           (begin
+                            (set!
+                              compiler-backend-identity-tail-forwarder-active
+                              false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
                         (OkCompilerBackend
@@ -21801,6 +21957,9 @@
                       (let
                         [_addr-forward-done : unit
                           (begin
+                            (set!
+                              compiler-backend-identity-tail-forwarder-active
+                              false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
                         (ErrCompilerBackend message))]))]

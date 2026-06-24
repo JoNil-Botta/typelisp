@@ -6527,6 +6527,75 @@
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-avx512-tail-mask-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-avx512-tail-mask-emits?
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]
+  [want : String]) : bool
+  (match (compiler-backend-emit-avx512-tail-mask
+    "_tl_tail"
+    "entry"
+    (compiler-backend-avx512-tail-mask-assignments)
+    0
+    index
+    end-value
+    lanes
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm) (string-eq asm want)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
+  (match (compiler-backend-emit-avx512-tail-mask
+    "_tl_tail"
+    "entry"
+    (compiler-backend-avx512-tail-mask-assignments)
+    0
+    (IrValueVar 1)
+    (IrValueVar 2)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    kxorw %k1, %k1, %k1\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    xorl %eax, %eax\n    kmovw %eax, %k1\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-tail-mask-ok?) : bool
+  (and
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 8)
+      (IrValueI64 8)
+      8
+      "    kxorw %k1, %k1, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 10)
+      (IrValueI64 13)
+      8
+      "    movl $7, %eax\n    kmovw %eax, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 0)
+      (IrValueI64 8)
+      8
+      "    movl $255, %eax\n    kmovw %eax, %k1\n")
+    (compiler-backend-avx512-tail-mask-emits?
+      (IrValueI64 0)
+      (IrValueI64 3)
+      64
+      "    movq $7, %rax\n    kmovq %rax, %k1\n")
+    (compiler-backend-avx512-tail-mask-dynamic-zero-ok?)))
+
 (define (compiler-backend-avx512-mask-not-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
@@ -6912,6 +6981,7 @@
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-tail-mask-ok?)
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)

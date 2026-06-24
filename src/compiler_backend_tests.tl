@@ -8578,8 +8578,8 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Fixed-size array set/ref emit-shape coverage (#1416). The source takes the
-;; fixed array as a parameter because fixed-array literals still have separate
-;; lowerer coverage; this exercises backend emission for fixed-array indexing.
+;; fixed array as a parameter; a separate literal source below covers #3580's
+;; stack/local fixed-array storage path.
 (define (compiler-backend-fixed-array-source) : String
   "(define (use-fixed [a : (Array i64 3)]) : i64
   (begin
@@ -8609,6 +8609,24 @@
               asm
               "    leaq (%rax,%r8,8), %rax\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-fixed-array-literal-source) : String
+  "(define (main) : i64
+  (let
+    [a : (Array i64 3) (array 1 2 3)]
+    (array-ref a 2)))")
+
+(define (compiler-backend-fixed-array-literal-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-fixed-array-literal-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -11669,6 +11687,7 @@
       (compiler-backend-string-ref-shape-ok?)
       (compiler-backend-fixed-array-shape-ok?)
       (and
+        (compiler-backend-fixed-array-literal-shape-ok?)
         (compiler-backend-raw-pointer-fixture-shape-ok?)
         (compiler-backend-atomic-intrinsic-shape-ok?))
       (and

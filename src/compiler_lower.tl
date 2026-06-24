@@ -6450,7 +6450,7 @@
     [(AstTyExprList) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray _ _) 8]
+    [(AstTyArray _ _) (lower-inline-layout-size-or ctx ty 8)]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -6491,7 +6491,7 @@
     [(AstTyExprList) 1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray _ _) 8]
+    [(AstTyArray _ _) (lower-inline-layout-align-or ctx ty 8)]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -6860,15 +6860,23 @@
               (+ src-offset chunk)
               (- size chunk))]))]))
 
-;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) only
-;; when it is a struct or enum (incl. their generic …Args forms). Tuples,
-;; arrays, boxes, dyn-arrays, strings, closures, and scalars all occupy a
-;; register-width slot (a pointer/handle or a scalar) under the #1867 flip:
-;; lower-type-size returns 8 for them, so they must use the scalar load/store.
+;; A value is stored FULL-INLINE (its own bytes, addressed by a pointer) when it
+;; is a memory aggregate: a struct/enum or fixed array. Tuples, boxes,
+;; dyn-arrays, strings, closures, and scalars keep their existing register-width
+;; slot semantics:
+;; they use scalar load/store rather than byte-copy or pointer-return.
 ;; This is the precise gate for choosing inline byte-copy / pointer-return vs.
 ;; scalar load/store, distinct from the broad lower-type-contains-inline-
-;; aggregate? (which is true for a tuple/array that merely contains an aggregate
-;; and is used for the conservative tail-call risk check).
+;; aggregate? (which is used for the conservative tail-call risk check).
+(define (lower-type-inline-storage? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [(AstTyArray _ _) true]
+    [_ false]))
+
 (define (lower-type-inline-struct-or-enum? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct _) true]
@@ -7038,15 +7046,18 @@
 (define (lower-one-word-register-storage-type [ctx : TcContext] [ty : AstType]) : AstType
   (let
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    (if (and
-      (lower-type-register-resident? ctx resolved)
-      (not (lower-type-register-group? ctx resolved)))
-      (let
-        [word-ty : AstType (lower-register-word-type ctx resolved 0)]
-        (match (tc-type-strip-region word-ty)
-          [(AstTyF64) word-ty]
-          [_ resolved]))
-      resolved)))
+    (match resolved
+      [(AstTyArray _ _) (AstTyU64)]
+      [_
+        (if (and
+          (lower-type-register-resident? ctx resolved)
+          (not (lower-type-register-group? ctx resolved)))
+          (let
+            [word-ty : AstType (lower-register-word-type ctx resolved 0)]
+            (match (tc-type-strip-region word-ty)
+              [(AstTyF64) word-ty]
+              [_ resolved]))
+          resolved)])))
 
 (define (lower-type-signed? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -7633,7 +7644,7 @@
   ;; offset+8). Only a genuine memory aggregate (inline struct/enum that is not
   ;; register-resident) needs the byte-copy.
   (if (and
-    (lower-type-inline-struct-or-enum? ctx ty)
+    (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty)))
     (lower-copy-bytes state base offset value 0 size)
     (if (lower-type-register-group? ctx ty)
@@ -7679,7 +7690,7 @@
   (cond
     [(and
         (lower-mode-inline-aggregates? mode)
-        (lower-type-inline-struct-or-enum? ctx ty)
+        (lower-type-inline-storage? ctx ty)
         (not (lower-type-register-resident? ctx ty)))
       (match (lower-gep-byte state base offset)
         [(LowerExpr ptr-state ptr _) (LowerExpr ptr-state ptr ty)])]
@@ -7801,7 +7812,7 @@
     (lower-mode-inline-aggregates? (lower-state-mode state))
     ;; #2386: a register-resident aggregate is returned/passed in a register,
     ;; so it needs neither a heap escape-copy nor a caller-provided sret slot.
-    (lower-type-inline-struct-or-enum? ctx ty)
+    (lower-type-inline-storage? ctx ty)
     (not (lower-type-register-resident? ctx ty))))
 
 (define (lower-return-abi-value
@@ -8502,7 +8513,7 @@
                     (lower-repr-c-inline-field? ctx field-ty))
                   (and
                     (lower-mode-inline-aggregates? (lower-state-mode state))
-                    (lower-type-inline-struct-or-enum? ctx field-ty)
+                    (lower-type-inline-storage? ctx field-ty)
                     (not (lower-type-register-resident? ctx field-ty)))))]
             (match (lower-gep-byte state base offset)
               [(LowerExpr ptr-state ptr _)
@@ -16858,7 +16869,7 @@
                         (and
                           (lower-mode-inline-aggregates?
                             (lower-state-mode ptr-state))
-                          (lower-type-inline-struct-or-enum? ctx field-ty))))
+                          (lower-type-inline-storage? ctx field-ty))))
                     (OkLowerExpr (LowerExpr ptr-state ptr result-ty))]
                   [(lower-type-register-group? ctx field-ty)
                     (match (lower-load-group-from-ptr
@@ -17026,7 +17037,7 @@
                   ;; #2386: a register-resident inner value is a word; store it
                   ;; scalar into the box rather than byte-copying from a pointer.
                   (if (and
-                    (lower-type-inline-struct-or-enum? ctx inner-ty)
+                    (lower-type-inline-storage? ctx inner-ty)
                     (not (lower-type-register-resident? ctx inner-ty)))
                     (match (lower-inline-aggregate-copy-size ctx inner-ty)
                       [(OkLowerSize size)
@@ -17376,13 +17387,8 @@
       (let
         [resolved-elem : AstType (tc-resolve-type ctx (ty-node-get elem-ty))]
         [elem-size : i64 (lower-type-size ctx (ty-node-get elem-ty))]
-        [storage-size : i64
-          (lower-align-up
-            (if (= (* count elem-size) 0)
-              1
-              (* count elem-size))
-            8)]
-        (match (lower-reserve-heap-storage state storage-size result-ty)
+        [storage-size : i64 (lower-type-size ctx result-ty)]
+        (match (lower-reserve-inline-storage state storage-size result-ty)
           [(LowerExpr base-state base _)
             (match (lower-array-literal-store-elems
               ctx
@@ -21693,19 +21699,17 @@
         bounds-ok-state
         (IrInstrBoundsCheck index length bounds-ok-label))]))
 
-;; #1867: address an array element, striding by the element's full inline size.
-;; For an inline struct/enum element the backend's GEP scale
-;; (compiler-backend-type-size) is still 8, so pre-multiply the index by
-;; lower-type-size (the real inline size, matching make-array's element buffer)
-;; and GEP at byte granularity (u8). Scalars and pointer-slot handles keep the
-;; type-scaled GEP (correct, since their backend size is right).
+;; #1867/#3580: address an array element, striding by the element's full inline
+;; size. Memory aggregates use a byte-offset GEP so fixed arrays, structs, and
+;; enums use their real layout size instead of an address-sized backend scale.
+;; Scalars and pointer-slot handles keep the type-scaled GEP.
 (define (lower-emit-elem-addr-gep
   [ctx : TcContext]
   [state : LowerState]
   [base : CompilerIrValue]
   [idx-off : CompilerIrValue]
   [elem-ty : AstType]) : LowerExpr
-  (if (lower-type-inline-struct-or-enum? ctx elem-ty)
+  (if (lower-type-inline-storage? ctx elem-ty)
     (match (lower-emit-binop
       state
       IrBinMul
@@ -22771,7 +22775,7 @@
       ;; storage, but a one-word register-resident aggregate is the word
       ;; itself, so fill8 can replicate it directly.
       (or
-        (not (lower-type-inline-struct-or-enum? ctx resolved))
+        (not (lower-type-inline-storage? ctx resolved))
         (lower-type-register-resident? ctx resolved))
       (lower-init-default-share-safe? ctx resolved))))
 
@@ -23077,11 +23081,11 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
-;; #1867: read an array element given its address. For an inline struct/enum
+;; #1867/#3580: read an array element given its address. For a memory aggregate
 ;; element the address IS the value (pointer representation); for scalars and
-;; pointer-slot types (tuple/array/box/dynarray/string handles) load the
-;; register-width value. Mirrors lower-load-inline-value-at-offset at offset 0
-;; but preserves the exact lower-emit-load scalar path.
+;; pointer-slot types (tuple/box/dynarray/string handles) load the register-width
+;; value. Mirrors lower-load-inline-value-at-offset at offset 0 but preserves the
+;; exact lower-emit-load scalar path.
 (define (lower-array-elem-ref-result
   [ctx : TcContext]
   [addr-state : LowerState]
@@ -23091,7 +23095,7 @@
   ;; element address.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
-    (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+    (lower-type-inline-storage? ctx elem-ir-ty)
     (not (lower-type-register-resident? ctx elem-ir-ty)))
     (OkLowerExpr (LowerExpr addr-state elem-ptr elem-ir-ty))
     (if (lower-type-register-group? ctx elem-ir-ty)
@@ -23198,8 +23202,8 @@
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
-;; #1867: store a value into an array element slot. An inline struct/enum value
-;; is byte-copied into the full-size element slot; scalars and pointer-slot
+;; #1867/#3580: store a value into an array element slot. A memory aggregate
+;; value is byte-copied into the full-size element slot; scalars and pointer-slot
 ;; handles use a register-width store.
 (define (lower-array-elem-store-state
   [ctx : TcContext]
@@ -23211,7 +23215,7 @@
   ;; of byte-copying from a pointer.
   (if (and
     (lower-mode-inline-aggregates? (lower-state-mode addr-state))
-    (lower-type-inline-struct-or-enum? ctx elem-ir-ty)
+    (lower-type-inline-storage? ctx elem-ir-ty)
     (not (lower-type-register-resident? ctx elem-ir-ty)))
     (lower-copy-bytes
       addr-state
@@ -34619,8 +34623,7 @@
     [(AstTyEnumArgs _ _) true]
     [(AstTyTuple elems)
       (lower-type-list-contains-inline-aggregate? ctx (box-get elems))]
-    [(AstTyArray elem _)
-      (lower-type-contains-inline-aggregate? ctx (ty-node-get elem))]
+    [(AstTyArray _ _) true]
     [(AstTyRegion _ inner)
       (lower-type-contains-inline-aggregate? ctx (ty-node-get inner))]
     ;; #1867: a reference can point INTO the current frame (memory-aggregate
@@ -36818,6 +36821,13 @@
   (let [a : (Array i64 3) (array 1 2 3)]
     (array-ref a 2)))")
 
+(define (compiler-lower-fixed-array-aggregate-literal-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main) : i64
+  (let
+    [items : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
+    (struct-get (array-ref items 1) y)))")
+
 (define (compiler-lower-fixed-array-return-source) : String
   "(define (main) : (Array i64 3)
   (array 1 2 3))")
@@ -38354,7 +38364,7 @@
                 functions
                 "direct-fixed-array")
               0)
-            (=
+            (>
               (lower-test-function-copy-bytes-count
                 functions
                 "direct-fixed-literal")
@@ -42963,6 +42973,29 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-fixed-array-literal-stack-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-array-literal-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (>= (lower-test-function-alloc-count functions "main") 3)
+            (= (lower-test-function-addr-of-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-fixed-array-aggregate-layout-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-fixed-array-aggregate-literal-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (> (lower-test-function-gep-offset-count functions "main" 16) 0)
+            (= (lower-test-function-copy-bytes-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -45612,6 +45645,17 @@
       (+ (offset-of (type Outer) inner)
         (+ (offset-of (type Outer) tail) 6))))))"
       42)
+    (compiler-lower-comptime-fold-ok?
+      "(defstruct Pair (x i64) (y i64))
+(define (main) : i64
+  (comptime
+    (+ (size-of (type (Array u8 3)))
+      (+ (align-of (type (Array u8 3)))
+        (+ (size-of (type (Array i64 3)))
+          (+ (align-of (type (Array i64 3)))
+            (+ (size-of (type (Array Pair 2)))
+              (align-of (type (Array Pair 2))))))))))"
+      76)
     (compiler-lower-error-ok?
       "(define (main) : i64 (size-of (type i64)))"
       "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
@@ -46082,6 +46126,12 @@
         (set! ok false))
       (if (compiler-lower-fixed-array-access-shape-ok?
         (compiler-lower-fixed-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-fixed-array-literal-stack-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-fixed-array-aggregate-layout-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-array-access-shape-ok?

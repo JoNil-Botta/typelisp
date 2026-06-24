@@ -27507,10 +27507,11 @@ tl_memcpy:
 (define (compiler-backend-object-disp8? [disp : i64]) : bool
   (and (>= disp -128) (<= disp 127)))
 
-(define (compiler-backend-object-load-slot-bytes [var-id : i64] [reg : String]) : String
+(define (compiler-backend-object-load-rbp-disp-bytes
+  [disp : i64]
+  [reg : String]) : String
   (let
     [out : (Array u8) (make-array u8 0)]
-    [disp : i64 (compiler-backend-object-slot-disp var-id)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -27704,7 +27705,9 @@ tl_memcpy:
     [(IrValueVar id)
       (compiler-backend-object-add-nonempty-bytes
         parts
-        (compiler-backend-object-load-slot-bytes id reg))]
+        (compiler-backend-object-load-rbp-disp-bytes
+          (compiler-backend-object-slot-disp id)
+          reg))]
     [(IrValueI64 n)
       (compiler-backend-object-add-nonempty-bytes
         parts
@@ -28093,12 +28096,14 @@ tl_memcpy:
 
 (define (compiler-backend-object-call-stack-arg
   [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
   [site : String]
   [value : CompilerIrValue]
   [stack-index : i64]) : CompilerBackendObjectParts
   (compiler-backend-object-add-nonempty-bytes
     (compiler-backend-object-load-value-to-reg parts site value "%rax")
-    (compiler-backend-object-store-rax-rsp-bytes (+ 32 (* stack-index 8)))))
+    (compiler-backend-object-store-rax-rsp-bytes
+      (compiler-backend-outgoing-stack-arg-offset target stack-index))))
 
 (define (compiler-backend-object-call-arg-moves
   [parts : CompilerBackendObjectParts]
@@ -28115,6 +28120,7 @@ tl_memcpy:
           (compiler-backend-object-call-arg-moves
             (compiler-backend-object-call-stack-arg
               parts
+              target
               site
               (compiler-backend-call-arg-at args index)
               (- index (compiler-backend-object-call-reg-count target)))
@@ -28176,7 +28182,21 @@ tl_memcpy:
               int-index)
             (if (>= int-index (compiler-backend-object-call-reg-count target))
               (compiler-backend-object-param-spills
-                parts
+                (match target
+                  [(BackendTargetLinux) parts]
+                  [(BackendTargetWindows)
+                    (compiler-backend-object-store-reg-to-var
+                      (compiler-backend-object-add-nonempty-bytes
+                        parts
+                        (compiler-backend-object-load-rbp-disp-bytes
+                          (compiler-backend-incoming-stack-arg-offset
+                            target
+                            (-
+                              int-index
+                              (compiler-backend-object-call-reg-count target)))
+                          "%rax"))
+                      var-id
+                      "%rax")])
                 target
                 (box-get rest)
                 (+ int-index 1))

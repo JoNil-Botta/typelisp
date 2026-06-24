@@ -1523,30 +1523,40 @@
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (string_data_ptr [s : String]) : (Ptr u8)
   (unsafe (string-data s)))
-(define (main) : i64 0)"
+(define (main) : i64
+  (unsafe (cast (ptr->int (string_data_ptr \"hi\")) : i64)))"
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
-      (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff obj)
-          (let
-            [text-header : i64
-              (compiler-object-coff-section-header-offset (ObjectSectionText))]
-            [text-ptr : i64
-              (compiler-object-coff-u32-at obj (+ text-header 20))]
-            [fn-offset : i64
-              (compiler-object-coff-section-label-offset
-                image
-                (ObjectSectionText)
-                "_tl_string_data_ptr")]
-            [fn-ptr : i64 (+ text-ptr fn-offset)]
-            (if (< fn-offset 0)
-              false
-              (backend-and4
-                (= (compiler-object-coff-u8-at obj (+ fn-ptr 16)) 0x48)
-                (= (compiler-object-coff-u8-at obj (+ fn-ptr 17)) 0x8b)
-                (= (compiler-object-coff-u8-at obj (+ fn-ptr 18)) 0x00)
-                (= (compiler-object-coff-u8-at obj (+ fn-ptr 19)) 0x48))))]
-        [(ErrCompilerObjectCoff _) false])]
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (and
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b00"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488945"))))]
+    [(ErrCompilerBackendObject _) false]))
+
+(define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    "(define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+  e)
+(define (main) : i64
+  (sum5 1 2 3 4 5))"
+    (BackendTargetWindows))
+    [(OkCompilerBackendObject image)
+      (let
+        [sections : CompilerObjectSectionList (struct-get image sections)]
+        (backend-and4
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4889442420"))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b4530"))
+          true
+          true))]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-implicit-main-source) : String
@@ -11397,6 +11407,7 @@
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)
         (compiler-backend-windows-object-load-stores-dst-ok?)
+        (compiler-backend-windows-object-stack-param-spill-ok?)
         (compiler-object-elf-smoke-ok?)
         (compiler-object-elf-text-smoke-ok?)
         (compiler-backend-elf-renders-real-text-ok?)

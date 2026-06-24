@@ -2406,114 +2406,138 @@
   (sym-i64-empty))
 (define tc-unqualified-import-ambiguous-second-modules : SymI64Env
   (sym-i64-empty))
+(define tc-unqualified-import-local-value-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-local-value-modules-ready : bool
+  false)
 
 (define (tc-unqualified-import-ambiguity-reset!) : unit
   (begin
     (set! tc-unqualified-import-owner-modules (sym-i64-empty))
     (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
-    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))))
+    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
+    (set! tc-unqualified-import-local-value-modules (sym-i64-empty))
+    (set! tc-unqualified-import-local-value-modules-ready false)))
 
 (define (tc-unqualified-import-key-id
   [importer-module : String]
   [name-id : i64]) : i64
   (compiler-symbol-module-key-id-by-name-id importer-module name-id))
 
-(define (tc-struct-cleanup-has-value-id?
-  [cleanup : AstStructCleanup]
-  [name-id : i64]) : bool
-  (match cleanup
-    [(AstStructNoCleanup) false]
-    [(AstStructCleanupFn cleanup-name) (= cleanup-name name-id)]))
-
-(define (tc-enum-cleanup-has-value-id?
-  [cleanup : AstEnumCleanup]
-  [name-id : i64]) : bool
-  (match cleanup
-    [(AstEnumNoCleanup) false]
-    [(AstEnumCleanupFn cleanup-name) (= cleanup-name name-id)]))
-
-(define (tc-variant-list-has-value-id?
-  [variants : AstVariantDefList]
-  [name-id : i64]) : bool
-  (match variants
-    [(AstVariantDefNil) false]
-    [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef variant-name _ _)
-          (if (= variant-name name-id)
-            true
-            (tc-variant-list-has-value-id? (box-get rest) name-id))])]))
-
-(define (tc-local-decl-has-value-id? [decl : AstDecl] [name-id : i64]) : bool
-  (match decl
-    [(AstDeclDef local-name _ _) (= local-name name-id)]
-    [(AstDeclDefFn local-name _ _ _ _) (= local-name name-id)]
-    [(AstDeclDefMacro _ _ _ _) false]
-    [(AstDeclExtern local-name _ _ _) (= local-name name-id)]
-    [(AstDeclDefDispatch local-name _) (= local-name name-id)]
-    [(AstDeclDefEnum local-name cleanup variants)
-      (or
-        (= local-name name-id)
-        (tc-enum-cleanup-has-value-id? cleanup name-id)
-        (tc-variant-list-has-value-id? variants name-id))]
-    [(AstDeclDefEnumLifetimes local-name _ cleanup variants)
-      (or
-        (= local-name name-id)
-        (tc-enum-cleanup-has-value-id? cleanup name-id)
-        (tc-variant-list-has-value-id? variants name-id))]
-    [(AstDeclDefStruct local-name _ cleanup _)
-      (or
-        (= local-name name-id)
-        (tc-struct-cleanup-has-value-id? cleanup name-id))]
-    [(AstDeclDefStructLifetimes local-name _ _ cleanup _)
-      (or
-        (= local-name name-id)
-        (tc-struct-cleanup-has-value-id? cleanup name-id))]
-    [(AstDeclUnsafe inner-box)
-      (tc-local-decl-has-value-id? (box-get inner-box) name-id)]
-    [(AstDeclComptimeDecl _ template-box)
-      (tc-local-decl-has-value-id? (box-get template-box) name-id)]
-    [_ false]))
-
-(define (tc-module-local-decl-list-has-value-id?
-  [decls : AstDeclList]
-  [target-module : String]
+(define (tc-unqualified-import-note-local-value!
   [module : String]
-  [name-id : i64]) : bool
+  [name-id : i64]) : unit
+  (set!
+    tc-unqualified-import-local-value-modules
+    (sym-i64-bind-id
+      tc-unqualified-import-local-value-modules
+      (tc-unqualified-import-key-id module name-id)
+      1)))
+
+(define (tc-unqualified-import-note-struct-cleanup-local!
+  [module : String]
+  [cleanup : AstStructCleanup]) : unit
+  (match cleanup
+    [(AstStructNoCleanup) unit]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-unqualified-import-note-local-value! module cleanup-name)]))
+
+(define (tc-unqualified-import-note-enum-cleanup-local!
+  [module : String]
+  [cleanup : AstEnumCleanup]) : unit
+  (match cleanup
+    [(AstEnumNoCleanup) unit]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-unqualified-import-note-local-value! module cleanup-name)]))
+
+(define (tc-unqualified-import-note-variant-list-local!
+  [module : String]
+  [variants : AstVariantDefList]) : unit
+  (match variants
+    [(AstVariantDefNil) unit]
+    [(AstVariantDefCons variant rest)
+      (begin
+        (match variant
+          [(AstVariantDef variant-name _ _)
+            (tc-unqualified-import-note-local-value! module variant-name)])
+        (tc-unqualified-import-note-variant-list-local! module (box-get rest)))]))
+
+(define (tc-unqualified-import-note-local-decl!
+  [module : String]
+  [decl : AstDecl]) : unit
+  (match decl
+    [(AstDeclDef local-name _ _)
+      (tc-unqualified-import-note-local-value! module local-name)]
+    [(AstDeclDefFn local-name _ _ _ _)
+      (tc-unqualified-import-note-local-value! module local-name)]
+    [(AstDeclDefMacro _ _ _ _) unit]
+    [(AstDeclExtern local-name _ _ _)
+      (tc-unqualified-import-note-local-value! module local-name)]
+    [(AstDeclDefDispatch local-name _)
+      (tc-unqualified-import-note-local-value! module local-name)]
+    [(AstDeclDefEnum local-name cleanup variants)
+      (begin
+        (tc-unqualified-import-note-local-value! module local-name)
+        (tc-unqualified-import-note-enum-cleanup-local! module cleanup)
+        (tc-unqualified-import-note-variant-list-local! module variants))]
+    [(AstDeclDefEnumLifetimes local-name _ cleanup variants)
+      (begin
+        (tc-unqualified-import-note-local-value! module local-name)
+        (tc-unqualified-import-note-enum-cleanup-local! module cleanup)
+        (tc-unqualified-import-note-variant-list-local! module variants))]
+    [(AstDeclDefStruct local-name _ cleanup _)
+      (begin
+        (tc-unqualified-import-note-local-value! module local-name)
+        (tc-unqualified-import-note-struct-cleanup-local! module cleanup))]
+    [(AstDeclDefStructLifetimes local-name _ _ cleanup _)
+      (begin
+        (tc-unqualified-import-note-local-value! module local-name)
+        (tc-unqualified-import-note-struct-cleanup-local! module cleanup))]
+    [(AstDeclUnsafe inner-box)
+      (tc-unqualified-import-note-local-decl! module (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (tc-unqualified-import-note-local-decl! module (box-get template-box))]
+    [_ unit]))
+
+(define (tc-unqualified-import-note-local-decls!
+  [decls : AstDeclList]
+  [module : String]) : unit
   (match decls
-    [(AstDeclNil) false]
+    [(AstDeclNil) unit]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (tc-module-local-decl-list-has-value-id?
+            (tc-unqualified-import-note-local-decls!
               rest
-              target-module
-              (intern-str next-module)
-              name-id)]
+              (intern-str next-module))]
           [_
-            (if (and
-              (string-eq module target-module)
-              (tc-local-decl-has-value-id? decl name-id))
-              true
-              (tc-module-local-decl-list-has-value-id?
-                rest
-                target-module
-                module
-                name-id))]))]))
+            (begin
+              (tc-unqualified-import-note-local-decl! module decl)
+              (tc-unqualified-import-note-local-decls! rest module))]))]))
+
+(define (tc-unqualified-import-local-values-ensure! [ctx : TcContext]) : unit
+  (if tc-unqualified-import-local-value-modules-ready
+    unit
+    (begin
+      (set! tc-unqualified-import-local-value-modules (sym-i64-empty))
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (tc-unqualified-import-note-local-decls! (box-get decls-box) "")])
+      (set! tc-unqualified-import-local-value-modules-ready true))))
 
 (define (tc-program-module-has-local-value-id?
-  [program : AstProgram]
+  [ctx : TcContext]
   [target-module : String]
   [name-id : i64]) : bool
-  (match program
-    [(AstProgram decls-box)
-      (tc-module-local-decl-list-has-value-id?
-        (box-get decls-box)
-        target-module
-        ""
-        name-id)]))
+  (begin
+    (tc-unqualified-import-local-values-ensure! ctx)
+    (match (sym-i64-lookup-id
+      tc-unqualified-import-local-value-modules
+      (tc-unqualified-import-key-id target-module name-id))
+      [(SomeI64 _) true]
+      [NoneI64 false])))
 
 (define (tc-unqualified-import-note-value!
   [ctx : TcContext]
@@ -2528,10 +2552,7 @@
       [key-id : i64 (tc-unqualified-import-key-id importer-module name-id)]
       [source-id : i64 (intern source-module)]
       [binding-id : i64 (tc-module-name-id alias name-id)]
-      (if (tc-program-module-has-local-value-id?
-        (tc-context-program ctx)
-        importer-module
-        name-id)
+      (if (tc-program-module-has-local-value-id? ctx importer-module name-id)
         unit
         (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
           [(SomeI64 owner-id)
@@ -4682,10 +4703,7 @@
           [(SomeI64 first-module)
             (if (or
               (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
-              (tc-program-module-has-local-value-id?
-                (tc-context-program ctx)
-                module
-                name-id))
+              (tc-program-module-has-local-value-id? ctx module name-id))
               (TcNoString)
               (match (sym-i64-lookup-id
                 tc-unqualified-import-ambiguous-second-modules

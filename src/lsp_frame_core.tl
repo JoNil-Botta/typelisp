@@ -137,37 +137,42 @@
             (set! i prefix-len)))
         ok))))
 
+;; Find the first occurrence of a substring within a string at or after start.
+;; Returns the starting index, or -1 if not found.
+(define (string-find-from [text : String] [pattern : String] [start : i64]) : i64
+  (let
+    [text-len : i64 (string-length text)]
+    [pat-len : i64 (string-length pattern)]
+    [i : i64 start]
+    (begin
+      (when (< i 0) (set! i 0))
+      (if (= pat-len 0)
+        i
+        (if (or (> pat-len text-len) (> i (- text-len pat-len)))
+          -1
+          (let
+            [max-i : i64 (- text-len pat-len)]
+            [found : i64 -1]
+            (begin
+              (while (and (<= i max-i) (= found -1))
+                (let
+                  [j : i64 0]
+                  [match : bool true]
+                  (begin
+                    (while (and (< j pat-len) match)
+                      (if (= (string-ref text (+ i j)) (string-ref pattern j))
+                        (set! j (+ j 1))
+                        (begin
+                          (set! match false)
+                          (set! j pat-len))))
+                    (when match (set! found i))
+                    (set! i (+ i 1)))))
+              found)))))))
 
 ;; Find the first occurrence of a substring within a string.
 ;; Returns the starting index, or -1 if not found.
 (define (string-find [text : String] [pattern : String]) : i64
-  (let
-    [text-len : i64 (string-length text)]
-    [pat-len : i64 (string-length pattern)]
-    (if (= pat-len 0)
-      0
-      (if (> pat-len text-len)
-        -1
-        (let
-          [max-i : i64 (- text-len pat-len)]
-          [i : i64 0]
-          [found : i64 -1]
-          (begin
-            (while (and (<= i max-i) (= found -1))
-              (let
-                [j : i64 0]
-                [match : bool true]
-                (begin
-                  (while (and (< j pat-len) match)
-                    (if (= (string-ref text (+ i j)) (string-ref pattern j))
-                      (set! j (+ j 1))
-                      (begin
-                        (set! match false)
-                        (set! j pat-len))))
-                  (when match
-                    (set! found i))
-                  (set! i (+ i 1)))))
-            found))))))
+  (string-find-from text pattern 0))
 
 (define (lsp-frame-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
@@ -4693,9 +4698,7 @@
                       [params-key : String "params"]
                       (match (json.json-object-get message (& params-key))
                         [(json.JsonFound params)
-                          (set!
-                            result
-                            (lsp-handle-tl-patch id params docs))]
+                          (set! result (lsp-handle-tl-patch id params docs))]
                         [(json.JsonMissing)
                           (lsp-write-error id -32600 "Missing params")]))]
                   [(json.JsonMissing) unit])))
@@ -5336,12 +5339,8 @@
           (OkLspEdit result)
           (ErrLspEdit "Declaration not found"))))))
 
-
 ;; tl/patch - Find and replace text anywhere in the file, then validate
-(define (lsp-patch-text
-  [text : String]
-  [old-text : String]
-  [new-text : String]) : LspEditResult
+(define (lsp-patch-text [text : String] [old-text : String] [new-text : String]) : LspEditResult
   (if (string-eq old-text "")
     (ErrLspEdit "oldText cannot be empty")
     (let
@@ -5349,19 +5348,23 @@
       (if (= idx -1)
         (ErrLspEdit "oldText not found in document")
         (let
-          [before : String (substring text 0 idx)]
-          [after : String
-            (substring
-              text
-              (+ idx (string-length old-text))
-              (- (string-length text) (+ idx (string-length old-text))))]
-          [replaced : String (str-cat before new-text after)]
-          (if (not (lsp-text-is-valid-forms replaced))
-            (ErrLspEdit
-              (str-cat
-                "Patch produces invalid form(s): "
-                (lsp-validate-forms-error replaced)))
-            (OkLspEdit replaced)))))))
+          [next-idx : i64 (string-find-from text old-text (+ idx 1))]
+          (if (not (= next-idx -1))
+            (ErrLspEdit "oldText occurs more than once in document")
+            (let
+              [before : String (substring text 0 idx)]
+              [after : String
+                (substring
+                  text
+                  (+ idx (string-length old-text))
+                  (- (string-length text) (+ idx (string-length old-text))))]
+              [replaced : String (str-cat before new-text after)]
+              (if (not (lsp-text-is-valid-forms replaced))
+                (ErrLspEdit
+                  (str-cat
+                    "Patch produces invalid form(s): "
+                    (lsp-validate-forms-error replaced)))
+                (OkLspEdit replaced)))))))))
 
 ;; tl/patch - Handler for find-and-replace patch
 (define (lsp-handle-tl-patch
@@ -5403,6 +5406,54 @@
       (begin
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
+
+(define (lsp-string-find-smoke-ok?) : bool
+  (and
+    (= (string-find "abc abc" "abc") 0)
+    (= (string-find-from "abc abc" "abc" 1) 4)
+    (= (string-find-from "aaaa" "aa" 1) 1)
+    (= (string-find "abc" "z") -1)))
+
+(define (lsp-patch-text-smoke-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)"]
+    (match (lsp-patch-text text "1" "2")
+      [(OkLspEdit replaced) (string-eq replaced "(define (foo) : i64 2)")]
+      [(ErrLspEdit _) false])))
+
+(define (lsp-patch-text-duplicate-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)\n(define (bar) : i64 1)"]
+    [needle : String "more than once"]
+    (match (lsp-patch-text text "1" "2")
+      [(OkLspEdit _) false]
+      [(ErrLspEdit message) (string-contains (& message) (& needle))])))
+
+(define (lsp-patch-text-invalid-ok?) : bool
+  (let
+    [text : String "(define (foo) : i64 1)"]
+    [needle : String "invalid form"]
+    (match (lsp-patch-text text "1)" "1")
+      [(OkLspEdit _) false]
+      [(ErrLspEdit message) (string-contains (& message) (& needle))])))
+
+(test
+  lsp-string-find-smoke
+  (unless (lsp-string-find-smoke-ok?) (panic "lsp-string-find-smoke failed")))
+
+(test
+  lsp-patch-text-smoke
+  (unless (lsp-patch-text-smoke-ok?) (panic "lsp-patch-text-smoke failed")))
+
+(test
+  lsp-patch-text-duplicate
+  (unless
+    (lsp-patch-text-duplicate-ok?)
+    (panic "lsp-patch-text-duplicate failed")))
+
+(test
+  lsp-patch-text-invalid
+  (unless (lsp-patch-text-invalid-ok?) (panic "lsp-patch-text-invalid failed")))
 
 (test
   lsp-validate-forms-smoke

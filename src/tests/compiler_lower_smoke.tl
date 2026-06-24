@@ -297,6 +297,12 @@
         (compiler-lower-fixed-array-access-source))
       (panic "lower: fixed array access smoke mismatch"))
     (unless
+      (compiler-lower-fixed-array-literal-stack-shape-ok?)
+      (panic "lower: fixed array stack literal smoke mismatch"))
+    (unless
+      (compiler-lower-fixed-array-aggregate-layout-shape-ok?)
+      (panic "lower: fixed array aggregate layout smoke mismatch"))
+    (unless
       (compiler-lower-array-access-shape-ok?
         (compiler-lower-mut-ref-array-access-source))
       (panic "lower: mutable ref array access smoke mismatch"))

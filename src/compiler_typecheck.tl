@@ -251,12 +251,10 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-              "feature-str-view")
-            "feature-private-string-intrinsics")
-          "feature-compiler-private-string-intrinsics")
-        "feature-compiler-private-dynamic-buffer")
+            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
       "array-helper-intrinsics")
     "feature-plain-comptime-well-known"))
 
@@ -382,6 +380,19 @@
                   paths)]
               [(ErrCompilerLoadWithPaths diag) (ErrCompilerTypecheck diag)])
             (typecheck-compiler-program program))]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      result)))
+
+(define (typecheck-compiler-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultCompilerTypecheck
+  (let
+    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
+    [_dedup-reset : unit (ty-node-dedup-clear!)]
+    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
+    [result : ResultCompilerTypecheck
+      (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
+        [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
@@ -670,6 +681,11 @@
 
 (define (compiler-typecheck-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
+    [(OkCompilerTypecheck _) true]
+    [(ErrCompilerTypecheck _) false]))
+
+(define (compiler-typecheck-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+  (match (typecheck-compiler-source-with-cfg src cfgs)
     [(OkCompilerTypecheck _) true]
     [(ErrCompilerTypecheck _) false]))
 
@@ -6018,31 +6034,40 @@
 (define (main) : i64 (field-count 1))")
 
 (define (compiler-typecheck-type-literal-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (twice [comptime n : i64]) : i64 (* n 2))
+  (let
+    [private-cfg : SymI64Env
+      (compiler-cfg-enable
+        (compiler-cfg-empty)
+        "feature-compiler-private-dynamic-buffer")]
+    (and
+      (compiler-typecheck-ok?
+        "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
-    (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
-    (compiler-typecheck-ok?
-      "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type i64) 0))"
-      "type value i64 is compile-time only")
-    (compiler-typecheck-error-ok?
-      "(define (main) : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (f [value : type]) : i64 0)"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define value : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type Missing) 0))"
-      (compiler-typecheck-unknown-type-policy-message "Missing"))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-type-valued-comptime-scalar-arg-source)
-      "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
+      (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+      (compiler-typecheck-error-ok?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+      (compiler-typecheck-ok-with-cfg?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        private-cfg)
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type i64) 0))"
+        "type value i64 is compile-time only")
+      (compiler-typecheck-error-ok?
+        "(define (main) : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (f [value : type]) : i64 0)"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define value : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type Missing) 0))"
+        (compiler-typecheck-unknown-type-policy-message "Missing"))
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-type-valued-comptime-scalar-arg-source)
+        "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`"))))
 
 (define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
   "(defenum Expr

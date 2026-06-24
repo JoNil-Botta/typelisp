@@ -820,10 +820,12 @@
       (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
       (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
       (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
-      (set!
-        out
-        (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
       out)))
+
+(define (compiler-parse-dispatch-private-types [e : SymI64Env]) : SymI64Env
+  (if (compiler-cfg-enabled? e "feature-compiler-private-dynamic-buffer")
+    (sym-i64-bind e "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array))
+    e))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
   (let
@@ -6539,7 +6541,8 @@
   (compiler-parse-dispatch-env))
 
 (define (parse-ast-program-dispatch-with-cfg [cfgs : SymI64Env]) : SymI64Env
-  (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs))
+  (compiler-parse-dispatch-private-types
+    (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array SpannedToken)]
@@ -7346,6 +7349,14 @@
 ;; messages so a regression that drops or relabels an error is caught (#655).
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
+    [(ErrAstProgram message) (string-eq message want)]
+    [(OkAstProgram _) false]))
+
+(define (compiler-parse-error-ok-with-cfg?
+  [src : String]
+  [cfgs : SymI64Env]
+  [want : String]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
     [(ErrAstProgram message) (string-eq message want)]
     [(OkAstProgram _) false]))
 
@@ -9114,6 +9125,11 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
+    [(OkAstProgram _) true]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-cfg-decl-count-ok?
   [src : String]
   [cfgs : SymI64Env]
@@ -9336,21 +9352,31 @@
       "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
-  (and
-    (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
-    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
-    (compiler-parse-ok?
-      "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
-    (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
-      "parse: __tl_dyn-array expects exactly one type")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (type))"
-      "parse: type expects exactly one type")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (type i64 bool))"
-      "parse: type expects exactly one type")))
+  (let
+    [private-cfg : SymI64Env
+      (compiler-cfg-enable
+        (compiler-cfg-empty)
+        "feature-compiler-private-dynamic-buffer")]
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+      (compiler-parse-ok-with-cfg?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
+        private-cfg)
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+      (compiler-parse-error-ok-with-cfg?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
+        private-cfg
+        "parse: __tl_dyn-array expects exactly one type")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (type))"
+        "parse: type expects exactly one type")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (type i64 bool))"
+        "parse: type expects exactly one type"))))
 
 ;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
 ;; multi-expression body, nested region) and rejects missing binder,

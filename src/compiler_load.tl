@@ -930,6 +930,14 @@
           0
           (string-vec-len effective-roots))))))
 
+(define (compiler-load-stdlib-private-cfgs
+  [path : String]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : SymI64Env
+  (if (compiler-load-session-file-cache-immediate? path stdlib-roots)
+    (compiler-cfg-enable cfgs "feature-compiler-private-dynamic-buffer")
+    cfgs))
+
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
   [roots : StringVec]) : CompilerLoadMaybePath
@@ -2958,12 +2966,17 @@
   (let
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
+    [parse-cfgs : SymI64Env
+      (compiler-load-stdlib-private-cfgs path stdlib-roots cfgs)]
     (if (and path-dedup (sym-i64-contains seen path-key))
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
       (if (file-exists? path)
         (match (if cache-current
-          (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
-          (compiler-load-parse-file-diagnostic-escaping path cfgs))
+          (compiler-load-parse-file-diagnostic-session
+            path
+            stdlib-roots
+            parse-cfgs)
+          (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
           [(OkAstProgramDiagnostic program)
             (compiler-load-bind-path-dedup
               (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -2973,7 +2986,7 @@
                 stdlib-roots
                 expected-module
                 import-root
-                cfgs)
+                parse-cfgs)
               path-dedup
               path-key)]
           [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
@@ -2983,8 +2996,11 @@
               (compiler-load-parse-embedded-source-diagnostic-session
                 path
                 source
-                cfgs)
-              (compiler-load-parse-source-diagnostic-escaping path source cfgs))
+                parse-cfgs)
+              (compiler-load-parse-source-diagnostic-escaping
+                path
+                source
+                parse-cfgs))
               [(OkAstProgramDiagnostic program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -2994,7 +3010,7 @@
                     stdlib-roots
                     expected-module
                     import-root
-                    cfgs)
+                    parse-cfgs)
                   path-dedup
                   path-key)]
               [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
@@ -3016,6 +3032,8 @@
   (let
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
+    [parse-cfgs : SymI64Env
+      (compiler-load-stdlib-private-cfgs path stdlib-roots cfgs)]
     (if (and path-dedup (sym-i64-contains seen path-key))
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
       (if (file-exists? path)
@@ -3023,11 +3041,11 @@
           (compiler-load-parse-file-diagnostic-session-with-pools
             path
             stdlib-roots
-            cfgs
+            parse-cfgs
             pools)
           (compiler-load-parse-file-diagnostic-escaping-with-pools
             path
-            cfgs
+            parse-cfgs
             pools))
           [(OkAstProgramDiagnostic program)
             (compiler-load-bind-path-dedup
@@ -3038,7 +3056,7 @@
                 stdlib-roots
                 expected-module
                 import-root
-                cfgs
+                parse-cfgs
                 pools)
               path-dedup
               path-key)]
@@ -3049,12 +3067,12 @@
               (compiler-load-parse-embedded-source-diagnostic-session-with-pools
                 path
                 source
-                cfgs
+                parse-cfgs
                 pools)
               (compiler-load-parse-source-diagnostic-escaping-with-pools
                 path
                 source
-                cfgs
+                parse-cfgs
                 pools))
               [(OkAstProgramDiagnostic program)
                 (compiler-load-bind-path-dedup
@@ -3065,7 +3083,7 @@
                     stdlib-roots
                     expected-module
                     import-root
-                    cfgs
+                    parse-cfgs
                     pools)
                   path-dedup
                   path-key)]
@@ -4010,45 +4028,54 @@
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]
   [cache-current : bool]) : ResultCompilerLoadWithPaths
-  (if (file-exists? path)
-    (match (if cache-current
-      (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
-      (compiler-load-parse-file-diagnostic-escaping path cfgs))
-      [(OkAstProgramDiagnostic program)
-        (compiler-load-package-program-with-paths-and-roots-expect
+  (let
+    [parse-cfgs : SymI64Env
+      (compiler-load-stdlib-private-cfgs path stdlib-roots cfgs)]
+    (if (file-exists? path)
+      (match (if cache-current
+        (compiler-load-parse-file-diagnostic-session
           path
-          program
-          seen
           stdlib-roots
-          expected-module
-          manifest-dir
-          deps
-          cfgs)]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-    (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(CompilerEmbeddedStdlibSomeSource source)
-        (match (if cache-current
-          (compiler-load-parse-embedded-source-diagnostic-session
+          parse-cfgs)
+        (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
+        [(OkAstProgramDiagnostic program)
+          (compiler-load-package-program-with-paths-and-roots-expect
             path
-            source
-            cfgs)
-          (compiler-load-parse-source-diagnostic-escaping path source cfgs))
-          [(OkAstProgramDiagnostic program)
-            (compiler-load-package-program-with-paths-and-roots-expect
+            program
+            seen
+            stdlib-roots
+            expected-module
+            manifest-dir
+            deps
+            parse-cfgs)]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+      (match (compiler-load-embedded-stdlib-source-for-path path)
+        [(CompilerEmbeddedStdlibSomeSource source)
+          (match (if cache-current
+            (compiler-load-parse-embedded-source-diagnostic-session
               path
-              program
-              seen
-              stdlib-roots
-              expected-module
-              manifest-dir
-              deps
-              cfgs)]
-          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
-      [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadWithPaths
-          (compiler-diagnostic-at-start
-            path
-            (string-append "compiler-load: cannot read import " path)))])))
+              source
+              parse-cfgs)
+            (compiler-load-parse-source-diagnostic-escaping
+              path
+              source
+              parse-cfgs))
+            [(OkAstProgramDiagnostic program)
+              (compiler-load-package-program-with-paths-and-roots-expect
+                path
+                program
+                seen
+                stdlib-roots
+                expected-module
+                manifest-dir
+                deps
+                parse-cfgs)]
+            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+        [(CompilerEmbeddedStdlibNoSource)
+          (ErrCompilerLoadWithPaths
+            (compiler-diagnostic-at-start
+              path
+              (string-append "compiler-load: cannot read import " path)))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]

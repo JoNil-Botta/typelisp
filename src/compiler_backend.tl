@@ -11526,30 +11526,10 @@
   [name : String]
   [args : CompilerIrCallArgs]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (let
-    [target-types : AstTypeList
-      (compiler-backend-call-param-types-index name program-index)]
-    (and
-      (compiler-backend-direct-tail-call?
-        target
-        source-function
-        name
-        args
-        target-types
-        program-index)
-      (=
-        0
-        (compiler-backend-call-stack-arg-count
-          target
-          args
-          target-types
-          false
-          0
-          0
-          0
-          0
-          0
-          program-index))
+  (if (compiler-backend-index-function-defines? program-index name)
+    (let
+      [target-types : AstTypeList
+        (compiler-backend-call-param-types-index name program-index)]
       (compiler-backend-identity-tail-forwarder-args?
         target
         params
@@ -11559,7 +11539,8 @@
         0
         0
         0
-        program-index))))
+        program-index))
+    false))
 
 (define (compiler-backend-identity-tail-forwarder-block?
   [target : CompilerBackendTarget]
@@ -11601,12 +11582,14 @@
             program-index)]
         [_ false])]
     [(IrBlockArray seq)
-      (compiler-backend-identity-tail-forwarder?
-        target
-        source-function
-        params
-        (compiler-ir-block-seq-to-list seq)
-        program-index)]))
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (compiler-backend-identity-tail-forwarder-block?
+          target
+          source-function
+          params
+          (compiler-ir-block-seq-ref seq 0)
+          program-index)
+        false)]))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so

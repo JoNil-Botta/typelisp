@@ -21,7 +21,6 @@
 (include-str compiler-embedded-stdlib-io "stdlib/io.tl")
 (include-str compiler-embedded-stdlib-iterator "stdlib/iterator.tl")
 (include-str compiler-embedded-stdlib-json "stdlib/json.tl")
-(include-str compiler-embedded-stdlib-list "stdlib/list.tl")
 (include-str compiler-embedded-stdlib-math "stdlib/math.tl")
 (include-str compiler-embedded-stdlib-msvc "stdlib/msvc.tl")
 (include-str compiler-embedded-stdlib-process "stdlib/process.tl")
@@ -52,7 +51,6 @@
 (include-str compiler-embedded-stdlib-tests-io-stdio-bytes "stdlib/tests/io_stdio_bytes.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-lines "stdlib/tests/io_stdio_lines.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-pipe-short-read "stdlib/tests/io_stdio_pipe_short_read.tl")
-(include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 (include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
@@ -107,8 +105,6 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-iterator)]
     [(string-eq suffix "json.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
-    [(string-eq suffix "list.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)]
     [(string-eq suffix "math.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-math)]
     [(string-eq suffix "msvc.tl")
@@ -250,12 +246,6 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-pipe-short-read))
-        unit)
-      (if (string-eq suffix "tests/list_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-list-api))
         unit)
       (if (string-eq suffix "tests/msvc_api.tl")
         (set!

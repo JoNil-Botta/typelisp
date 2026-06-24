@@ -7,7 +7,6 @@
 (import "../stdlib/fs.tl")
 (import "../stdlib/env.tl")
 (import "../stdlib/io.tl")
-(import "../stdlib/list.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/core_macros.tl")
 (import "../stdlib/str_cat.tl")

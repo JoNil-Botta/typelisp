@@ -6,7 +6,6 @@
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/io.tl")
-(import "../stdlib/list.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")

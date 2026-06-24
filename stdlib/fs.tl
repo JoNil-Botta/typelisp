@@ -23,16 +23,10 @@
 
 (import stdlib.env)
 (import stdlib.io)
-(import stdlib.list)
 (import stdlib.string)
 (import stdlib.vector)
 
 ;: Result type for directory-listing APIs.
-(defenum ResultIoStringList
-  (OkIoStringList list.StringList)
-  (ErrIoStringList io.IoError))
-
-;: Result type for vector-backed directory-listing APIs.
 (defenum ResultIoStringVec
   (OkIoStringVec vector.StringVec)
   (ErrIoStringVec io.IoError))
@@ -1417,17 +1411,13 @@
           (string.substring entries start (- n start)))
         items))))
 
-;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split [entries : String]) : list.StringList
-  (list.string-list-from-vec (stdlib.fs.fs-read-dir-split-vec entries)))
-
 ;: Read one directory and return entry names as a `StringVec`.
 ;:
 ;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
 ;: Host directory order is preserved and not guaranteed to be stable; callers
 ;: that need stable ordering should sort the returned vector. The returned
 ;: vector storage and entry strings allocate in the active arena.
-(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+(define (try-read-dir [path : (& path str)]) : ResultIoStringVec
   (let
     [path-text : String (string.string-copy path)]
     (if (io.io-empty-path? path)
@@ -1439,17 +1429,10 @@
             (stdlib.fs.fs-read-dir-split-vec (stdlib.fs.fs-read-dir path-text)))
           (ErrIoStringVec (io.io-error-from-status path status)))))))
 
-;: Read one directory and return entry names as a `StringList`.
-;:
-;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
-;: Host directory order is preserved and not guaranteed to be stable; callers
-;: that need stable ordering should sort the returned list. The returned list
-;: spine and entry strings allocate in the active arena.
-(define (try-read-dir [path : (& path str)]) : ResultIoStringList
-  (match (try-read-dir-vec path)
-    [(OkIoStringVec entries)
-      (OkIoStringList (list.string-list-from-vec entries))]
-    [(ErrIoStringVec error) (ErrIoStringList error)]))
+;: Compatibility spelling for callers already migrated to the explicit vector
+;: name before `try-read-dir` became vector-backed.
+(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+  (try-read-dir path))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
@@ -1751,15 +1734,6 @@
 
 (cfg
   test
-  (define (fs-test-expect-ok-string-list
-    [result : ResultIoStringList]
-    [message : String]) : list.StringList
-    (match result
-      [(OkIoStringList value) value]
-      [(ErrIoStringList error) (io.panic message)])))
-
-(cfg
-  test
   (define (fs-test-expect-ok-string-vec
     [result : ResultIoStringVec]
     [message : String]) : vector.StringVec
@@ -1769,39 +1743,30 @@
 
 (cfg
   test
-  (define (fs-test-assert-unsupported-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-not-found-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-not-found-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-invalid-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-invalid-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-error-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
-
-(cfg
-  test
-  (define (fs-test-assert-error-string-list
-    [result : ResultIoStringList]
-    [message : String]) : unit
-    (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList _) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec _) unit])))
 
 (cfg
   test
@@ -1917,7 +1882,7 @@
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringList
+  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringVec
     (stdlib.fs.try-read-dir (& path))))
 
 (cfg
@@ -2343,8 +2308,8 @@
           (fs-api-test-try-mkdir child-dir)
           "read-dir child dir: ")
         (let
-          [entries : list.StringList
-            (fs-test-expect-ok-string-list
+          [entries : vector.StringVec
+            (fs-test-expect-ok-string-vec
               (fs-api-test-try-read-dir root)
               "read dir: ")]
           [entries-vec : vector.StringVec
@@ -2353,19 +2318,19 @@
               "read dir vec: ")]
           (begin
             (fs-test-assert-true
-              (list.string-list-contains? entries "alpha.txt")
+              (vector.string-vec-contains? entries "alpha.txt")
               "read-dir includes first file name")
             (fs-test-assert-true
-              (list.string-list-contains? entries "beta data.txt")
+              (vector.string-vec-contains? entries "beta data.txt")
               "read-dir includes second file name")
             (fs-test-assert-true
-              (list.string-list-contains? entries "child-dir")
+              (vector.string-vec-contains? entries "child-dir")
               "read-dir includes subdirectory name")
             (fs-test-assert-false
-              (list.string-list-contains? entries ".")
+              (vector.string-vec-contains? entries ".")
               "read-dir filters dot")
             (fs-test-assert-false
-              (list.string-list-contains? entries "..")
+              (vector.string-vec-contains? entries "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
               (vector.string-vec-contains? entries-vec "alpha.txt")
@@ -2382,13 +2347,13 @@
             (fs-test-assert-false
               (vector.string-vec-contains? entries-vec "..")
               "read-dir vec filters dotdot")
-            (fs-test-assert-not-found-string-list
+            (fs-test-assert-not-found-string-vec
               (fs-api-test-try-read-dir missing)
               "read-dir missing path reports not found")
-            (fs-test-assert-error-string-list
+            (fs-test-assert-error-string-vec
               (fs-api-test-try-read-dir file-a)
               "read-dir file path reports an IoError")
-            (fs-test-assert-invalid-string-list
+            (fs-test-assert-invalid-string-vec
               (fs-api-test-try-read-dir "")
               "read-dir empty path invalid")
             (fs-test-assert-ok-unit

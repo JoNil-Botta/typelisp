@@ -204,6 +204,81 @@
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
 
+(define (typecheck-compiler-source-language-cfgs) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-cfg-enable
+      (compiler-cfg-enable
+        (compiler-cfg-enable
+          (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+          "feature-str-view")
+        "feature-private-string-intrinsics")
+      "feature-compiler-private-string-intrinsics")
+    "array-helper-intrinsics"))
+
+(define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
+  (let
+    [stdlib-roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
+    (match (compiler-load-core-macro-prelude-with-roots-cfg
+      (sym-i64-empty)
+      stdlib-roots
+      cfgs)
+      [(OkCompilerLoadWithPaths
+          prelude-decls
+          prelude-paths
+          prelude-modules
+          prelude-seen)
+        (match (compiler-load-source-with-paths-and-roots-cfg
+          ""
+          src
+          prelude-seen
+          stdlib-roots
+          cfgs)
+          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+            (OkCompilerLoadWithPaths
+              (compiler-load-decl-list-append prelude-decls entry-decls)
+              (compiler-load-decl-path-list-append prelude-paths entry-paths)
+              (compiler-load-decl-module-list-append
+                prelude-modules
+                entry-modules)
+              seen)]
+          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+
+(define (typecheck-compiler-source-stdlib-import-kind?
+  [kind : AstImportKind]
+  [path : String]) : bool
+  (match kind
+    [(AstImportPath) (compiler-load-stdlib-import? path)]
+    [(AstImportModule)
+      (compiler-load-stdlib-import? (compiler-load-dotted-module-path path))]
+    [_ false]))
+
+(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind path _ _ _))
+      (typecheck-compiler-source-stdlib-import-kind? kind path)]
+    [(AstDeclUnsafe inner-box)
+      (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (typecheck-compiler-source-decl-has-stdlib-import? (box-get template-box))]
+    [_ false]))
+
+(define (typecheck-compiler-source-decls-have-stdlib-import?
+  [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (typecheck-compiler-source-decl-has-stdlib-import? decl)
+        (typecheck-compiler-source-decls-have-stdlib-import? (box-get rest)))]))
+
+(define (typecheck-compiler-source-program-has-stdlib-import?
+  [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (typecheck-compiler-source-decls-have-stdlib-import? (box-get decls-box))]))
+
 (define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
   (let
     [program : AstProgram (ast-program decls)]
@@ -250,7 +325,18 @@
     [_reset-before : unit (compiler-typecheck-reset-file-state!)]
     [result : ResultCompilerTypecheck
       (match (parse-ast-source-diagnostic "" src)
-        [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
+        [(OkAstProgramDiagnostic program)
+          ;; Keep synthetic in-memory fixtures on the historical direct path,
+          ;; but route real stdlib imports through the loader so macro imports
+          ;; see loaded stdlib macro definitions and alias markers.
+          (if (typecheck-compiler-source-program-has-stdlib-import? program)
+            (match (typecheck-compiler-source-load src)
+              [(OkCompilerLoadWithPaths decls paths _ _)
+                (typecheck-compiler-program-with-paths
+                  (ast-program decls)
+                  paths)]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerTypecheck diag)])
+            (typecheck-compiler-program program))]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)

@@ -1117,7 +1117,7 @@
   (gen-key-prefix? key "decls:"))
 
 (define (gen-metadata-key-normalizable? [key : String]) : bool
-  (or (string-eq key "") (or (gen-full-key? key) (gen-decls-macro-key? key))))
+  (or (string-eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
 
 (define (gen-registration-key
   [module : String]

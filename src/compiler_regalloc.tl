@@ -3384,6 +3384,216 @@
                 types
                 var)))])]))
 
+;; ---------------------------------------------------------------------------
+;; #2 value-number same-value coalescing (move-flood bucket b).
+;;
+;; Bucket b (un-coalesced SSA copies, the dominant move class) is src-live
+;; fan-out: `dst := src` where src stays live past the copy, so src and dst
+;; OVERLAP and the interference-gated coalescer rejects them. But a copy whose
+;; dst and src are BOTH single-static-def holds one identical value over the
+;; entire overlap (dst mirrors src, neither is ever redefined), so merging them
+;; into one register is sound regardless of overlap -- LLVM's
+;; valuesIdentical/CR_Erase case (RegisterCoalescer.cpp:2799/3008).
+;;
+;; SOUNDNESS: only DIRECT `IrInstrMov dst (IrValueVar src)` copies with
+;; def-count[dst]==def-count[src]==1 enter the same-value relation. Phi inputs
+;; (path-dependent) and multi-def vars -- the loop-carried set!/back-edge values
+;; that are the #3489 fibonacci/four_acc/bce_sum miscompile class -- are EXCLUDED
+;; because loop-carried values are lowered to phis or carry multiple defs and so
+;; are never single-def direct copies. The relaxation only WAIVES interference
+;; for proven same-value pairs; the geometry predicate is unchanged, and the
+;; all-pairs class-compatibility check still rejects any class that would mix a
+;; distinct-value var with an overlapping member.
+;; The single var an instruction defines, or -1. Mirrors the def list of
+;; compiler-reg-instr-def-type so the def census stays complete (a missed def
+;; site would understate a multi-def var and is the one unsound failure mode).
+(define (compiler-reg-instr-def-var [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov dst _ _) dst]
+    [(IrInstrAddrOf dst _) dst]
+    [(IrInstrLoad dst _ _) dst]
+    [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBitcast dst _ _ _) dst]
+    [(IrInstrBinOp dst _ _ _ _) dst]
+    [(IrInstrUnOp dst _ _ _) dst]
+    [(IrInstrVectorReduce dst _ _ _ _) dst]
+    [(IrInstrMaskReduce dst _ _ _) dst]
+    [(IrInstrEntryArgc dst) dst]
+    [(IrInstrEntryArgv dst) dst]
+    [(IrInstrEntryEnvp dst) dst]
+    [(IrInstrCpuId dst _ _ _) dst]
+    [(IrInstrXgetbv dst _) dst]
+    [(IrInstrSyscall dst _) dst]
+    [(IrInstrCall dst _ _ _) dst]
+    [(IrInstrPhi dst _ _) dst]
+    [(IrInstrPack dst _ _) dst]
+    [(IrInstrWord dst _ _ _) dst]
+    [_ (- 0 1)]))
+
+(define (compiler-reg-count-def! [counts : (Array i64)] [var : i64]) : unit
+  (if (and (>= var 0) (< var (array-length counts)))
+    (array-set! counts var (+ (array-ref counts var) 1))
+    unit))
+
+(define (compiler-reg-count-seq-defs!
+  [instrs : CompilerIrInstrSeq]
+  [counts : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-count-def!
+            counts
+            (compiler-reg-instr-def-var (array-ref slots index)))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-count-block-defs!
+  [blocks : CompilerIrBlockList]
+  [counts : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-count-seq-defs! instrs counts)
+            (compiler-reg-count-block-defs! (box-get rest) counts))])]
+    [(IrBlockArray seq)
+      (compiler-reg-count-block-defs!
+        (compiler-ir-block-seq-to-list seq)
+        counts)]))
+
+(define (compiler-reg-param-count-defs!
+  [params : CompilerIrParamList]
+  [counts : (Array i64)]) : unit
+  (match params
+    [(IrParamNil) unit]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ id)
+          (begin
+            (compiler-reg-count-def! counts id)
+            (compiler-reg-param-count-defs! (box-get rest) counts))])]))
+
+(define (compiler-reg-function-def-counts [func : CompilerIrFunction]) : (Array
+    i64)
+  (match func
+    [(IrFunction _ params _ vars blocks)
+      (let
+        [counts : (Array i64) (make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array counts 0)
+          (compiler-reg-param-count-defs! params counts)
+          (compiler-reg-count-block-defs! blocks counts)
+          counts))]))
+
+;; Same-value union-find, path-compressed; the class root is its min member id.
+(define (compiler-reg-sv-find [parents : (Array i64)] [x : i64]) : i64
+  (if (or (< x 0) (>= x (array-length parents)))
+    (- 0 1)
+    (let
+      [p : i64 (array-ref parents x)]
+      (if (= p x)
+        x
+        (let
+          [r : i64 (compiler-reg-sv-find parents p)]
+          (begin
+            (array-set! parents x r)
+            r))))))
+
+(define (compiler-reg-sv-union! [parents : (Array i64)] [a : i64] [b : i64]) : unit
+  (let
+    [ra : i64 (compiler-reg-sv-find parents a)]
+    [rb : i64 (compiler-reg-sv-find parents b)]
+    (if (or (< ra 0) (< rb 0) (= ra rb))
+      unit
+      (if (< ra rb)
+        (array-set! parents rb ra)
+        (array-set! parents ra rb)))))
+
+(define (compiler-reg-sv-single-def? [counts : (Array i64)] [var : i64]) : bool
+  (and (>= var 0) (< var (array-length counts)) (= (array-ref counts var) 1)))
+
+(define (compiler-reg-sv-add-instr!
+  [instr : CompilerIrInstr]
+  [counts : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match instr
+    [(IrInstrMov dst src _)
+      (match src
+        [(IrValueVar svar)
+          (if (and
+            (compiler-reg-sv-single-def? counts dst)
+            (compiler-reg-sv-single-def? counts svar))
+            (compiler-reg-sv-union! parents svar dst)
+            unit)]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-reg-sv-seq!
+  [instrs : CompilerIrInstrSeq]
+  [counts : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-sv-add-instr! (array-ref slots index) counts parents)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-sv-blocks!
+  [blocks : CompilerIrBlockList]
+  [counts : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-sv-seq! instrs counts parents)
+            (compiler-reg-sv-blocks! (box-get rest) counts parents))])]
+    [(IrBlockArray seq)
+      (compiler-reg-sv-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        counts
+        parents)]))
+
+(define (compiler-reg-function-same-value-parents [func : CompilerIrFunction]) : (Array
+    i64)
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [counts : (Array i64) (compiler-reg-function-def-counts func)]
+        [parents : (Array i64) (make-array i64 vars)]
+        [index : i64 0]
+        (begin
+          (while (< index vars)
+            (begin
+              (array-set! parents index index)
+              (set! index (+ index 1))))
+          (compiler-reg-sv-blocks! blocks counts parents)
+          parents))]))
+
+(define (compiler-reg-same-value-class?
+  [parents : (Array i64)]
+  [left : i64]
+  [right : i64]) : bool
+  (if (= (array-length parents) 0)
+    false
+    (let
+      [rl : i64 (compiler-reg-sv-find parents left)]
+      [rr : i64 (compiler-reg-sv-find parents right)]
+      (and (>= rl 0) (= rl rr)))))
+
 (define (compiler-reg-coalesce-map-init!
   [parents : (Array i64)]
   [sizes : (Array i64)]
@@ -3408,16 +3618,22 @@
   [group-vars : CompilerLiveI64Set]
   [left : i64]
   [right : i64]
-  [strict : bool]) : bool
+  [strict : bool]
+  [sv-parents : (Array i64)]) : bool
   (and
     (not (= left right))
     (not (compiler-live-set-contains? group-vars left))
     (not (compiler-live-set-contains? group-vars right))
     (compiler-reg-compatible-types? types left right)
-    (not
-      (if strict
-        (compiler-reg-vars-interfere-index? intervals left right)
-        (compiler-reg-vars-interfere-segmented-index? intervals left right)))))
+    ;; #2 same-value relaxation: a proven same-value pair (single-def direct copy)
+    ;; may coalesce despite overlap -- one register holds the shared value. The
+    ;; geometry test itself is unchanged; this only ADDS the same-value escape.
+    (or
+      (not
+        (if strict
+          (compiler-reg-vars-interfere-index? intervals left right)
+          (compiler-reg-vars-interfere-segmented-index? intervals left right)))
+      (compiler-reg-same-value-class? sv-parents left right))))
 
 (define (compiler-reg-coalesce-map-var-compatible-with-root?
   [parents : (Array i64)]
@@ -3427,7 +3643,8 @@
   [var : i64]
   [root : i64]
   [strict : bool]
-  [index : i64]) : bool
+  [index : i64]
+  [sv-parents : (Array i64)]) : bool
   (cond
     [(>= index (array-length parents)) true]
     [(= (array-ref parents index) root)
@@ -3437,7 +3654,8 @@
         group-vars
         var
         index
-        strict)
+        strict
+        sv-parents)
         (compiler-reg-coalesce-map-var-compatible-with-root?
           parents
           intervals
@@ -3446,7 +3664,8 @@
           var
           root
           strict
-          (+ index 1))
+          (+ index 1)
+          sv-parents)
         false)]
     [else
       (compiler-reg-coalesce-map-var-compatible-with-root?
@@ -3457,7 +3676,8 @@
         var
         root
         strict
-        (+ index 1))]))
+        (+ index 1)
+        sv-parents)]))
 
 (define (compiler-reg-coalesce-map-classes-compatible-from?
   [parents : (Array i64)]
@@ -3467,7 +3687,8 @@
   [left-root : i64]
   [right-root : i64]
   [strict : bool]
-  [index : i64]) : bool
+  [index : i64]
+  [sv-parents : (Array i64)]) : bool
   (cond
     [(>= index (array-length parents)) true]
     [(= (array-ref parents index) left-root)
@@ -3479,7 +3700,8 @@
         index
         right-root
         strict
-        0)
+        0
+        sv-parents)
         (compiler-reg-coalesce-map-classes-compatible-from?
           parents
           intervals
@@ -3488,7 +3710,8 @@
           left-root
           right-root
           strict
-          (+ index 1))
+          (+ index 1)
+          sv-parents)
         false)]
     [else
       (compiler-reg-coalesce-map-classes-compatible-from?
@@ -3499,7 +3722,8 @@
         left-root
         right-root
         strict
-        (+ index 1))]))
+        (+ index 1)
+        sv-parents)]))
 
 (define (compiler-reg-coalesce-map-classes-compatible?
   [parents : (Array i64)]
@@ -3508,7 +3732,8 @@
   [group-vars : CompilerLiveI64Set]
   [left-root : i64]
   [right-root : i64]
-  [strict : bool]) : bool
+  [strict : bool]
+  [sv-parents : (Array i64)]) : bool
   (compiler-reg-coalesce-map-classes-compatible-from?
     parents
     intervals
@@ -3517,7 +3742,8 @@
     left-root
     right-root
     strict
-    0))
+    0
+    sv-parents))
 
 (define (compiler-reg-coalesce-map-merge-root-parents-into!
   [parents : (Array i64)]
@@ -3557,7 +3783,8 @@
   [group-vars : CompilerLiveI64Set]
   [left : i64]
   [right : i64]
-  [strict : bool]) : bool
+  [strict : bool]
+  [sv-parents : (Array i64)]) : bool
   (let
     [left-root : i64 (compiler-reg-coalesce-map-root-from-parents parents left)]
     [right-root : i64
@@ -3571,7 +3798,8 @@
             group-vars
             left
             right
-            strict))
+            strict
+            sv-parents))
         false]
       [(or
           (and
@@ -3584,7 +3812,8 @@
             group-vars
             left-root
             right-root
-            strict))
+            strict
+            sv-parents))
         (let
           [winner : i64
             (if (< left-root right-root)
@@ -3610,7 +3839,8 @@
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
-  [changed : bool]) : bool
+  [changed : bool]
+  [sv-parents : (Array i64)]) : bool
   (match moves
     [(CompilerRegMoveNil) changed]
     [(CompilerRegMoveCons move rest)
@@ -3626,7 +3856,8 @@
                 group-vars
                 src
                 dst
-                strict)]
+                strict
+                sv-parents)]
             (compiler-reg-coalesce-map-merge-moves!
               parents
               sizes
@@ -3634,7 +3865,8 @@
               intervals
               types
               group-vars
-              (or changed did-merge)))])]))
+              (or changed did-merge)
+              sv-parents))])]))
 
 (define (compiler-reg-coalesce-map-fixpoint!
   [parents : (Array i64)]
@@ -3642,7 +3874,8 @@
   [moves : CompilerRegMoveList]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
-  [group-vars : CompilerLiveI64Set]) : unit
+  [group-vars : CompilerLiveI64Set]
+  [sv-parents : (Array i64)]) : unit
   (begin
     (compiler-reg-coalesce-map-merge-moves!
       parents
@@ -3651,7 +3884,8 @@
       intervals
       types
       group-vars
-      false)
+      false
+      sv-parents)
     unit))
 
 (define (compiler-reg-coalesce-map-build
@@ -3659,7 +3893,8 @@
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
-  [vars : i64]) : CompilerRegCoalesceMap
+  [vars : i64]
+  [sv-parents : (Array i64)]) : CompilerRegCoalesceMap
   (if (compiler-reg-move-list-empty? moves)
     (CompilerRegCoalesceMap (make-array i64 0))
     (let
@@ -3677,7 +3912,8 @@
           moves
           intervals
           types
-          group-vars)
+          group-vars
+          sv-parents)
         (CompilerRegCoalesceMap parents)))))
 
 (define (compiler-reg-coalesce-location-from-class-from
@@ -6260,7 +6496,8 @@
                 intervals
                 type-info
                 group-vars
-                vars)]
+                vars
+                (make-array i64 0))]
             [parents : (Array i64) (struct-get coalesce parents)]
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
@@ -7199,6 +7436,13 @@
       (compiler-reg-function-moves func false)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
+    ;; #2 same-value coalescing: built only on the scalar-opt2 path (the SIMD/AVX
+    ;; path passes an empty array, so compiler-reg-same-value-class? is always
+    ;; false there and that plan stays byte-identical).
+    [sv-parents : (Array i64)
+      (if allow-caller-saved-zero-call
+        (compiler-reg-function-same-value-parents func)
+        (make-array i64 0))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -7206,7 +7450,8 @@
           interval-index
           type-info
           group-vars
-          (array-length (struct-get interval-index starts)))
+          (array-length (struct-get interval-index starts))
+          sv-parents)
         (CompilerRegCoalesceMap (make-array i64 0)))]
     ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run
     ;; the allocation passes over those roots with an EMPTY coalesce map (the
@@ -12709,7 +12954,8 @@
         index
         types
         (compiler-live-set-empty)
-        3)]
+        3
+        (make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 3)
@@ -12744,7 +12990,8 @@
         index
         types
         (compiler-live-set-empty)
-        2)]
+        2
+        (make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
@@ -12767,7 +13014,8 @@
         index
         types
         (compiler-live-set-empty)
-        2)]
+        2
+        (make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
@@ -12790,7 +13038,8 @@
         index
         types
         (compiler-live-set-empty)
-        2)]
+        2
+        (make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)

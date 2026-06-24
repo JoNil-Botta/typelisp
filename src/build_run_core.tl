@@ -45,6 +45,20 @@
   (OkSourceToolLinkInputs SourceToolLinkInputs)
   (ErrSourceToolLinkInputs String))
 
+(define (source-tool-cfg-names-to-env-from
+  [cfg-names : StringVec]
+  [index : i64]
+  [env : SymI64Env]) : SymI64Env
+  (if (>= index (string-vec-len cfg-names))
+    env
+    (source-tool-cfg-names-to-env-from
+      cfg-names
+      (+ index 1)
+      (compiler-cfg-enable env (string-vec-get cfg-names index "")))))
+
+(define (source-tool-cfg-names-to-env [cfg-names : StringVec]) : SymI64Env
+  (source-tool-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
+
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
   (match target
     [(BackendTargetLinux) "linux-x86_64"]
@@ -442,11 +456,13 @@
 (define (source-tool-link-inputs-for-source
   [source : String]
   [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
-  (match (compiler-load-file-with-paths-and-roots
+  (match (compiler-load-file-with-paths-and-roots-cfg
     source
     (sym-i64-empty)
-    stdlib-roots)
+    stdlib-roots
+    cfgs)
     [(OkCompilerLoadWithPaths decls _ _ _)
       (OkSourceToolLinkInputs
         (source-tool-link-inputs-merge
@@ -666,19 +682,21 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match (source-tool-try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-file-with-target-roots-level-mode-and-crt
+      (match (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
         source
         target
         true
         stdlib-roots
         opt-level
         mode
+        cfgs
         (source-tool-linux-crt-entry? target link-inputs))
         [(OkCompilerDriver asm)
           (OkSourceToolString
@@ -776,6 +794,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
     [(BackendTargetLinux)
@@ -791,7 +810,7 @@
             stdlib-roots
             opt-level
             mode
-            (compiler-cfg-empty)
+            cfgs
             (source-tool-linux-crt-entry? target link-inputs))
             [(OkCompilerDriverObject image)
               (source-tool-render-linkable-linux-elf-object image)]
@@ -930,6 +949,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
     [(BackendTargetLinux)
@@ -948,7 +968,7 @@
             stdlib-roots
             opt-level
             mode
-            (compiler-cfg-empty)
+            cfgs
             (source-tool-linux-crt-entry? target link-inputs))
             [(OkCompilerDriverObject image)
               (source-tool-render-linkable-windows-coff-object image)]
@@ -1547,6 +1567,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
@@ -1559,6 +1580,7 @@
       stdlib-roots
       opt-level
       mode
+      cfgs
       link-inputs)
       [(OkSourceToolString obj)
         (source-tool-write-direct-object-and-link
@@ -1578,6 +1600,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
@@ -1590,6 +1613,7 @@
       stdlib-roots
       opt-level
       mode
+      cfgs
       link-inputs)
       [(OkSourceToolString obj)
         (source-tool-write-direct-object-and-link
@@ -1688,6 +1712,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [asm-path : String]
   [obj-path : String]
@@ -1699,6 +1724,7 @@
     stdlib-roots
     opt-level
     mode
+    cfgs
     link-inputs)
     [(ErrSourceToolString message) (SourceToolCommandErr message)]
     [(OkSourceToolString asm)
@@ -1717,6 +1743,7 @@
   [stdlib-roots : StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [asm-path : String]
   [obj-path : String]
@@ -1728,6 +1755,7 @@
     stdlib-roots
     opt-level
     mode
+    cfgs
     link-inputs
     obj-path
     bin-path)
@@ -1740,6 +1768,7 @@
         stdlib-roots
         opt-level
         mode
+        cfgs
         link-inputs
         obj-path
         bin-path)
@@ -1752,6 +1781,7 @@
             stdlib-roots
             opt-level
             mode
+            cfgs
             link-inputs
             asm-path
             obj-path
@@ -1820,7 +1850,11 @@
       (if has-output
         output
         (source-tool-default-output source target))]
-    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+    (match (source-tool-link-inputs-for-source
+      source
+      stdlib-roots
+      (compiler-driver-target-cfgs target (compiler-cfg-empty))
+      link-inputs)
       [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
@@ -1835,6 +1869,7 @@
             stdlib-roots
             opt-level
             mode
+            (compiler-cfg-empty)
             effective-link-inputs
             asm-path
             obj-path
@@ -1902,6 +1937,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
+  [cfg-names : StringVec]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
@@ -1911,7 +1947,13 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+    (match (source-tool-link-inputs-for-source
+      source
+      stdlib-roots
+      (compiler-driver-target-cfgs
+        target
+        (source-tool-cfg-names-to-env cfg-names))
+      link-inputs)
       [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
@@ -1926,6 +1968,7 @@
             stdlib-roots
             opt-level
             mode
+            (source-tool-cfg-names-to-env cfg-names)
             effective-link-inputs
             asm-path
             obj-path
@@ -1977,6 +2020,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : StringVec]
+  [cfg-names : StringVec]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
@@ -1987,6 +2031,7 @@
         source
         target
         stdlib-roots
+        cfg-names
         runtime-args
         opt-level
         mode

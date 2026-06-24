@@ -343,8 +343,9 @@ same module can still be imported explicitly as
 qualified calls such as `core.when`, `core.unless`, `core.and`, `core.or`, and
 `core.cond`.
 
-`typelisp compile` accepts `--cfg <name>` to enable source-level conditional
-compilation flags. Source may wrap a top-level declaration as
+`typelisp compile` and `typelisp run` accept `--cfg <name>` to enable
+source-level conditional compilation flags. Source may wrap a top-level
+declaration as
 `(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
 `(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
 not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
@@ -959,12 +960,12 @@ reports the staged masked-if diagnostic.
 `(program-index)`/`(program-count)` lane identity forms are accepted in the
 SPMD scopes described by `SPEC.md` and are backend-mode observable.
 
-`compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
-predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
-forms. Without `--cfg`, named predicates are false, `(all ...)` is true only when
-all operands are true, `(any ...)` is true when any operand is true, and
-`(not ...)` negates one predicate. Target OS predicates are enabled implicitly
-from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
+`compile` and `run` accept repeated `--cfg <name>` flags. Enabled names control
+`(cfg predicate declaration)` and expression-level `(cfg predicate expr
+[else-expr])` forms. Without `--cfg`, named predicates are false, `(all ...)` is
+true only when all operands are true, `(any ...)` is true when any operand is
+true, and `(not ...)` negates one predicate. Target OS predicates are enabled
+implicitly from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
 `linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
 `windows-x86_64`.
 

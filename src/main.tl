@@ -116,7 +116,7 @@ Options:
 
 (define (cli-run-help-text) : String
   "Usage:
-    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
+    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
 
 Summary:
     Compile, link, and run a source file.
@@ -126,6 +126,7 @@ Options:
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
     --stdlib-root <dir>            Search root for stdlib/... imports
+    --cfg <name>                   Enable a compile-time cfg predicate name
     --link-lib <name>              Link a named native library
     --link-search <dir>            Add a native linker library search directory
     --link-arg <arg>               Pass a raw native linker argument

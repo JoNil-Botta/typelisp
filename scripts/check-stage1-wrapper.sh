@@ -588,6 +588,25 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     exit 1
 fi
 
+RUN_CFG_SRC="$WORKDIR/run-cfg.tl"
+cat > "$RUN_CFG_SRC" <<'EOF'
+(define (main) : i64 (cfg feature 11 3))
+EOF
+set +e
+"$COMPILER" run "$RUN_CFG_SRC" --cfg feature > "$WORKDIR/run-cfg.stdout" 2> "$WORKDIR/run-cfg.stderr"
+run_cfg_status=$?
+set -e
+if [ "$run_cfg_status" -ne 11 ]; then
+    echo "run --cfg expected exit 11, got $run_cfg_status" >&2
+    echo "stdout:" >&2
+    sed 's/^/  /' "$WORKDIR/run-cfg.stdout" >&2 || true
+    echo "stderr:" >&2
+    sed 's/^/  /' "$WORKDIR/run-cfg.stderr" >&2 || true
+    exit 1
+fi
+assert_empty "$WORKDIR/run-cfg.stdout"
+assert_empty "$WORKDIR/run-cfg.stderr"
+
 echo "[host-action-cli] repl"
 : > "$WORKDIR/repl-empty.in"
 run_stdin_capture repl-empty "$WORKDIR/repl-empty.in" "$COMPILER" repl

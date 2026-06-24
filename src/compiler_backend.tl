@@ -11521,7 +11521,7 @@
 
 (define (compiler-backend-identity-tail-forwarder-call?
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [_source-function : String]
   [params : CompilerIrParamList]
   [name : String]
   [args : CompilerIrCallArgs]

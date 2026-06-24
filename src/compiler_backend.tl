@@ -156,6 +156,10 @@
   (CompilerBackendNoAsm)
   (CompilerBackendSomeAsm String))
 
+(defenum CompilerBackendMaybeStackOperand
+  (CompilerBackendNoStackOperand)
+  (CompilerBackendSomeStackOperand String))
+
 (defenum CompilerBackendPeepholeMove
   (CompilerBackendPeepholeNoMove)
   (CompilerBackendPeepholeMove String String))
@@ -1196,106 +1200,154 @@
           (compiler-diagnostic-with-message instr-diag message))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
+(define (compiler-backend-stack-memory-operand
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : CompilerBackendMaybeStackOperand
+  (match value
+    [(IrValueVar var-id)
+      (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
+        (CompilerBackendNoStackOperand)
+        (match (compiler-reg-assignment-lookup assignments var-id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegSpill offset)
+                (CompilerBackendSomeStackOperand
+                  (compiler-backend-frame-offset offset))]
+              [_ (CompilerBackendNoStackOperand)])]
+          [(CompilerRegNoLocation)
+            (CompilerBackendSomeStackOperand (compiler-backend-slot var-id))]))]
+    [_ (CompilerBackendNoStackOperand)]))
+
+(define (compiler-backend-splat-memory-mnemonic [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyF64) "vbroadcastsd"]
+    [(AstTyF32) "vbroadcastss"]
+    [(AstTyI32) "vpbroadcastd"]
+    [(AstTyU32) "vpbroadcastd"]
+    [(AstTyI16) "vpbroadcastw"]
+    [(AstTyU16) "vpbroadcastw"]
+    [(AstTyI8) "vpbroadcastb"]
+    [(AstTyU8) "vpbroadcastb"]
+    [_ "vpbroadcastq"]))
+
+(define (compiler-backend-splat-memory-load
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-stack-memory-operand assignments value)
+    [(CompilerBackendSomeStackOperand operand)
+      (CompilerBackendSomeAsm
+        (str-cat
+          "    "
+          (compiler-backend-splat-memory-mnemonic elem-ty)
+          " "
+          operand
+          ", "))]
+    [(CompilerBackendNoStackOperand) (CompilerBackendNoAsm)]))
+
 (define (compiler-backend-avx2-splat-load
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
-  (match elem-ty
-    [(AstTyF64)
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        elem-ty
-        "%xmm0")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vbroadcastsd %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyF32)
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        elem-ty
-        "%xmm0")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vbroadcastss %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI32)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU32)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI16)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU16)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI8)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU8)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [_
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovq %rax, %xmm0\n    vpbroadcastq %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]))
+  (match (compiler-backend-splat-memory-load assignments value elem-ty)
+    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+    [(CompilerBackendNoAsm)
+      (match elem-ty
+        [(AstTyF64)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            elem-ty
+            "%xmm0")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vbroadcastsd %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyF32)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            elem-ty
+            "%xmm0")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vbroadcastss %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI32)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU32)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI16)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU16)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI8)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU8)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [_
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovq %rax, %xmm0\n    vpbroadcastq %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])])]))
 
 (define (compiler-backend-emit-avx2-splat
   [assignments : CompilerRegAssignmentList]
@@ -1679,93 +1731,96 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
-  (match elem-ty
-    [(AstTyF64)
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        elem-ty
-        "%xmm0")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vbroadcastsd %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyF32)
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        elem-ty
-        "%xmm0")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vbroadcastss %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI32)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU32)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI16)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU16)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyI8)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [(AstTyU8)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend
-            (string-append
-              asm
-              "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
-    [_
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        value
-        "%rax")
-        [(OkCompilerBackend asm)
-          (OkCompilerBackend (string-append asm "    vpbroadcastq %rax, "))]
-        [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]))
+  (match (compiler-backend-splat-memory-load assignments value elem-ty)
+    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+    [(CompilerBackendNoAsm)
+      (match elem-ty
+        [(AstTyF64)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            elem-ty
+            "%xmm0")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vbroadcastsd %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyF32)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            elem-ty
+            "%xmm0")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vbroadcastss %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI32)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU32)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vpbroadcastd %eax, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI16)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU16)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyI8)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [(AstTyU8)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend
+                (string-append
+                  asm
+                  "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+        [_
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            value
+            "%rax")
+            [(OkCompilerBackend asm)
+              (OkCompilerBackend (string-append asm "    vpbroadcastq %rax, "))]
+            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])])]))
 
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : CompilerIrVectorReduceOp]

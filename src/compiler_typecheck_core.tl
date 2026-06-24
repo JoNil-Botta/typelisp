@@ -203,15 +203,19 @@
   (TcSpmdValue)
   (TcSpmdForeachIndex))
 
-(defenum TcSpmdEnv
-  (TcSpmdEnvNil)
-  (TcSpmdEnvBind
-    String
-    AstType
-    TcSpmdClass
-    TcSpmdScope
-    TcSpmdRole
-    (Box TcSpmdEnv)))
+(defstruct TcSpmdBinding
+  (name String)
+  (ty AstType)
+  (class TcSpmdClass)
+  (scope TcSpmdScope)
+  (role TcSpmdRole))
+
+(defstruct TcSpmdEnv
+  (bindings (Array TcSpmdBinding))
+  (len i64))
+
+(defstruct TcSpmdEnvMark
+  (len i64))
 
 (defenum TcSpmdLookup
   (TcSpmdMissing)
@@ -225,7 +229,7 @@
   (ErrTcSpmdExprInfo String))
 
 (defenum TcSpmdLetState
-  (TcSpmdLetState TcTypeEnv TcSpmdEnv i64))
+  (TcSpmdLetState TcTypeEnv TcSpmdEnv TcSpmdEnvMark))
 
 (defenum ResultTcSpmdLetState
   (OkTcSpmdLetState TcSpmdLetState)
@@ -9701,19 +9705,84 @@
             [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
 
-(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+(define (tc-spmd-env-empty) : TcSpmdEnv
+  (TcSpmdEnv (make-array TcSpmdBinding 0) 0))
+
+(define (tc-spmd-binding
+  [name : String]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [scope : TcSpmdScope]
+  [role : TcSpmdRole]) : TcSpmdBinding
+  (TcSpmdBinding name ty class scope role))
+
+(define (tc-spmd-env-binding-count [env : TcTypeEnv]) : i64
   (match env
-    [(TcTypeNil) TcSpmdEnvNil]
+    [(TcTypeNil) 0]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
-      (tc-spmd-env-from-type-env (box-get rest))]
+      (tc-spmd-env-binding-count (box-get rest))]
+    [(TcTypeBind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]))
+
+(define (tc-spmd-env-fill-from-type-env
+  [env : TcTypeEnv]
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]) : unit
+  (match env
+    [(TcTypeNil) unit]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-spmd-env-fill-from-type-env (box-get rest) bindings index)]
     [(TcTypeBind name-id ty rest)
-      (TcSpmdEnvBind
-        (intern-str name-id)
-        ty
-        TcSpmdUniform
-        TcSpmdOuter
-        TcSpmdValue
-        (box (tc-spmd-env-from-type-env (box-get rest))))]))
+      (begin
+        (array-set!
+          bindings
+          index
+          (tc-spmd-binding
+            (intern-str name-id)
+            ty
+            TcSpmdUniform
+            TcSpmdOuter
+            TcSpmdValue))
+        (tc-spmd-env-fill-from-type-env (box-get rest) bindings (- index 1)))]))
+
+(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+  (let
+    [count : i64 (tc-spmd-env-binding-count env)]
+    [bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding count)]
+    (begin
+      (tc-spmd-env-fill-from-type-env env bindings (- count 1))
+      (TcSpmdEnv bindings count))))
+
+(define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (Array TcSpmdBinding)
+  (struct-get env bindings))
+
+(define (tc-spmd-env-len [env : TcSpmdEnv]) : i64
+  (struct-get env len))
+
+(define (tc-spmd-env-mark [env : TcSpmdEnv]) : TcSpmdEnvMark
+  (TcSpmdEnvMark (tc-spmd-env-len env)))
+
+(define (tc-spmd-env-restore [env : TcSpmdEnv] [mark : TcSpmdEnvMark]) : TcSpmdEnv
+  (let
+    [mark-len : i64 (struct-get mark len)]
+    [current-len : i64 (tc-spmd-env-len env)]
+    [restored-len : i64
+      (if (< mark-len 0)
+        0
+        (if (> mark-len current-len)
+          current-len
+          mark-len))]
+    (TcSpmdEnv (tc-spmd-env-bindings env) restored-len)))
+
+(define (tc-spmd-env-copy-bindings
+  [dst : (Array TcSpmdBinding)]
+  [src : (Array TcSpmdBinding)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
 (define (tc-spmd-env-bind
   [env : TcSpmdEnv]
@@ -9721,7 +9790,7 @@
   [ty : AstType]
   [class : TcSpmdClass]
   [scope : TcSpmdScope]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope TcSpmdValue (box env)))
+  (tc-spmd-env-bind-role env name ty class scope TcSpmdValue))
 
 (define (tc-spmd-env-bind-role
   [env : TcSpmdEnv]
@@ -9730,99 +9799,222 @@
   [class : TcSpmdClass]
   [scope : TcSpmdScope]
   [role : TcSpmdRole]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope role (box env)))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [new-len : i64 (+ old-len 1)]
+    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding new-len)]
+    (begin
+      (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
+      (array-set!
+        new-bindings
+        old-len
+        (tc-spmd-binding name ty class scope role))
+      (TcSpmdEnv new-bindings new-len))))
+
+(define (tc-spmd-env-lookup-from
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : TcSpmdLookup
+  (if (< index 0)
+    TcSpmdMissing
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (TcSpmdFound
+          (struct-get binding ty)
+          (struct-get binding class)
+          (struct-get binding scope)
+          (struct-get binding role))
+        (tc-spmd-env-lookup-from bindings (- index 1) name)))))
 
 (define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
-  (match env
-    [(TcSpmdEnvNil) TcSpmdMissing]
-    [(TcSpmdEnvBind key ty class scope role rest)
-      (if (string-eq key name)
-        (TcSpmdFound ty class scope role)
-        (tc-spmd-env-lookup (box-get rest) name))]))
+  (tc-spmd-env-lookup-from
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-has-local-from?
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdLocal) true]
+          [(TcSpmdOuter)
+            (tc-spmd-env-has-local-from? bindings (- index 1) name)])
+        (tc-spmd-env-has-local-from? bindings (- index 1) name)))))
 
 (define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
-  (match env
-    [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope _ rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdLocal) true]
-          [(TcSpmdOuter) (tc-spmd-env-has-local? (box-get rest) name)])
-        (tc-spmd-env-has-local? (box-get rest) name))]))
+  (tc-spmd-env-has-local-from?
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-has-outer-from?
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdOuter) true]
+          [(TcSpmdLocal)
+            (tc-spmd-env-has-outer-from? bindings (- index 1) name)])
+        (tc-spmd-env-has-outer-from? bindings (- index 1) name)))))
 
 (define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
-  (match env
-    [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope _ rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdOuter) true]
-          [(TcSpmdLocal) (tc-spmd-env-has-outer? (box-get rest) name)])
-        (tc-spmd-env-has-outer? (box-get rest) name))]))
+  (tc-spmd-env-has-outer-from?
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-local-index
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdLocal) index]
+          [(TcSpmdOuter) (tc-spmd-env-local-index bindings (- index 1) name)])
+        (tc-spmd-env-local-index bindings (- index 1) name)))))
 
 (define (tc-spmd-env-set-local-class
   [env : TcSpmdEnv]
   [name : String]
   [class : TcSpmdClass]) : TcSpmdEnv
-  (match env
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind key ty old-class scope role rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope role rest)]
-          [(TcSpmdOuter)
-            (TcSpmdEnvBind
-              key
-              ty
-              old-class
-              scope
-              role
-              (box (tc-spmd-env-set-local-class (box-get rest) name class)))])
-        (TcSpmdEnvBind
-          key
-          ty
-          old-class
-          scope
-          role
-          (box (tc-spmd-env-set-local-class (box-get rest) name class))))]))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [local-index : i64
+      (tc-spmd-env-local-index old-bindings (- old-len 1) name)]
+    (if (< local-index 0)
+      env
+      (let
+        [new-bindings : (Array TcSpmdBinding)
+          (make-array TcSpmdBinding old-len)]
+        [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
+        (begin
+          (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
+          (array-set!
+            new-bindings
+            local-index
+            (tc-spmd-binding
+              (struct-get old-binding name)
+              (struct-get old-binding ty)
+              class
+              (struct-get old-binding scope)
+              (struct-get old-binding role)))
+          (TcSpmdEnv new-bindings old-len))))))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
   (if (<= count 0)
     env
-    (match env
-      [(TcSpmdEnvNil) TcSpmdEnvNil]
-      [(TcSpmdEnvBind _ _ _ _ _ rest)
-        (tc-spmd-env-pop (box-get rest) (- count 1))])))
+    (tc-spmd-env-restore env (TcSpmdEnvMark (- (tc-spmd-env-len env) count)))))
+
+(define (tc-spmd-env-mark-outer-into
+  [dst : (Array TcSpmdBinding)]
+  [src : (Array TcSpmdBinding)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [binding : TcSpmdBinding (array-ref src index)]
+      (begin
+        (array-set!
+          dst
+          index
+          (tc-spmd-binding
+            (struct-get binding name)
+            (struct-get binding ty)
+            (struct-get binding class)
+            TcSpmdOuter
+            (struct-get binding role)))
+        (tc-spmd-env-mark-outer-into dst src (+ index 1) count)))))
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
-  (match env
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class _ role rest)
-      (TcSpmdEnvBind
-        name
-        ty
-        class
-        TcSpmdOuter
-        role
-        (box (tc-spmd-env-mark-outer (box-get rest))))]))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding old-len)]
+    (begin
+      (tc-spmd-env-mark-outer-into new-bindings old-bindings 0 old-len)
+      (TcSpmdEnv new-bindings old-len))))
+
+(define (tc-spmd-env-merge-binding-class
+  [left : TcSpmdBinding]
+  [right-bindings : (Array TcSpmdBinding)]
+  [right-len : i64]
+  [index : i64]) : TcSpmdClass
+  (if (>= index right-len)
+    (struct-get left class)
+    (let
+      [right : TcSpmdBinding (array-ref right-bindings index)]
+      (tc-spmd-merge-class (struct-get left class) (struct-get right class)))))
+
+(define (tc-spmd-env-merge-classes-into
+  [dst : (Array TcSpmdBinding)]
+  [left-bindings : (Array TcSpmdBinding)]
+  [right-bindings : (Array TcSpmdBinding)]
+  [left-len : i64]
+  [right-len : i64]
+  [index : i64]) : unit
+  (if (>= index left-len)
+    unit
+    (let
+      [left : TcSpmdBinding (array-ref left-bindings index)]
+      (begin
+        (array-set!
+          dst
+          index
+          (tc-spmd-binding
+            (struct-get left name)
+            (struct-get left ty)
+            (tc-spmd-env-merge-binding-class
+              left
+              right-bindings
+              right-len
+              index)
+            (struct-get left scope)
+            (struct-get left role)))
+        (tc-spmd-env-merge-classes-into
+          dst
+          left-bindings
+          right-bindings
+          left-len
+          right-len
+          (+ index 1))))))
 
 (define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
-  (match left
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class scope role left-rest)
-      (match right
-        [(TcSpmdEnvNil) left]
-        [(TcSpmdEnvBind _ _ right-class _ _ right-rest)
-          (TcSpmdEnvBind
-            name
-            ty
-            (tc-spmd-merge-class class right-class)
-            scope
-            role
-            (box
-              (tc-spmd-env-merge-classes
-                (box-get left-rest)
-                (box-get right-rest))))])]))
+  (let
+    [left-len : i64 (tc-spmd-env-len left)]
+    [right-len : i64 (tc-spmd-env-len right)]
+    [left-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings left)]
+    [right-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings right)]
+    [merged : (Array TcSpmdBinding) (make-array TcSpmdBinding left-len)]
+    (begin
+      ;; Branch merge is index-aligned: both branches start from the same
+      ;; snapshot and local lets restore to that mark before the merge.
+      (tc-spmd-env-merge-classes-into
+        merged
+        left-bindings
+        right-bindings
+        left-len
+        right-len
+        0)
+      (TcSpmdEnv merged left-len))))
 
 (define (tc-type-env-box-smoke?) : bool
   (let
@@ -10081,6 +10273,9 @@
   (let
     [env : TcTypeEnv
       (tc-bind (tc-bind (tc-empty-env) "x" (AstTyI64)) "flag" (AstTyBool))]
+    [shadow-env : TcTypeEnv
+      (tc-bind (tc-bind (tc-empty-env) "x" (AstTyI64)) "x" (AstTyBool))]
+    [shadow-spmd : TcSpmdEnv (tc-spmd-env-from-type-env shadow-env)]
     [outer : TcSpmdEnv (tc-spmd-env-from-type-env env)]
     [local : TcSpmdEnv
       (tc-spmd-env-bind outer "lane" (AstTyI64) TcSpmdVarying TcSpmdLocal)]
@@ -10098,6 +10293,8 @@
     [branch-right : TcSpmdEnv
       (tc-spmd-env-set-local-class indexed "lane" TcSpmdVarying)]
     [merged : TcSpmdEnv (tc-spmd-env-merge-classes indexed branch-right)]
+    [restore-mark : TcSpmdEnvMark (tc-spmd-env-mark outer)]
+    [restored : TcSpmdEnv (tc-spmd-env-restore updated restore-mark)]
     (and
       (match (tc-spmd-env-lookup updated "lane")
         [(TcSpmdFound (AstTyI64) (TcSpmdUniform) (TcSpmdLocal) (TcSpmdValue))
@@ -10105,6 +10302,10 @@
         [_ false])
       (tc-spmd-env-has-local? updated "lane")
       (tc-spmd-env-has-outer? updated "x")
+      (match (tc-spmd-env-lookup shadow-spmd "x")
+        [(TcSpmdFound (AstTyBool) (TcSpmdUniform) (TcSpmdOuter) (TcSpmdValue))
+          true]
+        [_ false])
       (match (tc-spmd-env-lookup marked-outer "idx")
         [(TcSpmdFound
             (AstTyI64)
@@ -10128,6 +10329,9 @@
           true]
         [_ false])
       (match (tc-spmd-env-lookup (tc-spmd-env-pop updated 1) "lane")
+        [(TcSpmdMissing) true]
+        [_ false])
+      (match (tc-spmd-env-lookup restored "lane")
         [(TcSpmdMissing) true]
         [_ false]))))
 
@@ -17316,9 +17520,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -17350,7 +17554,7 @@
                                 init-class
                                 TcSpmdLocal)
                               rest
-                              (+ count 1)))])]
+                              mark))])]
                     [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])]
                 [(ErrTcUnit message) (ErrTcSpmdLetState message)]))]))]))
 
@@ -17391,7 +17595,12 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-masked-if-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-masked-if-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env _)
@@ -17539,9 +17748,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -17571,7 +17780,7 @@
                             init-class
                             TcSpmdLocal)
                           rest
-                          (+ count 1)))])]
+                          mark))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)]))]))]))
 
 (define (tc-spmd-expr-list
@@ -18046,9 +18255,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -18078,7 +18287,7 @@
                             init-class
                             TcSpmdLocal)
                           rest
-                          (+ count 1)))])]
+                          mark))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)]))]))]))
 
 (define (tc-spmd-reduce-class
@@ -18162,10 +18371,15 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-reduce-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-reduce-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
-                  [(TcSpmdLetState body-env body-spmd-env count)
+                  [(TcSpmdLetState body-env body-spmd-env mark)
                     (match (tc-spmd-reduce-class
                       ctx
                       body-env
@@ -18177,7 +18391,7 @@
                             (tc-spmd-reduce-class-finish
                               ctx
                               env
-                              (tc-spmd-env-pop final-spmd-env count)
+                              (tc-spmd-env-restore final-spmd-env mark)
                               expr
                               body-class)])]
                       [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
@@ -18451,10 +18665,15 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
-                  [(TcSpmdLetState body-env body-spmd-env count)
+                  [(TcSpmdLetState body-env body-spmd-env mark)
                     (match (tc-spmd-expr ctx body-env body-spmd-env body)
                       [(OkTcSpmdExprInfo body-info)
                         (match body-info
@@ -18462,7 +18681,7 @@
                             (tc-spmd-finish
                               expr-ty
                               body-class
-                              (tc-spmd-env-pop final-spmd-env count))])]
+                              (tc-spmd-env-restore final-spmd-env mark))])]
                       [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
               [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)]))])]
     [(AstExprLambda _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]

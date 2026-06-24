@@ -98,7 +98,7 @@ layout/spec metadata, and wrappers around other data.
 | `TcModuleLocalEnvCache` | `src/compiler_typecheck_core.tl:168` | `TcModuleLocalEnvNil` / `TcModuleLocalEnvCons` | Small cache chain keyed by module, values are `TcTypeEnv`. | Moderate in multi-module programs. | `redesign-scope-stack` | #3428; follows env design. |
 | `ResultTcModuleLocalEnv` | `src/compiler_typecheck_core.tl:172` | `OkTcModuleLocalEnv` / `ErrTcModuleLocalEnv` | Wrapper for env cache result. | Error plumbing. | `not-a-cons-migration-target` | Follows `TcModuleLocalEnvCache`. |
 | `ResultTcEnv` | `src/compiler_typecheck_core.tl:176` | `OkTcEnv` / `ErrTcEnv` | Wrapper for `TcTypeEnv`. | Error plumbing. | `not-a-cons-migration-target` | Follows `TcTypeEnv` redesign. |
-| `TcSpmdEnv` | `src/compiler_typecheck_core.tl:200` | `TcSpmdEnvNil` / `TcSpmdEnvBind` | Persistent SPMD scope stack with pop/merge/mark-outer operations. | Hot in SPMD code. | `redesign-scope-stack` | #3428. |
+| `TcSpmdEnv` | `src/compiler_typecheck_core.tl:200` | `TcSpmdEnv` / `TcSpmdBinding` | Array-backed SPMD scoped-stack snapshot with explicit restore marks plus merge/mark-outer operations. | Hot in SPMD code. | `migrated-scoped-stack` | #3583. |
 | `TcSpmdExprListInfo` | `src/compiler_typecheck_core.tl:228` | `TcSpmdExprListInfo` | Summary for checking an expression list; not a list storage family. | SPMD expression checking. | `not-a-cons-migration-target` | No follow-up. |
 | `TcReprCFieldLayoutList` | `src/compiler_typecheck_core.tl:274` | `TcReprCFieldLayoutNil` / `TcReprCFieldLayoutCons` | Ordered field layout metadata. | Layout/C ABI paths. | `convert-to-bespoke-dense-builder` | #3429; measure before landing. |
 | `TcInlineFieldLayoutList` | `src/compiler_typecheck_core.tl:288` | `TcInlineFieldLayoutNil` / `TcInlineFieldLayoutCons` | Ordered inline field metadata; offset scans. | Layout/typecheck/lower paths. | `convert-to-bespoke-dense-builder` | #3429. |
@@ -140,9 +140,10 @@ inline aggregate recursion. They are not production storage families.
 
 - Do not convert parser result wrappers independently; they change only when
   their payload family changes.
-- Do not vectorize env chains mechanically. `TcTypeEnv`, `TcSpmdEnv`, and
-  `MacroHygieneEnv` need a scoped-stack design with explicit save/restore marks
-  and marker-scan semantics (#3428).
+- Do not vectorize env chains mechanically. `TcTypeEnv` and `MacroHygieneEnv`
+  need a scoped-stack design with explicit save/restore marks and marker-scan
+  semantics (#3428); `TcSpmdEnv` has already moved to an array-backed scoped
+  stack with snapshot marks (#3583).
 - Treat `AstDeclList` and `AstDeclPathList` as a paired migration; every caller
   that assumes lockstep traversal must update in one slice.
 - Measure before landing any conversion that claims speed or memory wins. The

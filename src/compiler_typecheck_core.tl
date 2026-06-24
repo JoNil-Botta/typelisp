@@ -2454,15 +2454,13 @@
     [(AstDeclDefEnum local-name cleanup variants)
       (or
         (= local-name name-id)
-        (or
-          (tc-enum-cleanup-has-value-id? cleanup name-id)
-          (tc-variant-list-has-value-id? variants name-id)))]
+        (tc-enum-cleanup-has-value-id? cleanup name-id)
+        (tc-variant-list-has-value-id? variants name-id))]
     [(AstDeclDefEnumLifetimes local-name _ cleanup variants)
       (or
         (= local-name name-id)
-        (or
-          (tc-enum-cleanup-has-value-id? cleanup name-id)
-          (tc-variant-list-has-value-id? variants name-id)))]
+        (tc-enum-cleanup-has-value-id? cleanup name-id)
+        (tc-variant-list-has-value-id? variants name-id))]
     [(AstDeclDefStruct local-name _ cleanup _)
       (or
         (= local-name name-id)

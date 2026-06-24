@@ -13037,19 +13037,28 @@
 
 (define (tc-thread-name-last-dot [name : String]) : i64
   (let
-    [i : i64 0]
-    [n : i64 (string-length name)]
-    [last : i64 -1]
-    (begin
-      (while (< i n)
+    [first : i64 (tc-name-first-dot name)]
+    (if (< first 0)
+      -1
+      (let
+        [i : i64 (+ first 1)]
+        [n : i64 (string-length name)]
+        [last : i64 first]
         (begin
-          (if (char-eq (string-ref name i) '.')
-            (set! last i)
-            unit)
-          (set! i (+ i 1))))
-      last)))
+          (while (< i n)
+            (begin
+              (if (char-eq (string-ref name i) '.')
+                (set! last i)
+                unit)
+              (set! i (+ i 1))))
+          last)))))
 
 (define (tc-thread-name-base [name : String]) : String
+  (if (tc-name-qualified? name)
+    (tc-qualified-name-base name)
+    name))
+
+(define (tc-thread-source-name-base [name : String]) : String
   (if (tc-name-qualified? name)
     (tc-qualified-name-base name)
     (let
@@ -13100,7 +13109,7 @@
     (and
       (not (tc-name-qualified? name))
       (>= (tc-thread-name-last-dot name) 0)
-      (string-eq (tc-thread-name-base name) "Handle"))))
+      (string-eq (tc-thread-source-name-base name) "Handle"))))
 
 (define (tc-thread-spawn-string-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-string"))
@@ -13111,13 +13120,14 @@
 (define (tc-thread-spawn-box-i64-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-box-i64"))
 
+(define (tc-thread-legacy-safe-spawn-base? [base : String]) : bool
+  (or
+    (string-eq base "thread-spawn-string")
+    (string-eq base "thread-spawn-array-i64")
+    (string-eq base "thread-spawn-box-i64")))
+
 (define (tc-thread-legacy-safe-spawn-name? [name : String]) : bool
-  (let
-    [base : String (tc-thread-name-base name)]
-    (or
-      (string-eq base "thread-spawn-string")
-      (string-eq base "thread-spawn-array-i64")
-      (string-eq base "thread-spawn-box-i64"))))
+  (tc-thread-legacy-safe-spawn-base? (tc-thread-name-base name)))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
   (let
@@ -13143,19 +13153,25 @@
     (tc-thread-legacy-safe-spawn-name? source-name)
     (tc-thread-legacy-safe-spawn-name? lookup-name)
     (tc-thread-generated-name? lookup-name "spawn")
-    (string-eq (tc-thread-name-base source-name) "spawn")
+    (string-eq (tc-thread-source-name-base source-name) "spawn")
     (string-eq (tc-thread-name-base lookup-name) "spawn")))
 
-(define (tc-thread-potential-safe-spawn-source-name? [source-name : String]) : bool
-  (or
-    (tc-thread-legacy-safe-spawn-name? source-name)
-    (tc-thread-generated-name? source-name "spawn")
-    (string-eq (tc-thread-name-base source-name) "spawn")))
+(define (tc-thread-potential-safe-spawn-dotted-source-name?
+  [source-name : String]) : bool
+  (tc-string-has-suffix? source-name ".spawn"))
 
-(define (tc-thread-dotted-source-spawn-name? [name : String]) : bool
-  (and
-    (>= (tc-thread-name-last-dot name) 0)
-    (string-eq (tc-thread-name-base name) "spawn")))
+(define (tc-thread-potential-safe-spawn-source-name? [source-name : String]) : bool
+  (cond
+    [(or
+        (string-eq source-name "spawn")
+        (tc-thread-legacy-safe-spawn-base? source-name))
+      true]
+    [(tc-name-qualified? source-name)
+      (let
+        [base : String (tc-qualified-name-base source-name)]
+        (or (string-eq base "spawn") (tc-thread-legacy-safe-spawn-base? base)))]
+    [(tc-thread-potential-safe-spawn-dotted-source-name? source-name) true]
+    [else false]))
 
 (define (tc-thread-safe-spawn-call-name
   [ctx : TcContext]
@@ -13262,7 +13278,7 @@
     [(TcSomeString module) (TcSomeString module)]
     [(TcNoString)
       (if (or
-        (string-eq (tc-thread-name-base source-name) "spawn")
+        (string-eq (tc-thread-source-name-base source-name) "spawn")
         (string-eq (tc-thread-name-base lookup-name) "spawn"))
         (match (tc-thread-generated-spawn-result-module ctx ret)
           [(TcSomeString module) (TcSomeString module)]
@@ -13912,14 +13928,12 @@
     [(TcSomeString source-name)
       (let
         [lookup-name : String (tc-thread-spawn-lookup-name ctx env source-name)]
-        (if (or
-          (tc-thread-safe-spawn-signature?
-            ctx
-            source-name
-            lookup-name
-            params
-            ret)
-          (tc-thread-dotted-source-spawn-name? source-name))
+        (if (tc-thread-safe-spawn-signature?
+          ctx
+          source-name
+          lookup-name
+          params
+          ret)
           (match args
             [(AstExprCons arg rest)
               (match (box-get rest)

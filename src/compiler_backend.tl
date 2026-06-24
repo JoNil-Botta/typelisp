@@ -8564,6 +8564,43 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
+  ;; vreg-model: when the GEP result has a register home and the base is already
+  ;; in a register, compute the address straight into that home with a single
+  ;; leaq (constant offset), instead of loading base into %rax, adding, and
+  ;; storing it (bucket f). Variable-index GEPs and spilled/stack operands fall
+  ;; through to the staged %rax path.
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [base-reg : String
+      (compiler-backend-value-scalar-register assignments base)]
+    (if (if (string-eq dst-home "")
+      false
+      (not (string-eq base-reg "")))
+      (match (compiler-backend-value-as-i64 offset)
+        [(CompilerBackendSomeI64 n)
+          (let
+            [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+            (if (if (= disp 0)
+              (string-eq base-reg dst-home)
+              false)
+              (OkCompilerBackend "")
+              (OkCompilerBackend
+                (str-cat
+                  "    leaq "
+                  (compiler-backend-copy-address disp base-reg)
+                  ", "
+                  dst-home
+                  "\n"))))]
+        [(CompilerBackendNoI64)
+          (compiler-backend-emit-gep-staged assignments dst base offset elem-ty)])
+      (compiler-backend-emit-gep-staged assignments dst base offset elem-ty))))
+
+(define (compiler-backend-emit-gep-staged
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
     [(OkCompilerBackend base-asm)
       (let

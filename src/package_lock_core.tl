@@ -718,9 +718,7 @@
   (if (package-lock-self-test-ok?)
     42
     (begin
-      (panic "package-lock: self-test mismatch")
-      ;; lint-allow: unreachable-code
-      1)))
+      (panic "package-lock: self-test mismatch"))))
 
 (test
   package-lock-parse-emit-round-trip

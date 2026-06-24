@@ -315,10 +315,6 @@ _No documented declarations._
       (if (string-eq empty-rendered (doc-render-empty-expected))
         42
         (begin
-          (panic "doc-render: empty markdown smoke mismatch")
-          ;; lint-allow: unreachable-code
-          0))
+          (panic "doc-render: empty markdown smoke mismatch")))
       (begin
-        (panic "doc-render: markdown smoke mismatch")
-        ;; lint-allow: unreachable-code
-        0))))
+        (panic "doc-render: markdown smoke mismatch")))))

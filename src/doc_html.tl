@@ -670,6 +670,4 @@
   (if (doc-string-contains? rendered needle)
     true
     (begin
-      (panic message)
-      ;; lint-allow: unreachable-code
-      false)))
+      (panic message))))

@@ -9935,15 +9935,9 @@
           (compiler-parse-cfg-tests-ok?))
           42
           (begin
-            (panic "parse: error-path self-tests failed")
-            ;; lint-allow: unreachable-code
-            0))
+            (panic "parse: error-path self-tests failed")))
         (begin
-          (panic "parse: compiler AST smoke score mismatch")
-          ;; lint-allow: unreachable-code
-          0))]
+          (panic "parse: compiler AST smoke score mismatch")))]
     [(ErrAstProgram message)
       (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        0)]))
+        (panic message))]))

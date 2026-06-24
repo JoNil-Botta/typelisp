@@ -176,10 +176,7 @@
               (expect tags cur (tag-rparen))
               inner)))
         (begin
-          (panic "parser: expected an integer or '('")
-          ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
-          ;; lint-allow: unreachable-code
-          (ENum 0))))))
+          (panic "parser: expected an integer or '('"))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then while the next token is '*' or '/', consume it, parse the

@@ -7626,9 +7626,7 @@
           (panic "typecheck: smoke score mismatch"))]
       [(ErrCompilerTypecheck diag)
         (begin
-          (panic (compiler-diagnostic-message diag))
-          ;; lint-allow: unreachable-code
-          unit)])
+          (panic (compiler-diagnostic-message diag)))])
     unit))
 
 ;; --- move checker fixtures (#1048) ------------------------------------------
@@ -9736,21 +9734,15 @@
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
       (begin
-        (panic "typecheck: layout query tests failed")
-        ;; lint-allow: unreachable-code
-        unit))
+        (panic "typecheck: layout query tests failed")))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
       (begin
-        (panic "typecheck: defmacro tests failed")
-        ;; lint-allow: unreachable-code
-        unit))
+        (panic "typecheck: defmacro tests failed")))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
       (begin
-        (panic "typecheck: macro expansion tests failed")
-        ;; lint-allow: unreachable-code
-        unit))))
+        (panic "typecheck: macro expansion tests failed")))))
 
 (define (compiler-typecheck-self-test) : i64
   (begin

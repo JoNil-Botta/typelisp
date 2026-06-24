@@ -46872,6 +46872,4 @@
     (compiler-lower-back-half-tests-ok?))
     42
     (begin
-      (panic "lower: smoke score mismatch")
-      ;; lint-allow: unreachable-code
-      0)))
+      (panic "lower: smoke score mismatch"))))

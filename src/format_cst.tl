@@ -259,9 +259,7 @@
     [(OkFormatParsedCstList parsed) parsed]
     [(ErrFormatParsedCstList err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtParsedCstList FmtCstNil idx))]))
+        (panic (format-source-error-message err)))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
@@ -311,9 +309,7 @@
     [(OkFormatParsedCst parsed) parsed]
     [(ErrFormatParsedCst err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtParsedCst (FmtCstAtom (format-token-at stream idx)) idx))]))
+        (panic (format-source-error-message err)))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
@@ -327,9 +323,7 @@
     [(OkFormatCst tree) tree]
     [(ErrFormatCst err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtCstForms (box FmtCstNil)))]))
+        (panic (format-source-error-message err)))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
   (match (format-lex-result src)
@@ -341,9 +335,7 @@
     [(OkFormatCst tree) tree]
     [(ErrFormatCst err)
       (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtCstForms (box FmtCstNil)))]))
+        (panic (format-source-error-message err)))]))
 
 (define (format-cst-fixture) : String
   "(import \"std.tl\")

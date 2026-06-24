@@ -3689,21 +3689,13 @@
                   (if ok
                     42
                     (begin
-                      (panic "symbols: smoke score mismatch")
-                      ;; lint-allow: unreachable-code
-                      0))))]
+                      (panic "symbols: smoke score mismatch")))))]
             [(ErrCompilerRegistries message)
               (begin
-                (panic message)
-                ;; lint-allow: unreachable-code
-                0)])]
+                (panic message))])]
         [(ErrCompilerSymbols message)
           (begin
-            (panic message)
-            ;; lint-allow: unreachable-code
-            0)])]
+            (panic message))])]
     [(ErrAstProgram message)
       (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        0)]))
+        (panic message))]))

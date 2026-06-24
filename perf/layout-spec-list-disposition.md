@@ -47,9 +47,13 @@ Cachegrind self-compile for the branch-built Linux compiler:
 The current-main comparison used the same WSL/cachegrind harness family after
 rebasing onto `b7805f0d`. Absolute self-compile counts vary across runner and
 worktree path, so CI remains authoritative for the fixed
-`perf/insn-exec-baseline.tsv` gate. This change only adds profile-gated
-counters plus one small fixture; normal builds do not execute the counter
-increments.
+`perf/insn-exec-baseline.tsv` gate. CI measured the rebased branch at
+`108,253,771,341` instructions against the previous fixed baseline
+`107,680,565,264`, a `+573,206,077` (`+0.532321%`) self-compile source-size
+increase. Exact benchmark rows were unchanged. After rebasing onto current
+`main`, the checked baseline is `108,338,114,549`, so this PR keeps the newer
+baseline row and does not lower it. This change only adds profile-gated counters
+plus one small fixture; normal builds do not execute the counter increments.
 
 Self-compile `typecheck.layout.*` counters:
 

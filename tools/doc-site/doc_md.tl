@@ -15,20 +15,21 @@
 (import "../../stdlib/vector.tl")
 (import "../../stdlib/vector_family.tl")
 (import "../../stdlib/str_cat.tl")
+(import (vector String) as svec)
 
 (defenum MdTableRow
-  (MdTableRow StringVec))
+  (MdTableRow svec.Vec))
 
 (vector-family MdTableRow MdTableRowList md-table-row-list)
 
 (defenum MdBlock
   (MdHeading i64 String)
   (MdParagraph String)
-  (MdBlockquote StringVec)
-  (MdBulletList StringVec)
-  (MdNumberedList StringVec)
+  (MdBlockquote svec.Vec)
+  (MdBulletList svec.Vec)
+  (MdNumberedList svec.Vec)
   (MdCodeFence String String String)
-  (MdTable StringVec MdTableRowList)
+  (MdTable svec.Vec MdTableRowList)
   (MdBlank))
 
 (vector-family MdBlock MdBlockList md-block-list)
@@ -54,7 +55,7 @@
   (md-table-row-list-len (& items)))
 
 (define (md-table-row-list-ref [items : MdTableRowList] [index : i64]) : MdTableRow
-  (md-table-row-list-get (& items) index (MdTableRow (string-vec-new))))
+  (md-table-row-list-get (& items) index (MdTableRow (svec.new))))
 
 (define (md-block-list-empty) : MdBlockList
   (md-block-list-new))
@@ -62,18 +63,18 @@
 (define (md-block-list-count [items : MdBlockList]) : i64
   (md-block-list-len (& items)))
 
-(define (md-string-list-count [items : StringVec]) : i64
-  (string-vec-len items))
+(define (md-string-list-count [items : svec.Vec]) : i64
+  (svec.len (& items)))
 
-(define (md-string-list-ref [items : StringVec] [index : i64]) : MdMaybeString
+(define (md-string-list-ref [items : svec.Vec] [index : i64]) : MdMaybeString
   (if (if (>= index 0)
-    (< index (string-vec-len items))
+    (< index (svec.len (& items)))
     false)
-    (MdSomeString (string-vec-get items index ""))
+    (MdSomeString (svec.get (& items) index ""))
     MdNoString))
 
 (define (md-string-list-ref-eq?
-  [items : StringVec]
+  [items : svec.Vec]
   [index : i64]
   [expected : String]) : bool
   (match (md-string-list-ref items index)
@@ -81,7 +82,7 @@
     [(MdNoString) false]))
 
 (define (md-string-list-eq2?
-  [items : StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]) : bool
   (and
@@ -480,28 +481,27 @@
         (set! end end))
       (substring trimmed start (- end start)))))
 
-(define (md-split-pipe-row [line : String]) : StringVec
+(define (md-split-pipe-row [line : String]) : svec.Vec
   (let
     [body : String (md-strip-pipe-edges line)]
     [n : i64 (string-length (md-strip-pipe-edges line))]
     [i : i64 0]
     [segment-start : i64 0]
-    [items : StringVec (string-vec-new)]
+    [items : svec.Vec (svec.new)]
     (begin
       (while (< i n)
         (if (= (string-ref body i) '|')
           (begin
-            (set!
-              items
-              (string-vec-push
-                items
-                (md-trim (substring body segment-start (- i segment-start)))))
+            (svec.push
+              (&mut items)
+              (md-trim (substring body segment-start (- i segment-start))))
             (set! segment-start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
-      (string-vec-push
-        items
-        (md-trim (substring body segment-start (- n segment-start)))))))
+      (svec.push
+        (&mut items)
+        (md-trim (substring body segment-start (- n segment-start))))
+      items)))
 
 (define (md-block-start-at? [src : String] [pos : i64] [n : i64]) : bool
   (let
@@ -543,7 +543,7 @@
 (define (md-scan-blockquote [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : StringVec (string-vec-new)]
+    [items : svec.Vec (svec.new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -553,7 +553,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-blockquote-start? line)
             (begin
-              (set! items (string-vec-push items (md-blockquote-text line)))
+              (svec.push (&mut items) (md-blockquote-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdBlockquote items)))))
@@ -561,7 +561,7 @@
 (define (md-scan-bullet-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : StringVec (string-vec-new)]
+    [items : svec.Vec (svec.new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -571,7 +571,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-bullet-start? line)
             (begin
-              (set! items (string-vec-push items (md-bullet-text line)))
+              (svec.push (&mut items) (md-bullet-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdBulletList items)))))
@@ -579,7 +579,7 @@
 (define (md-scan-numbered-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
-    [items : StringVec (string-vec-new)]
+    [items : svec.Vec (svec.new)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -589,7 +589,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-numbered-start? line)
             (begin
-              (set! items (string-vec-push items (md-numbered-text line)))
+              (svec.push (&mut items) (md-numbered-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock scan-pos (MdNumberedList items)))))
@@ -817,22 +817,22 @@
 (define (md-render-paragraph [text : String]) : String
   (str-cat "<p>" (md-render-inline text) "</p>\n"))
 
-(define (md-render-inline-lines-from [lines : StringVec] [index : i64]) : String
-  (if (>= index (string-vec-len lines))
+(define (md-render-inline-lines-from [lines : svec.Vec] [index : i64]) : String
+  (if (>= index (svec.len (& lines)))
     ""
     (let
-      [head : String (string-vec-get lines index "")]
-      (if (= (+ index 1) (string-vec-len lines))
+      [head : String (svec.get (& lines) index "")]
+      (if (= (+ index 1) (svec.len (& lines)))
         (md-render-inline head)
         (str-cat
           (md-render-inline head)
           "<br>\n"
           (md-render-inline-lines-from lines (+ index 1)))))))
 
-(define (md-render-inline-lines [lines : StringVec]) : String
+(define (md-render-inline-lines [lines : svec.Vec]) : String
   (md-render-inline-lines-from lines 0))
 
-(define (md-render-blockquote [lines : StringVec]) : String
+(define (md-render-blockquote [lines : svec.Vec]) : String
   (str-cat
     "<blockquote>\n<p>"
     (md-render-inline-lines lines)
@@ -840,49 +840,49 @@
     "</blockquote>\n"
     ""))
 
-(define (md-render-list-items-from [items : StringVec] [index : i64]) : String
-  (if (>= index (string-vec-len items))
+(define (md-render-list-items-from [items : svec.Vec] [index : i64]) : String
+  (if (>= index (svec.len (& items)))
     ""
     (str-cat
       "<li>"
-      (md-render-inline (string-vec-get items index ""))
+      (md-render-inline (svec.get (& items) index ""))
       "</li>\n"
       (md-render-list-items-from items (+ index 1)))))
 
-(define (md-render-list-items [items : StringVec]) : String
+(define (md-render-list-items [items : svec.Vec]) : String
   (md-render-list-items-from items 0))
 
-(define (md-render-bullet-list [items : StringVec]) : String
+(define (md-render-bullet-list [items : svec.Vec]) : String
   (str-cat "<ul>\n" (md-render-list-items items) "</ul>\n"))
 
-(define (md-render-numbered-list [items : StringVec]) : String
+(define (md-render-numbered-list [items : svec.Vec]) : String
   (str-cat "<ol>\n" (md-render-list-items items) "</ol>\n"))
 
 (define (md-render-code-fence [lang : String] [meta : String] [body : String]) : String
   (doc-html-code-block-with-info lang meta body))
 
-(define (md-render-table-header-cells-from [cells : StringVec] [index : i64]) : String
-  (if (>= index (string-vec-len cells))
+(define (md-render-table-header-cells-from [cells : svec.Vec] [index : i64]) : String
+  (if (>= index (svec.len (& cells)))
     ""
     (str-cat
       "<th>"
-      (md-render-inline (string-vec-get cells index ""))
+      (md-render-inline (svec.get (& cells) index ""))
       "</th>"
       (md-render-table-header-cells-from cells (+ index 1)))))
 
-(define (md-render-table-header-cells [cells : StringVec]) : String
+(define (md-render-table-header-cells [cells : svec.Vec]) : String
   (md-render-table-header-cells-from cells 0))
 
-(define (md-render-table-data-cells-from [cells : StringVec] [index : i64]) : String
-  (if (>= index (string-vec-len cells))
+(define (md-render-table-data-cells-from [cells : svec.Vec] [index : i64]) : String
+  (if (>= index (svec.len (& cells)))
     ""
     (str-cat
       "<td>"
-      (md-render-inline (string-vec-get cells index ""))
+      (md-render-inline (svec.get (& cells) index ""))
       "</td>"
       (md-render-table-data-cells-from cells (+ index 1)))))
 
-(define (md-render-table-data-cells [cells : StringVec]) : String
+(define (md-render-table-data-cells [cells : svec.Vec]) : String
   (md-render-table-data-cells-from cells 0))
 
 (define (md-render-table-row [row : MdTableRow]) : String
@@ -900,7 +900,7 @@
 (define (md-render-table-rows [rows : MdTableRowList]) : String
   (md-render-table-rows-from rows 0))
 
-(define (md-render-table [header : StringVec] [rows : MdTableRowList]) : String
+(define (md-render-table [header : svec.Vec] [rows : MdTableRowList]) : String
   (str-cat
     "<table>\n<thead>\n<tr>"
     (md-render-table-header-cells header)

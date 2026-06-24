@@ -6661,7 +6661,7 @@
       "    vpaddq "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, %rax\n")
+      "    vmovq %xmm0, ")
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
@@ -6726,13 +6726,13 @@
       "    vpminsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, %rax\n")
+      "    vmovq %xmm0, ")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, %rax\n")))
+      "    vmovq %xmm0, ")))
 
 (define (compiler-backend-avx512-vector-reduce-ok?) : bool
   (and
@@ -6741,7 +6741,7 @@
       "    vpaddq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, %rax\n")
+      "    vmovq %xmm0, ")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
@@ -6767,6 +6767,101 @@
       "    vaddsd "
       "    movsd %xmm0, ")
     (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))
+
+(define (compiler-backend-vector-reduce-direct-assignments
+  [dst-location : CompilerRegLocation]) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 dst-location)
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-avx2-vector-reduce-direct-stack-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-reduce
+    (compiler-backend-vector-reduce-direct-assignments (CompilerRegSpill -40))
+    1
+    (IrVectorReduceSum)
+    (IrValueVar 0)
+    4
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti128 $1, %ymm6, %xmm0\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm0, -40(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -40(%rbp)\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx2-vector-reduce-direct-register-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-reduce
+    (compiler-backend-vector-reduce-direct-assignments
+      (CompilerRegRegister "%r12"))
+    1
+    (IrVectorReduceSum)
+    (IrValueVar 0)
+    4
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti128 $1, %ymm6, %xmm0\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm0, %r12\n")
+        (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-vector-reduce-direct-stack-ok?) : bool
+  (match (compiler-backend-emit-avx512-vector-reduce
+    (compiler-backend-vector-reduce-direct-assignments (CompilerRegSpill -40))
+    1
+    (IrVectorReduceSum)
+    (IrValueVar 0)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti64x4 $1, %zmm6, %ymm0\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm0, -40(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq %rax, -40(%rbp)\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-vector-reduce-direct-register-ok?) : bool
+  (match (compiler-backend-emit-avx512-vector-reduce
+    (compiler-backend-vector-reduce-direct-assignments
+      (CompilerRegRegister "%r12"))
+    1
+    (IrVectorReduceSum)
+    (IrValueVar 0)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vextracti64x4 $1, %zmm6, %ymm0\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm0, %r12\n")
+        (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-vector-reduce-direct-store-ok?) : bool
+  (and
+    (compiler-backend-avx2-vector-reduce-direct-stack-ok?)
+    (compiler-backend-avx2-vector-reduce-direct-register-ok?)
+    (compiler-backend-avx512-vector-reduce-direct-stack-ok?)
+    (compiler-backend-avx512-vector-reduce-direct-register-ok?)))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
   (IrProgram
@@ -7306,6 +7401,7 @@
     (compiler-backend-avx512-masked-if-ok?)
     (compiler-backend-avx2-vector-reduce-ok?)
     (compiler-backend-avx512-vector-reduce-ok?)
+    (compiler-backend-vector-reduce-direct-store-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
     (compiler-backend-avx512-tail-mask-ok?)

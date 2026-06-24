@@ -33538,6 +33538,90 @@
               [(ErrGenKey diag) (ErrGenKey diag)])]
           [(ErrGenKey diag) (ErrGenKey diag)]))]))
 
+(define (macro-identity-key-sexpr [sexpr : SpannedSexpr]) : String
+  (match sexpr
+    [(SpSInt _ text _) (str-cat "int:" (spec-string-key text))]
+    [(SpSSym name _) (str-cat "sym:" (spec-string-key name))]
+    [(SpSNil _) "nil"]
+    [(SpSCons head tail _)
+      (str-cat
+        "cons:"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get head)))
+        ":"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get tail))))]
+    [(SpSStr text _) (str-cat "str:" (spec-string-key text))]
+    [(SpSChar c _) (str-cat "char:" (int->string (cast c : i64)))]
+    [(SpSFloat text _) (str-cat "float:" (spec-string-key text))]
+    [(SpSBracketList items _)
+      (str-cat
+        "bracket:"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get items))))]))
+
+(define (macro-identity-key-syntax-expr
+  [expr : AstExpr]
+  [origin : AstExpr]
+  [fuel : i64]) : ResultGenKey
+  (match (macro-expr-to-spanned-sexpr expr origin)
+    [(OkMacroSexpr sexpr)
+      (OkGenKey (str-cat "syntax:" (macro-identity-key-sexpr sexpr)) fuel)]
+    [(ErrMacroSexpr diag) (ErrGenKey diag)]))
+
+(define (macro-identity-syntax-param-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-resolve-type ctx (tc-macro-signature-type ty))]
+    (or
+      (tc-type-eq resolved (AstTyExpr))
+      (tc-type-eq resolved (AstTyExprList))
+      (tc-macro-expr-clause-type? resolved)
+      (tc-macro-expr-clause-list-type? resolved)
+      (tc-macro-expr-binding-clause-type? resolved)
+      (tc-macro-expr-binding-clause-list-type? resolved))))
+
+(define (macro-identity-key-param-expr
+  [ctx : TcContext]
+  [ty : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (if (macro-identity-syntax-param-type? ctx ty)
+    (match (macro-identity-key-string-expr expr env fuel)
+      [(OkGenKey key next-fuel) (OkGenKey key next-fuel)]
+      [(ErrGenKey _) (macro-identity-key-syntax-expr expr call-expr fuel)])
+    (macro-identity-key-string-expr expr env fuel)))
+
+(define (macro-identity-key-param-exprs
+  [ctx : TcContext]
+  [ty : AstType]
+  [exprs : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (match exprs
+    [(AstExprNil) (OkGenKey "" fuel)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        (match (macro-identity-key-param-expr
+          ctx
+          ty
+          head-expr
+          env
+          fuel
+          call-expr)
+          [(OkGenKey head-key head-fuel)
+            (match (macro-identity-key-param-exprs
+              ctx
+              ty
+              (box-get rest)
+              env
+              head-fuel
+              call-expr)
+              [(OkGenKey tail tail-fuel)
+                (OkGenKey (macro-identity-key-join head-key tail) tail-fuel)]
+              [(ErrGenKey diag) (ErrGenKey diag)])]
+          [(ErrGenKey diag) (ErrGenKey diag)]))]))
+
 (define (macro-identity-key-params
   [ctx : TcContext]
   [params : AstMacroParamList]
@@ -33565,7 +33649,15 @@
                   (ctfe-diagnostic-at-expr
                     call-expr
                     "typecheck: type macro operand cannot be variadic"))
-                (macro-identity-key-string-exprs args env fuel))
+                (if (macro-identity-syntax-param-type? ctx ty)
+                  (macro-identity-key-param-exprs
+                    ctx
+                    ty
+                    args
+                    env
+                    fuel
+                    call-expr)
+                  (macro-identity-key-string-exprs args env fuel)))
               (match args
                 [(AstExprNil)
                   (ErrGenKey
@@ -33583,7 +33675,13 @@
                             (str-cat "type_" (ctfe-type-key resolved-ty))
                             fuel)]
                         [(ErrMacroTypeArg diag) (ErrGenKey diag)])
-                      (macro-identity-key-string-expr head-expr env fuel))
+                      (macro-identity-key-param-expr
+                        ctx
+                        ty
+                        head-expr
+                        env
+                        fuel
+                        call-expr))
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx

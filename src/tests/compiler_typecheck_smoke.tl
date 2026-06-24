@@ -1334,6 +1334,17 @@
 (module bundle.family)
 (bundle \"v1\")")
 
+(define (compiler-typecheck-smoke-decls-macro-expr-name-key-source) : String
+  "(defmacro (box-family [T : type] [box-name : Expr] [ctor-name : Expr]) : Decls
+  `(begin
+    (defstruct ,box-name (value ,T))
+    (define (,ctor-name [value : ,T]) : ,box-name
+      (,box-name value))))
+(box-family i64 IntBox int-box)
+(box-family i64 IntBox int-box)
+(define (main) : i64
+  (struct-get (int-box 42) value))")
+
 (define (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source) : String
   "(module bundle.left)
 (defmacro (bundle [version : String]) : Decls
@@ -1353,6 +1364,8 @@
       "generated-decl: duplicate generated key for BundleBox has incompatible payload")
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-expr-name-key-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source))))
 

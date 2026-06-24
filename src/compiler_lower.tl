@@ -691,7 +691,9 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeCache _ _ _ _ _ _ _ rest _) (lower-type-env-count (box-get rest))]
-    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
+    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]
+    [(TcTypeStack _ slot)
+      (+ 1 (lower-type-env-count (tc-type-env-stack-rest slot)))]))
 
 (define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
   (match env
@@ -701,7 +703,11 @@
     [(TcTypeBind _ ty rest)
       (if (tc-type-contains-reference? ty)
         true
-        (lower-type-env-contains-reference? (box-get rest)))]))
+        (lower-type-env-contains-reference? (box-get rest)))]
+    [(TcTypeStack _ slot)
+      (if (tc-type-contains-reference? (tc-type-env-stack-type slot))
+        true
+        (lower-type-env-contains-reference? (tc-type-env-stack-rest slot)))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -735,7 +741,14 @@
     [(TcTypeBind name-id ty rest)
       (lower-type-cache-from-env-into
         (box-get rest)
-        (lower-type-cache-add cache (intern-str name-id) ty))]))
+        (lower-type-cache-add cache (intern-str name-id) ty))]
+    [(TcTypeStack name-id slot)
+      (lower-type-cache-from-env-into
+        (tc-type-env-stack-rest slot)
+        (lower-type-cache-add
+          cache
+          (intern-str name-id)
+          (tc-type-env-stack-type slot)))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -11993,6 +12006,13 @@
               (set! result (OkLowerState cur-state))
               (set! done true))]
           [(TcTypeCache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
+          [(TcTypeStack name-id slot)
+            (set!
+              cur-env
+              (TcTypeBind
+                name-id
+                (tc-type-env-stack-type slot)
+                (box (tc-type-env-stack-rest slot))))]
           [(TcTypeBind key ty rest)
             (begin
               (if (= key cleanup-marker-id)
@@ -12100,6 +12120,15 @@
         state
         env
         (box-get rest))]
+    [(TcTypeStack name-id slot)
+      (lower-emit-active-cleanups-with
+        cleanup-marker-id
+        state
+        env
+        (TcTypeBind
+          name-id
+          (tc-type-env-stack-type slot)
+          (box (tc-type-env-stack-rest slot))))]
     [(TcTypeBind key ty rest)
       (if (= key cleanup-marker-id)
         (match ty

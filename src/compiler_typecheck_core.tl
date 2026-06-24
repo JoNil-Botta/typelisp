@@ -35,6 +35,7 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind i64 AstType (Box TcTypeEnv))
+  (TcTypeStack i64 i64)
   (TcTypeCache
     I64I64Map
     (Array AstType)
@@ -45,6 +46,198 @@
     bool
     (Box TcTypeEnv)
     (Box TcTypeEnv)))
+
+;; Stack slots are append-only pages. Pages are stable for the whole compiler
+;; file-state lifetime, so old TcTypeEnv snapshots never observe moved or
+;; overwritten slot storage.
+(defstruct TcTypeEnvStackPage
+  (base i64)
+  (keys (Array i64))
+  (types (Array AstType))
+  (rests (Array TcTypeEnv)))
+
+(defenum TcTypeEnvStackPages
+  (TcTypeEnvStackPagesNil)
+  (TcTypeEnvStackPagesCons TcTypeEnvStackPage (Box TcTypeEnvStackPages)))
+
+(defenum TcMaybeTypeEnvStackPage
+  (TcNoTypeEnvStackPage)
+  (TcSomeTypeEnvStackPage TcTypeEnvStackPage))
+
+(define tc-type-env-stack-page-size : i64
+  262144)
+(define tc-type-env-stack-pages : TcTypeEnvStackPages
+  (TcTypeEnvStackPagesNil))
+(define tc-type-env-stack-len : i64
+  0)
+(define tc-type-env-stack-arena : i64
+  0)
+(define tc-type-env-stack-hot-ready : bool
+  false)
+(define tc-type-env-stack-hot-base : i64
+  0)
+(define tc-type-env-stack-hot-keys : (Array i64)
+  (make-array i64 1))
+(define tc-type-env-stack-hot-types : (Array AstType)
+  (make-array AstType 1))
+(define tc-type-env-stack-hot-rests : (Array TcTypeEnv)
+  (make-array TcTypeEnv 1))
+
+(define (tc-type-env-stack-arena-handle) : i64
+  (begin
+    (if (= tc-type-env-stack-arena 0)
+      (set! tc-type-env-stack-arena (tl_arena_make))
+      unit)
+    tc-type-env-stack-arena))
+
+(define (tc-type-env-stack-page-base [slot : i64]) : i64
+  (- slot (% slot tc-type-env-stack-page-size)))
+
+(define (tc-type-env-stack-page-has-slot?
+  [page : TcTypeEnvStackPage]
+  [slot : i64]) : bool
+  (let
+    [base : i64 (struct-get page base)]
+    (and (>= slot base) (< slot (+ base tc-type-env-stack-page-size)))))
+
+(define (tc-type-env-stack-hot-has-slot? [slot : i64]) : bool
+  (and
+    tc-type-env-stack-hot-ready
+    (>= slot tc-type-env-stack-hot-base)
+    (< slot (+ tc-type-env-stack-hot-base tc-type-env-stack-page-size))))
+
+(define (tc-type-env-stack-set-hot-page! [page : TcTypeEnvStackPage]) : unit
+  (begin
+    (set! tc-type-env-stack-hot-base (struct-get page base))
+    (set! tc-type-env-stack-hot-keys (struct-get page keys))
+    (set! tc-type-env-stack-hot-types (struct-get page types))
+    (set! tc-type-env-stack-hot-rests (struct-get page rests))
+    (set! tc-type-env-stack-hot-ready true)))
+
+(define (tc-type-env-stack-find-page [pages : TcTypeEnvStackPages] [slot : i64]) : TcMaybeTypeEnvStackPage
+  (match pages
+    [(TcTypeEnvStackPagesNil) (TcNoTypeEnvStackPage)]
+    [(TcTypeEnvStackPagesCons page rest)
+      (if (tc-type-env-stack-page-has-slot? page slot)
+        (TcSomeTypeEnvStackPage page)
+        (tc-type-env-stack-find-page (box-get rest) slot))]))
+
+(define (tc-type-env-stack-new-page [slot : i64]) : TcTypeEnvStackPage
+  (TcTypeEnvStackPage
+    (tc-type-env-stack-page-base slot)
+    (make-array i64 tc-type-env-stack-page-size)
+    (make-array AstType tc-type-env-stack-page-size)
+    (make-array TcTypeEnv tc-type-env-stack-page-size)))
+
+(define (tc-type-env-stack-ensure-page! [slot : i64]) : TcTypeEnvStackPage
+  (if (tc-type-env-stack-hot-has-slot? slot)
+    (TcTypeEnvStackPage
+      tc-type-env-stack-hot-base
+      tc-type-env-stack-hot-keys
+      tc-type-env-stack-hot-types
+      tc-type-env-stack-hot-rests)
+    (match (tc-type-env-stack-find-page tc-type-env-stack-pages slot)
+      [(TcSomeTypeEnvStackPage page)
+        (begin
+          (tc-type-env-stack-set-hot-page! page)
+          page)]
+      [(TcNoTypeEnvStackPage)
+        (let
+          [prev-arena : i64 (tl_arena_current)]
+          [_switched : unit
+            (unsafe
+              (tl_arena_set (tc-type-env-stack-arena-handle)))]
+          [page : TcTypeEnvStackPage (tc-type-env-stack-new-page slot)]
+          [next-pages : TcTypeEnvStackPages
+            (TcTypeEnvStackPagesCons page (box tc-type-env-stack-pages))]
+          [_restored : unit
+            (unsafe
+              (tl_arena_set prev-arena))]
+          (begin
+            (set! tc-type-env-stack-pages next-pages)
+            (tc-type-env-stack-set-hot-page! page)
+            page))])))
+
+(define (tc-type-env-stack-page-for-slot [slot : i64]) : TcTypeEnvStackPage
+  (if (tc-type-env-stack-hot-has-slot? slot)
+    (TcTypeEnvStackPage
+      tc-type-env-stack-hot-base
+      tc-type-env-stack-hot-keys
+      tc-type-env-stack-hot-types
+      tc-type-env-stack-hot-rests)
+    (match (tc-type-env-stack-find-page tc-type-env-stack-pages slot)
+      [(TcSomeTypeEnvStackPage page)
+        (begin
+          (tc-type-env-stack-set-hot-page! page)
+          page)]
+      [(TcNoTypeEnvStackPage)
+        (panic "typecheck: missing type env stack page\n")])))
+
+(define (tc-type-env-stack-slot-offset [page : TcTypeEnvStackPage] [slot : i64]) : i64
+  (- slot (struct-get page base)))
+
+(define (tc-type-env-stack-push
+  [name-id : i64]
+  [ty : AstType]
+  [rest : TcTypeEnv]) : TcTypeEnv
+  (let
+    [prev-arena : i64 (tl_arena_current)]
+    [_switched : unit
+      (unsafe
+        (tl_arena_set (tc-type-env-stack-arena-handle)))]
+    [slot : i64 tc-type-env-stack-len]
+    [page : TcTypeEnvStackPage (tc-type-env-stack-ensure-page! slot)]
+    [offset : i64 (tc-type-env-stack-slot-offset page slot)]
+    (begin
+      (array-set! (struct-get page keys) offset name-id)
+      (array-set! (struct-get page types) offset ty)
+      (array-set! (struct-get page rests) offset rest)
+      (set! tc-type-env-stack-len (+ slot 1))
+      (let
+        [out : TcTypeEnv (TcTypeStack name-id slot)]
+        (begin
+          (unsafe
+            (tl_arena_set prev-arena))
+          out)))))
+
+(define (tc-type-env-stack-key [slot : i64]) : i64
+  (if (tc-type-env-stack-hot-has-slot? slot)
+    (array-ref tc-type-env-stack-hot-keys (- slot tc-type-env-stack-hot-base))
+    (let
+      [page : TcTypeEnvStackPage (tc-type-env-stack-page-for-slot slot)]
+      (array-ref
+        (struct-get page keys)
+        (tc-type-env-stack-slot-offset page slot)))))
+
+(define (tc-type-env-stack-type [slot : i64]) : AstType
+  (if (tc-type-env-stack-hot-has-slot? slot)
+    (array-ref tc-type-env-stack-hot-types (- slot tc-type-env-stack-hot-base))
+    (let
+      [page : TcTypeEnvStackPage (tc-type-env-stack-page-for-slot slot)]
+      (array-ref
+        (struct-get page types)
+        (tc-type-env-stack-slot-offset page slot)))))
+
+(define (tc-type-env-stack-rest [slot : i64]) : TcTypeEnv
+  (if (tc-type-env-stack-hot-has-slot? slot)
+    (array-ref tc-type-env-stack-hot-rests (- slot tc-type-env-stack-hot-base))
+    (let
+      [page : TcTypeEnvStackPage (tc-type-env-stack-page-for-slot slot)]
+      (array-ref
+        (struct-get page rests)
+        (tc-type-env-stack-slot-offset page slot)))))
+
+(define (tc-type-env-stack-reset!) : unit
+  (begin
+    (set! tc-type-env-stack-pages (TcTypeEnvStackPagesNil))
+    (set! tc-type-env-stack-len 0)
+    (set! tc-type-env-stack-hot-ready false)
+    (if (= tc-type-env-stack-arena 0)
+      unit
+      (begin
+        (unsafe
+          (tl_arena_destroy tc-type-env-stack-arena))
+        (set! tc-type-env-stack-arena 0)))))
 
 (defenum TcContext
   (TcContext
@@ -1885,7 +2078,7 @@
 (define (tc-bind-raw-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-bind))
-    (TcTypeBind name-id ty (box env))))
+    (tc-type-env-stack-push name-id ty env)))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind-raw-id env (tc-name-id name) ty))
@@ -1900,6 +2093,10 @@
     (match env
       [(TcTypeBind _ _ rest)
         (tc-env-uncached-prefix-reaches-cache? (box-get rest) (- remaining 1))]
+      [(TcTypeStack _ slot)
+        (tc-env-uncached-prefix-reaches-cache?
+          (tc-type-env-stack-rest slot)
+          (- remaining 1))]
       [_ false])))
 
 (define (tc-env-after-prefix [env : TcTypeEnv] [remaining : i64]) : TcTypeEnv
@@ -1908,6 +2105,8 @@
     (match env
       [(TcTypeBind _ _ rest)
         (tc-env-after-prefix (box-get rest) (- remaining 1))]
+      [(TcTypeStack _ slot)
+        (tc-env-after-prefix (tc-type-env-stack-rest slot) (- remaining 1))]
       [_ env])))
 
 (define (tc-env-partial-layer-depth [env : TcTypeEnv]) : i64
@@ -2051,6 +2250,15 @@
             (tc-c-abi-fnptr-marker-near-id?
               (box-get rest)
               name-id
+              (- remaining 1))))]
+      [(TcTypeStack key slot)
+        (if (= key (tc-c-abi-fnptr-marker-id name-id))
+          true
+          (if (= key name-id)
+            false
+            (tc-c-abi-fnptr-marker-near-id?
+              (tc-type-env-stack-rest slot)
+              name-id
               (- remaining 1))))])))
 
 (define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
@@ -2066,7 +2274,13 @@
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
-        (tc-binding-c-abi-fnptr-id? (box-get rest) name-id))]))
+        (tc-binding-c-abi-fnptr-id? (box-get rest) name-id))]
+    [(TcTypeStack key slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= key name-id)
+          (tc-c-abi-fnptr-marker-near-id? rest name-id 3)
+          (tc-binding-c-abi-fnptr-id? rest name-id)))]))
 
 (define (tc-binding-c-abi-fnptr? [env : TcTypeEnv] [name : String]) : bool
   (tc-binding-c-abi-fnptr-id? env (tc-name-id name)))
@@ -2074,6 +2288,7 @@
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeBind key _ _) (= key (tc-unsafe-decl-marker-id name-id))]
+    [(TcTypeStack key _) (= key (tc-unsafe-decl-marker-id name-id))]
     [_ false]))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
@@ -2092,7 +2307,14 @@
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
-        (tc-binding-unsafe-id? (box-get rest) name-id))]))
+        (tc-binding-unsafe-id? (box-get rest) name-id))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= key name-id)
+          (tc-binding-unsafe-marker-head-id? rest name-id)
+          (tc-binding-unsafe-id? rest name-id)))]))
 
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (tc-binding-unsafe-id? env (tc-name-id name)))
@@ -2101,6 +2323,8 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
+    [(TcTypeStack _ slot)
+      (+ 1 (tc-env-cache-count (tc-type-env-stack-rest slot)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-env-cache-count (box-get rest))]))
 
 (define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
@@ -2109,6 +2333,12 @@
     (match env
       [(TcTypeBind _ _ rest)
         (+ 1 (tc-env-cache-count-prefix (box-get rest) (- remaining 1)))]
+      [(TcTypeStack _ slot)
+        (+
+          1
+          (tc-env-cache-count-prefix
+            (tc-type-env-stack-rest slot)
+            (- remaining 1)))]
       [_ 0])))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
@@ -2200,6 +2430,32 @@
           c-abi-fnptr-flags
           shadow-flags
           still-above))]
+    [(TcTypeStack name-id slot)
+      (let
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest-env : TcTypeEnv (tc-type-env-stack-rest slot)]
+        [still-above : bool
+          (if above-boundary
+            (not (= name-id (tc-default-boundary-id)))
+            false)]
+        (tc-env-cache-fill
+          rest-env
+          (tc-env-cache-add
+            ids
+            values
+            unsafe-flags
+            c-abi-fnptr-flags
+            shadow-flags
+            name-id
+            ty
+            (tc-binding-unsafe-marker-head-id? rest-env name-id)
+            (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+            still-above)
+          values
+          unsafe-flags
+          c-abi-fnptr-flags
+          shadow-flags
+          still-above))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-env-cache-fill
         (box-get rest)
@@ -2225,6 +2481,33 @@
       [(TcTypeBind name-id ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
+          [still-above : bool
+            (if above-boundary
+              (not (= name-id (tc-default-boundary-id)))
+              false)]
+          (tc-env-cache-fill-prefix
+            rest-env
+            (- remaining 1)
+            (tc-env-cache-add
+              ids
+              values
+              unsafe-flags
+              c-abi-fnptr-flags
+              shadow-flags
+              name-id
+              ty
+              (tc-binding-unsafe-marker-head-id? rest-env name-id)
+              (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+              still-above)
+            values
+            unsafe-flags
+            c-abi-fnptr-flags
+            shadow-flags
+            still-above))]
+      [(TcTypeStack name-id slot)
+        (let
+          [ty : AstType (tc-type-env-stack-type slot)]
+          [rest-env : TcTypeEnv (tc-type-env-stack-rest slot)]
           [still-above : bool
             (if above-boundary
               (not (= name-id (tc-default-boundary-id)))
@@ -3033,7 +3316,11 @@
     [(TcTypeBind key _ rest)
       (if (= key (tc-unsafe-marker-id))
         true
-        (tc-in-unsafe-scan? (box-get rest)))]))
+        (tc-in-unsafe-scan? (box-get rest)))]
+    [(TcTypeStack key slot)
+      (if (= key (tc-unsafe-marker-id))
+        true
+        (tc-in-unsafe-scan? (tc-type-env-stack-rest slot)))]))
 
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (begin
@@ -3254,7 +3541,11 @@
     [(TcTypeBind key ty rest)
       (if (= key (tc-return-type-id))
         (OkTcType ty)
-        (tc-current-return-type-scan (box-get rest)))]))
+        (tc-current-return-type-scan (box-get rest)))]
+    [(TcTypeStack key slot)
+      (if (= key (tc-return-type-id))
+        (OkTcType (tc-type-env-stack-type slot))
+        (tc-current-return-type-scan (tc-type-env-stack-rest slot)))]))
 
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
   (begin
@@ -4477,7 +4768,11 @@
       [(TcTypeBind key ty rest)
         (if (= key name-id)
           (OkTcType ty)
-          (tc-lookup-id (box-get rest) name-id))])))
+          (tc-lookup-id (box-get rest) name-id))]
+      [(TcTypeStack key slot)
+        (if (= key name-id)
+          (OkTcType (tc-type-env-stack-type slot))
+          (tc-lookup-id (tc-type-env-stack-rest slot) name-id))])))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-id env (tc-name-id name)))
@@ -4495,7 +4790,11 @@
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         true
-        (tc-name-bound-id? (box-get rest) name-id))]))
+        (tc-name-bound-id? (box-get rest) name-id))]
+    [(TcTypeStack key slot)
+      (if (= key name-id)
+        true
+        (tc-name-bound-id? (tc-type-env-stack-rest slot) name-id))]))
 
 (define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (begin
@@ -4529,7 +4828,15 @@
           (OkTcTypeUnsafe
             ty
             (tc-binding-unsafe-marker-head-id? (box-get rest) name-id))
-          (tc-lookup-unsafe-id (box-get rest) name-id))])))
+          (tc-lookup-unsafe-id (box-get rest) name-id))]
+      [(TcTypeStack key slot)
+        (let
+          [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+          (if (= key name-id)
+            (OkTcTypeUnsafe
+              (tc-type-env-stack-type slot)
+              (tc-binding-unsafe-marker-head-id? rest name-id))
+            (tc-lookup-unsafe-id rest name-id)))])))
 
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))
@@ -4552,6 +4859,14 @@
           true
           (tc-name-bound-before-hygiene-global-boundary-id?
             (box-get rest)
+            name-id)))]
+    [(TcTypeStack key slot)
+      (if (= key (tc-hygiene-global-boundary-id))
+        false
+        (if (= key name-id)
+          true
+          (tc-name-bound-before-hygiene-global-boundary-id?
+            (tc-type-env-stack-rest slot)
             name-id)))]))
 
 (define (tc-unqualified-import-ambiguity-message-for-key
@@ -4645,7 +4960,13 @@
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
         (tc-lookup-id (box-get rest) name-id)
-        (tc-lookup-hygiene-global-scan root (box-get rest) name-id))]))
+        (tc-lookup-hygiene-global-scan root (box-get rest) name-id))]
+    [(TcTypeStack _ slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= (tc-type-env-stack-key slot) (tc-hygiene-global-boundary-id))
+          (tc-lookup-id rest name-id)
+          (tc-lookup-hygiene-global-scan root rest name-id)))]))
 
 (define (tc-lookup-hygiene-global-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (tc-lookup-hygiene-global-scan env env name-id))
@@ -4755,7 +5076,13 @@
     [(TcTypeBind key _ rest)
       (if (= key (tc-hygiene-global-boundary-id))
         (tc-binding-unsafe-id? (box-get rest) name-id)
-        (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id))]))
+        (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id))]
+    [(TcTypeStack _ slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= (tc-type-env-stack-key slot) (tc-hygiene-global-boundary-id))
+          (tc-binding-unsafe-id? rest name-id)
+          (tc-hygiene-global-binding-unsafe-scan root rest name-id)))]))
 
 (define (tc-hygiene-global-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (tc-hygiene-global-binding-unsafe-scan env env name-id))
@@ -4775,7 +5102,17 @@
         (match ty
           [(AstTyVar region) (TcSomeString (intern-str region))]
           [_ (tc-active-region-scan (box-get rest))])
-        (tc-active-region-scan (box-get rest)))]))
+        (tc-active-region-scan (box-get rest)))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= key (tc-region-marker-id))
+          (match ty
+            [(AstTyVar region) (TcSomeString (intern-str region))]
+            [_ (tc-active-region-scan rest)])
+          (tc-active-region-scan rest)))]))
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (begin
@@ -4861,13 +5198,24 @@
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
-    [(TcTypeBind key ty _) (tc-arena-owner-marker-for? marker-id key ty name)]))
+    [(TcTypeBind key ty _) (tc-arena-owner-marker-for? marker-id key ty name)]
+    [(TcTypeStack _ slot)
+      (tc-arena-owner-marker-for?
+        marker-id
+        (tc-type-env-stack-key slot)
+        (tc-type-env-stack-type slot)
+        name)]))
 
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
-    [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
+    [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]
+    [(TcTypeStack _ slot)
+      (tc-cleanup-owner-marker-for?
+        (tc-type-env-stack-key slot)
+        (tc-type-env-stack-type slot)
+        name)]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -4879,7 +5227,13 @@
     [(TcTypeBind key ty rest)
       (if (= key (tc-name-id name))
         (tc-cleanup-owner-marker-head? (box-get rest) name)
-        (tc-cleanup-owner-active-scan? (box-get rest) name))]))
+        (tc-cleanup-owner-active-scan? (box-get rest) name))]
+    [(TcTypeStack _ slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= (tc-type-env-stack-key slot) (tc-name-id name))
+          (tc-cleanup-owner-marker-head? rest name)
+          (tc-cleanup-owner-active-scan? rest name)))]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (begin
@@ -4902,7 +5256,13 @@
     [(TcTypeBind key _ rest)
       (if (= key (tc-name-id name))
         (tc-arena-owner-marker-head? (box-get rest) name marker-id)
-        (tc-arena-owner-active-scan? (box-get rest) name marker-id))]))
+        (tc-arena-owner-active-scan? (box-get rest) name marker-id))]
+    [(TcTypeStack _ slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= (tc-type-env-stack-key slot) (tc-name-id name))
+          (tc-arena-owner-marker-head? rest name marker-id)
+          (tc-arena-owner-active-scan? rest name marker-id)))]))
 
 (define (tc-arena-owner-active?
   [env : TcTypeEnv]
@@ -4932,6 +5292,22 @@
       (let
         [owners : TcStringList
           (tc-active-cleanup-owners-scan root (box-get rest))]
+        (if (= key (tc-cleanup-owner-marker-id))
+          (match ty
+            [(AstTyVar owner)
+              (let
+                [owner-str : String (intern-str owner)]
+                (if (tc-cleanup-owner-active? root owner-str)
+                  (tc-string-list-add owners owner-str)
+                  owners))]
+            [_ owners])
+          owners))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
         (if (= key (tc-cleanup-owner-marker-id))
           (match ty
             [(AstTyVar owner)
@@ -5120,7 +5496,14 @@
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
-        (tc-lifetime-visible-scan? (box-get rest) lifetime))]))
+        (tc-lifetime-visible-scan? (box-get rest) lifetime))]
+    [(TcTypeStack _ slot)
+      (if (tc-env-binding-matches-lifetime?
+        (tc-type-env-stack-key slot)
+        (tc-type-env-stack-type slot)
+        lifetime)
+        true
+        (tc-lifetime-visible-scan? (tc-type-env-stack-rest slot) lifetime))]))
 
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (begin
@@ -5162,7 +5545,18 @@
           (box-get rest)
           lifetime
           target
-          (or seen-target (= key (tc-name-id target)))))]))
+          (or seen-target (= key (tc-name-id target)))))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        (if (tc-env-binding-matches-lifetime? key ty lifetime)
+          seen-target
+          (tc-lifetime-outlives-binding-scan-inner
+            (tc-type-env-stack-rest slot)
+            lifetime
+            target
+            (or seen-target (= key (tc-name-id target))))))]))
 
 (define (tc-lifetime-outlives-binding-scan
   [env : TcTypeEnv]
@@ -5224,7 +5618,20 @@
             target-lifetime
             (or
               seen-target
-              (tc-env-binding-matches-lifetime? key ty target-lifetime))))])))
+              (tc-env-binding-matches-lifetime? key ty target-lifetime))))]
+      [(TcTypeStack _ slot)
+        (let
+          [key : i64 (tc-type-env-stack-key slot)]
+          [ty : AstType (tc-type-env-stack-type slot)]
+          (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
+            seen-target
+            (tc-lifetime-outlives-lifetime-scan-inner
+              (tc-type-env-stack-rest slot)
+              value-lifetime
+              target-lifetime
+              (or
+                seen-target
+                (tc-env-binding-matches-lifetime? key ty target-lifetime)))))])))
 
 (define (tc-lifetime-outlives-lifetime-scan
   [env : TcTypeEnv]
@@ -5782,7 +6189,29 @@
           (tc-region-outlives-or-matches-scan
             (box-get rest)
             value-region
-            target-region))])))
+            target-region))]
+      [(TcTypeStack _ slot)
+        (let
+          [key : i64 (tc-type-env-stack-key slot)]
+          [ty : AstType (tc-type-env-stack-type slot)]
+          [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+          (if (= key (tc-region-marker-id))
+            (match ty
+              [(AstTyVar region)
+                (if (string-eq (intern-str region) value-region)
+                  false
+                  (if (string-eq (intern-str region) target-region)
+                    true
+                    (tc-region-outlives-or-matches-scan
+                      rest
+                      value-region
+                      target-region)))]
+              [_
+                (tc-region-outlives-or-matches-scan
+                  rest
+                  value-region
+                  target-region)])
+            (tc-region-outlives-or-matches-scan rest value-region target-region)))])))
 
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
@@ -6006,6 +6435,17 @@
             (box-get rest)
             name-id
             prefix-id)))]
+    [(TcTypeStack key slot)
+      (let
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (= key name-id)
+          false
+          (if (= key prefix-id)
+            true
+            (tc-source-leading-segment-wins-over-exact-id?
+              rest
+              name-id
+              prefix-id))))]
     [(TcTypeCache ids _ _ _ _ _ partial _ below)
       (match (i64-i64-map-get ids prefix-id)
         [(I64I64MapFound prefix-index)
@@ -9518,7 +9958,16 @@
         (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")
         (if (= key (tc-name-id name))
           (OkTcType ty)
-          (tc-ptr-addr-of-local-lookup (box-get rest) name)))]))
+          (tc-ptr-addr-of-local-lookup (box-get rest) name)))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        (if (= key (tc-hygiene-global-boundary-id))
+          (ErrTcType
+            "typecheck: ptr-addr-of requires a local or parameter name")
+          (if (= key (tc-name-id name))
+            (OkTcType (tc-type-env-stack-type slot))
+            (tc-ptr-addr-of-local-lookup (tc-type-env-stack-rest slot) name))))]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -9703,7 +10152,9 @@
     [(TcTypeNil) 0]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-spmd-env-binding-count (box-get rest))]
-    [(TcTypeBind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]))
+    [(TcTypeBind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]
+    [(TcTypeStack _ slot)
+      (+ 1 (tc-spmd-env-binding-count (tc-type-env-stack-rest slot)))]))
 
 (define (tc-spmd-env-fill-from-type-env
   [env : TcTypeEnv]
@@ -9724,7 +10175,22 @@
             TcSpmdUniform
             TcSpmdOuter
             TcSpmdValue))
-        (tc-spmd-env-fill-from-type-env (box-get rest) bindings (- index 1)))]))
+        (tc-spmd-env-fill-from-type-env (box-get rest) bindings (- index 1)))]
+    [(TcTypeStack _ slot)
+      (begin
+        (array-set!
+          bindings
+          index
+          (tc-spmd-binding
+            (intern-str (tc-type-env-stack-key slot))
+            (tc-type-env-stack-type slot)
+            TcSpmdUniform
+            TcSpmdOuter
+            TcSpmdValue))
+        (tc-spmd-env-fill-from-type-env
+          (tc-type-env-stack-rest slot)
+          bindings
+          (- index 1)))]))
 
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (let
@@ -9998,6 +10464,11 @@
         0)
       (TcSpmdEnv merged left-len))))
 
+(define (tc-type-env-stack-head? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeStack _ _) true]
+    [_ false]))
+
 (define (tc-type-env-box-smoke?) : bool
   (let
     [env : TcTypeEnv
@@ -10009,6 +10480,7 @@
         (AstTyI64))]
     [cached : TcTypeEnv (tc-env-with-cache env)]
     (and
+      (tc-type-env-stack-head? env)
       (= (tc-env-cache-count cached) 4)
       (match (tc-lookup cached "x")
         [(OkTcType (AstTyBool)) true]
@@ -12519,7 +12991,17 @@
         false
         (if (= key (tc-default-boundary-id))
           true
-          (tc-default-builtin-unshadowed-scan-id? (box-get rest) name-id)))]))
+          (tc-default-builtin-unshadowed-scan-id? (box-get rest) name-id)))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        (if (= key name-id)
+          false
+          (if (= key (tc-default-boundary-id))
+            true
+            (tc-default-builtin-unshadowed-scan-id?
+              (tc-type-env-stack-rest slot)
+              name-id))))]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (tc-default-builtin-unshadowed-scan-id? env (tc-name-id name)))
@@ -12536,7 +13018,13 @@
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         true
-        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
+        (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]
+    [(TcTypeStack key slot)
+      (if (= key name-id)
+        true
+        (tc-name-local-bound-before-module-scan-id?
+          (tc-type-env-stack-rest slot)
+          name-id))]))
 
 (define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
   (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
@@ -14427,6 +14915,72 @@
                   root
                   (box-get rest)
                   bound
+                  body)])]))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest-env : TcTypeEnv (tc-type-env-stack-rest slot)]
+        [name : String (intern-str key)]
+        (cond
+          [(or
+              (= key (tc-region-marker-id))
+              (= key (tc-default-boundary-id))
+              (tc-cleanup-owner-marker-entry? key ty)
+              (tc-ordinary-arena-owner-marker-entry? key ty)
+              (tc-atomic-arena-owner-marker-entry? key ty))
+            (tc-check-thread-safe-spawn-captures-scan-root
+              spawn-name
+              ctx
+              root
+              rest-env
+              bound
+              body)]
+          [(not (tc-expr-uses-free-name? body name bound))
+            (tc-check-thread-safe-spawn-captures-scan-root
+              spawn-name
+              ctx
+              root
+              rest-env
+              bound
+              body)]
+          [(tc-expr-sets-free-name? body name bound)
+            (ErrTcUnit
+              (str-cat
+                "typecheck: "
+                spawn-name
+                " lambda cannot assign captured binding"))]
+          [(tc-ordinary-arena-owner-active? root name)
+            (ErrTcUnit
+              (str-cat
+                "typecheck: "
+                spawn-name
+                " cannot capture ordinary arena handle `"
+                name
+                "`; use arena-make-atomic for a spanning owner"))]
+          [(tc-cleanup-owner-active? root name)
+            (ErrTcUnit
+              (str-cat
+                "typecheck: "
+                spawn-name
+                " cannot capture cleanup-required resource"))]
+          [else
+            (match (tc-thread-transfer-classify-type-in-env ctx root ty)
+              [(TcThreadTransferRejected reason)
+                (ErrTcUnit
+                  (tc-thread-safe-spawn-capture-message
+                    spawn-name
+                    ctx
+                    name
+                    ty
+                    reason))]
+              [_
+                (tc-check-thread-safe-spawn-captures-scan-root
+                  spawn-name
+                  ctx
+                  root
+                  rest-env
+                  bound
                   body)])]))]))
 
 (define (tc-check-thread-safe-spawn-captures
@@ -15883,7 +16437,22 @@
           (tc-expr-uses-free-name? body (intern-str key) bound)
           (tc-type-contains-reference? ty))
           true
-          (tc-lambda-captures-reference-scan-root (box-get rest) bound body)))]))
+          (tc-lambda-captures-reference-scan-root (box-get rest) bound body)))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        (if (or
+          (= key (tc-region-marker-id))
+          (= key (tc-default-boundary-id))
+          (tc-cleanup-owner-marker-entry? key ty))
+          (tc-lambda-captures-reference-scan-root rest bound body)
+          (if (and
+            (tc-expr-uses-free-name? body (intern-str key) bound)
+            (tc-type-contains-reference? ty))
+            true
+            (tc-lambda-captures-reference-scan-root rest bound body))))]))
 
 (define (tc-lambda-captures-reference?
   [env : TcTypeEnv]
@@ -20645,6 +21214,67 @@
             (tc-check-lambda-region-captures-scan-root
               root
               (box-get rest)
+              bound
+              body
+              allow-immutable-reference-captures)]))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest : TcTypeEnv (tc-type-env-stack-rest slot)]
+        [name : String (intern-str key)]
+        (cond
+          [(or
+              (= key (tc-region-marker-id))
+              (= key (tc-default-boundary-id))
+              (tc-cleanup-owner-marker-entry? key ty)
+              (tc-ordinary-arena-owner-marker-entry? key ty)
+              (tc-atomic-arena-owner-marker-entry? key ty))
+            (tc-check-lambda-region-captures-scan-root
+              root
+              rest
+              bound
+              body
+              allow-immutable-reference-captures)]
+          [(not (tc-expr-uses-free-name? body name bound))
+            (tc-check-lambda-region-captures-scan-root
+              root
+              rest
+              bound
+              body
+              allow-immutable-reference-captures)]
+          [(tc-expr-sets-free-name? body name bound)
+            (ErrTcUnit "typecheck: lambda cannot assign captured binding")]
+          [(tc-cleanup-owner-active? root name)
+            (ErrTcUnit
+              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
+          [(tc-type-contains-mut-reference? ty)
+            (ErrTcUnit
+              "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")]
+          [(tc-type-contains-reference? ty)
+            (if allow-immutable-reference-captures
+              (tc-check-lambda-region-captures-scan-root
+                root
+                rest
+                bound
+                body
+                allow-immutable-reference-captures)
+              (ErrTcUnit
+                "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
+          [(tc-type-contains-any-region ty)
+            (if (tc-type-regions-all-atomic-arena-owners? root ty)
+              (tc-check-lambda-region-captures-scan-root
+                root
+                rest
+                bound
+                body
+                allow-immutable-reference-captures)
+              (ErrTcUnit
+                "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
+          [else
+            (tc-check-lambda-region-captures-scan-root
+              root
+              rest
               bound
               body
               allow-immutable-reference-captures)]))]))
@@ -29794,6 +30424,105 @@
                   moved
                   bound
                   (tc-string-list-add seen name)
+                  body)])]))]
+    [(TcTypeStack _ slot)
+      (let
+        [key : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [rest-env : TcTypeEnv (tc-type-env-stack-rest slot)]
+        [name : String (intern-str key)]
+        (cond
+          [(or
+              (= key (tc-region-marker-id))
+              (= key (tc-default-boundary-id))
+              (tc-cleanup-owner-marker-entry? key ty))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              seen
+              body)]
+          [(tc-string-list-contains seen name)
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              seen
+              body)]
+          [(not (tc-moved-contains? locals name))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              (tc-string-list-add seen name)
+              body)]
+          [(not (tc-expr-uses-free-name? body name bound))
+            (tc-move-check-lambda-owner-captures-scan
+              ctx
+              root
+              rest-env
+              locals
+              loop-carried
+              moved
+              bound
+              (tc-string-list-add seen name)
+              body)]
+          [else
+            (match (tc-lookup-id root key)
+              [(OkTcType visible-ty)
+                (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                  (if (or
+                    (tc-moved-contains? moved name)
+                    (tc-moved-partial? moved name))
+                    (tc-move-rich-use-conflict-result
+                      (tc-moved-root-conflict moved name)
+                      name
+                      body
+                      name)
+                    (if (tc-moved-contains? loop-carried name)
+                      (tc-move-rich-loop-carried-result name body)
+                      (tc-move-check-lambda-owner-captures-scan
+                        ctx
+                        root
+                        rest-env
+                        locals
+                        loop-carried
+                        (tc-moved-add-origin moved name body)
+                        bound
+                        (tc-string-list-add seen name)
+                        body)))
+                  (tc-move-check-lambda-owner-captures-scan
+                    ctx
+                    root
+                    rest-env
+                    locals
+                    loop-carried
+                    moved
+                    bound
+                    (tc-string-list-add seen name)
+                    body))]
+              [(ErrTcType _)
+                (tc-move-check-lambda-owner-captures-scan
+                  ctx
+                  root
+                  rest-env
+                  locals
+                  loop-carried
+                  moved
+                  bound
+                  (tc-string-list-add seen name)
                   body)])]))]))
 
 (define (tc-move-check-lambda-owner-captures
@@ -31288,6 +32017,29 @@
       (let
         [name : String (intern-str name-id)]
         [rest-env : TcTypeEnv (box-get rest)]
+        (if (tc-string-list-contains seen name)
+          (tc-borrow-check-env-lifetime-used-in-exprs?
+            ctx
+            rest-env
+            exprs
+            lifetime
+            seen)
+          (if (and
+            (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
+            (tc-expr-list-uses-free-name? exprs name TcStringNil))
+            true
+            (tc-borrow-check-env-lifetime-used-in-exprs?
+              ctx
+              rest-env
+              exprs
+              lifetime
+              (tc-string-list-add seen name)))))]
+    [(TcTypeStack _ slot)
+      (let
+        [name-id : i64 (tc-type-env-stack-key slot)]
+        [ty : AstType (tc-type-env-stack-type slot)]
+        [name : String (intern-str name-id)]
+        [rest-env : TcTypeEnv (tc-type-env-stack-rest slot)]
         (if (tc-string-list-contains seen name)
           (tc-borrow-check-env-lifetime-used-in-exprs?
             ctx
@@ -41469,6 +42221,7 @@
 
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
+    (tc-type-env-stack-reset!)
     (tc-fn-scratch-arena-release!)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)

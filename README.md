@@ -746,16 +746,17 @@ handle is dead.
 
 ### Safe task threading
 
-Safe task threads use the typed closure wrappers in `stdlib/thread.tl`, such as
-`thread-spawn-i64`, `thread-spawn-string`, `thread-spawn-array-i64`, and their
-matching join functions. The checker validates the captured environment and
-joined result structurally: references, borrowed `str` views, scoped regions,
-ordinary first-class arenas, raw pointer ownership claims, live mutable aliases,
-and guards do not cross safe task-thread boundaries. Aggregate results that
-leave a worker must live in a spanning owner, or in a wrapper that explicitly
-copies them into one. `stdlib/sync.tl` provides the first concrete synchronized
-surfaces: `ChannelI64`, `ChannelI64PairChannel`, `ChannelString`, and
-`MutexI64`.
+Safe task threads use generated typed closure modules from `stdlib/thread.tl`,
+such as `(import (thread.thread-handle i64) as thread_i64)` with
+`thread_i64.spawn` / `thread_i64.join`, plus aggregate wrappers such as
+`thread-spawn-string` and their matching joins. The checker validates the
+captured environment and joined result structurally: references, borrowed `str`
+views, scoped regions, ordinary first-class arenas, raw pointer ownership
+claims, live mutable aliases, and guards do not cross safe task-thread
+boundaries. Aggregate results that leave a worker must live in a spanning
+owner, or in a wrapper that explicitly copies them into one. `stdlib/sync.tl`
+provides the first concrete synchronized surfaces: `ChannelI64`,
+`ChannelI64PairChannel`, `ChannelString`, and `MutexI64`.
 
 Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
 inside one task; task threading creates independently scheduled workers with

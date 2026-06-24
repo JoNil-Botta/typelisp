@@ -1,5 +1,6 @@
 (import "stdlib/arena.tl")
 (import "stdlib/thread.tl")
+(import (thread-handle i64) as thread_i64)
 (import "stdlib/string.tl")
 
 (defstruct AtomicThreadText
@@ -19,8 +20,8 @@
       (in-arena
         owner
         (AtomicThreadMessageText (AtomicThreadText (string-append "atom" "ic"))))]
-    [spawn : ThreadI64SpawnResult
-      (thread-spawn-i64
+    [spawn : thread_i64.SpawnResult
+      (thread_i64.spawn
         (lambda () : i64
           (atomic-thread-message-score message)))]
     42))

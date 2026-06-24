@@ -9069,20 +9069,36 @@
                               dst
                               "%xmm0"
                               load-ty)))))
-                    (string-append
-                      base-asm
-                      (string-append
-                        offset-asm
+                    (let
+                      [dst-home : String
+                        (compiler-backend-var-register-home assignments dst)]
+                      (if (if (string-eq dst-home "")
+                        false
+                        (<= (compiler-backend-type-size load-ty) 8))
                         (string-append
-                          addr-asm
+                          base-asm
                           (string-append
-                            (compiler-backend-emit-load-memory
-                              load-addr
-                              load-ty)
-                            (compiler-backend-emit-store-var-with-plan
-                              assignments
-                              dst
-                              "%rax")))))))]
+                            offset-asm
+                            (string-append
+                              addr-asm
+                              (compiler-backend-emit-load-memory-to-reg
+                                load-addr
+                                load-ty
+                                dst-home))))
+                        (string-append
+                          base-asm
+                          (string-append
+                            offset-asm
+                            (string-append
+                              addr-asm
+                              (string-append
+                                (compiler-backend-emit-load-memory
+                                  load-addr
+                                  load-ty)
+                                (compiler-backend-emit-store-var-with-plan
+                                  assignments
+                                  dst
+                                  "%rax")))))))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
@@ -9106,9 +9122,19 @@
                 dst
                 "%xmm0"
                 load-ty))
-            (string-append
-              (compiler-backend-emit-load-memory addr load-ty)
-              (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))))]
+            (let
+              [dst-home : String
+                (compiler-backend-var-register-home assignments dst)]
+              (if (if (string-eq dst-home "")
+                false
+                (<= (compiler-backend-type-size load-ty) 8))
+                (compiler-backend-emit-load-memory-to-reg addr load-ty dst-home)
+                (string-append
+                  (compiler-backend-emit-load-memory addr load-ty)
+                  (compiler-backend-emit-store-var-with-plan
+                    assignments
+                    dst
+                    "%rax")))))))]
     [(CompilerBackendNoI64)
       (ErrCompilerBackend
         (compiler-diagnostic-at-start
@@ -9172,12 +9198,22 @@
                     second-dst
                     "%xmm0"
                     second-ty))
-                (str-cat
-                  (compiler-backend-emit-load-memory "(%r10)" second-ty)
-                  (compiler-backend-emit-store-var-with-plan
-                    assignments
-                    second-dst
-                    "%rax")))))]
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home assignments second-dst)]
+                  (if (if (string-eq dst-home "")
+                    false
+                    (<= (compiler-backend-type-size second-ty) 8))
+                    (compiler-backend-emit-load-memory-to-reg
+                      "(%r10)"
+                      second-ty
+                      dst-home)
+                    (str-cat
+                      (compiler-backend-emit-load-memory "(%r10)" second-ty)
+                      (compiler-backend-emit-store-var-with-plan
+                        assignments
+                        second-dst
+                        "%rax")))))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])
       (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
 

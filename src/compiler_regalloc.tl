@@ -3786,9 +3786,63 @@
         loser
         (+ index 1)))))
 
+;; Per-pair join (LLVM joinVirtRegs structure): maintain a per-root merged COARSE
+;; interval [start,end] -- the union extent of the class members. Two roots with
+;; DISJOINT coarse extents provably have no interfering member pair (each member's
+;; segments lie within its coarse interval, which lies within the root extent), so
+;; they join in O(1) without the O(n^2) all-pairs class scan. This is a sound
+;; SUBSET of classes-compatible? (coarse-disjoint => segment-disjoint => every
+;; cross pair non-interfering; the class is type-homogeneous and src/dst types are
+;; already checked), so the coalescing RESULT is identical -- only the common
+;; disjoint case takes the fast path. When extents overlap, the exact
+;; classes-compatible? check still decides, preserving #3489 semantics precisely.
+(define (compiler-reg-coalesce-init-coarse!
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
+  [src-start : (Array i64)]
+  [src-end : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length root-start))
+    unit
+    (begin
+      (array-set!
+        root-start
+        index
+        (if (< index (array-length src-start))
+          (array-ref src-start index)
+          (- 0 1)))
+      (array-set!
+        root-end
+        index
+        (if (< index (array-length src-end))
+          (array-ref src-end index)
+          (- 0 1)))
+      (compiler-reg-coalesce-init-coarse!
+        root-start
+        root-end
+        src-start
+        src-end
+        (+ index 1)))))
+
+(define (compiler-reg-coalesce-coarse-disjoint?
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
+  [a : i64]
+  [b : i64]) : bool
+  (let
+    [a-start : i64 (array-ref root-start a)]
+    [a-end : i64 (array-ref root-end a)]
+    [b-start : i64 (array-ref root-start b)]
+    [b-end : i64 (array-ref root-end b)]
+    (if (or (< a-start 0) (< a-end 0) (< b-start 0) (< b-end 0))
+      false
+      (or (<= a-end b-start) (<= b-end a-start)))))
+
 (define (compiler-reg-coalesce-map-merge-root-into!
   [parents : (Array i64)]
   [sizes : (Array i64)]
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
   [winner : i64]
   [loser : i64]) : unit
   (begin
@@ -3797,11 +3851,29 @@
       winner
       (+ (array-ref sizes winner) (array-ref sizes loser)))
     (array-set! sizes loser 0)
+    (let
+      [loser-start : i64 (array-ref root-start loser)]
+      [loser-end : i64 (array-ref root-end loser)]
+      [winner-start : i64 (array-ref root-start winner)]
+      [winner-end : i64 (array-ref root-end winner)]
+      (begin
+        (if (< winner-start 0)
+          (array-set! root-start winner loser-start)
+          (if (if (< loser-start 0)
+            false
+            (< loser-start winner-start))
+            (array-set! root-start winner loser-start)
+            unit))
+        (if (> loser-end winner-end)
+          (array-set! root-end winner loser-end)
+          unit)))
     (compiler-reg-coalesce-map-merge-root-parents-into! parents winner loser 0)))
 
 (define (compiler-reg-coalesce-map-try-merge!
   [parents : (Array i64)]
   [sizes : (Array i64)]
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -3829,6 +3901,12 @@
           (and
             (= (array-ref sizes left-root) 1)
             (= (array-ref sizes right-root) 1))
+          ;; per-pair join fast path: disjoint merged extents => trivially legal.
+          (compiler-reg-coalesce-coarse-disjoint?
+            root-start
+            root-end
+            left-root
+            right-root)
           (compiler-reg-coalesce-map-classes-compatible?
             parents
             intervals
@@ -3851,6 +3929,8 @@
             (compiler-reg-coalesce-map-merge-root-into!
               parents
               sizes
+              root-start
+              root-end
               winner
               loser)
             true))]
@@ -3859,6 +3939,8 @@
 (define (compiler-reg-coalesce-map-merge-moves!
   [parents : (Array i64)]
   [sizes : (Array i64)]
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
   [moves : CompilerRegMoveList]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
@@ -3875,6 +3957,8 @@
               (compiler-reg-coalesce-map-try-merge!
                 parents
                 sizes
+                root-start
+                root-end
                 intervals
                 types
                 group-vars
@@ -3885,6 +3969,8 @@
             (compiler-reg-coalesce-map-merge-moves!
               parents
               sizes
+              root-start
+              root-end
               (box-get rest)
               intervals
               types
@@ -3895,6 +3981,8 @@
 (define (compiler-reg-coalesce-map-fixpoint!
   [parents : (Array i64)]
   [sizes : (Array i64)]
+  [root-start : (Array i64)]
+  [root-end : (Array i64)]
   [moves : CompilerRegMoveList]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
@@ -3904,6 +3992,8 @@
     (compiler-reg-coalesce-map-merge-moves!
       parents
       sizes
+      root-start
+      root-end
       moves
       intervals
       types
@@ -3928,11 +4018,21 @@
           vars)]
       [parents : (Array i64) (make-array i64 n)]
       [sizes : (Array i64) (make-array i64 n)]
+      [root-start : (Array i64) (make-array i64 n)]
+      [root-end : (Array i64) (make-array i64 n)]
       (begin
         (compiler-reg-coalesce-map-init! parents sizes 0)
+        (compiler-reg-coalesce-init-coarse!
+          root-start
+          root-end
+          (struct-get intervals starts)
+          (struct-get intervals ends)
+          0)
         (compiler-reg-coalesce-map-fixpoint!
           parents
           sizes
+          root-start
+          root-end
           moves
           intervals
           types

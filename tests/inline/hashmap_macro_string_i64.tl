@@ -74,3 +74,23 @@
               -1)
             0)
           "entry cursor returns a value")))))
+
+(test
+  hashmap-macro-string-i64-insert-grows
+  (let
+    [m : map_string_i64.Map (map_string_i64.with-capacity 1)]
+    (begin
+      (map_string_i64.insert (&mut m) "k0" 0)
+      (map_string_i64.insert (&mut m) "k1" 1)
+      (map_string_i64.insert (&mut m) "k2" 2)
+      (map_string_i64.insert (&mut m) "k3" 3)
+      (map_string_i64.insert (&mut m) "k4" 4)
+      (map_string_i64.insert (&mut m) "k5" 5)
+      (assert-i64-eq (map_string_i64.len (& m)) 6 "growth preserves len")
+      (assert-true
+        (>= (map_string_i64.capacity (& m)) 8)
+        "growth expands capacity")
+      (assert-i64-eq
+        (map_string_i64.lookup-value-or (map_string_i64.get (& m) "k5") -1)
+        5
+        "growth keeps late insert"))))

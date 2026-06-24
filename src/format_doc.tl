@@ -3,7 +3,7 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
-(import "../stdlib/string.tl")
+(import stdlib.string as string)
 
 (defenum Doc
   (DEmpty)
@@ -58,14 +58,14 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-concat3 out " " ""))
+          (set! out (string.string-concat3 out " " ""))
           (set! i (+ i 1))))
       out)))
 
 (define (flat-width [doc : Doc]) : i64
   (match doc
     [(DEmpty) 0]
-    [(DText text) (string-length text)]
+    [(DText text) (string.string-length text)]
     [(DSoftLine) 1]
     [(DHardLine) 1000000]
     [(DConcat left right)
@@ -86,7 +86,7 @@
     acc
     (match doc
       [(DEmpty) acc]
-      [(DText text) (+ acc (string-length text))]
+      [(DText text) (+ acc (string.string-length text))]
       [(DSoftLine) (+ acc 1)]
       [(DHardLine) (+ acc 1000000)]
       [(DConcat left right)
@@ -109,7 +109,7 @@
     [(Rendered _ col) col]))
 
 (define (render-newline [indent : i64]) : RenderedDoc
-  (Rendered (string-append "\n" (spaces indent)) indent))
+  (Rendered (string.string-append "\n" (spaces indent)) indent))
 
 ;; Flat byte buffer for the render pass. The chunk-list `TextBuf` allocates a
 ;; cons per appended fragment, and rendering the corpus appends roughly one
@@ -140,7 +140,7 @@
             [n : i64 (struct-get buf len)]
             (begin
               (if (> n 0)
-                (str-copy-bytes-into
+                (string.str-copy-bytes-into
                   (unsafe
                     (ptr-cast (array-data cur) : (Ptr u8)))
                   (unsafe
@@ -152,14 +152,14 @@
 
 (define (fmt-render-buf-append [buf : FmtRenderBuf] [s : String]) : unit
   (let
-    [slen : i64 (string-length s)]
+    [slen : i64 (string.string-length s)]
     (if (= slen 0)
       unit
       (let
         [base : i64 (struct-get buf len)]
         (begin
           (fmt-render-buf-reserve buf (+ base slen))
-          (str-copy-bytes-into
+          (string.str-copy-bytes-into
             (unsafe
               (string-data (& s)))
             (unsafe
@@ -199,7 +199,7 @@
     [(DEmpty) col]
     [(DText text)
       (let
-        [text-width : i64 (string-length text)]
+        [text-width : i64 (string.string-length text)]
         (begin
           (fmt-render-buf-append buf text)
           (+ col text-width)))]
@@ -235,7 +235,7 @@
   [flat : bool]) : RenderedDoc
   (match doc
     [(DEmpty) (Rendered "" col)]
-    [(DText text) (Rendered text (+ col (string-length text)))]
+    [(DText text) (Rendered text (+ col (string.string-length text)))]
     [(DSoftLine)
       (if flat
         (Rendered " " (+ col 1))
@@ -246,7 +246,7 @@
         [(Rendered left-text left-col)
           (match (render-doc-in (box-get right) width indent left-col flat)
             [(Rendered right-text right-col)
-              (Rendered (string-append left-text right-text) right-col)])])]
+              (Rendered (string.string-append left-text right-text) right-col)])])]
     [(DNest extra inner)
       (render-doc-in (box-get inner) width (+ indent extra) col flat)]
     [(DGroup inner)
@@ -292,8 +292,8 @@
     [flat : String (render-doc-width doc 80)]
     [broken : String (render-doc-width doc 4)]
     (and
-      (string-eq flat "a b c")
-      (string-eq broken "a\n    b\n    c")
+      (string.string-eq flat "a b c")
+      (string.string-eq broken "a\n    b\n    c")
       (= (flat-width doc) 5))))
 
 (define (format-doc-repeat-text [count : i64]) : Doc
@@ -338,7 +338,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-concat3 out " x" ""))
+          (set! out (string.string-concat3 out " x" ""))
           (set! i (+ i 1))))
       out)))
 
@@ -349,7 +349,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string-concat3 out "\n  x" ""))
+          (set! out (string.string-concat3 out "\n  x" ""))
           (set! i (+ i 1))))
       out)))
 
@@ -364,13 +364,13 @@
     [right-flow : Doc (doc-group (doc-nest 2 right-doc))]
     [right-broken-flow : String (render-doc-width right-flow 3)]
     [plain-ok : bool
-      (and (= (string-length rendered) 64) (= (flat-width doc) 64))]
+      (and (= (string.string-length rendered) 64) (= (flat-width doc) 64))]
     [flow-ok : bool
       (and
-        (string-eq flat-flow (format-doc-repeat-soft-flat 16))
-        (string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
+        (string.string-eq flat-flow (format-doc-repeat-soft-flat 16))
+        (string.string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
     [right-ok : bool
-      (string-eq right-broken-flow (format-doc-repeat-soft-broken 16))]
+      (string.string-eq right-broken-flow (format-doc-repeat-soft-broken 16))]
     (and plain-ok flow-ok right-ok)))
 
 (define (format-doc-seq-branching-ok?) : bool
@@ -383,11 +383,11 @@
     [with-a : Doc (doc-append (doc-text "a") tail)]
     [with-z : Doc (doc-append (doc-text "z") tail)]
     (and
-      (string-eq (render-doc-width base 80) "ab")
-      (string-eq (render-doc-width with-c 80) "abc")
-      (string-eq (render-doc-width with-d 80) "abd")
-      (string-eq (render-doc-width with-a 80) "abcd")
-      (string-eq (render-doc-width with-z 80) "zbcd"))))
+      (string.string-eq (render-doc-width base 80) "ab")
+      (string.string-eq (render-doc-width with-c 80) "abc")
+      (string.string-eq (render-doc-width with-d 80) "abd")
+      (string.string-eq (render-doc-width with-a 80) "abcd")
+      (string.string-eq (render-doc-width with-z 80) "zbcd"))))
 
 (define (format-doc-self-test) : i64
   (let
@@ -396,10 +396,10 @@
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
     [empty : String (render-doc (doc-append (doc-empty) (doc-text "x")))]
     (begin
-      (unless (string-eq flat "alpha beta") (return 1))
-      (unless (string-eq broken "alpha\n  beta") (return 2))
-      (unless (string-eq hard "a\nb") (return 3))
-      (unless (string-eq empty "x") (return 4))
+      (unless (string.string-eq flat "alpha beta") (return 1))
+      (unless (string.string-eq broken "alpha\n  beta") (return 2))
+      (unless (string.string-eq hard "a\nb") (return 3))
+      (unless (string.string-eq empty "x") (return 4))
       (unless (format-doc-boxed-algebra-ok?) (return 5))
       (unless (format-doc-long-sequence-ok?) (return 6))
       (unless (format-doc-seq-branching-ok?) (return 7))

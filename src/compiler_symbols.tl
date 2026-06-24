@@ -1420,8 +1420,9 @@
         (compiler-symbols-remove-decl-macro-alias symbols inner index))]
     [_ symbols]))
 
-;; An explicit `module ... as alias` import should expose macros as `alias/name`
-;; without leaving the module's legacy bare macro alias in the importer.
+;; An explicit `module ... as alias` import resolves dotted uses through the
+;; import target directly. It should not leave the module's legacy bare macro
+;; alias in the importer.
 (define (compiler-symbols-remove-module-macro-aliases-list
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
@@ -1471,8 +1472,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-symbols-remove-decl-macro-alias symbols decl index)
                   symbols)]
               (compiler-symbols-remove-module-macro-aliases-list
@@ -1548,8 +1550,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-symbols-add-decl-alias-in-module
                     symbols
                     alias
@@ -1603,14 +1606,19 @@
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)
                   _))
-              (compiler-symbols-add-module-aliases
-                (compiler-symbols-remove-module-macro-aliases
-                  symbols
-                  all-decls
-                  target-module)
-                all-decls
-                target-module
-                (compiler-symbols-import-alias-key module alias))]
+              (let
+                [without-bare-macros : CompilerSymbols
+                  (compiler-symbols-remove-module-macro-aliases
+                    symbols
+                    all-decls
+                    target-module)]
+                (if (string-eq alias "")
+                  (compiler-symbols-add-module-aliases
+                    without-bare-macros
+                    all-decls
+                    target-module
+                    (compiler-symbols-import-alias-key module alias))
+                  without-bare-macros))]
             [_ symbols])]
         (match decl
           [(AstDeclModule next-module)
@@ -2361,8 +2369,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-registries : CompilerRegistries
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-registries-add-decl-alias-in-module
                     registries
                     alias
@@ -2409,11 +2418,13 @@
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)
                   _))
-              (compiler-registries-add-module-aliases
-                registries
-                all-decls
-                target-module
-                (compiler-symbols-import-alias-key module alias))]
+              (if (string-eq alias "")
+                (compiler-registries-add-module-aliases
+                  registries
+                  all-decls
+                  target-module
+                  (compiler-symbols-import-alias-key module alias))
+                registries)]
             [_ registries])]
         (match decl
           [(AstDeclModule next-module)
@@ -2900,6 +2911,11 @@
     [(NoneI64) 0]))
 
 (define (compiler-symbols-miss-score [found : MaybeI64]) : i64
+  (match found
+    [(NoneI64) 1]
+    [(SomeI64 _) 0]))
+
+(define (compiler-registry-miss-score [found : MaybeI64]) : i64
   (match found
     [(NoneI64) 1]
     [(SomeI64 _) 0]))
@@ -3474,10 +3490,8 @@
             [(OkCompilerRegistries registries)
               (and
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "d/get")
-                    (compiler-symbol-kind-function-define)
-                    1)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-value symbols "d/get"))
                   1)
                 (=
                   (compiler-symbol-lookup-score
@@ -3486,20 +3500,16 @@
                     1)
                   1)
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-macro symbols "d/all")
-                    (compiler-symbol-kind-defmacro)
-                    2)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-macro symbols "d/all"))
                   1)
                 (=
                   (compiler-symbols-miss-score
                     (compiler-symbols-lookup-macro symbols "all"))
                   1)
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "d/Point")
-                    (compiler-symbol-kind-defstruct)
-                    4)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-type symbols "d/Point"))
                   1)
                 (=
                   (compiler-symbol-lookup-score
@@ -3508,11 +3518,8 @@
                     4)
                   1)
                 (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-variant registries "d/Some")
-                    (compiler-symbol-kind-enum-variant)
-                    3
-                    1)
+                  (compiler-registry-miss-score
+                    (compiler-registries-lookup-variant registries "d/Some"))
                   1)
                 (=
                   (compiler-registry-lookup-score
@@ -3522,14 +3529,11 @@
                     1)
                   1)
                 (=
-                  (compiler-registry-lookup-score
+                  (compiler-registry-miss-score
                     (compiler-registries-lookup-struct-field
                       registries
                       "d/Point"
-                      "x")
-                    (compiler-symbol-kind-struct-field)
-                    4
-                    0)
+                      "x"))
                   1))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]

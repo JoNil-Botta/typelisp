@@ -137,43 +137,6 @@
             (set! i prefix-len)))
         ok))))
 
-;; Find the first occurrence of a substring within a string at or after start.
-;; Returns the starting index, or -1 if not found.
-(define (string-find-from [text : String] [pattern : String] [start : i64]) : i64
-  (let
-    [text-len : i64 (string-length text)]
-    [pat-len : i64 (string-length pattern)]
-    [i : i64 start]
-    (begin
-      (when (< i 0) (set! i 0))
-      (if (= pat-len 0)
-        i
-        (if (or (> pat-len text-len) (> i (- text-len pat-len)))
-          -1
-          (let
-            [max-i : i64 (- text-len pat-len)]
-            [found : i64 -1]
-            (begin
-              (while (and (<= i max-i) (= found -1))
-                (let
-                  [j : i64 0]
-                  [match : bool true]
-                  (begin
-                    (while (and (< j pat-len) match)
-                      (if (= (string-ref text (+ i j)) (string-ref pattern j))
-                        (set! j (+ j 1))
-                        (begin
-                          (set! match false)
-                          (set! j pat-len))))
-                    (when match (set! found i))
-                    (set! i (+ i 1)))))
-              found)))))))
-
-;; Find the first occurrence of a substring within a string.
-;; Returns the starting index, or -1 if not found.
-(define (string-find [text : String] [pattern : String]) : i64
-  (string-find-from text pattern 0))
-
 (define (lsp-frame-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
@@ -5344,20 +5307,29 @@
   (if (string-eq old-text "")
     (ErrLspEdit "oldText cannot be empty")
     (let
-      [idx : i64 (string-find text old-text)]
-      (if (= idx -1)
-        (ErrLspEdit "oldText not found in document")
-        (let
-          [next-idx : i64 (string-find-from text old-text (+ idx 1))]
-          (if (not (= next-idx -1))
+      [n : i64 (string-length text)]
+      [old-len : i64 (string-length old-text)]
+      [limit : i64 (- n old-len)]
+      [i : i64 0]
+      [found-at : i64 -1]
+      [matches : i64 0]
+      (begin
+        (while (<= i limit)
+          (begin
+            (when
+              (string-eq (substring text i old-len) old-text)
+              (begin
+                (when (= found-at -1) (set! found-at i))
+                (set! matches (+ matches 1))))
+            (set! i (+ i 1))))
+        (if (= matches 0)
+          (ErrLspEdit "oldText not found in document")
+          (if (> matches 1)
             (ErrLspEdit "oldText occurs more than once in document")
             (let
-              [before : String (substring text 0 idx)]
-              [after : String
-                (substring
-                  text
-                  (+ idx (string-length old-text))
-                  (- (string-length text) (+ idx (string-length old-text))))]
+              [before : String (substring text 0 found-at)]
+              [after-start : i64 (+ found-at old-len)]
+              [after : String (substring text after-start (- n after-start))]
               [replaced : String (str-cat before new-text after)]
               (if (not (lsp-text-is-valid-forms replaced))
                 (ErrLspEdit
@@ -5407,13 +5379,6 @@
         (lsp-write-error id -32600 "Document not found")
         (LspContinue docs))]))
 
-(define (lsp-string-find-smoke-ok?) : bool
-  (and
-    (= (string-find "abc abc" "abc") 0)
-    (= (string-find-from "abc abc" "abc" 1) 4)
-    (= (string-find-from "aaaa" "aa" 1) 1)
-    (= (string-find "abc" "z") -1)))
-
 (define (lsp-patch-text-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
@@ -5436,10 +5401,6 @@
     (match (lsp-patch-text text "1)" "1")
       [(OkLspEdit _) false]
       [(ErrLspEdit message) (string-contains (& message) (& needle))])))
-
-(test
-  lsp-string-find-smoke
-  (unless (lsp-string-find-smoke-ok?) (panic "lsp-string-find-smoke failed")))
 
 (test
   lsp-patch-text-smoke

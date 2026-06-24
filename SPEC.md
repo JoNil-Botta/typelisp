@@ -2421,13 +2421,11 @@ Example with colliding local names:
 ```lisp test=ignore name=qualified-colliding-modules reason="selfhost qualified imports are tracked by #952"
 ;; left.tl
 (module left)
-(export (value get))
 (define same : i64 20)
 (define (get) : i64 same)
 
 ;; right.tl
 (module right)
-(export (value get))
 (define same : i64 22)
 (define (get) : i64 same)
 
@@ -2437,7 +2435,7 @@ Example with colliding local names:
 (define (main) : i64 (+ (left.get) (right.get)))
 ```
 
-#### 4.4.4 Macro export/import and expansion ordering
+#### 4.4.4 Macro import and expansion ordering
 
 Macro-bearing modules use the same loader identity and path-resolution rules as
 ordinary imports. Relative paths, canonical module identities, stdlib-root
@@ -2479,7 +2477,7 @@ the general module-cycle policy is tightened.
 
 Diagnostics required by v1:
 
-- Missing macro export: a qualified macro head names an imported module but that
+- Missing macro: a qualified macro head names an imported module but that
   module declares no macro of that name.
 - Duplicate macro: two distinct macro declarations share the same
   `(module, macro-name)` identity.
@@ -2489,7 +2487,7 @@ Diagnostics required by v1:
 
 Cross-module macro use:
 
-```lisp test=ignore name=module-exported-macro-use reason="macro export/import expansion is tracked by #1140"
+```lisp test=ignore name=module-imported-macro-use reason="macro import expansion is tracked by #1140"
 ;; bool_macros.tl
 (module bool-macros)
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -4736,9 +4734,8 @@ before real PIC code generation lands; the emitted layout and content hash must
 round-trip byte-identically.
 
 `typelisp inspect <file.tlci>` parses a tlci image with the same validation
-path as loaders and prints a stable human-readable header, section table,
-package metadata, and export list. Malformed images surface the tlci parse
-diagnostic.
+path as loaders and prints a stable human-readable header, section table, and
+package metadata. Malformed images surface the tlci parse diagnostic.
 
 ### 5.18 Layout queries (specified, selfhost metadata implemented)
 
@@ -6544,7 +6541,6 @@ top-level     ::= define-var
                 | extern-decl
                 | module-decl
                 | import-decl
-                | export-decl
                 | include-str-decl
                 | include-bin-decl
                 | defenum
@@ -6594,13 +6590,6 @@ import-decl   ::= "(" "import" string ["module" module-ident] [import-alias] ")"
                 | "(" "import" macro-call [item-suffix] [import-alias] ")"
 item-suffix   ::= ".*" | "." ident
 import-alias  ::= ("as" | ":as") ident
-export-decl   ::= "(" "export" export-item+ ")"
-export-item   ::= "(" "value" ident ")"
-                | "(" "type" ident ")"
-                | "(" "macro" ident ")"
-                | "(" "constructor" ident ")"
-                | "(" "field" ident ident ")"
-                | "(" "variant" ident ")"
 defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
@@ -6749,16 +6738,18 @@ Import grammar constraints:
 
 - A bare `module-ident` import binds the final-segment default alias and gives
   qualified access only.
-- `.*` imports all exported items unqualified and cannot combine with `as`.
-- `.item` imports that single exported item unqualified and may combine with
+- `.*` imports all visible top-level items unqualified and cannot combine with
+  `as`.
+- `.item` imports that single visible top-level item unqualified and may combine
+  with
   `as` to rename the bound item.
 - A `macro-call` whole-module import requires `as alias`; otherwise it must use
   `.*` or `.item`. Bare `(import (macro args))` is rejected, and `.item` may
   combine with `as` to rename the selected item.
 - For named modules, item resolution uses the longest module prefix; a single
-  remaining segment is the selected exported item. For macro-call imports, the
+  remaining segment is the selected visible item. For macro-call imports, the
   parenthesized macro call is the module expression and an optional suffix
-  selects items from its exports.
+  selects items from its generated declarations.
 - Multi-segment item paths and multi-item `:only` selected imports are
   rejected/reserved.
 

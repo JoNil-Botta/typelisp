@@ -3082,23 +3082,19 @@
   [pools : AstNodePoolContext]
   [a : AstType]
   [b : AstType]) : AstTypeList
-  (ast-type-cons-with-pools
-    pools
-    a
-    (ast-type-cons-with-pools pools b AstTypeNil)))
+  (let
+    [rest : AstTypeList (ast-type-cons-with-pools pools b AstTypeNil)]
+    (ast-type-cons-with-pools pools a rest)))
 
 (define (tc-type-list3-with-pools
   [pools : AstNodePoolContext]
   [a : AstType]
   [b : AstType]
   [c : AstType]) : AstTypeList
-  (ast-type-cons-with-pools
-    pools
-    a
-    (ast-type-cons-with-pools
-      pools
-      b
-      (ast-type-cons-with-pools pools c AstTypeNil))))
+  (let
+    [tail : AstTypeList (ast-type-cons-with-pools pools c AstTypeNil)]
+    [rest : AstTypeList (ast-type-cons-with-pools pools b tail)]
+    (ast-type-cons-with-pools pools a rest)))
 
 (define (tc-fn0 [ret : AstType]) : AstType
   (ast-ty-func AstTypeNil ret))
@@ -3296,44 +3292,64 @@
       (AstSomeType (tc-macro-expr-binding-clause-list-type))]
     [else (AstNoType)]))
 
+(defenum TcStdlibTypeSpec
+  (TcStdlibTyI64)
+  (TcStdlibTyBool)
+  (TcStdlibTyString)
+  (TcStdlibTyName String)
+  (TcStdlibTyBoxName String)
+  (TcStdlibTyArrayName String))
+
+(defenum TcStdlibTypeSpecList
+  (TcStdlibTypeSpecNil)
+  (TcStdlibTypeSpecCons TcStdlibTypeSpec (Box TcStdlibTypeSpecList)))
+
 (defenum TcStdlibFieldSpecList
   (TcStdlibFieldSpecNil)
-  (TcStdlibFieldSpecCons String AstType (Box TcStdlibFieldSpecList)))
+  (TcStdlibFieldSpecCons String TcStdlibTypeSpec (Box TcStdlibFieldSpecList)))
 
 (defenum TcStdlibVariantSpecList
   (TcStdlibVariantSpecNil)
-  (TcStdlibVariantSpecCons String AstTypeList (Box TcStdlibVariantSpecList)))
+  (TcStdlibVariantSpecCons
+    String
+    TcStdlibTypeSpecList
+    (Box TcStdlibVariantSpecList)))
+
+(define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons a (box (TcStdlibTypeSpecNil))))
+
+(define (tc-stdlib-type-spec-list2
+  [a : TcStdlibTypeSpec]
+  [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons
+    a
+    (box (TcStdlibTypeSpecCons b (box (TcStdlibTypeSpecNil))))))
+
+(define (tc-stdlib-type-spec-list3
+  [a : TcStdlibTypeSpec]
+  [b : TcStdlibTypeSpec]
+  [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons
+    a
+    (box
+      (TcStdlibTypeSpecCons
+        b
+        (box (TcStdlibTypeSpecCons c (box (TcStdlibTypeSpecNil))))))))
 
 (define (tc-stdlib-field-spec-cons
   [name : String]
-  [ty : AstType]
+  [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (TcStdlibFieldSpecCons name ty (box rest)))
 
 (define (tc-stdlib-variant-spec-cons
   [name : String]
-  [payloads : AstTypeList]
+  [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (TcStdlibVariantSpecCons name payloads (box rest)))
 
 (define (tc-stdlib-name-type [name : String]) : AstType
   (AstTyVar (intern name)))
-
-(define (tc-stdlib-box-name-type [name : String]) : AstType
-  (ast-ty-box (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-array-name-type [name : String]) : AstType
-  (ast-ty-dyn-array (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-box-name-type-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]) : AstType
-  (ast-ty-box-with-pools pools (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-array-name-type-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]) : AstType
-  (ast-ty-dyn-array-with-pools pools (tc-stdlib-name-type name)))
 
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ErrTcUnit
@@ -3444,21 +3460,10 @@
     [(AstProgram decls-box)
       (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
 
-(define (tc-stdlib-type-list-ref
-  [ctx : TcContext]
-  [types : AstTypeList]
-  [index : i64]) : ResultTcType
-  (if (< index 0)
-    (ErrTcType "typecheck: tuple index out of bounds")
-    (match types
-      [(AstTypeNil) (ErrTcType "typecheck: tuple index out of bounds")]
-      [(AstTypeCons ty rest)
-        (let
-          [ty : AstType (tc-context-type-get ctx ty)]
-          [rest : AstTypeList (box-get rest)]
-          (if (= index 0)
-            (OkTcType ty)
-            (tc-stdlib-type-list-ref ctx rest (- index 1))))])))
+(define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : AstType]) : AstType
+  (match ty
+    [(AstTyVar name) (tc-resolve-type-name ctx (intern-str name))]
+    [_ ty]))
 
 (define (tc-stdlib-type-match-normalized?
   [ctx : TcContext]
@@ -3495,7 +3500,7 @@
           (tc-stdlib-type-match?
             ctx
             (tc-context-type-get ctx actual-inner)
-            (tc-context-type-get ctx expected-inner))]
+            (ty-node-get expected-inner))]
         [_ false])]
     [(AstTyDynArray actual-inner)
       (match expected
@@ -3503,7 +3508,7 @@
           (tc-stdlib-type-match?
             ctx
             (tc-context-type-get ctx actual-inner)
-            (tc-context-type-get ctx expected-inner))]
+            (ty-node-get expected-inner))]
         [_ false])]
     [(AstTyStruct actual-name)
       (match expected
@@ -3523,7 +3528,54 @@
   [ctx : TcContext]
   [actual : AstType]
   [expected : AstType]) : bool
-  (tc-stdlib-type-match-normalized? ctx actual expected))
+  (tc-stdlib-type-match-normalized?
+    ctx
+    (tc-stdlib-type-normalize-name ctx actual)
+    (tc-stdlib-type-normalize-name ctx expected)))
+
+(define (tc-stdlib-type-name-match?
+  [ctx : TcContext]
+  [actual : AstType]
+  [name : String]) : bool
+  (tc-stdlib-type-match? ctx actual (tc-stdlib-name-type name)))
+
+(define (tc-stdlib-type-spec-match?
+  [ctx : TcContext]
+  [actual : AstType]
+  [expected : TcStdlibTypeSpec]) : bool
+  (match expected
+    [(TcStdlibTyI64)
+      (match actual
+        [(AstTyI64) true]
+        [_ false])]
+    [(TcStdlibTyBool)
+      (match actual
+        [(AstTyBool) true]
+        [_ false])]
+    [(TcStdlibTyString)
+      (match actual
+        [(AstTyString) true]
+        [_ false])]
+    [(TcStdlibTyName name) (tc-stdlib-type-name-match? ctx actual name)]
+    [(TcStdlibTyBoxName name)
+      (match actual
+        [(AstTyBox inner)
+          (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
+        [_ false])]
+    [(TcStdlibTyArrayName name)
+      (match actual
+        [(AstTyDynArray inner)
+          (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
+        [_ false])]))
+
+(define (tc-stdlib-type-spec-render [expected : TcStdlibTypeSpec]) : String
+  (match expected
+    [(TcStdlibTyI64) "i64"]
+    [(TcStdlibTyBool) "bool"]
+    [(TcStdlibTyString) "String"]
+    [(TcStdlibTyName name) name]
+    [(TcStdlibTyBoxName name) (str-cat "(Box " name ")")]
+    [(TcStdlibTyArrayName name) (str-cat "(Array " name ")")]))
 
 (define (tc-stdlib-check-field-specs
   [ctx : TcContext]
@@ -3556,7 +3608,7 @@
                       expected-name
                       " at index "
                       (int->string index)))
-                  (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
+                  (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
                     (tc-stdlib-check-field-specs
                       ctx
                       type-name
@@ -3569,43 +3621,49 @@
                         "expected field "
                         expected-name
                         " type "
-                        (tc-type-render (tc-resolve-type ctx expected-ty))))))]))])]))
+                        (tc-stdlib-type-spec-render expected-ty)))))]))])]))
 
 (define (tc-stdlib-check-payload-specs
   [ctx : TcContext]
   [type-name : String]
   [variant-name : String]
   [actual : AstTypeList]
-  [expected : AstTypeList]
+  [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
-  (if (!= (tc-type-list-len actual) (tc-type-list-len expected))
-    (tc-stdlib-well-known-mismatch
-      type-name
-      (str-cat "payload arity mismatch for variant " variant-name))
-    (if (= index (tc-type-list-len expected))
-      OkTcUnit
-      (match (tc-stdlib-type-list-ref ctx actual index)
-        [(OkTcType actual-ty)
-          (match (tc-stdlib-type-list-ref ctx expected index)
-            [(OkTcType expected-ty)
-              (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
-                (tc-stdlib-check-payload-specs
-                  ctx
-                  type-name
+  (match expected
+    [(TcStdlibTypeSpecNil)
+      (match actual
+        [(AstTypeNil) OkTcUnit]
+        [_
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "payload arity mismatch for variant " variant-name))])]
+    [(TcStdlibTypeSpecCons expected-ty rest-expected)
+      (match actual
+        [(AstTypeNil)
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "payload arity mismatch for variant " variant-name))]
+        [(AstTypeCons actual-id rest-actual)
+          (let
+            [actual-ty : AstType (tc-context-type-get ctx actual-id)]
+            [rest-actual : AstTypeList (box-get rest-actual)]
+            [rest-expected : TcStdlibTypeSpecList (box-get rest-expected)]
+            (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
+              (tc-stdlib-check-payload-specs
+                ctx
+                type-name
+                variant-name
+                rest-actual
+                rest-expected
+                (+ index 1))
+              (tc-stdlib-well-known-mismatch
+                type-name
+                (str-cat
+                  "payload type mismatch for variant "
                   variant-name
-                  actual
-                  expected
-                  (+ index 1))
-                (tc-stdlib-well-known-mismatch
-                  type-name
-                  (str-cat
-                    "payload type mismatch for variant "
-                    variant-name
-                    " at index "
-                    (int->string index))))]
-            [(ErrTcType message)
-              (tc-stdlib-well-known-mismatch type-name message)])]
-        [(ErrTcType message) (tc-stdlib-well-known-mismatch type-name message)]))))
+                  " at index "
+                  (int->string index)))))])]))
 
 (define (tc-stdlib-check-variant-specs
   [ctx : TcContext]
@@ -3719,115 +3777,85 @@
       [(SomeI64 _) true]
       [(NoneI64) false])))
 
-(define (tc-stdlib-expr-specs [ctx : TcContext]) : TcStdlibVariantSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
+(define (tc-stdlib-expr-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "ExprBool"
+    (tc-stdlib-type-spec-list1 (TcStdlibTyBool))
     (tc-stdlib-variant-spec-cons
-      "ExprBool"
-      (tc-type-list1-with-pools pools (AstTyBool))
+      "ExprInt"
+      (tc-stdlib-type-spec-list1 (TcStdlibTyI64))
       (tc-stdlib-variant-spec-cons
-        "ExprInt"
-        (tc-type-list1-with-pools pools (AstTyI64))
+        "ExprVar"
+        (tc-stdlib-type-spec-list1 (TcStdlibTyString))
         (tc-stdlib-variant-spec-cons
-          "ExprVar"
-          (tc-type-list1-with-pools pools (AstTyString))
+          "ExprSplice"
+          (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
           (tc-stdlib-variant-spec-cons
-            "ExprSplice"
-            (tc-type-list1-with-pools
-              pools
-              (tc-stdlib-box-name-type-with-pools pools "Expr"))
+            "ExprIf"
+            (tc-stdlib-type-spec-list3
+              (TcStdlibTyBoxName "Expr")
+              (TcStdlibTyBoxName "Expr")
+              (TcStdlibTyBoxName "Expr"))
             (tc-stdlib-variant-spec-cons
-              "ExprIf"
-              (tc-type-list3-with-pools
-                pools
-                (tc-stdlib-box-name-type-with-pools pools "Expr")
-                (tc-stdlib-box-name-type-with-pools pools "Expr")
-                (tc-stdlib-box-name-type-with-pools pools "Expr"))
+              "ExprCall"
+              (tc-stdlib-type-spec-list2
+                (TcStdlibTyBoxName "Expr")
+                (TcStdlibTyName "ExprList"))
               (tc-stdlib-variant-spec-cons
-                "ExprCall"
-                (tc-type-list2-with-pools
-                  pools
-                  (tc-stdlib-box-name-type-with-pools pools "Expr")
-                  (tc-stdlib-name-type "ExprList"))
+                "ExprBegin"
+                (tc-stdlib-type-spec-list1 (TcStdlibTyName "ExprList"))
                 (tc-stdlib-variant-spec-cons
-                  "ExprBegin"
-                  (tc-type-list1-with-pools
-                    pools
-                    (tc-stdlib-name-type "ExprList"))
+                  "ExprQuote"
+                  (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                   (tc-stdlib-variant-spec-cons
-                    "ExprQuote"
-                    (tc-type-list1-with-pools
-                      pools
-                      (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                    "ExprQuasiquote"
+                    (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                     (tc-stdlib-variant-spec-cons
-                      "ExprQuasiquote"
-                      (tc-type-list1-with-pools
-                        pools
-                        (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                      "ExprUnquote"
+                      (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                       (tc-stdlib-variant-spec-cons
-                        "ExprUnquote"
-                        (tc-type-list1-with-pools
-                          pools
-                          (tc-stdlib-box-name-type-with-pools pools "Expr"))
-                        (tc-stdlib-variant-spec-cons
-                          "ExprUnquoteSplicing"
-                          (tc-type-list1-with-pools
-                            pools
-                            (tc-stdlib-box-name-type-with-pools pools "Expr"))
-                          (TcStdlibVariantSpecNil))))))))))))))
+                        "ExprUnquoteSplicing"
+                        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+                        (TcStdlibVariantSpecNil)))))))))))))
 
-(define (tc-stdlib-sequence-fields [ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
-    (tc-stdlib-field-spec-cons
-      "items"
-      (tc-stdlib-array-name-type-with-pools pools elem-name)
-      (tc-stdlib-field-spec-cons "len" (AstTyI64) (TcStdlibFieldSpecNil)))))
+(define (tc-stdlib-sequence-fields [_ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
+  (tc-stdlib-field-spec-cons
+    "items"
+    (TcStdlibTyArrayName elem-name)
+    (tc-stdlib-field-spec-cons "len" (TcStdlibTyI64) (TcStdlibFieldSpecNil))))
 
-(define (tc-stdlib-type-info-specs [ctx : TcContext]) : TcStdlibVariantSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
+(define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "TypeInfoBuiltin"
+    (tc-stdlib-type-spec-list1 (TcStdlibTyString))
     (tc-stdlib-variant-spec-cons
-      "TypeInfoBuiltin"
-      (tc-type-list1-with-pools pools (AstTyString))
+      "TypeInfoArray"
+      (tc-stdlib-type-spec-list2 (TcStdlibTyBoxName "TypeInfo") (TcStdlibTyI64))
       (tc-stdlib-variant-spec-cons
-        "TypeInfoArray"
-        (tc-type-list2-with-pools
-          pools
-          (tc-stdlib-box-name-type-with-pools pools "TypeInfo")
-          (AstTyI64))
+        "TypeInfoDynArray"
+        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "TypeInfo"))
         (tc-stdlib-variant-spec-cons
-          "TypeInfoDynArray"
-          (tc-type-list1-with-pools
-            pools
-            (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
+          "TypeInfoFunction"
+          (tc-stdlib-type-spec-list2
+            (TcStdlibTyName "TypeInfoList")
+            (TcStdlibTyBoxName "TypeInfo"))
           (tc-stdlib-variant-spec-cons
-            "TypeInfoFunction"
-            (tc-type-list2-with-pools
-              pools
-              (tc-stdlib-name-type "TypeInfoList")
-              (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
+            "TypeInfoTuple"
+            (tc-stdlib-type-spec-list1 (TcStdlibTyName "TypeInfoList"))
             (tc-stdlib-variant-spec-cons
-              "TypeInfoTuple"
-              (tc-type-list1-with-pools
-                pools
-                (tc-stdlib-name-type "TypeInfoList"))
+              "TypeInfoStruct"
+              (tc-stdlib-type-spec-list2
+                (TcStdlibTyString)
+                (TcStdlibTyName "TypeFieldList"))
               (tc-stdlib-variant-spec-cons
-                "TypeInfoStruct"
-                (tc-type-list2-with-pools
-                  pools
-                  (AstTyString)
-                  (tc-stdlib-name-type "TypeFieldList"))
+                "TypeInfoEnum"
+                (tc-stdlib-type-spec-list2
+                  (TcStdlibTyString)
+                  (TcStdlibTyName "TypeVariantList"))
                 (tc-stdlib-variant-spec-cons
-                  "TypeInfoEnum"
-                  (tc-type-list2-with-pools
-                    pools
-                    (AstTyString)
-                    (tc-stdlib-name-type "TypeVariantList"))
-                  (tc-stdlib-variant-spec-cons
-                    "TypeInfoOpaque"
-                    (tc-type-list1-with-pools pools (AstTyString))
-                    (TcStdlibVariantSpecNil)))))))))))
+                  "TypeInfoOpaque"
+                  (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+                  (TcStdlibVariantSpecNil))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -3839,58 +3867,58 @@
 (define (tc-stdlib-expr-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "first"
-    (tc-stdlib-name-type "Expr")
+    (TcStdlibTyName "Expr")
     (tc-stdlib-field-spec-cons
       "second"
-      (tc-stdlib-name-type "Expr")
+      (TcStdlibTyName "Expr")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-expr-binding-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "has-type"
-      (AstTyBool)
+      (TcStdlibTyBool)
       (tc-stdlib-field-spec-cons
         "ty"
-        (tc-stdlib-name-type "Expr")
+        (TcStdlibTyName "Expr")
         (tc-stdlib-field-spec-cons
           "init"
-          (tc-stdlib-name-type "Expr")
+          (TcStdlibTyName "Expr")
           (TcStdlibFieldSpecNil))))))
 
 (define (tc-stdlib-type-field-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "ty"
-      (tc-stdlib-name-type "TypeInfo")
+      (TcStdlibTyName "TypeInfo")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-type-variant-payload-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "ty"
-    (tc-stdlib-name-type "TypeInfo")
+    (TcStdlibTyName "TypeInfo")
     (TcStdlibFieldSpecNil)))
 
 (define (tc-stdlib-type-variant-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "payloads"
-      (tc-stdlib-name-type "TypeVariantPayloadList")
+      (TcStdlibTyName "TypeVariantPayloadList")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-type-param-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "ty"
-      (tc-stdlib-name-type "TypeInfo")
+      (TcStdlibTyName "TypeInfo")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-comptime-surface-ok-impl [ctx : TcContext]) : ResultTcUnit
@@ -4332,18 +4360,22 @@
   [name-id : i64]) : ResultTcType
   (let
     [name : String (intern-str name-id)]
-    (match (tc-lookup-id env name-id)
-      [(OkTcType ty) (OkTcType ty)]
-      [(ErrTcType message)
-        (let
-          [module : String (tc-context-module ctx)]
-          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
-            (match (tc-lookup-id
-              env
-              (tc-name-id (compiler-symbol-module-key module name)))
-              [(OkTcType ty) (OkTcType ty)]
-              [(ErrTcType _) (ErrTcType message)])
-            (ErrTcType message)))])))
+    [found : ResultTcType
+      (match (tc-lookup-id env name-id)
+        [(OkTcType ty) (OkTcType ty)]
+        [(ErrTcType message)
+          (let
+            [module : String (tc-context-module ctx)]
+            (if (and
+              (> (string-length module) 0)
+              (not (tc-name-qualified? name)))
+              (match (tc-lookup-id
+                env
+                (tc-name-id (compiler-symbol-module-key module name)))
+                [(OkTcType ty) (OkTcType ty)]
+                [(ErrTcType _) (ErrTcType message)])
+              (ErrTcType message)))])]
+    found))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-visible-id ctx env (tc-name-id name)))
@@ -10996,16 +11028,16 @@
           (AstSomeModuleName target-module)
           (AstSomeImportAlias alias)
           _))
-      (if (string-eq alias "")
-        (match (tc-context-program ctx)
-          [(AstProgram decls-box)
-            (tc-bind-import-alias-module
-              ctx
-              (box-get decls-box)
-              env
-              target-module
-              "")])
-        (OkTcEnv env))]
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (tc-bind-import-alias-module
+            ctx
+            (box-get decls-box)
+            env
+            target-module
+            (if (string-eq alias "")
+              ""
+              (compiler-symbols-import-alias-key module alias)))])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]

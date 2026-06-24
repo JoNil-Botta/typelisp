@@ -1,10 +1,9 @@
 ;# Public dynamic/fixed array helper macros (#3421).
 ;#
 ;# This module owns the user-facing array helper spellings during the migration
-;# away from compiler-public special forms and builtins. Macro exports are gated
-;# so older stage0 compilers skip the public surface while building the branch
-;# compiler; the branch compiler enables the gate by default and expands these
-;# helpers to private compiler intrinsics.
+;# away from compiler-public special forms and builtins. The branch compiler
+;# enables these helpers by default and expands them to private compiler
+;# intrinsics.
 ;#
 ;# Usage: `(import "stdlib/array.tl")`
 (module stdlib.array)

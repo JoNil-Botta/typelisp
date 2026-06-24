@@ -6961,13 +6961,11 @@
   "(defmacro (gen-a) : Module
   `(begin
     (module generated.a)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (defmacro (gen-b) : Module
   `(begin
     (module generated.b)
-    (define (answer) : i64 99)
-    (export (value answer))))
+    (define (answer) : i64 99)))
 (import (gen-a))
 (import (gen-b))
 (define (main) : i64 (answer))")

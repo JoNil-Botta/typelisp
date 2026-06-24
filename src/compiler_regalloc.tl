@@ -3169,6 +3169,16 @@
         (compiler-reg-interval-list-overlaps? left-segments right-segments)
         (compiler-reg-vars-interfere-index? intervals left right)))))
 
+;; Two values may share a register iff they occupy the SAME register class. The
+;; old rule demanded identical AstType tags AND scalar-ness, which refused to
+;; coalesce a copy between e.g. an i64 and a Ptr, or -- far more commonly in this
+;; compiler -- between any two 8-byte HANDLE values (Enum/Struct/String/Box/Array
+;; descriptors), even though all of those live in one GP register and are moved
+;; with a plain movq. Nominal type is irrelevant to register sharing: the only
+;; constraint is GP-vs-SSE (you cannot put a GP value in an XMM register), and
+;; width consistency is already guaranteed because coalescing is driven by pure
+;; moves, whose two endpoints always have the same representation. So: both
+;; register-eligible, and both the same register class.
 (define (compiler-reg-compatible-types?
   [types : CompilerRegVarTypes]
   [left : i64]
@@ -3178,9 +3188,11 @@
       (match (compiler-reg-var-types-lookup types right)
         [(CompilerRegSomeType right-ty)
           (and
-            (compiler-reg-scalar-type? left-ty)
-            (compiler-reg-scalar-type? right-ty)
-            (= (ast-type-tag left-ty) (ast-type-tag right-ty)))]
+            (compiler-reg-register-eligible-type? left-ty)
+            (compiler-reg-register-eligible-type? right-ty)
+            (if (compiler-reg-float-type? left-ty)
+              (compiler-reg-float-type? right-ty)
+              (not (compiler-reg-float-type? right-ty))))]
         [(CompilerRegNoType) false])]
     [(CompilerRegNoType) false]))
 
@@ -7339,6 +7351,162 @@
       (print-error (compiler-reg-call-span-census-row "2-3" 2))
       (print-error (compiler-reg-call-span-census-row "4+" 3)))))
 
+;; ---- move census (cfg regalloc-census) ------------------------------------
+;; Categorise every harvested IR move by why it survived as a reg-reg copy, to
+;; see where the move flood actually comes from. Slots:
+;;   0 harvested      total moves seen
+;;   1 coalesced      src/dst share a coalesce root -> emitted as a self-move
+;;   2 samevalue_unco un-coalesced but proven SAME VALUE (#2 should catch these;
+;;                    leftovers are multi-def / class-check rejects)
+;;   3 disjoint_unco  un-coalesced, DISTINCT value, but live SEGMENTS are
+;;                    DISJOINT -> the two could share one register via sound
+;;                    hole-filling, so copy-hint *should* fold the copy away
+;;   4 interfere      un-coalesced, distinct value, segments overlap -> a real
+;;                    simultaneous-liveness copy (needs a split, else irreducible)
+(cfg
+  regalloc-census
+  (define compiler-reg-move-census-counts : (Array i64)
+    (make-array i64 16)))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-move-census-reset!) : unit
+    (compiler-reg-fill-i64-array compiler-reg-move-census-counts 0)))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-move-census-bump! [slot : i64]) : unit
+    (if (if (< slot 0)
+      true
+      (>= slot (array-length compiler-reg-move-census-counts)))
+      unit
+      (array-set!
+        compiler-reg-move-census-counts
+        slot
+        (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-move-census-find [parents : (Array i64)] [v : i64]) : i64
+    (if (if (< v 0)
+      true
+      (>= v (array-length parents)))
+      v
+      (let
+        [p : i64 (array-ref parents v)]
+        (if (= p v)
+          v
+          (compiler-reg-move-census-find parents p))))))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-move-census-record!
+    [moves : CompilerRegMoveList]
+    [parents : (Array i64)]
+    [interval-index : CompilerRegIntervalIndex]
+    [eff-index : CompilerRegIntervalIndex]
+    [types : CompilerRegVarTypes]
+    [group-vars : CompilerLiveI64Set]
+    [sv-parents : (Array i64)]) : unit
+    (match moves
+      [(CompilerRegMoveNil) unit]
+      [(CompilerRegMoveCons move rest)
+        (begin
+          (match move
+            [(CompilerRegMove src dst _)
+              (begin
+                (compiler-reg-move-census-bump! 0)
+                (let
+                  [rs : i64 (compiler-reg-move-census-find parents src)]
+                  [rd : i64 (compiler-reg-move-census-find parents dst)]
+                  (if (= rs rd)
+                    (compiler-reg-move-census-bump! 1)
+                    (if (compiler-reg-same-value-class? sv-parents src dst)
+                      (compiler-reg-move-census-bump! 2)
+                      (if (not
+                        (compiler-reg-vars-interfere-segmented-index?
+                          interval-index
+                          src
+                          dst))
+                        ;; vars are segment-disjoint. Split by whether their
+                        ;; coalesce ROOTS also stay disjoint (slot 5: a root-level
+                        ;; copy-hint COULD place them in one register) or the merged
+                        ;; classes now conflict (slot 6). Slot 7: of the rootfree
+                        ;; ones, the PAIR is coalesce-vars-compatible? -> the merge
+                        ;; was blocked by the all-pairs class check, not the pair.
+                        (begin
+                          (compiler-reg-move-census-bump! 3)
+                          (if (compiler-reg-vars-interfere-segmented-index?
+                            eff-index
+                            rs
+                            rd)
+                            (compiler-reg-move-census-bump! 6)
+                            (begin
+                              (compiler-reg-move-census-bump! 5)
+                              (if (compiler-reg-coalesce-vars-compatible?
+                                interval-index
+                                types
+                                group-vars
+                                src
+                                dst
+                                false
+                                sv-parents)
+                                (compiler-reg-move-census-bump! 7)
+                                (if (if (compiler-live-set-contains?
+                                  group-vars
+                                  src)
+                                  true
+                                  (compiler-live-set-contains? group-vars dst))
+                                  (compiler-reg-move-census-bump! 8)
+                                  (if (not
+                                    (compiler-reg-compatible-types?
+                                      types
+                                      src
+                                      dst))
+                                    (compiler-reg-move-census-bump! 9)
+                                    (compiler-reg-move-census-bump! 10)))))))
+                        (compiler-reg-move-census-bump! 4))))))])
+          (compiler-reg-move-census-record!
+            (box-get rest)
+            parents
+            interval-index
+            eff-index
+            types
+            group-vars
+            sv-parents))])))
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-move-census-print!) : unit
+    (begin
+      (print-error
+        "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
+      (print-error
+        (str-cat
+          "regalloc-move-census|"
+          (int->string (array-ref compiler-reg-move-census-counts 0))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 1))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 2))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 3))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 4))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 5))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 6))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 7))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 8))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 9))
+          "|"
+          (int->string (array-ref compiler-reg-move-census-counts 10))
+          "\n")))))
+
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
   (match (compiler-reg-var-types-lookup type-info var)
     [(CompilerRegSomeType ty) (compiler-reg-float-type? ty)]
@@ -7872,6 +8040,23 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce interval-index)
         interval-index)]
+    ;; move census (cfg regalloc-census only; no-op otherwise): categorise the
+    ;; harvested moves against the final coalesce result + per-var and per-root
+    ;; segments.
+    [_move-census : unit
+      (cfg
+        regalloc-census
+        (if allow-caller-saved-zero-call
+          (compiler-reg-move-census-record!
+            moves
+            (struct-get coalesce parents)
+            interval-index
+            eff-index
+            type-info
+            group-vars
+            sv-parents)
+          unit)
+        unit)]
     [eff-intervals : CompilerRegIntervalList
       (if allow-caller-saved-zero-call
         (compiler-reg-interval-arrays-to-list

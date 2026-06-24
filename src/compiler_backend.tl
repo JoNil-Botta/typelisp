@@ -27064,7 +27064,9 @@ tl_memcpy:
                             (compiler-backend-profile-finish "compose_tail"))
                           (cfg
                             regalloc-census
-                            (compiler-reg-call-span-census-print!))
+                            (begin
+                              (compiler-reg-call-span-census-print!)
+                              (compiler-reg-move-census-print!)))
                           (OkCompilerBackendBuffer buf))))]
                   [(ErrCompilerBackendBuffer message)
                     (begin
@@ -27088,7 +27090,11 @@ tl_memcpy:
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
-    (cfg regalloc-census (compiler-reg-call-span-census-reset!))
+    (cfg
+      regalloc-census
+      (begin
+        (compiler-reg-call-span-census-reset!)
+        (compiler-reg-move-census-reset!)))
     (cfg compile-profile (compiler-backend-profile-start))
     (match (compiler-backend-runtime-plan-with-index program)
       [(OkBackendRuntimePlanWithIndex planned)

@@ -6802,6 +6802,17 @@
         [(CompilerRegEdgeCopyRewriteRefused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
 
+;; Multi-split: rescue EVERY profitable spilled loop-carried var, not just the
+;; first. Each split rewrites the IR (region uses -> a new register-resident var
+;; SV + edge copies at the region boundary) and merges SV's register assignment
+;; into `plan`; the next pass recomputes liveness/intervals on the rewritten
+;; blocks, so its conflict check (loop-split-first-register / location-conflicts-
+;; region?) already sees every prior split's SV occupying its register across its
+;; region and avoids it -- which is exactly what makes picking the FINAL (not
+;; re-allocated) registers sound. The region remap also stops the same var being
+;; re-selected for the same region, so it converges; fuel (the integer register
+;; count) bounds it. With a single candidate this is bit-identical to the old
+;; one-shot behaviour (merging additions with the empty tail is the identity).
 (define (compiler-reg-loop-split-rewrite-blocks
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
@@ -6809,6 +6820,23 @@
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (if (not (compiler-reg-scalar-full-intervals? func))
+    (compiler-reg-loop-split-noop blocks vars)
+    (compiler-reg-loop-split-rewrite-fueled
+      func
+      blocks
+      vars
+      type-info
+      plan
+      (compiler-reg-sysv-integer-register-count))))
+
+(define (compiler-reg-loop-split-rewrite-fueled
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]
+  [fuel : i64]) : CompilerRegCallSaveRewrite
+  (if (<= fuel 0)
     (compiler-reg-loop-split-noop blocks vars)
     (let
       [liveness : CompilerFunctionLiveness
@@ -6860,14 +6888,62 @@
                       ty
                       reg
                       copies)
-                    (compiler-reg-loop-split-apply-candidate
-                      blocks
-                      vars
-                      stack-var
-                      region-label
-                      ty
-                      reg
-                      copies)])]))]))))
+                    (let
+                      [applied : CompilerRegCallSaveRewrite
+                        (compiler-reg-loop-split-apply-candidate
+                          blocks
+                          vars
+                          stack-var
+                          region-label
+                          ty
+                          reg
+                          copies)]
+                      (match applied
+                        [(CompilerRegCallSaveRewrite
+                            new-blocks
+                            _
+                            new-vars
+                            split-assignments
+                            split-types)
+                          (match func
+                            [(IrFunction name params ret-ty _ _)
+                              (let
+                                [new-func : CompilerIrFunction
+                                  (IrFunction
+                                    name
+                                    params
+                                    ret-ty
+                                    new-vars
+                                    new-blocks)]
+                                [new-plan : CompilerRegPlan
+                                  (compiler-reg-plan-with-call-save-rewrite
+                                    plan
+                                    applied)]
+                                [rest : CompilerRegCallSaveRewrite
+                                  (compiler-reg-loop-split-rewrite-fueled
+                                    new-func
+                                    new-blocks
+                                    new-vars
+                                    type-info
+                                    new-plan
+                                    (- fuel 1))]
+                                (match rest
+                                  [(CompilerRegCallSaveRewrite
+                                      final-blocks
+                                      _
+                                      final-vars
+                                      rest-assignments
+                                      rest-types)
+                                    (CompilerRegCallSaveRewrite
+                                      final-blocks
+                                      vars
+                                      final-vars
+                                      (compiler-reg-assignment-list-merge
+                                        split-assignments
+                                        rest-assignments)
+                                      (compiler-reg-var-type-list-merge
+                                        split-types
+                                        rest-types))]))])]))])]))]))))
 
 (define (compiler-reg-caller-saved-call-spanning-candidate?
   [assignments : CompilerRegAssignmentTable]

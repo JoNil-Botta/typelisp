@@ -974,24 +974,27 @@
   [state : CompilerDriverState]
   [input-path : String]
   [stdlib-roots : StringVec]) : bool
-  (begin
-    (compiler-driver-state-reset-file-state! state)
-    (let
-      [ok : bool
-        (match (compiler-driver-load-and-lower-escaping-with-state
-          state
-          input-path
-          (BackendTargetLinux)
-          stdlib-roots
-          (BackendModeScalar)
-          (compiler-driver-target-cfgs
+  (let
+    [decoy-state : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state)
+      (compiler-driver-state-install-pools! decoy-state)
+      (let
+        [ok : bool
+          (match (compiler-driver-load-and-lower-escaping-with-state
+            state
+            input-path
             (BackendTargetLinux)
-            (compiler-cfg-empty)))
-          [(OkCompilerDriverLowered _ _ _ _) true]
-          [(ErrCompilerDriverLowered _) false])]
-      (begin
-        (compiler-driver-state-capture-session-floors! state)
-        ok))))
+            stdlib-roots
+            (BackendModeScalar)
+            (compiler-driver-target-cfgs
+              (BackendTargetLinux)
+              (compiler-cfg-empty)))
+            [(OkCompilerDriverLowered _ _ _ _) true]
+            [(ErrCompilerDriverLowered _) false])]
+        (begin
+          (compiler-driver-state-capture-session-floors! state)
+          ok)))))
 
 (define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
   (let

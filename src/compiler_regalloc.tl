@@ -2879,12 +2879,17 @@
         (compiler-reg-first-free-register (box-get rest) active)
         reg)]))
 
-;; #3489 (PR4, hole-aware): is `reg` held by an active value that conflicts with
-;; `var`? Segment holes are trusted only when both same-register values are
-;; non-singleton coalesce roots: those roots carry the explicitly merged union of
-;; their class members' segments. Ordinary values keep the old conservative "same
-;; active register conflicts" rule, preventing incomplete per-value segments from
-;; becoming register aliases.
+;; #3489 (PR4) -> general hole-filling: is `reg` held by an active value that
+;; conflicts with `var`? Two same-register values conflict iff their live
+;; SEGMENTS overlap. This is sound for EVERY candidate because the allocator runs
+;; on the merged-root index, where each candidate carries complete segments -- a
+;; singleton its own live range, a class root the union of its members'. Every
+;; segment hole is therefore genuine deadness, exactly the LLVM LiveInterval
+;; property that makes segment-overlap an exact interference test. The earlier
+;; rule trusted holes only for non-singleton roots, conservatively treating all
+;; other values' segments as if incomplete; the merged-root index guarantees they
+;; are not, so the restriction is dropped. (`hole-aware-vars` is retained on the
+;; signature for the call sites but no longer gates the decision.)
 (define (compiler-reg-active-register-conflicts?
   [active : CompilerRegActiveList]
   [reg : String]
@@ -2897,10 +2902,8 @@
       (match item
         [(CompilerRegActive aid _ areg)
           (if (string-eq reg areg)
-            (if (and
-              (compiler-live-set-contains? hole-aware-vars var)
-              (compiler-live-set-contains? hole-aware-vars aid)
-              (not (compiler-reg-vars-interfere-segmented-index? index var aid)))
+            (if (not
+              (compiler-reg-vars-interfere-segmented-index? index var aid))
               (compiler-reg-active-register-conflicts?
                 (box-get rest)
                 reg
@@ -12810,15 +12813,22 @@
       (array-set! parents 3 2)
       (array-set! parents 4 4)
       (let
-        [ordinary-root-conflicts : bool
+        ;; #3489 -> general hole-filling: the allocator runs on the merged-root
+        ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
+        ;; its own live range, a class root the union of its members'. Every
+        ;; segment hole is therefore genuine deadness, so ANY value may reuse an
+        ;; active register in a hole whose segments are disjoint, regardless of
+        ;; whether it is a coalesce root or a singleton. var 1's segment [4,6] is
+        ;; disjoint from the active root var 0's [0,2], so it reuses %r12.
+        [var1-disjoint-reuses : bool
           (match (compiler-reg-first-free-register-holes
             one-reg
             active-root
             segment-index
             1
             hole-aware)
-            [(CompilerRegNoString) true]
-            [(CompilerRegSomeString _) false])]
+            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegNoString) false])]
         [root-hole-reuses : bool
           (match (compiler-reg-first-free-register-holes
             one-reg
@@ -12828,6 +12838,7 @@
             hole-aware)
             [(CompilerRegSomeString reg) (string-eq reg "%r12")]
             [(CompilerRegNoString) false])]
+        ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
         [root-overlap-conflicts : bool
           (match (compiler-reg-first-free-register-holes
             one-reg
@@ -12837,15 +12848,16 @@
             hole-aware)
             [(CompilerRegNoString) true]
             [(CompilerRegSomeString _) false])]
-        [ordinary-ordinary-conflicts : bool
+        ;; var 4's [8,9] is disjoint from the active ordinary var 1's [4,6].
+        [var4-disjoint-reuses : bool
           (match (compiler-reg-first-free-register-holes
             one-reg
             active-ordinary
             segment-index
             4
             hole-aware)
-            [(CompilerRegNoString) true]
-            [(CompilerRegSomeString _) false])]
+            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegNoString) false])]
         [roots : CompilerLiveI64Set
           (compiler-reg-coalesce-merged-root-set
             (CompilerRegCoalesceMap parents))]
@@ -12854,10 +12866,10 @@
             (CompilerRegCoalesceMap parents)
             (compiler-live-set2 1 4))]
         (and
-          ordinary-root-conflicts
+          var1-disjoint-reuses
           root-hole-reuses
           root-overlap-conflicts
-          ordinary-ordinary-conflicts
+          var4-disjoint-reuses
           (compiler-live-set-contains? roots 0)
           (compiler-live-set-contains? roots 2)
           (not (compiler-live-set-contains? roots 1))

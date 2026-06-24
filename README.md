@@ -34,7 +34,7 @@ Language direction:
   selects. AVX2 emits an explicit masked-if diagnostic, and the remaining SPMD
   queue covers wider lane types (#2763), public vector/mask values (#2764),
   cross-lane ops (#2765), atomics/overlapping writes (#2766), deferred control
-  flow (#2767), and varying-call ABI (#2768).
+  flow (#2767), and out-of-line varying-call ABI (#2852).
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
   generates concrete types, functions, and implementation bundles instead.

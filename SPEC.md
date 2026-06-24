@@ -3715,9 +3715,11 @@ Uniform and varying rules:
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
-- Calls with varying arguments are rejected until an SPMD function ABI is
-  designed, except for the explicit `stdlib/atomic.tl` integer element helpers.
-  The implemented non-atomic slice permits built-in arithmetic/comparison
+- Non-inlineable calls with varying arguments or varying returns are rejected
+  until an out-of-line SPMD function ABI is designed (#2852). The implemented
+  exceptions are the explicit `stdlib/atomic.tl` integer element helpers,
+  direct source-known non-dispatch helper calls that can be inlined within the
+  current SPMD-safe expression subset, and built-in arithmetic/comparison
   operators and array operations over supported lane types.
 - `while` conditions must be uniform. Varying `if` is admitted with the
   restrictions below.

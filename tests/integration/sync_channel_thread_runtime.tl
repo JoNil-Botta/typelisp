@@ -65,12 +65,11 @@
       (while (and ok (< i count))
         (let
           [value : i64 (+ base i)]
-          (begin
-            (if (sync-integration-send-ok? (channel-i64-send channel value))
-              (begin
-                (set! sum (+ sum value))
-                (set! i (+ i 1)))
-              (set! ok false)))))
+          (if (sync-integration-send-ok? (channel-i64-send channel value))
+            (begin
+              (set! sum (+ sum value))
+              (set! i (+ i 1)))
+            (set! ok false))))
       (if ok
         sum
         -1))))

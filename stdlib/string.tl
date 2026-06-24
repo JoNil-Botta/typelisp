@@ -606,11 +606,10 @@
               (set! found true)
               (set! i (+ i 1))))))
       (if found
-        (begin
-          (string-concat3
-            (substring s 0 i)
-            new
-            (substring s (+ i olen) (- (- hlen i) olen))))
+        (string-concat3
+          (substring s 0 i)
+          new
+          (substring s (+ i olen) (- (- hlen i) olen)))
         s))))
 
 ;: Return true if haystack has needle at position start.

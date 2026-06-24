@@ -314,7 +314,5 @@ _No documented declarations._
     (if (string-eq rendered (doc-render-smoke-expected))
       (if (string-eq empty-rendered (doc-render-empty-expected))
         42
-        (begin
-          (panic "doc-render: empty markdown smoke mismatch")))
-      (begin
-        (panic "doc-render: markdown smoke mismatch")))))
+        (panic "doc-render: empty markdown smoke mismatch"))
+      (panic "doc-render: markdown smoke mismatch"))))

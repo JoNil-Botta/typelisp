@@ -1215,13 +1215,12 @@
   [reloc : CompilerObjectRelocation]) : unit
   (match reloc
     [(ObjectRelocation section site kind target)
-      (begin
-        (compiler-object-coff-render-relocation-record!
-          out
-          image
-          (compiler-object-coff-section-label-offset image section site)
-          kind
-          target))]))
+      (compiler-object-coff-render-relocation-record!
+        out
+        image
+        (compiler-object-coff-section-label-offset image section site)
+        kind
+        target)]))
 
 (define (compiler-object-coff-render-text-instr-relocations!
   [out : (Array u8)]

@@ -175,8 +175,7 @@
             (begin
               (expect tags cur (tag-rparen))
               inner)))
-        (begin
-          (panic "parser: expected an integer or '('"))))))
+        (panic "parser: expected an integer or '('")))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then while the next token is '*' or '/', consume it, parse the

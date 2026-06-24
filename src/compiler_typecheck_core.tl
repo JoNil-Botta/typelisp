@@ -41524,46 +41524,45 @@
           [(OkCompilerRegistries registries)
             (let
               [ctx : TcContext (TcContext program symbols registries "" pools)]
-              (begin
-                (match (tc-stdlib-comptime-surface-ok ctx)
-                  [(OkTcUnit)
-                    (match (tc-program-source-types-policy-ok ctx program)
-                      [(OkTcUnit)
-                        (match (tc-build-top-env ctx program)
-                          [(OkTcEnv top-env)
-                            (match program
-                              [(AstProgram decls-box)
-                                (let
-                                  [decls : AstDeclList (box-get decls-box)]
-                                  (begin
-                                    (tc-hygiene-reset-active-top-env! top-env)
-                                    (tc-context-capture-active-pools! ctx)
-                                    (tc-clone-able-cache-populate! ctx)
-                                    (tc-macro-helper-env-cache-reset!)
-                                    (match (tc-check-decls-with-paths
-                                      ctx
-                                      top-env
-                                      decls
-                                      paths
-                                      (CompilerTypecheckSummary 0 0 0)
-                                      stdlib-roots
-                                      cache-scope)
-                                      [(OkCompilerTypecheck summary)
-                                        (begin
-                                          (tc-context-capture-active-pools! ctx)
-                                          (OkCompilerTypecheckChecked
-                                            summary
-                                            ctx
-                                            top-env))]
-                                      [(ErrCompilerTypecheck diag)
-                                        (ErrCompilerTypecheckChecked diag)])))])]
-                          [(ErrTcEnv message)
-                            (ErrCompilerTypecheckChecked
-                              (tc-diag-at-start message))])]
-                      [(ErrTcUnit message)
-                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-                  [(ErrTcUnit message)
-                    (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))]
+              (match (tc-stdlib-comptime-surface-ok ctx)
+                [(OkTcUnit)
+                  (match (tc-program-source-types-policy-ok ctx program)
+                    [(OkTcUnit)
+                      (match (tc-build-top-env ctx program)
+                        [(OkTcEnv top-env)
+                          (match program
+                            [(AstProgram decls-box)
+                              (let
+                                [decls : AstDeclList (box-get decls-box)]
+                                (begin
+                                  (tc-hygiene-reset-active-top-env! top-env)
+                                  (tc-context-capture-active-pools! ctx)
+                                  (tc-clone-able-cache-populate! ctx)
+                                  (tc-macro-helper-env-cache-reset!)
+                                  (match (tc-check-decls-with-paths
+                                    ctx
+                                    top-env
+                                    decls
+                                    paths
+                                    (CompilerTypecheckSummary 0 0 0)
+                                    stdlib-roots
+                                    cache-scope)
+                                    [(OkCompilerTypecheck summary)
+                                      (begin
+                                        (tc-context-capture-active-pools! ctx)
+                                        (OkCompilerTypecheckChecked
+                                          summary
+                                          ctx
+                                          top-env))]
+                                    [(ErrCompilerTypecheck diag)
+                                      (ErrCompilerTypecheckChecked diag)])))])]
+                        [(ErrTcEnv message)
+                          (ErrCompilerTypecheckChecked
+                            (tc-diag-at-start message))])]
+                    [(ErrTcUnit message)
+                      (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+                [(ErrTcUnit message)
+                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
           [(ErrCompilerRegistries message)
             (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
       [(ErrCompilerSymbols message)

@@ -12117,5 +12117,4 @@
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-interns-bound-names-ok?))))
     42
-    (begin
-      (panic "backend: smoke output mismatch"))))
+    (panic "backend: smoke output mismatch")))

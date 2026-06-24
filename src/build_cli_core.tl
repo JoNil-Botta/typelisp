@@ -360,45 +360,43 @@
   [stdlib-lines : String]
   [stdlib-roots : StringVec]) : ResultBuildConfig
   (if (>= idx count)
-    (begin
-      (if has-source
-        (begin
-          (when
-            has-manifest
-            (return
-              (ErrBuildConfig
-                "build: cannot combine a source file with --manifest-path")))
-          (OkBuildConfig
-            (BuildSourceConfig
-              source
-              has-source
-              output
-              has-output
-              target
-              mode
-              (if has-opt-level
-                (int->string opt-level)
-                "")
-              stdlib-lines)))
-        (begin
-          (when
+    (if has-source
+      (begin
+        (when
+          has-manifest
+          (return
+            (ErrBuildConfig
+              "build: cannot combine a source file with --manifest-path")))
+        (OkBuildConfig
+          (BuildSourceConfig
+            source
+            has-source
+            output
             has-output
-            (return
-              (ErrBuildConfig "build: -o requires a source file argument")))
-          (OkBuildConfig
-            (BuildPackageConfig
-              manifest
-              has-manifest
-              target
-              has-target
-              mode
-              profile
-              has-opt-level
-              (if has-opt-level
-                opt-level
-                (build-profile-default-opt-level profile))
-              lock-policy
-              stdlib-roots)))))
+            target
+            mode
+            (if has-opt-level
+              (int->string opt-level)
+              "")
+            stdlib-lines)))
+      (begin
+        (when
+          has-output
+          (return (ErrBuildConfig "build: -o requires a source file argument")))
+        (OkBuildConfig
+          (BuildPackageConfig
+            manifest
+            has-manifest
+            target
+            has-target
+            mode
+            profile
+            has-opt-level
+            (if has-opt-level
+              opt-level
+              (build-profile-default-opt-level profile))
+            lock-policy
+            stdlib-roots))))
     (let
       [current : String (arg idx)]
       (cond

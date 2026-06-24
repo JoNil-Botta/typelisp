@@ -9,12 +9,11 @@
     [found : bool false]
     (begin
       (while (< idx (string-vec-len items))
-        (begin
-          (if (string.string-eq (string-vec-get items idx "") needle)
-            (begin
-              (set! found true)
-              (set! idx (string-vec-len items)))
-            (set! idx (+ idx 1)))))
+        (if (string.string-eq (string-vec-get items idx "") needle)
+          (begin
+            (set! found true)
+            (set! idx (string-vec-len items)))
+          (set! idx (+ idx 1))))
       found)))
 
 (define (lsp-completion-smoke-ok?) : bool

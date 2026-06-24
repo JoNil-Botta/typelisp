@@ -443,14 +443,13 @@
   (let
     [i : i64 index]
     [last : i64 (- (lsp-documents-len docs) 1)]
-    (begin
-      (while (< i last)
-        (begin
-          (lsp-documents-set!
-            docs
-            i
-            (lsp-documents-get docs (+ i 1) (lsp-document-fallback)))
-          (set! i (+ i 1)))))))
+    (while (< i last)
+      (begin
+        (lsp-documents-set!
+          docs
+          i
+          (lsp-documents-get docs (+ i 1) (lsp-document-fallback)))
+        (set! i (+ i 1))))))
 
 (define (lsp-documents-remove-index [docs : LspDocuments] [index : i64]) : LspDocuments
   (if (if (>= index 0)
@@ -3228,50 +3227,49 @@
       (while (< i n)
         (let
           [c : char (string-ref text i)]
-          (begin
-            (cond
-              [(= c ';') (set! i (lsp-skip-line text i n))]
-              [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
-              [(= c '"') (set! i (lsp-skip-string text i n))]
-              [(= c '(')
-                (begin
-                  (set! depth (+ depth 1))
-                  (if (= depth 1)
-                    (let
-                      [name-off : i64 (lsp-def-name-offset-at text i n)]
-                      (if (>= name-off 0)
-                        (let
-                          [name : String (lsp-symbol-at-offset text name-off)]
-                          [kind : String (lsp-decl-kind-at text i n)]
-                          [form-end : i64 (lsp-skip-paren-group text i n)]
-                          [name-lc : LspLineCol
-                            (lsp-line-col-at-offset text name-off)]
-                          [form-start-lc : LspLineCol
-                            (lsp-line-col-at-offset text i)]
-                          [form-end-lc : LspLineCol
-                            (lsp-line-col-at-offset text form-end)]
-                          (set!
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
+              (begin
+                (set! depth (+ depth 1))
+                (if (= depth 1)
+                  (let
+                    [name-off : i64 (lsp-def-name-offset-at text i n)]
+                    (if (>= name-off 0)
+                      (let
+                        [name : String (lsp-symbol-at-offset text name-off)]
+                        [kind : String (lsp-decl-kind-at text i n)]
+                        [form-end : i64 (lsp-skip-paren-group text i n)]
+                        [name-lc : LspLineCol
+                          (lsp-line-col-at-offset text name-off)]
+                        [form-start-lc : LspLineCol
+                          (lsp-line-col-at-offset text i)]
+                        [form-end-lc : LspLineCol
+                          (lsp-line-col-at-offset text form-end)]
+                        (set!
+                          result
+                          (lsp-decl-list-push
                             result
-                            (lsp-decl-list-push
-                              result
-                              (LspDeclEntry
-                                kind
-                                name
-                                (struct-get name-lc line)
-                                (struct-get name-lc col)
-                                (string-length name)
-                                (struct-get form-start-lc line)
-                                (struct-get form-start-lc col)
-                                (struct-get form-end-lc line)
-                                (struct-get form-end-lc col)))))
-                        unit))
-                    unit)
-                  (set! i (+ i 1)))]
-              [(= c ')')
-                (begin
-                  (set! depth (- depth 1))
-                  (set! i (+ i 1)))]
-              [else (set! i (+ i 1))]))))
+                            (LspDeclEntry
+                              kind
+                              name
+                              (struct-get name-lc line)
+                              (struct-get name-lc col)
+                              (string-length name)
+                              (struct-get form-start-lc line)
+                              (struct-get form-start-lc col)
+                              (struct-get form-end-lc line)
+                              (struct-get form-end-lc col)))))
+                      unit))
+                  unit)
+                (set! i (+ i 1)))]
+            [(= c ')')
+              (begin
+                (set! depth (- depth 1))
+                (set! i (+ i 1)))]
+            [else (set! i (+ i 1))])))
       result)))
 
 ;; Helper: extract document from params

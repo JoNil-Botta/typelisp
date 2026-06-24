@@ -7653,9 +7653,7 @@
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
           (panic "typecheck: smoke score mismatch"))]
-      [(ErrCompilerTypecheck diag)
-        (begin
-          (panic (compiler-diagnostic-message diag)))])
+      [(ErrCompilerTypecheck diag) (panic (compiler-diagnostic-message diag))])
     unit))
 
 ;; --- move checker fixtures (#1048) ------------------------------------------
@@ -9762,16 +9760,13 @@
       (panic "typecheck: comptime reflection tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: layout query tests failed")))
+      (panic "typecheck: layout query tests failed"))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: defmacro tests failed")))
+      (panic "typecheck: defmacro tests failed"))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: macro expansion tests failed")))))
+      (panic "typecheck: macro expansion tests failed"))))
 
 (define (compiler-typecheck-self-test) : i64
   (begin

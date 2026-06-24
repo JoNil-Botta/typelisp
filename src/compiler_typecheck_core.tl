@@ -2382,10 +2382,142 @@
     env
     (tc-bind-id env name-id ty)))
 
+(define tc-module-name-id-cache-capacity : i64
+  8192)
+(define tc-module-name-id-cache-module-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-module-name-id-cache-name-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-module-name-id-cache-values : (Array i64)
+  (make-array i64 8192))
+(define tc-module-name-id-cache-count : i64
+  0)
+(define tc-module-name-id-cache-generation : i64
+  -1)
+(define tc-module-name-id-cache-ready : bool
+  false)
+
+(define (tc-module-name-id-cache-ensure!) : unit
+  (if (if tc-module-name-id-cache-ready
+    (= tc-module-name-id-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-module-name-id-cache-capacity)
+          (begin
+            (array-set! tc-module-name-id-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! tc-module-name-id-cache-count 0)
+        (set! tc-module-name-id-cache-generation (intern-generation))
+        (set! tc-module-name-id-cache-ready true)))))
+
+(define (tc-module-name-id-cache-bucket [module-id : i64] [name-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) (* name-id 40503))
+    (- tc-module-name-id-cache-capacity 1)))
+
+(define (tc-module-name-id-cache-get [module-id : i64] [name-id : i64]) : i64
+  (let
+    [cursor : i64 (tc-module-name-id-cache-bucket module-id name-id)]
+    [module-key : i64 (+ module-id 1)]
+    [name-key : i64 (+ name-id 1)]
+    [steps : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps tc-module-name-id-cache-capacity))
+        (let
+          [slot : i64 (array-ref tc-module-name-id-cache-module-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (and
+              (= slot module-key)
+              (= (array-ref tc-module-name-id-cache-name-keys cursor) name-key))
+              (begin
+                (set! out (array-ref tc-module-name-id-cache-values cursor))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and (+ cursor 1) (- tc-module-name-id-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (tc-module-name-id-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [value-id : i64]) : unit
+  (if (>= (* tc-module-name-id-cache-count 2) tc-module-name-id-cache-capacity)
+    unit
+    (let
+      [cursor : i64 (tc-module-name-id-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps tc-module-name-id-cache-capacity))
+          (let
+            [slot : i64 (array-ref tc-module-name-id-cache-module-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array-set!
+                  tc-module-name-id-cache-module-keys
+                  cursor
+                  module-key)
+                (array-set! tc-module-name-id-cache-name-keys cursor name-key)
+                (array-set! tc-module-name-id-cache-values cursor value-id)
+                (set!
+                  tc-module-name-id-cache-count
+                  (+ tc-module-name-id-cache-count 1))
+                (set! done true))
+              (if (and
+                (= slot module-key)
+                (=
+                  (array-ref tc-module-name-id-cache-name-keys cursor)
+                  name-key))
+                (set! done true)
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- tc-module-name-id-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
+
+(define (tc-module-name-id-by-id [module-id : i64] [name-id : i64]) : i64
+  (if (or (< module-id 0) (= (string-length (intern-str module-id)) 0))
+    name-id
+    (begin
+      (tc-module-name-id-cache-ensure!)
+      (let
+        [cached : i64 (tc-module-name-id-cache-get module-id name-id)]
+        (if (>= cached 0)
+          cached
+          (let
+            [value-id : i64
+              (tc-name-id
+                (compiler-symbol-module-key
+                  (intern-str module-id)
+                  (intern-str name-id)))]
+            (begin
+              (tc-module-name-id-cache-put! module-id name-id value-id)
+              value-id)))))))
+
+(define (tc-module-name-string-by-id [module-id : i64] [name-id : i64]) : String
+  (intern-str (tc-module-name-id-by-id module-id name-id)))
+
 (define (tc-module-name-id [module : String] [name-id : i64]) : i64
   (if (= (string-length module) 0)
     name-id
-    (tc-name-id (compiler-symbol-module-key module (intern-str name-id)))))
+    (tc-module-name-id-by-id (intern module) name-id)))
 
 (define (tc-bind-module-name
   [env : TcTypeEnv]
@@ -6030,10 +6162,10 @@
     [module : String (tc-context-module ctx)]
     (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
       (let
-        [module-key : String (compiler-symbol-module-key module name)]
-        [module-key-id : i64 (tc-name-id module-key)]
+        [module-key-id : i64
+          (tc-module-name-id-by-id (tc-name-id module) (tc-name-id name))]
         (if (tc-source-name-bound-exact-id? env module-key-id)
-          (TcSomeString module-key)
+          (TcSomeString (intern-str module-key-id))
           (TcNoString)))
       (TcNoString))))
 
@@ -6717,20 +6849,22 @@
     (if (or (<= first-dot 0) (>= first-dot (- n 1)))
       (TcNoString)
       (let
-        [alias : String (substring name 0 first-dot)]
+        [alias-id : i64 (intern-slice name 0 first-dot)]
         [base-start : i64 (+ first-dot 1)]
-        [base : String (substring name base-start (- n base-start))]
+        [base-id : i64 (intern-slice name base-start (- n base-start))]
         (match ctx
           [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
-                (match (macro-import-alias-target-cached
+                (match (macro-import-alias-target-cached-id
                   (box-get decls-box)
                   (intern current-module)
-                  alias)
+                  alias-id)
                   [(TcSomeString target-module)
                     (TcSomeString
-                      (compiler-symbol-module-key target-module base))]
+                      (tc-module-name-string-by-id
+                        (intern target-module)
+                        base-id))]
                   [(TcNoString) (TcNoString)])])])))))
 
 (define (tc-source-alias-display-key [ctx : TcContext] [name : String]) : TcMaybeString
@@ -6801,9 +6935,9 @@
       (if (and (> best-dot 0) (< best-dot (- n 1)))
         (let
           [base-start : i64 (+ best-dot 1)]
-          [module-name : String (substring name 0 best-dot)]
-          [base : String (substring name base-start (- n base-start))]
-          (TcSomeString (compiler-symbol-module-key module-name base)))
+          [module-id : i64 (intern-slice name 0 best-dot)]
+          [base-id : i64 (intern-slice name base-start (- n base-start))]
+          (TcSomeString (tc-module-name-string-by-id module-id base-id)))
         (TcNoString)))))
 
 (define (tc-unresolved-dotted-name-message [name : String]) : String
@@ -37114,16 +37248,24 @@
   [decls : AstDeclList]
   [current-module-id : i64]
   [qualifier : String]) : TcMaybeString
+  (macro-import-alias-target-cached-id
+    decls
+    current-module-id
+    (intern qualifier)))
+
+(define (macro-import-alias-target-cached-id
+  [decls : AstDeclList]
+  [current-module-id : i64]
+  [qualifier-id : i64]) : TcMaybeString
   (begin
     (macro-alias-cache-ensure!)
     (let
-      [qualifier-id : i64 (intern qualifier)]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (if (= cached -2)
         (match (macro-import-alias-target-ids
           decls
           current-module-id
-          qualifier
+          (intern-str qualifier-id)
           (intern ""))
           [(TcSomeString target)
             (let

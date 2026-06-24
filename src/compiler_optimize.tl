@@ -19617,7 +19617,7 @@
                       [_t-preheaders : i64
                         (cfg compile-profile (profile-now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
-                      ;; the preheaders -> licm -> induction -> global_gvn chain.
+                      ;; the preheaders -> scratch_reset -> licm -> induction -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
                       ;; so the context the pass builds for its post-pass verify
                       ;; is exactly what the next pass needs for its entry verify
@@ -19659,13 +19659,35 @@
                             name
                             _t-preheaders)
                           unit)]
+                      [_t-scratch-reset : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [scratch-reset-result : OptFunctionCtxResult
+                        (if run-heavy?
+                          (opt-scratch-reset-function-with-context-result
+                            preheaders-context
+                            preheaders)
+                          preheaders-result)]
+                      [scratch-reset : CompilerIrFunction
+                        (match scratch-reset-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [scratch-reset-context : OptCfgContext
+                        (match scratch-reset-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
+                      [_p-scratch-reset : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "scratch_reset"
+                            name
+                            _t-scratch-reset)
+                          unit)]
                       [_t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-licm-function-with-context-result
-                            preheaders-context
-                            preheaders)
-                          preheaders-result)]
+                            scratch-reset-context
+                            scratch-reset)
+                          scratch-reset-result)]
                       [licm : CompilerIrFunction
                         (match licm-result
                           [(OptFunctionCtxResult f _) f])]
@@ -25112,13 +25134,18 @@
                         globals
                         optimized-functions
                         externs)]
+                    [scratch-reset-functions : CompilerIrFunctionList
+                      (opt-scratch-reset-function-list-with-level
+                        final-functions
+                        level)]
                     (begin
                       (cfg
                         compile-profile
                         (compiler-opt-profile-finish "post_prune"))
                       (IrProgram
                         globals
-                        (compiler-ir-function-list-compact final-functions)
+                        (compiler-ir-function-list-compact
+                          scratch-reset-functions)
                         externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
@@ -25402,10 +25429,15 @@
                           globals
                           optimized-functions
                           externs)]
+                      [scratch-reset-functions : CompilerIrFunctionList
+                        (opt-scratch-reset-function-list-with-level
+                          final-functions
+                          level)]
                       [optimized : CompilerIrProgram
                         (IrProgram
                           globals
-                          (compiler-ir-function-list-compact final-functions)
+                          (compiler-ir-function-list-compact
+                            scratch-reset-functions)
                           externs)]
                       (begin
                         (cfg
@@ -35903,6 +35935,44 @@
 (defenum OptScratchScopeReport
   (OptScratchScopeReport i64 i64 OptScratchBlockerReason))
 
+(define (opt-scratch-alloc-type-size [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 0]
+    [(AstTyNever) 0]
+    [(AstTyExpr) 0]
+    [(AstTyExprList) 0]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray _ _) 8]
+    [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
+    [(AstTyRegion _ inner) (opt-scratch-alloc-type-size (ty-node-get inner))]
+    [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
+    [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
+    [(AstTyString) 8]
+    [(AstTyStr) 8]
+    [(AstTyBytes) 8]
+    [(AstTyVar _) 0]
+    [(AstTyVarArgs _ _) 0]))
+
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
   [root : i64]) : bool
@@ -35918,6 +35988,8 @@
 
 (define (opt-scratch-direct-alloc [instr : CompilerIrInstr]) : OptScratchAlloc
   (match instr
+    [(IrInstrAlloc dst ty)
+      (OptScratchAlloc dst (opt-scratch-alloc-type-size ty))]
     [(IrInstrCall dst name args _)
       (if (string-eq name "tl_alloc")
         (match (opt-aggregate-tl-alloc-size args)
@@ -36452,8 +36524,524 @@
             (tl_region_reset mark)
             (tl_arena_set enclosing)))))))
 
+;; --- implicit scratch-region reset insertion (#2743) -----------------------
+;;
+;; Opt2 may wrap a proven loop-body scratch candidate with one mark before the
+;; loop and one reset in the latch. The pass deliberately handles only simple
+;; cleanup shapes. Any body return, candidate carried by a phi, allocation in
+;; the header guard, missing unique mark block, or non-header/non-latch edge out
+;; of the loop keeps the IR unchanged.
+(defenum OptScratchResetApplyResult
+  (OptScratchResetApplyResult CompilerIrBlockList i64 bool))
+
+(defenum OptScratchResetMarkBlock
+  (OptNoScratchResetMarkBlock)
+  (OptSomeScratchResetMarkBlock String))
+
+(defenum OptScratchResetMarkCandidate
+  (OptScratchResetMarkNone)
+  (OptScratchResetMarkOne String)
+  (OptScratchResetMarkMany))
+
+(define (opt-scratch-scope-state-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeState
+  (opt-scratch-scope-scan-blocks (opt-scratch-state-initial) blocks))
+
+(define (opt-scratch-state-candidate? [state : OptScratchScopeState]) : bool
+  (match state
+    [(OptScratchScopeState allocs _ _ _ blocker)
+      (and (> allocs 0) (opt-scratch-blocker-none? blocker))]))
+
+(define (opt-scratch-report-alloc-count [report : OptScratchScopeReport]) : i64
+  (match report
+    [(OptScratchScopeReport allocs _ _) allocs]))
+
+(define (opt-scratch-block-alloc-count
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptNoBlock) 0]
+    [(OptSomeBlock block)
+      (opt-scratch-report-alloc-count (opt-scratch-scope-report-block block))]))
+
+(define (opt-scratch-reset-mark-candidate-add
+  [candidate : OptScratchResetMarkCandidate]
+  [pred : String]) : OptScratchResetMarkCandidate
+  (match candidate
+    [(OptScratchResetMarkNone) (OptScratchResetMarkOne pred)]
+    [(OptScratchResetMarkOne _) (OptScratchResetMarkMany)]
+    [(OptScratchResetMarkMany) (OptScratchResetMarkMany)]))
+
+(define (opt-scratch-reset-mark-candidate-scan
+  [reachable : OptLabelSet]
+  [body : OptLabelSet]
+  [preds : OptLabelSet]
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (opt-scratch-reset-mark-candidate-scan
+        reachable
+        body
+        (box-get rest)
+        (if (and
+          (opt-label-contains reachable pred)
+          (not (opt-label-contains body pred)))
+          (opt-scratch-reset-mark-candidate-add candidate pred)
+          candidate))]))
+
+(define (opt-scratch-reset-mark-candidate-scan-not-label
+  [reachable : OptLabelSet]
+  [skip : String]
+  [preds : OptLabelSet]
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (opt-scratch-reset-mark-candidate-scan-not-label
+        reachable
+        skip
+        (box-get rest)
+        (if (and
+          (opt-label-contains reachable pred)
+          (not (string-eq pred skip)))
+          (opt-scratch-reset-mark-candidate-add candidate pred)
+          candidate))]))
+
+(define (opt-scratch-reset-mark-block-from-candidate
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkBlock
+  (match candidate
+    [(OptScratchResetMarkOne label) (OptSomeScratchResetMarkBlock label)]
+    [_ (OptNoScratchResetMarkBlock)]))
+
+(define (opt-scratch-reset-loop-mark-block
+  [context : OptCfgContext]
+  [loop : OptNaturalLoop]) : OptScratchResetMarkBlock
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader preheader) (OptSomeScratchResetMarkBlock preheader)]
+    [(OptNoLoopPreheader)
+      (let
+        [header : String (opt-natural-loop-header loop)]
+        [preds : OptLabelSet
+          (opt-pred-map-lookup (struct-get context pred-map) header)]
+        [reachable : OptLabelSet (struct-get context reachable)]
+        (opt-scratch-reset-mark-block-from-candidate
+          (if (string-eq header (opt-natural-loop-latch loop))
+            (opt-scratch-reset-mark-candidate-scan-not-label
+              reachable
+              header
+              preds
+              (OptScratchResetMarkNone))
+            (opt-scratch-reset-mark-candidate-scan
+              reachable
+              (opt-natural-loop-body loop)
+              preds
+              (OptScratchResetMarkNone)))))]))
+
+(define (opt-scratch-phi-input-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons value _ rest)
+      (or
+        (opt-scratch-value-derived? roots facts value)
+        (opt-scratch-phi-input-derived? roots facts (box-get rest)))]))
+
+(define (opt-scratch-instr-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrPhi _ inputs _)
+      (opt-scratch-phi-input-derived? roots facts inputs)]
+    [_ false]))
+
+(define (opt-scratch-instr-seq-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-scratch-instr-loop-carried-candidate?
+        roots
+        facts
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-scratch-instr-seq-loop-carried-candidate?
+        roots
+        facts
+        instrs
+        (+ index 1)))))
+
+(define (opt-scratch-block-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (opt-scratch-instr-seq-loop-carried-candidate? roots facts instrs 0)]))
+
+(define (opt-scratch-blocks-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (or
+        (opt-scratch-block-loop-carried-candidate? roots facts block)
+        (opt-scratch-blocks-loop-carried-candidate? roots facts (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-scratch-blocks-loop-carried-candidate?
+        roots
+        facts
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-scratch-state-loop-carried-candidate?
+  [state : OptScratchScopeState]
+  [blocks : CompilerIrBlockList]) : bool
+  (match state
+    [(OptScratchScopeState _ _ roots facts _)
+      (opt-scratch-blocks-loop-carried-candidate? roots facts blocks)]))
+
+(define (opt-scratch-instr-return-exit? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrReturn _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
+    [_ false]))
+
+(define (opt-scratch-instr-seq-return-exit?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-scratch-instr-return-exit? (compiler-ir-instr-seq-ref instrs index))
+      (opt-scratch-instr-seq-return-exit? instrs (+ index 1)))))
+
+(define (opt-scratch-successors-loop-safe?
+  [body : OptLabelSet]
+  [label : String]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [successors : OptLabelSet]) : bool
+  (match successors
+    [(OptLabelNil) true]
+    [(OptLabelCons succ rest)
+      (and
+        (or
+          (opt-label-contains body succ)
+          (string-eq label header)
+          (string-eq label latch)
+          (string-eq label mark-block))
+        (opt-scratch-successors-loop-safe?
+          body
+          label
+          header
+          latch
+          mark-block
+          (box-get rest)))]))
+
+(define (opt-scratch-loop-block-exits-safe?
+  [index : OptCfgIndex]
+  [body : OptLabelSet]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock label instrs)
+      (and
+        (not (opt-scratch-instr-seq-return-exit? instrs 0))
+        (opt-scratch-successors-loop-safe?
+          body
+          label
+          header
+          latch
+          mark-block
+          (opt-cfg-index-successors index label)))]))
+
+(define (opt-scratch-loop-blocks-exits-safe?
+  [index : OptCfgIndex]
+  [body : OptLabelSet]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (and
+        (opt-scratch-loop-block-exits-safe?
+          index
+          body
+          header
+          latch
+          mark-block
+          block)
+        (opt-scratch-loop-blocks-exits-safe?
+          index
+          body
+          header
+          latch
+          mark-block
+          (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-scratch-loop-blocks-exits-safe?
+        index
+        body
+        header
+        latch
+        mark-block
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-scratch-loop-eligible?
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]) : bool
+  (match (opt-scratch-reset-loop-mark-block context loop)
+    [(OptNoScratchResetMarkBlock) false]
+    [(OptSomeScratchResetMarkBlock mark-block)
+      (let
+        [index : OptCfgIndex (struct-get context index)]
+        [header : String (opt-natural-loop-header loop)]
+        [latch : String (opt-natural-loop-latch loop)]
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks index loop blocks)]
+        [state : OptScratchScopeState
+          (opt-scratch-scope-state-blocks body-blocks)]
+        (and
+          (opt-scratch-state-candidate? state)
+          (or
+            (string-eq header latch)
+            (= (opt-scratch-block-alloc-count blocks header) 0))
+          (not (opt-scratch-state-loop-carried-candidate? state body-blocks))
+          (opt-scratch-loop-blocks-exits-safe?
+            index
+            body
+            header
+            latch
+            mark-block
+            body-blocks)))]))
+
+(define (opt-scratch-reset-mark-instr [mark-var : i64]) : CompilerIrInstr
+  (IrInstrCall mark-var "tl_region_mark" (IrCallArgsNil) (AstTyI64)))
+
+(define (opt-scratch-reset-reset-instr [reset-var : i64] [mark-var : i64]) : CompilerIrInstr
+  (IrInstrCall
+    reset-var
+    "tl_region_reset"
+    (IrCallArgsOne (IrValueVar mark-var))
+    (AstTyUnit)))
+
+(define (opt-scratch-reset-mark-instrs [mark-var : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons (opt-scratch-reset-mark-instr mark-var) IrInstrNil))
+
+(define (opt-scratch-reset-reset-instrs [reset-var : i64] [mark-var : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-reset-reset-instr reset-var mark-var)
+    IrInstrNil))
+
+(define (opt-scratch-reset-rewrite-block
+  [block : CompilerIrBlock]
+  [preheader : String]
+  [latch : String]
+  [mark-var : i64]
+  [reset-var : i64]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (if (string-eq label preheader)
+        (compiler-ir-block
+          label
+          (opt-licm-insert-before-terminator-seq
+            (opt-scratch-reset-mark-instrs mark-var)
+            instrs))
+        (if (string-eq label latch)
+          (compiler-ir-block
+            label
+            (opt-licm-insert-before-terminator-seq
+              (opt-scratch-reset-reset-instrs reset-var mark-var)
+              instrs))
+          block))]))
+
+(define (opt-scratch-reset-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [preheader : String]
+  [latch : String]
+  [mark-var : i64]
+  [reset-var : i64]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-scratch-reset-rewrite-block
+          block
+          preheader
+          latch
+          mark-var
+          reset-var)
+        (opt-scratch-reset-rewrite-blocks
+          (box-get rest)
+          preheader
+          latch
+          mark-var
+          reset-var))]
+    [(IrBlockArray seq)
+      (opt-scratch-reset-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        preheader
+        latch
+        mark-var
+        reset-var)]))
+
+(define (opt-scratch-reset-apply-loop
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptScratchResetApplyResult
+  (match (opt-scratch-reset-loop-mark-block context loop)
+    [(OptNoScratchResetMarkBlock)
+      (OptScratchResetApplyResult blocks frame false)]
+    [(OptSomeScratchResetMarkBlock mark-block)
+      (OptScratchResetApplyResult
+        (opt-scratch-reset-rewrite-blocks
+          blocks
+          mark-block
+          (opt-natural-loop-latch loop)
+          frame
+          (+ frame 1))
+        (+ frame 2)
+        true)]))
+
+(define (opt-scratch-reset-apply-loops
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loops : OptNaturalLoopList]) : OptScratchResetApplyResult
+  (match loops
+    [(OptNaturalLoopNil) (OptScratchResetApplyResult blocks frame false)]
+    [(OptNaturalLoopCons loop rest)
+      (if (opt-scratch-loop-eligible? context blocks loop)
+        (opt-scratch-reset-apply-loop context blocks frame loop)
+        (opt-scratch-reset-apply-loops context blocks frame (box-get rest)))]))
+
+(define (opt-scratch-reset-function-unchecked-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (match (opt-scratch-reset-apply-loops
+        context
+        blocks
+        frame
+        (opt-cfg-natural-loops-with-context blocks context))
+        [(OptScratchResetApplyResult next-blocks next-frame changed)
+          (if changed
+            (let
+              [next : CompilerIrFunction
+                (IrFunction name params ret-ty next-frame next-blocks)]
+              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+              (OptFunctionCtxResult next next-context))
+            (OptFunctionCtxResult func context))])]))
+
+(define (opt-scratch-reset-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-function-with-context func context)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (match (opt-scratch-reset-apply-loops
+            context
+            blocks
+            frame
+            (opt-cfg-natural-loops-with-context blocks context))
+            [(OptScratchResetApplyResult next-blocks next-frame changed)
+              (if changed
+                (let
+                  [next : CompilerIrFunction
+                    (IrFunction name params ret-ty next-frame next-blocks)]
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(OkCompilerOptimizeVerify)
+                      (OptFunctionCtxResult next next-context)]
+                    [(ErrCompilerOptimizeVerify _)
+                      (OptFunctionCtxResult func context)]))
+                (OptFunctionCtxResult func context))])])]
+    [(ErrCompilerOptimizeVerify _) (OptFunctionCtxResult func context)]))
+
+(define (opt-scratch-reset-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (opt-scratch-reset-function-with-context-result
+        (opt-cfg-context-build blocks)
+        func)
+        [(OptFunctionCtxResult next _) next])]))
+
+(define (opt-scratch-reset-function-unchecked [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (if (<=
+        (compiler-ir-block-list-count blocks)
+        (opt-heavy-pass-block-limit))
+        (match (opt-scratch-reset-function-unchecked-with-context-result
+          (opt-cfg-context-build blocks)
+          func)
+          [(OptFunctionCtxResult next _) next])
+        func)]))
+
+(define (opt-scratch-reset-function-list-unchecked
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) (IrFunctionNil)]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-cons
+        (opt-scratch-reset-function-unchecked func)
+        (opt-scratch-reset-function-list-unchecked (box-get rest)))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-compact
+        (opt-scratch-reset-function-list-unchecked
+          (compiler-ir-function-seq-to-list seq)))]))
+
+(define (opt-scratch-reset-function-list-with-level
+  [functions : CompilerIrFunctionList]
+  [level : i64]) : CompilerIrFunctionList
+  (if (< level 2)
+    functions
+    (opt-scratch-reset-function-list-unchecked functions)))
+
+(define (opt-scratch-reset-pre-ssa-function-with-context-result
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [context : OptCfgContext
+          (opt-cfg-context-build (compiler-ir-clone-block-list blocks))]
+        [input : CompilerIrFunction
+          (IrFunction name params ret-ty frame blocks)]
+        [preheaders-result : OptFunctionCtxResult
+          (opt-loop-preheaders-function-with-context-result context input)]
+        [preheaders : CompilerIrFunction
+          (match preheaders-result
+            [(OptFunctionCtxResult f _) f])]
+        [preheaders-context : OptCfgContext
+          (match preheaders-result
+            [(OptFunctionCtxResult _ ctx) ctx])]
+        (opt-scratch-reset-function-with-context-result
+          preheaders-context
+          preheaders))]))
+
 (define (opt-scratch-test-alloc) : CompilerIrInstr
   (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueI64 32)) (AstTyU64)))
+
+(define (opt-scratch-test-ir-alloc) : CompilerIrInstr
+  (IrInstrAlloc 1 (AstTyI64)))
 
 (define (opt-scratch-test-return-zero) : CompilerIrInstr
   (IrInstrReturn (IrSomeValue (IrValueI64 0))))
@@ -36517,6 +37105,165 @@
           32)
         (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
 
+(define (opt-scratch-reset-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "scratch_reset_test" IrParamNil (AstTyI64) 10 blocks))
+
+(define (opt-scratch-reset-header-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBranch (IrValueBool true) "body" "exit")
+    IrInstrNil))
+
+(define (opt-scratch-reset-body-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-test-ir-alloc)
+    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+
+(define (opt-scratch-reset-unknown-alloc) : CompilerIrInstr
+  (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueVar 0)) (AstTyU64)))
+
+(define (opt-scratch-reset-unknown-body-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-reset-unknown-alloc)
+    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+
+(define (opt-scratch-reset-blocks-with-body [body-instrs : CompilerIrInstrList]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block-cons
+          (compiler-ir-block "body" body-instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))
+            IrBlockNil))))))
+
+(define (opt-scratch-reset-positive-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body (opt-scratch-reset-body-instrs)))
+
+(define (opt-scratch-reset-level-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body (opt-scratch-reset-unknown-body-instrs)))
+
+(define (opt-scratch-reset-level-function) : CompilerIrFunction
+  (IrFunction
+    "main"
+    (compiler-ir-param-cons (IrParam "n" (AstTyI64) 0) IrParamNil)
+    (AstTyI64)
+    10
+    (opt-scratch-reset-level-blocks)))
+
+(define (opt-scratch-reset-level-program) : CompilerIrProgram
+  (IrProgram
+    (IrGlobalNil)
+    (compiler-ir-function-cons
+      (opt-scratch-reset-level-function)
+      (IrFunctionNil))
+    (IrExternNil)))
+
+(define (opt-scratch-reset-call-blocked-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body
+    (compiler-ir-instr-cons
+      (opt-scratch-test-ir-alloc)
+      (compiler-ir-instr-cons
+        (IrInstrCall 2 "touch" (IrCallArgsNil) (AstTyUnit))
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))
+
+(define (opt-scratch-reset-header-alloc-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (opt-scratch-test-ir-alloc)
+            (opt-scratch-reset-header-instrs)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))
+            IrBlockNil))))))
+
+(define (opt-scratch-reset-early-exit-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (opt-scratch-test-ir-alloc)
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueBool true) "ret" "latch")
+                IrInstrNil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "latch"
+              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "ret"
+                (compiler-ir-instr-cons
+                  (opt-scratch-test-return-zero)
+                  IrInstrNil))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "exit"
+                  (compiler-ir-instr-cons
+                    (opt-scratch-test-return-zero)
+                    IrInstrNil))
+                IrBlockNil))))))))
+
+(define (opt-scratch-reset-rewrite [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-scratch-reset-function (opt-scratch-reset-test-function blocks)))
+
+(define (opt-scratch-reset-call-count
+  [func : CompilerIrFunction]
+  [name : String]) : i64
+  (opt-count-direct-call-name-blocks (opt-function-blocks func) name))
+
+(define (opt-scratch-reset-level-program-call-count
+  [level : i64]
+  [name : String]) : i64
+  (match (optimize-program-with-level (opt-scratch-reset-level-program) level)
+    [(IrProgram _ functions _)
+      (match (opt-function-list-find functions "main")
+        [(OptNoFunction) (- 0 1)]
+        [(OptSomeFunction func) (opt-scratch-reset-call-count func name)])]))
+
+(define (opt-scratch-reset-emitted? [func : CompilerIrFunction]) : bool
+  (and
+    (= (opt-scratch-reset-call-count func "tl_region_mark") 1)
+    (= (opt-scratch-reset-call-count func "tl_region_reset") 1)))
+
+(define (opt-scratch-reset-not-emitted? [func : CompilerIrFunction]) : bool
+  (and
+    (= (opt-scratch-reset-call-count func "tl_region_mark") 0)
+    (= (opt-scratch-reset-call-count func "tl_region_reset") 0)))
+
 (define (compiler-optimize-scratch-region-self-test) : i64
   (let
     [positive : OptScratchScopeReport
@@ -36549,6 +37296,30 @@
           (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))))]
     [return-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
+    [reset-positive : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
+    [reset-call-blocked : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-call-blocked-blocks))]
+    [reset-header-alloc : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-header-alloc-blocks))]
+    [reset-early-exit : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
+    [reset-pre-ssa : CompilerIrFunction
+      (match (opt-scratch-reset-pre-ssa-function-with-context-result
+        (opt-scratch-reset-level-function))
+        [(OptFunctionCtxResult f _) f])]
+    [level0-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 0 "tl_region_mark")]
+    [level0-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 0 "tl_region_reset")]
+    [level1-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 1 "tl_region_mark")]
+    [level1-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 1 "tl_region_reset")]
+    [level2-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 2 "tl_region_mark")]
+    [level2-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 2 "tl_region_reset")]
     (cond
       [(not (opt-scratch-report-candidate? positive 1 32)) 1]
       [(not loop-positive) 2]
@@ -36559,6 +37330,18 @@
       [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper")) 7]
       [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
         8]
+      [(not (opt-scratch-reset-emitted? reset-positive)) 9]
+      [(not (= (opt-function-frame reset-positive) 12)) 10]
+      [(not (opt-scratch-reset-not-emitted? reset-call-blocked)) 11]
+      [(not (opt-scratch-reset-not-emitted? reset-header-alloc)) 12]
+      [(not (opt-scratch-reset-not-emitted? reset-early-exit)) 13]
+      [(not (opt-scratch-reset-emitted? reset-pre-ssa)) 14]
+      [(not (= level0-mark-count 0)) 15]
+      [(not (= level0-reset-count 0)) 16]
+      [(not (= level1-mark-count 0)) 17]
+      [(not (= level1-reset-count 0)) 18]
+      [(not (= level2-mark-count 1)) 19]
+      [(not (= level2-reset-count 1)) 20]
       [else 42])))
 
 ;; --- block-local redundant-load CSE (#2342) ---------------------------------

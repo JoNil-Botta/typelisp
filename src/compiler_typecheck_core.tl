@@ -23941,7 +23941,7 @@
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : ResultTcEnv
-  (match (tc-type-strip-region scrut-ty)
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
     [(AstTyRef lifetime referent-box)
       (let
         [referent-ty : AstType
@@ -30063,10 +30063,15 @@
                     [(OkTcMove moved2)
                       (tc-move-check-let-bindings
                         ctx
-                        (tc-bind-id
-                          env
-                          name
-                          (tc-move-binding-type ctx env maybe-ty init))
+                        (let
+                          [binding-ty : AstType
+                            (tc-move-binding-type ctx env maybe-ty init)]
+                          (tc-bind-c-abi-fnptr-if-needed-id
+                            ctx
+                            env
+                            name
+                            binding-ty
+                            init))
                         (tc-moved-add locals (intern-str name))
                         (tc-moved-remove-root-state
                           loop-carried
@@ -33139,10 +33144,15 @@
                     [(OkTcBorrowCheck borrowed2)
                       (tc-borrow-check-let-bindings
                         ctx
-                        (tc-bind-id
-                          env
-                          name
-                          (tc-move-binding-type ctx env maybe-ty init))
+                        (let
+                          [binding-ty : AstType
+                            (tc-move-binding-type ctx env maybe-ty init)]
+                          (tc-bind-c-abi-fnptr-if-needed-id
+                            ctx
+                            env
+                            name
+                            binding-ty
+                            init))
                         (tc-moved-add locals (intern-str name))
                         (tc-borrow-check-remove-root-state
                           borrowed2

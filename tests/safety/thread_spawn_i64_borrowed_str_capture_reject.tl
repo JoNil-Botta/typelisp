@@ -1,4 +1,5 @@
 (import "stdlib/thread.tl")
+(import (thread-handle i64) as thread_i64)
 
 (define (borrowed-text-score [view : (& text str)]) : i64
   1)
@@ -7,11 +8,11 @@
   (let
     [text : String "not-transferable"]
     [view : (& text str) (& text)]
-    (match (thread-spawn-i64
+    (match (thread_i64.spawn
       (lambda () : i64
         (borrowed-text-score view)))
-      [(ThreadI64SpawnErr _) 2]
-      [(ThreadI64SpawnOk thread)
-        (match (thread-join-i64 thread)
-          [(ThreadI64JoinOk value) value]
-          [(ThreadI64JoinErr _) 3])])))
+      [(thread_i64.I64SpawnErr _) 2]
+      [(thread_i64.I64SpawnOk thread)
+        (match (thread_i64.join thread)
+          [(thread_i64.I64JoinOk value) value]
+          [(thread_i64.I64JoinErr _) 3])])))

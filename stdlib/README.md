@@ -231,9 +231,9 @@ use.
   `(import "stdlib/test.tl")`.
 - `thread.tl`: minimal native thread primitives for selfhost worker pools:
   spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
-  count, plus `thread-spawn-i64`/`thread-join-i64`,
-  `thread-spawn-bool`/`thread-join-bool`, and
-  `thread-spawn-unit`/`thread-join-unit` for checked nullary closures.
+  count, plus generated `(thread-handle T)` modules for checked scalar nullary
+  closures such as `(import (thread.thread-handle i64) as thread_i64)` with
+  `thread_i64.Handle`, `thread_i64.spawn`, and `thread_i64.join`.
   `thread-spawn-string`/`thread-join-string` and
   `thread-spawn-array-i64`/`thread-join-array-i64` and
   `thread-spawn-box-i64`/`thread-join-box-i64` run the task in a fresh atomic

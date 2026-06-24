@@ -13035,22 +13035,72 @@
         ret
         (tc-expr-c-abi-fnptr? ctx env func))]))
 
+(define (tc-thread-name-last-dot [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [last : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref name i) '.')
+            (set! last i)
+            unit)
+          (set! i (+ i 1))))
+      last)))
+
 (define (tc-thread-name-base [name : String]) : String
   (if (tc-name-qualified? name)
     (tc-qualified-name-base name)
-    name))
+    (let
+      [dot : i64 (tc-thread-name-last-dot name)]
+      (if (and (>= dot 0) (< dot (- (string-length name) 1)))
+        (substring name (+ dot 1) (- (string-length name) (+ dot 1)))
+        name))))
 
 (define (tc-thread-name-base-eq? [name : String] [base : String]) : bool
   (tc-name-base-eq? name base))
 
-(define (tc-thread-spawn-i64-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-i64"))
+(define (tc-thread-generated-module-prefix) : String
+  "stdlib.thread.generated.")
 
-(define (tc-thread-spawn-bool-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-bool"))
+(define (tc-thread-generated-module? [module : String]) : bool
+  (tc-string-prefix? module (tc-thread-generated-module-prefix)))
 
-(define (tc-thread-spawn-unit-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-unit"))
+(define (tc-thread-generated-module-type-key [module : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-thread-generated-module-prefix))]
+    [module-len : i64 (string-length module)]
+    (if (tc-thread-generated-module? module)
+      (substring module prefix-len (- module-len prefix-len))
+      "")))
+
+(define (tc-thread-generated-name-module [name : String] [base : String]) : TcMaybeString
+  (if (tc-name-qualified? name)
+    (let
+      [module : String (tc-qualified-name-module name)]
+      (if (and
+        (tc-thread-generated-module? module)
+        (string-eq (tc-qualified-name-base name) base))
+        (TcSomeString module)
+        (TcNoString)))
+    (TcNoString)))
+
+(define (tc-thread-generated-name? [name : String] [base : String]) : bool
+  (match (tc-thread-generated-name-module name base)
+    [(TcSomeString _) true]
+    [(TcNoString) false]))
+
+(define (tc-thread-type-name-base? [name : String] [base : String]) : bool
+  (string-eq (tc-thread-name-base name) base))
+
+(define (tc-thread-generated-handle-type-name? [name : String]) : bool
+  (or
+    (tc-thread-generated-name? name "Handle")
+    (and
+      (not (tc-name-qualified? name))
+      (>= (tc-thread-name-last-dot name) 0)
+      (string-eq (tc-thread-name-base name) "Handle"))))
 
 (define (tc-thread-spawn-string-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-string"))
@@ -13061,13 +13111,10 @@
 (define (tc-thread-spawn-box-i64-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-box-i64"))
 
-(define (tc-thread-safe-spawn-name? [name : String]) : bool
+(define (tc-thread-legacy-safe-spawn-name? [name : String]) : bool
   (let
     [base : String (tc-thread-name-base name)]
     (or
-      (string-eq base "thread-spawn-i64")
-      (string-eq base "thread-spawn-bool")
-      (string-eq base "thread-spawn-unit")
       (string-eq base "thread-spawn-string")
       (string-eq base "thread-spawn-array-i64")
       (string-eq base "thread-spawn-box-i64"))))
@@ -13076,17 +13123,43 @@
   (let
     [base : String (tc-thread-name-base name)]
     (or
-      (string-eq base "ThreadI64")
-      (string-eq base "ThreadBool")
-      (string-eq base "ThreadUnit")
+      (tc-thread-generated-handle-type-name? name)
       (string-eq base "ThreadString")
       (string-eq base "ThreadArrayI64")
       (string-eq base "ThreadBoxI64"))))
 
-(define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
+(define (tc-thread-spawn-lookup-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]) : String
+  (match (tc-source-name-lookup-key ctx env source-name)
+    [(OkTcString lookup-name) lookup-name]
+    [(ErrTcString _) source-name]))
+
+(define (tc-thread-potential-safe-spawn-name?
+  [source-name : String]
+  [lookup-name : String]) : bool
+  (or
+    (tc-thread-legacy-safe-spawn-name? source-name)
+    (tc-thread-legacy-safe-spawn-name? lookup-name)
+    (tc-thread-generated-name? lookup-name "spawn")
+    (string-eq (tc-thread-name-base source-name) "spawn")
+    (string-eq (tc-thread-name-base lookup-name) "spawn")))
+
+(define (tc-thread-dotted-source-spawn-name? [name : String]) : bool
+  (and
+    (>= (tc-thread-name-last-dot name) 0)
+    (string-eq (tc-thread-name-base name) "spawn")))
+
+(define (tc-thread-safe-spawn-call-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)
     [(TcSomeString name)
-      (if (tc-thread-safe-spawn-name? name)
+      (if (tc-thread-potential-safe-spawn-name?
+        name
+        (tc-thread-spawn-lookup-name ctx env name))
         (TcSomeString name)
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
@@ -13154,16 +13227,57 @@
       (ErrTcExpr
         "typecheck: channel send expects channel and message arguments")]))
 
-(define (tc-thread-safe-spawn-result-type-name?
+(define (tc-thread-generated-spawn-result-module
+  [ctx : TcContext]
+  [ty : AstType]) : TcMaybeString
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name)
+      (tc-thread-generated-name-module (intern-str name) "SpawnResult")]
+    [(AstTyEnumArgs name _)
+      (tc-thread-generated-name-module (intern-str name) "SpawnResult")]
+    [_ (TcNoString)]))
+
+(define (tc-thread-spawn-result-type-base? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name)
+      (tc-thread-type-name-base? (intern-str name) "SpawnResult")]
+    [(AstTyEnumArgs name _)
+      (tc-thread-type-name-base? (intern-str name) "SpawnResult")]
+    [_ false]))
+
+(define (tc-thread-generated-spawn-module
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]
+  [ret : AstType]) : TcMaybeString
+  (match (tc-thread-generated-name-module lookup-name "spawn")
+    [(TcSomeString module) (TcSomeString module)]
+    [(TcNoString)
+      (if (or
+        (string-eq (tc-thread-name-base source-name) "spawn")
+        (string-eq (tc-thread-name-base lookup-name) "spawn"))
+        (match (tc-thread-generated-spawn-result-module ctx ret)
+          [(TcSomeString module) (TcSomeString module)]
+          [(TcNoString)
+            (if (tc-thread-spawn-result-type-base? ctx ret)
+              (TcSomeString "")
+              (TcNoString))])
+        (TcNoString))]))
+
+(define (tc-thread-generated-spawn-result-type?
+  [ctx : TcContext]
+  [module : String]
+  [ty : AstType]) : bool
+  (if (string-eq module "")
+    (tc-thread-spawn-result-type-base? ctx ty)
+    (match (tc-thread-generated-spawn-result-module ctx ty)
+      [(TcSomeString result-module) (string-eq result-module module)]
+      [(TcNoString) false])))
+
+(define (tc-thread-legacy-safe-spawn-result-type-name?
   [spawn-name : String]
   [result-name : String]) : bool
   (cond
-    [(tc-thread-spawn-i64-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadI64SpawnResult")]
-    [(tc-thread-spawn-bool-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadBoolSpawnResult")]
-    [(tc-thread-spawn-unit-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadUnitSpawnResult")]
     [(tc-thread-spawn-string-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
     [(tc-thread-spawn-array-i64-name? spawn-name)
@@ -13174,59 +13288,107 @@
 
 (define (tc-thread-safe-spawn-result-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
   [ty : AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyEnum name)
-      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
-    [(AstTyEnumArgs name _)
-      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
-    [_ false]))
+  (match generated-module
+    [(TcSomeString module)
+      (tc-thread-generated-spawn-result-type? ctx module ty)]
+    [(TcNoString)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyEnum name)
+          (or
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              source-name
+              (intern-str name))
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              lookup-name
+              (intern-str name)))]
+        [(AstTyEnumArgs name _)
+          (or
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              source-name
+              (intern-str name))
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              lookup-name
+              (intern-str name)))]
+        [_ false])]))
 
-(define (tc-thread-safe-spawn-task-ret-type?
+(define (tc-thread-generated-spawn-task-ret-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [module : String]
   [ty : AstType]) : bool
   (let
+    [type-key : String (tc-thread-generated-module-type-key module)]
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (cond
-      [(tc-thread-spawn-i64-name? spawn-name)
+      [(string-eq module "")
+        (match resolved
+          [(AstTyI64) true]
+          [(AstTyBool) true]
+          [(AstTyUnit) true]
+          [_ false])]
+      [(string-eq type-key "i64")
         (match resolved
           [(AstTyI64) true]
           [_ false])]
-      [(tc-thread-spawn-bool-name? spawn-name)
+      [(string-eq type-key "bool")
         (match resolved
           [(AstTyBool) true]
           [_ false])]
-      [(tc-thread-spawn-unit-name? spawn-name)
+      [(string-eq type-key "unit")
         (match resolved
           [(AstTyUnit) true]
           [_ false])]
-      [(tc-thread-spawn-string-name? spawn-name)
-        (match resolved
-          [(AstTyString) true]
-          [_ false])]
-      [(tc-thread-spawn-array-i64-name? spawn-name)
-        (match resolved
-          [(AstTyDynArray elem)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (ty-node-get elem)))
-              [(AstTyI64) true]
-              [_ false])]
-          [_ false])]
-      [(tc-thread-spawn-box-i64-name? spawn-name)
-        (match resolved
-          [(AstTyBox elem)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (ty-node-get elem)))
-              [(AstTyI64) true]
-              [_ false])]
-          [_ false])]
       [else false])))
+
+(define (tc-thread-safe-spawn-task-ret-type?
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
+  [ty : AstType]) : bool
+  (match generated-module
+    [(TcSomeString module)
+      (tc-thread-generated-spawn-task-ret-type? ctx module ty)]
+    [(TcNoString)
+      (let
+        [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+        (cond
+          [(or
+              (tc-thread-spawn-string-name? source-name)
+              (tc-thread-spawn-string-name? lookup-name))
+            (match resolved
+              [(AstTyString) true]
+              [_ false])]
+          [(or
+              (tc-thread-spawn-array-i64-name? source-name)
+              (tc-thread-spawn-array-i64-name? lookup-name))
+            (match resolved
+              [(AstTyDynArray elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (ty-node-get elem)))
+                  [(AstTyI64) true]
+                  [_ false])]
+              [_ false])]
+          [(or
+              (tc-thread-spawn-box-i64-name? source-name)
+              (tc-thread-spawn-box-i64-name? lookup-name))
+            (match resolved
+              [(AstTyBox elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (ty-node-get elem)))
+                  [(AstTyI64) true]
+                  [_ false])]
+              [_ false])]
+          [else false]))]))
 
 (define (tc-thread-safe-spawn-task-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
   [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyFunc task-params task-ret-box)
@@ -13234,28 +13396,41 @@
         [(AstTypeNil)
           (tc-thread-safe-spawn-task-ret-type?
             ctx
-            spawn-name
+            source-name
+            lookup-name
+            generated-module
             (ty-node-get task-ret-box))]
         [_ false])]
     [_ false]))
 
 (define (tc-thread-safe-spawn-signature?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
   [params : AstTypeList]
   [ret : AstType]) : bool
-  (and
-    (tc-thread-safe-spawn-result-type? ctx spawn-name ret)
-    (match params
-      [(AstTypeCons task-param rest-box)
-        (match (box-get rest-box)
-          [(AstTypeNil)
-            (tc-thread-safe-spawn-task-type?
-              ctx
-              spawn-name
-              (ty-node-get task-param))]
-          [_ false])]
-      [_ false])))
+  (let
+    [generated-module : TcMaybeString
+      (tc-thread-generated-spawn-module ctx source-name lookup-name ret)]
+    (and
+      (tc-thread-safe-spawn-result-type?
+        ctx
+        source-name
+        lookup-name
+        generated-module
+        ret)
+      (match params
+        [(AstTypeCons task-param rest-box)
+          (match (box-get rest-box)
+            [(AstTypeNil)
+              (tc-thread-safe-spawn-task-type?
+                ctx
+                source-name
+                lookup-name
+                generated-module
+                (ty-node-get task-param))]
+            [_ false])]
+        [_ false]))))
 
 (define (tc-thread-transfer-class-merge
   [left : TcThreadTransferClass]
@@ -13718,32 +13893,41 @@
     [(TcNoString)
       (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
-(define (tc-check-thread-spawn-i64-call
+(define (tc-check-thread-safe-spawn-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]) : ResultTcUnit
-  (match (tc-thread-safe-spawn-call-name func)
-    [(TcSomeString spawn-name)
-      (if (tc-thread-safe-spawn-signature? ctx spawn-name params ret)
-        (match args
-          [(AstExprCons arg rest)
-            (match (box-get rest)
-              [(AstExprNil)
-                (tc-check-thread-safe-spawn-direct-lambda
-                  spawn-name
-                  ctx
-                  env
-                  (ast-node-get arg))]
-              [_
-                (ErrTcUnit
-                  (str-cat "typecheck: " spawn-name " expects one argument"))])]
-          [(AstExprNil)
-            (ErrTcUnit
-              (str-cat "typecheck: " spawn-name " expects one argument"))])
-        OkTcUnit)]
+  (match (tc-thread-safe-spawn-call-name ctx env func)
+    [(TcSomeString source-name)
+      (let
+        [lookup-name : String (tc-thread-spawn-lookup-name ctx env source-name)]
+        (if (or
+          (tc-thread-safe-spawn-signature?
+            ctx
+            source-name
+            lookup-name
+            params
+            ret)
+          (tc-thread-dotted-source-spawn-name? source-name))
+          (match args
+            [(AstExprCons arg rest)
+              (match (box-get rest)
+                [(AstExprNil)
+                  (tc-check-thread-safe-spawn-direct-lambda
+                    source-name
+                    ctx
+                    env
+                    (ast-node-get arg))]
+                [_
+                  (ErrTcUnit
+                    (str-cat "typecheck: " source-name " expects one argument"))])]
+            [(AstExprNil)
+              (ErrTcUnit
+                (str-cat "typecheck: " source-name " expects one argument"))])
+          OkTcUnit))]
     [(TcNoString) OkTcUnit]))
 
 (define (tc-thread-channel-send-message
@@ -13865,7 +14049,7 @@
                     (TcArityDetailed func args params)
                     c-abi-args)
                     [(OkTcUnit)
-                      (match (tc-check-thread-spawn-i64-call
+                      (match (tc-check-thread-safe-spawn-call
                         ctx
                         env
                         func

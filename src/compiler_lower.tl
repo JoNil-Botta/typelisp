@@ -4310,6 +4310,13 @@
     [(AstExprSyscall args)
       (lower-clone-roots-expr-list ctx env decls able roots args)]))
 
+;; #3735-followup: `name-cache` is the LowerNameCache built once from the
+;; whole-program `names` env. It is invariant across every module of a single
+;; clone-roots pass (the global name env never changes mid-pass), so it is
+;; threaded as a parameter instead of being rebuilt from `names` at each
+;; `(module ...)` boundary. Rebuilding it per module made this pass
+;; O(modules x global-names); the self-compile hit ~2.3M redundant name-cache
+;; entries across ~190 rebuilds in the clone-roots phase alone.
 (define (lower-clone-roots-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -4319,6 +4326,7 @@
   [able : CloneNameSet]
   [roots : CloneNameList]
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [module : String]) : CloneNameList
   (match decls
     [(AstDeclNil) roots]
@@ -4338,6 +4346,7 @@
                 able
                 roots
                 names
+                name-cache
                 module))]
           [(AstDeclComptimeDecl _ template-box)
             (let
@@ -4351,6 +4360,7 @@
                 able
                 roots
                 names
+                name-cache
                 module))]
           [(AstDeclDef _ _ expr-box)
             (let
@@ -4370,6 +4380,7 @@
                   roots
                   expr)
                 names
+                name-cache
                 module))]
           [(AstDeclDefFn _ params ret body-box _)
             (let
@@ -4394,6 +4405,7 @@
                   roots
                   body)
                 names
+                name-cache
                 module))]
           [(AstDeclModule next-module)
             (let
@@ -4402,7 +4414,7 @@
                 ctx
                 top-env
                 names
-                (lower-name-cache-from-env names)
+                name-cache
                 next-module-str)
                 [(OkLowerModuleLocalEnv next-local-env _)
                   (lower-clone-roots-decls-in-module
@@ -4414,6 +4426,7 @@
                     able
                     roots
                     names
+                    name-cache
                     next-module-str)]
                 [(ErrLowerModuleLocalEnv _)
                   (lower-clone-roots-decls-in-module
@@ -4425,6 +4438,7 @@
                     able
                     roots
                     names
+                    name-cache
                     next-module-str)]))]
           [_
             (lower-clone-roots-decls-in-module
@@ -4436,6 +4450,7 @@
               able
               roots
               names
+              name-cache
               module)]))]))
 
 (define (lower-clone-roots-program
@@ -4447,6 +4462,7 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [name-cache : LowerNameCache (lower-name-cache-from-env names)]
         (lower-clone-roots-decls-in-module
           ctx
           top-env
@@ -4459,6 +4475,7 @@
             (clone-all-type-names decls (clone-name-set-empty)))
           (CloneNameNil)
           names
+          name-cache
           ""))]))
 
 (define (lower-reachable-clone-roots

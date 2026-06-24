@@ -2716,12 +2716,14 @@
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
   (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
 
-(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : ProcessStringList
+(define (build-package-graph-test-link-arg-target
+  [node : BuildPackageGraphNode]
+  [target : CompilerBackendTarget]) : ProcessStringList
   (process-args-single
-    (build-package-graph-node-artifact-path
-      node
-      (BuildProfileRelease)
-      (BackendTargetLinux))))
+    (build-package-graph-node-artifact-path node (BuildProfileRelease) target)))
+
+(define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : ProcessStringList
+  (build-package-graph-test-link-arg-target node (BackendTargetLinux)))
 
 (define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : ProcessStringList
   (process-args-single
@@ -2748,6 +2750,11 @@
         nodes
         (BuildProfileRelease)
         (BackendTargetLinux))]
+    [windows-libs : ProcessStringList
+      (build-package-graph-link-libs
+        nodes
+        (BuildProfileRelease)
+        (BackendTargetWindows))]
     [tlcis : ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfileRelease))]
     [expected : ProcessStringList
@@ -2762,12 +2769,23 @@
           (build-package-graph-test-tlci-arg first)
           (build-package-graph-test-tlci-arg second))
         (build-package-graph-test-tlci-arg third))]
+    [expected-windows : ProcessStringList
+      (process-args-append
+        (process-args-append
+          (build-package-graph-test-link-arg-target
+            third
+            (BackendTargetWindows))
+          (build-package-graph-test-link-arg-target
+            second
+            (BackendTargetWindows)))
+        (build-package-graph-test-link-arg-target first (BackendTargetWindows)))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string-eq
         (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
         "root/first/typelisp.pkg")
       (source-tool-string-list-eq? libs expected)
+      (source-tool-string-list-eq? windows-libs expected-windows)
       (source-tool-string-list-eq? tlcis expected-tlcis))))
 
 (cfg

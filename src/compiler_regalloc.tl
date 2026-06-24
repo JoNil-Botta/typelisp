@@ -8095,6 +8095,476 @@
 
 ;; Shared linear-scan body: assign the integer pool, then XMM, then vector, then
 ;; mask registers over the given intervals/ineligible set.
+;; ============================================================================
+;; LLVM-style per-vreg Greedy integer allocator (Milestone 1) -- --cfg greedy-regalloc
+;; Replaces the integer-PRIMARY assign pass on the scalar-opt2 path. Allocates the
+;; coalesced integer ROOTS over the callee-saved pool {r12,r13,r14,r15,rbx} (every
+;; member is call-safe, so no clobber concern in this pass) using:
+;;   * spill-weight PRIORITY ORDER (ref-counts desc, var asc) -- the LLVM enqueue;
+;;   * a GLOBAL per-register interference union: a register is free for a root iff
+;;     the SOUND segmented-index test clears against EVERY var holding it (prepass
+;;     picks + already-assigned roots);
+;;   * COPY-HINT biasing: try the copy-neighbour's register first;
+;;   * spill-weight EVICTION: clear a register all of whose interferers are strictly
+;;     lower weight (spilling them), then take it. Single pass + strict weight order
+;;     => terminating (an evicted var is lower weight, set to Spill, skipped when
+;;     reached). Group/pair roots are left UNASSIGNED (backend stack-homes them --
+;;     the existing fallback); spills use the var-keyed slot so the downstream
+;;     caller-saved / call-spanning passes run unchanged.
+(define (compiler-reg-greedy-string-list-to-array
+  [regs : CompilerRegStringList]
+  [out : (Array String)]
+  [i : i64]) : unit
+  (match regs
+    [(CompilerRegStringNil) unit]
+    [(CompilerRegStringCons reg rest)
+      (begin
+        (if (< i (array-length out))
+          (array-set! out i reg)
+          unit)
+        (compiler-reg-greedy-string-list-to-array (box-get rest) out (+ i 1)))]))
+
+(define (compiler-reg-greedy-holds-reg?
+  [assignments : CompilerRegAssignmentTable]
+  [w : i64]
+  [reg : String]) : bool
+  (match (compiler-reg-assignment-table-lookup assignments w)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister r) (string-eq r reg)]
+        [(CompilerRegRegisterPair a b) (or (string-eq a reg) (string-eq b reg))]
+        [(CompilerRegSpill _) false]
+        [(CompilerRegRemat _) false])]
+    [(CompilerRegNoLocation) false]))
+
+;; Max ref-count among vars holding `reg` that interfere with `var`; -1 if none.
+(define (compiler-reg-greedy-interferer-max
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [var : i64]
+  [reg : String]
+  [idx : i64]
+  [n : i64]
+  [acc : i64]) : i64
+  (if (>= idx n)
+    acc
+    (compiler-reg-greedy-interferer-max
+      assignments
+      interval-index
+      ref-counts
+      var
+      reg
+      (+ idx 1)
+      n
+      (if (and
+        (not (= idx var))
+        (compiler-reg-greedy-holds-reg? assignments idx reg)
+        (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
+        (let
+          [w : i64
+            (if (< idx (array-length ref-counts))
+              (array-ref ref-counts idx)
+              0)]
+          (if (> w acc)
+            w
+            acc))
+        acc))))
+
+(define (compiler-reg-greedy-reg-free?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [var : i64]
+  [reg : String]
+  [n : i64]) : bool
+  (=
+    (compiler-reg-greedy-interferer-max
+      assignments
+      interval-index
+      ref-counts
+      var
+      reg
+      0
+      n
+      (- 0 1))
+    (- 0 1)))
+
+(define (compiler-reg-greedy-first-free
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [var : i64]
+  [reg-arr : (Array String)]
+  [ridx : i64]
+  [rcount : i64]
+  [n : i64]) : String
+  (if (>= ridx rcount)
+    ""
+    (let
+      [reg : String (array-ref reg-arr ridx)]
+      (if (compiler-reg-greedy-reg-free?
+        assignments
+        interval-index
+        ref-counts
+        var
+        reg
+        n)
+        reg
+        (compiler-reg-greedy-first-free
+          assignments
+          interval-index
+          ref-counts
+          var
+          reg-arr
+          (+ ridx 1)
+          rcount
+          n)))))
+
+;; Copy-hint register: the reg held by the copy-neighbour, if it is in the pool
+;; and free for `var`. Biases `var` onto its move-partner's register.
+(define (compiler-reg-greedy-hint-free-reg
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]
+  [regs : CompilerRegStringList]
+  [var : i64]
+  [n : i64]) : String
+  (if (or (< var 0) (>= var (array-length copy-hints)))
+    ""
+    (let
+      [nb : i64 (array-ref copy-hints var)]
+      (if (< nb 0)
+        ""
+        (match (compiler-reg-assignment-table-lookup assignments nb)
+          [(CompilerRegSomeLocation loc)
+            (match loc
+              [(CompilerRegRegister r)
+                (if (and
+                  (compiler-reg-string-list-contains? regs r)
+                  (compiler-reg-greedy-reg-free?
+                    assignments
+                    interval-index
+                    ref-counts
+                    var
+                    r
+                    n))
+                  r
+                  "")]
+              [(CompilerRegRegisterPair _ _) ""]
+              [(CompilerRegSpill _) ""]
+              [(CompilerRegRemat _) ""])]
+          [(CompilerRegNoLocation) ""])))))
+
+;; First pool register all of whose interferers are STRICTLY lower weight than
+;; `weight` (so clearing it costs less than spilling `var`); "" if none.
+(define (compiler-reg-greedy-first-evictable
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [var : i64]
+  [weight : i64]
+  [reg-arr : (Array String)]
+  [ridx : i64]
+  [rcount : i64]
+  [n : i64]) : String
+  (if (>= ridx rcount)
+    ""
+    (let
+      [reg : String (array-ref reg-arr ridx)]
+      [m : i64
+        (compiler-reg-greedy-interferer-max
+          assignments
+          interval-index
+          ref-counts
+          var
+          (array-ref reg-arr ridx)
+          0
+          n
+          (- 0 1))]
+      (if (and (>= m 0) (< m weight))
+        reg
+        (compiler-reg-greedy-first-evictable
+          assignments
+          interval-index
+          ref-counts
+          var
+          weight
+          reg-arr
+          (+ ridx 1)
+          rcount
+          n)))))
+
+(define (compiler-reg-greedy-evict-reg!
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]
+  [reg : String]
+  [idx : i64]
+  [n : i64]) : unit
+  (if (>= idx n)
+    unit
+    (begin
+      (if (and
+        (not (= idx var))
+        (compiler-reg-greedy-holds-reg? assignments idx reg)
+        (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
+        (begin
+          (compiler-reg-assignment-table-insert
+            assignments
+            idx
+            (CompilerRegSpill (compiler-reg-stack-slot-offset idx)))
+          unit)
+        unit)
+      (compiler-reg-greedy-evict-reg!
+        assignments
+        interval-index
+        var
+        reg
+        (+ idx 1)
+        n))))
+
+(define (compiler-reg-greedy-already-assigned?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : bool
+  (match (compiler-reg-assignment-table-lookup assignments var)
+    [(CompilerRegSomeLocation _) true]
+    [(CompilerRegNoLocation) false]))
+
+(define (compiler-reg-greedy-alloc-one!
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [regs : CompilerRegStringList]
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [var : i64]
+  [n : i64]) : unit
+  (if (or
+    (compiler-reg-greedy-already-assigned? assignments var)
+    (compiler-live-set-contains? group-vars var))
+    unit
+    (let
+      [hint : String
+        (compiler-reg-greedy-hint-free-reg
+          assignments
+          interval-index
+          ref-counts
+          copy-hints
+          regs
+          var
+          n)]
+      (if (not (string-eq hint ""))
+        (begin
+          (compiler-reg-assignment-table-insert
+            assignments
+            var
+            (CompilerRegRegister hint))
+          unit)
+        (let
+          [free : String
+            (compiler-reg-greedy-first-free
+              assignments
+              interval-index
+              ref-counts
+              var
+              reg-arr
+              0
+              rcount
+              n)]
+          (if (not (string-eq free ""))
+            (begin
+              (compiler-reg-assignment-table-insert
+                assignments
+                var
+                (CompilerRegRegister free))
+              unit)
+            (let
+              [weight : i64
+                (if (< var (array-length ref-counts))
+                  (array-ref ref-counts var)
+                  0)]
+              [ev : String
+                (compiler-reg-greedy-first-evictable
+                  assignments
+                  interval-index
+                  ref-counts
+                  var
+                  weight
+                  reg-arr
+                  0
+                  rcount
+                  n)]
+              (if (not (string-eq ev ""))
+                (begin
+                  (compiler-reg-greedy-evict-reg!
+                    assignments
+                    interval-index
+                    var
+                    ev
+                    0
+                    n)
+                  (compiler-reg-assignment-table-insert
+                    assignments
+                    var
+                    (CompilerRegRegister ev))
+                  unit)
+                (begin
+                  (compiler-reg-assignment-table-insert
+                    assignments
+                    var
+                    (CompilerRegSpill (compiler-reg-stack-slot-offset var)))
+                  unit)))))))))
+
+(define (compiler-reg-greedy-collect-vars
+  [candidates : CompilerRegIntervalList]
+  [out : (Array i64)]
+  [i : i64]) : i64
+  (match candidates
+    [(CompilerRegIntervalNil) i]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var _ _)
+          (begin
+            (if (< i (array-length out))
+              (array-set! out i var)
+              unit)
+            (compiler-reg-greedy-collect-vars (box-get rest) out (+ i 1)))])]))
+
+(define (compiler-reg-greedy-weight-before?
+  [ref-counts : (Array i64)]
+  [a : i64]
+  [b : i64]) : bool
+  (let
+    [wa : i64
+      (if (< a (array-length ref-counts))
+        (array-ref ref-counts a)
+        0)]
+    [wb : i64
+      (if (< b (array-length ref-counts))
+        (array-ref ref-counts b)
+        0)]
+    (if (> wa wb)
+      true
+      (if (< wa wb)
+        false
+        (< a b)))))
+
+(define (compiler-reg-greedy-sort-insert!
+  [arr : (Array i64)]
+  [ref-counts : (Array i64)]
+  [j : i64]) : unit
+  (if (<= j 0)
+    unit
+    (let
+      [cur : i64 (array-ref arr j)]
+      [prev : i64 (array-ref arr (- j 1))]
+      (if (compiler-reg-greedy-weight-before? ref-counts cur prev)
+        (begin
+          (array-set! arr j prev)
+          (array-set! arr (- j 1) cur)
+          (compiler-reg-greedy-sort-insert! arr ref-counts (- j 1)))
+        unit))))
+
+(define (compiler-reg-greedy-sort!
+  [arr : (Array i64)]
+  [ref-counts : (Array i64)]
+  [i : i64]
+  [count : i64]) : unit
+  (if (>= i count)
+    unit
+    (begin
+      (compiler-reg-greedy-sort-insert! arr ref-counts i)
+      (compiler-reg-greedy-sort! arr ref-counts (+ i 1) count))))
+
+(define (compiler-reg-greedy-alloc-all!
+  [arr : (Array i64)]
+  [i : i64]
+  [count : i64]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [regs : CompilerRegStringList]
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [n : i64]) : unit
+  (if (>= i count)
+    unit
+    (begin
+      (compiler-reg-greedy-alloc-one!
+        assignments
+        interval-index
+        ref-counts
+        copy-hints
+        group-vars
+        regs
+        reg-arr
+        rcount
+        (array-ref arr i)
+        n)
+      (compiler-reg-greedy-alloc-all!
+        arr
+        (+ i 1)
+        count
+        assignments
+        interval-index
+        ref-counts
+        copy-hints
+        group-vars
+        regs
+        reg-arr
+        rcount
+        n))))
+
+(define (compiler-reg-greedy-integer-state
+  [candidates : CompilerRegIntervalList]
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]) : CompilerRegAssignState
+  (let
+    [n : i64 (array-length (struct-get assignments present))]
+    [rcount : i64 (compiler-reg-string-list-count regs)]
+    [reg-arr : (Array String)
+      (make-array
+        String
+        (if (< (compiler-reg-string-list-count regs) 1)
+          1
+          (compiler-reg-string-list-count regs)))]
+    [order : (Array i64)
+      (make-array
+        i64
+        (if (< (array-length (struct-get assignments present)) 1)
+          1
+          (array-length (struct-get assignments present))))]
+    (begin
+      (compiler-reg-greedy-string-list-to-array regs reg-arr 0)
+      (let
+        [count : i64 (compiler-reg-greedy-collect-vars candidates order 0)]
+        (begin
+          (compiler-reg-greedy-sort! order ref-counts 0 count)
+          (compiler-reg-greedy-alloc-all!
+            order
+            0
+            count
+            assignments
+            interval-index
+            ref-counts
+            copy-hints
+            group-vars
+            regs
+            reg-arr
+            rcount
+            n)
+          (CompilerRegAssignState CompilerRegActiveNil assignments))))))
+
 (define (compiler-reg-plan-from
   [func : CompilerIrFunction]
   [type-info : CompilerRegVarTypes]
@@ -8278,21 +8748,51 @@
           integer-candidates
           prepass-assignments)
         integer-candidates)]
-    [integer-state : CompilerRegAssignState
-      (compiler-reg-assign-candidates
-        primary-candidates
-        integer-registers
-        CompilerRegActiveNil
-        prepass-assignments
-        moves
-        eff-coalesce
-        allow-caller-saved-zero-call
-        eff-index
-        hole-aware-vars
-        type-info
-        group-vars
-        eviction-ref-counts
-        copy-hints)]
+    [integer-state
+      : CompilerRegAssignState
+      ;; M1 per-vreg Greedy allocator: only on the scalar-opt2 integer-primary
+      ;; pass and only under --cfg greedy-regalloc. Flag OFF -> the original
+      ;; linear-scan allocator (byte-identical). SIMD/AVX path
+      ;; (allow-caller-saved-zero-call = false) always uses the original.
+      (cfg
+        greedy-regalloc
+        (if allow-caller-saved-zero-call
+          (compiler-reg-greedy-integer-state
+            primary-candidates
+            integer-registers
+            prepass-assignments
+            eff-index
+            group-vars
+            eviction-ref-counts
+            copy-hints)
+          (compiler-reg-assign-candidates
+            primary-candidates
+            integer-registers
+            CompilerRegActiveNil
+            prepass-assignments
+            moves
+            eff-coalesce
+            allow-caller-saved-zero-call
+            eff-index
+            hole-aware-vars
+            type-info
+            group-vars
+            eviction-ref-counts
+            copy-hints))
+        (compiler-reg-assign-candidates
+          primary-candidates
+          integer-registers
+          CompilerRegActiveNil
+          prepass-assignments
+          moves
+          eff-coalesce
+          allow-caller-saved-zero-call
+          eff-index
+          hole-aware-vars
+          type-info
+          group-vars
+          eviction-ref-counts
+          copy-hints))]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]

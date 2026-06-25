@@ -6097,84 +6097,135 @@
         ;; #3786: publish the whole-program global name cache so the per-module
         ;; body name-cache overlays built inside lower-function-body-index-from-decls
         ;; (and resolved during lower-reach-process below) can fall through to it.
+        ;; Kept in the PERSISTENT (caller) arena so it survives the scratch rewind
+        ;; below (the original behavior); decl-lowering re-sets it before use.
         [_set-global : unit
           (begin
             (set!
               lower-active-global-name-cache
               (lower-name-cache-from-env names))
             unit)]
-        [all-functions : StringI64Map
-          (lower-function-set-from-decls decls paths entry-path)]
-        [body-index : LowerFunctionBodyIndex
-          (lower-function-body-index-from-decls
-            decls
-            paths
-            entry-path
-            names
-            (lower-function-decl-count decls))]
-        [name-cache : LowerNameCache (lower-name-cache-from-env names)]
-        [dispatch-variants : StringI64Map
-          (lower-dispatch-variant-set-from-decls
-            decls
-            paths
-            entry-path
-            name-cache)]
-        (if (string-i64-map-contains? all-functions "main")
-          (match (lower-reach-process
-            all-functions
-            name-cache
-            body-index
-            (lower-reach-global-decls
-              all-functions
-              name-cache
-              (lower-reach-add-dispatch-variant-roots
-                all-functions
+        ;; #3792: the reachability scratch (function/dispatch sets, body index and
+        ;; its per-module name overlays, the reachable map) is the bulk of the
+        ;; ~163MB / ~12% opt1 lower-phase prune cost and adds zero AST/type pool
+        ;; nodes -- pure transient scratch. Build it inside the dedicated lower
+        ;; scratch arena and rewind it once the pruned program is materialized.
+        ;; The pruned decl/path lists only reference shared decl nodes (by
+        ;; AstNodeId) and interned strings, never the scratch maps, so they are
+        ;; safe to keep in the persistent arena after the rewind (mirrors the
+        ;; scratch+escape pattern in lower-function-escaping).
+        [prev-arena : i64 (tl_arena_current)]
+        [prev-persist : bool (intern-persistent-storage-on?)]
+        [scratch : i64 (lower-scratch-arena-get)]
+        (begin
+          ;; Force any string interned while the scratch arena is active into the
+          ;; persistent intern arena, so the global intern table never retains a
+          ;; pointer into memory freed by the rewind below.
+          (intern-persistent-storage-enable!)
+          (unsafe
+            (tl_arena_set scratch))
+          (let
+            [mark : i64 (tl_region_mark)]
+            [all-functions : StringI64Map
+              (lower-function-set-from-decls decls paths entry-path)]
+            [body-index : LowerFunctionBodyIndex
+              (lower-function-body-index-from-decls
                 decls
-                name-cache
-                (lower-reach-add-clone-root-helpers
+                paths
+                entry-path
+                names
+                (lower-function-decl-count decls))]
+            [name-cache : LowerNameCache (lower-name-cache-from-env names)]
+            [dispatch-variants : StringI64Map
+              (lower-dispatch-variant-set-from-decls
+                decls
+                paths
+                entry-path
+                name-cache)]
+            [result : LowerPrunedProgram
+              (if (string-i64-map-contains? all-functions "main")
+                (match (lower-reach-process
                   all-functions
                   name-cache
-                  clone-roots
-                  (lower-reach-cleanup-metadata-roots-in-module
+                  body-index
+                  (lower-reach-global-decls
                     all-functions
-                    decls
-                    paths
-                    entry-path
-                    ""
                     name-cache
-                    (lower-reach-add-export-roots-in-module
-                      decls
-                      paths
-                      entry-path
-                      ""
+                    (lower-reach-add-dispatch-variant-roots
                       all-functions
-                      (lower-reach-add-logical
+                      decls
+                      name-cache
+                      (lower-reach-add-clone-root-helpers
                         all-functions
-                        (LowerReachState
-                          (string-i64-map-with-capacity 8192)
-                          LowerStringNil)
-                        "main")))))
-              decls))
-            [(LowerReachState reachable _)
-              (LowerPrunedProgram
-                (ast-program
-                  (lower-filter-reachable-decls-in-module
-                    decls
-                    paths
-                    entry-path
-                    ""
-                    name-cache
-                    all-functions
-                    reachable
-                    dispatch-variants))
-                (lower-filter-reachable-paths-in-module
-                  decls
-                  paths
-                  entry-path
-                  ""
-                  reachable
-                  dispatch-variants))])
-          (LowerPrunedProgram program paths)))]))
+                        name-cache
+                        clone-roots
+                        (lower-reach-cleanup-metadata-roots-in-module
+                          all-functions
+                          decls
+                          paths
+                          entry-path
+                          ""
+                          name-cache
+                          (lower-reach-add-export-roots-in-module
+                            decls
+                            paths
+                            entry-path
+                            ""
+                            all-functions
+                            (lower-reach-add-logical
+                              all-functions
+                              (LowerReachState
+                                (string-i64-map-with-capacity 8192)
+                                LowerStringNil)
+                              "main")))))
+                    decls))
+                  [(LowerReachState reachable _)
+                    (let
+                      [scratch-head : i64 (tl_arena_current)]
+                      (begin
+                        ;; Materialize the pruned program back in the persistent
+                        ;; arena before rewinding the scratch arena.
+                        (unsafe
+                          (tl_arena_set prev-arena))
+                        (let
+                          [pruned : LowerPrunedProgram
+                            (LowerPrunedProgram
+                              (ast-program
+                                (lower-filter-reachable-decls-in-module
+                                  decls
+                                  paths
+                                  entry-path
+                                  ""
+                                  name-cache
+                                  all-functions
+                                  reachable
+                                  dispatch-variants))
+                              (lower-filter-reachable-paths-in-module
+                                decls
+                                paths
+                                entry-path
+                                ""
+                                reachable
+                                dispatch-variants))]
+                          (begin
+                            (unsafe
+                              (tl_arena_set scratch-head)
+                              (tl_region_reset mark)
+                              (tl_arena_set prev-arena))
+                            pruned))))])
+                (let
+                  [scratch-head : i64 (tl_arena_current)]
+                  (begin
+                    (unsafe
+                      (tl_arena_set scratch-head)
+                      (tl_region_reset mark)
+                      (tl_arena_set prev-arena))
+                    (LowerPrunedProgram program paths))))]
+            (begin
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              result))))]))
 
 (define (lower-prune-unreachable-functions
   [entry-path : String]

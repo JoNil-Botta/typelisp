@@ -1,5 +1,6 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
 (import "../doc_html.tl")
+(import stdlib.str_cat)
 
 (define (doc-html-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.
@@ -88,7 +89,7 @@
       0)))
 
 (define (doc-html-syntax-smoke-source) : String
-  (str-cat
+  (str_cat.str-cat
     ";# docs <tag> &\n"
     "; ordinary comment\n"
     "(define (add-one [x : i64]) : i64\n"

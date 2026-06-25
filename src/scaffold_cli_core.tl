@@ -5,17 +5,17 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
-(import "../stdlib/io.tl")
-(import "../stdlib/fs.tl")
-(import "../stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.fs)
+(import stdlib.string)
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
 (define (scaffold-name-bad-char? [name : String] [idx : i64]) : bool
-  (if (>= idx (string-length name))
+  (if (>= idx (string.string-length name))
     false
     (let
-      [c : char (string-ref name idx)]
+      [c : char (string.string-ref name idx)]
       (if (or
         (and (>= c 'a') (<= c 'z'))
         (and (>= c 'A') (<= c 'Z'))
@@ -26,20 +26,22 @@
         true))))
 
 (define (scaffold-name-ok? [name : String]) : bool
-  (and (> (string-length name) 0) (not (scaffold-name-bad-char? name 0))))
+  (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name 0))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
 (define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
-  (string-append
+  (string.string-append
     "(package (name \""
-    (string-append
+    (string.string-append
       name
-      (string-append
+      (string.string-append
         "\") (version \"0.1.0\") (kind \""
-        (string-append
+        (string.string-append
           kind
-          (string-append "\") (entry \"" (string-append entry "\"))\n")))))))
+          (string.string-append
+            "\") (entry \""
+            (string.string-append entry "\"))\n")))))))
 
 (define (scaffold-bin-source) : String
   "(define (main) : i64\n  0)\n")
@@ -47,39 +49,39 @@
 (define (scaffold-lib-source) : String
   "(define (answer) : i64\n  42)\n")
 
-(define (scaffold-try-mkdir [path : String]) : ResultIoUnit
-  (try-mkdir (& path)))
+(define (scaffold-try-mkdir [path : String]) : io.ResultIoUnit
+  (fs.try-mkdir (& path)))
 
-(define (scaffold-try-write-file [path : String] [contents : String]) : ResultIoUnit
-  (try-write-file (& path) (& contents)))
+(define (scaffold-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
+  (io.try-write-file (& path) (& contents)))
 
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
-(define (scaffold-ensure-dir [path : String]) : ResultIoUnit
+(define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
   (match (scaffold-try-mkdir path)
-    [(OkIoUnit) OkIoUnit]
-    [(ErrIoUnit _)
-      (if (file-exists? path)
-        OkIoUnit
+    [(io.OkIoUnit) io.OkIoUnit]
+    [(io.ErrIoUnit _)
+      (if (io.file-exists? path)
+        io.OkIoUnit
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
 (define (scaffold-write-new [path : String] [contents : String]) : i64
-  (if (file-exists? path)
+  (if (io.file-exists? path)
     (begin
-      (print-error
-        (string-append
+      (io.print-error
+        (string.string-append
           "scaffold: refusing to overwrite existing file: "
-          (string-append path "\n")))
+          (string.string-append path "\n")))
       1)
     (match (scaffold-try-write-file path contents)
-      [(OkIoUnit) 0]
-      [(ErrIoUnit _)
+      [(io.OkIoUnit) 0]
+      [(io.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io.print-error
+            (string.string-append
               "scaffold: could not write "
-              (string-append path "\n")))
+              (string.string-append path "\n")))
           1)])))
 
 ;; Create `root/src/`, then write the manifest and entry source.
@@ -93,22 +95,23 @@
       (if is-lib
         "src/lib.tl"
         "src/main.tl")]
-    [src-dir : String (string-append root "/src")]
-    [pkg-path : String (string-append root "/typelisp.pkg")]
-    [src-path : String (string-append root (string-append "/" entry))]
+    [src-dir : String (string.string-append root "/src")]
+    [pkg-path : String (string.string-append root "/typelisp.pkg")]
+    [src-path : String
+      (string.string-append root (string.string-append "/" entry))]
     [source : String
       (if is-lib
         (scaffold-lib-source)
         (scaffold-bin-source))]
     (match (scaffold-ensure-dir src-dir)
-      [(ErrIoUnit _)
+      [(io.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io.print-error
+            (string.string-append
               "scaffold: could not create directory "
-              (string-append src-dir "\n")))
+              (string.string-append src-dir "\n")))
           1)]
-      [(OkIoUnit)
+      [(io.OkIoUnit)
         (let
           [pkg-code : i64
             (scaffold-write-new pkg-path (scaffold-manifest name kind entry))]
@@ -117,12 +120,14 @@
               [src-code : i64 (scaffold-write-new src-path source)]
               (if (= src-code 0)
                 (begin
-                  (print-string
-                    (string-append
+                  (io.print-string
+                    (string.string-append
                       "scaffold: created "
-                      (string-append
+                      (string.string-append
                         kind
-                        (string-append " package " (string-append name "\n")))))
+                        (string.string-append
+                          " package "
+                          (string.string-append name "\n")))))
                   0)
                 src-code))
             pkg-code))])))
@@ -130,34 +135,34 @@
 (define (scaffold-new [name : String] [is-lib : bool]) : i64
   (if (not (scaffold-name-ok? name))
     (begin
-      (print-error
-        (string-append
+      (io.print-error
+        (string.string-append
           "scaffold: invalid package name: "
-          (string-append name "\n")))
+          (string.string-append name "\n")))
       2)
     (match (scaffold-ensure-dir name)
-      [(ErrIoUnit _)
+      [(io.ErrIoUnit _)
         (begin
-          (print-error
-            (string-append
+          (io.print-error
+            (string.string-append
               "scaffold: could not create directory "
-              (string-append name "\n")))
+              (string.string-append name "\n")))
           1)]
-      [(OkIoUnit) (scaffold-emit name name is-lib)])))
+      [(io.OkIoUnit) (scaffold-emit name name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
   (if (not (scaffold-name-ok? name))
     (begin
-      (print-error
-        (string-append
+      (io.print-error
+        (string.string-append
           "scaffold: invalid package name: "
-          (string-append name "\n")))
+          (string.string-append name "\n")))
       2)
     (scaffold-emit "." name is-lib)))
 
 (define (scaffold-usage) : i64
   (begin
-    (print-error "scaffold: usage: (new|init) [--lib] <name>\n")
+    (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
     2))
 
 ;; Parse `[--lib] <name>` from argv starting at `idx`, bounded by `count`, then
@@ -170,8 +175,8 @@
   (if (>= idx count)
     (scaffold-usage)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--lib")
+      [current : String (io.arg idx)]
+      (if (string.string-eq current "--lib")
         (scaffold-dispatch-from is-init (+ idx 1) count true)
         (if (= (+ idx 1) count)
           (if is-init
@@ -189,9 +194,9 @@
   (if (>= command-idx count)
     (scaffold-usage)
     (let
-      [command : String (arg command-idx)]
-      (if (string-eq command "new")
+      [command : String (io.arg command-idx)]
+      (if (string.string-eq command "new")
         (scaffold-new-run-from (+ command-idx 1) count)
-        (if (string-eq command "init")
+        (if (string.string-eq command "init")
           (scaffold-init-run-from (+ command-idx 1) count)
           (scaffold-usage))))))

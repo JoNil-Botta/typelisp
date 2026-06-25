@@ -3,9 +3,9 @@
 ;; This is the first selfhost IR shape for the real compiler pipeline. The data
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
 ;; contain typed instructions, and instructions use explicit vars/values.
-(import "../stdlib/string.tl")
+(import stdlib.string)
 (import "compiler_ast_types.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.str_cat)
 
 (defenum CompilerIrBinOp
   (IrBinAdd)
@@ -1289,11 +1289,11 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (str-cat
+        (str_cat.str-cat
           (compiler-ir-type-render head)
           (match rest
             [(AstTypeNil) ""]
-            [_ (str-cat " " (compiler-ir-type-list-render rest))])))]))
+            [_ (str_cat.str-cat " " (compiler-ir-type-list-render rest))])))]))
 
 (define (compiler-ir-lifetime-list-render [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -1301,16 +1301,21 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (str-cat
+        (str_cat.str-cat
           head
           (match rest
             [(AstLifetimeNil) ""]
-            [_ (str-cat " " (compiler-ir-lifetime-list-render rest))])))]))
+            [_ (str_cat.str-cat " " (compiler-ir-lifetime-list-render rest))])))]))
 
 (define (compiler-ir-nominal-lifetime-render
   [name : String]
   [lifetimes : AstLifetimeList]) : String
-  (str-cat "(" name " " (compiler-ir-lifetime-list-render lifetimes) ")"))
+  (str_cat.str-cat
+    "("
+    name
+    " "
+    (compiler-ir-lifetime-list-render lifetimes)
+    ")"))
 
 (define (compiler-ir-type-render [ty : AstType]) : String
   (match ty
@@ -1334,41 +1339,47 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (str-cat
+      (str_cat.str-cat
         "(-> "
         (compiler-ir-type-list-render (box-get args))
         " "
         (compiler-ir-type-render (ty-node-get ret))
         ")")]
     [(AstTyTuple elems)
-      (str-cat "(Tuple " (compiler-ir-type-list-render (box-get elems)) ")")]
+      (str_cat.str-cat
+        "(Tuple "
+        (compiler-ir-type-list-render (box-get elems))
+        ")")]
     [(AstTyArray elem count)
-      (str-cat
+      (str_cat.str-cat
         "(Array "
         (compiler-ir-type-render (ty-node-get elem))
         " "
-        (int->string count)
+        (string.int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (str-cat "(Array " (compiler-ir-type-render (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Array "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]
     [(AstTyBox elem)
-      (str-cat "(Box " (compiler-ir-type-render (ty-node-get elem)) ")")]
+      (str_cat.str-cat "(Box " (compiler-ir-type-render (ty-node-get elem)) ")")]
     [(AstTyRegion region inner)
-      (str-cat
+      (str_cat.str-cat
         "(Region "
         region
         " "
         (compiler-ir-type-render (ty-node-get inner))
         ")")]
     [(AstTyRef region inner)
-      (str-cat
+      (str_cat.str-cat
         "(& "
         region
         " "
         (compiler-ir-type-render (ty-node-get inner))
         ")")]
     [(AstTyMutRef region inner)
-      (str-cat
+      (str_cat.str-cat
         "(&mut "
         region
         " "
@@ -1390,56 +1401,68 @@
         (intern-str name)
         (box-get lifetimes))]
     [(AstTyPtr elem)
-      (str-cat "(Ptr " (compiler-ir-type-render (ty-node-get elem)) ")")]
+      (str_cat.str-cat "(Ptr " (compiler-ir-type-render (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (str-cat "(MutPtr " (compiler-ir-type-render (ty-node-get elem)) ")")]))
+      (str_cat.str-cat
+        "(MutPtr "
+        (compiler-ir-type-render (ty-node-get elem))
+        ")")]))
 
 (define (compiler-ir-u64-payload-render [value : u64]) : String
-  (int->string (cast value : i64)))
+  (string.int->string (cast value : i64)))
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id) (string-append "%" (int->string id))]
-    [(IrValueGlobal name) (string-append "@" name)]
-    [(IrValueGlobalAddr name) (string-append "&@" name)]
-    [(IrValueFunction name) (string-append "fn@" name)]
-    [(IrValueI64 value) (int->string value)]
+    [(IrValueVar id) (string.string-append "%" (string.int->string id))]
+    [(IrValueGlobal name) (string.string-append "@" name)]
+    [(IrValueGlobalAddr name) (string.string-append "&@" name)]
+    [(IrValueFunction name) (string.string-append "fn@" name)]
+    [(IrValueI64 value) (string.int->string value)]
     [(IrValueF64 value)
-      (str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
+      (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
     [(IrValueBool value)
       (if value
         "true"
         "false")]
-    [(IrValueChar value) (int->string (cast value : i64))]
+    [(IrValueChar value) (string.int->string (cast value : i64))]
     [(IrValueString value) value]
     [(IrValueBytes value)
-      (str-cat "<bytes:" (int->string (string-length value)) ">")]
+      (str_cat.str-cat
+        "<bytes:"
+        (string.int->string (string.string-length value))
+        ">")]
     [(IrValueUnit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
   (match values
     [(IrValueNil) ""]
     [(IrValueCons value rest)
-      (str-cat
+      (str_cat.str-cat
         (compiler-ir-value-render value)
         (match (box-get rest)
           [(IrValueNil) ""]
-          [_ (str-cat ", " (compiler-ir-value-list-render (box-get rest)))]))]))
+          [_
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-value-list-render (box-get rest)))]))]))
 
 (define (compiler-ir-switch-case-render [case : CompilerIrSwitchCase]) : String
   (match case
-    [(IrSwitchCase tag label) (str-cat (int->string tag) ":" label)]))
+    [(IrSwitchCase tag label)
+      (str_cat.str-cat (string.int->string tag) ":" label)]))
 
 (define (compiler-ir-switch-case-list-render [cases : CompilerIrSwitchCaseList]) : String
   (match cases
     [(IrSwitchCaseNil) ""]
     [(IrSwitchCaseCons case rest)
-      (str-cat
+      (str_cat.str-cat
         (compiler-ir-switch-case-render case)
         (match (box-get rest)
           [(IrSwitchCaseNil) ""]
           [_
-            (str-cat ", " (compiler-ir-switch-case-list-render (box-get rest)))]))]))
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-switch-case-list-render (box-get rest)))]))]))
 
 (define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
   (match values
@@ -1481,18 +1504,23 @@
   [index : i64]) : String
   (if (>= index (array-length values))
     ""
-    (str-cat
+    (str_cat.str-cat
       (compiler-ir-value-render (array-ref values index))
       (if (= (+ index 1) (array-length values))
         ""
-        (str-cat ", " (compiler-ir-call-args-array-render values (+ index 1)))))))
+        (str_cat.str-cat
+          ", "
+          (compiler-ir-call-args-array-render values (+ index 1)))))))
 
 (define (compiler-ir-call-args-render [args : CompilerIrCallArgs]) : String
   (match args
     [(IrCallArgsNil) ""]
     [(IrCallArgsOne a) (compiler-ir-value-render a)]
     [(IrCallArgsTwo a b)
-      (str-cat (compiler-ir-value-render a) ", " (compiler-ir-value-render b))]
+      (str_cat.str-cat
+        (compiler-ir-value-render a)
+        ", "
+        (compiler-ir-value-render b))]
     [(IrCallArgsArray values) (compiler-ir-call-args-array-render values 0)]))
 
 (define (compiler-ir-call-args-count [args : CompilerIrCallArgs]) : i64
@@ -1506,7 +1534,7 @@
   [name : String]
   [args : CompilerIrCallArgs]
   [ty : AstType]) : String
-  (str-cat
+  (str_cat.str-cat
     "  tailcall "
     name
     "("
@@ -1518,7 +1546,7 @@
   [callee : CompilerIrValue]
   [args : CompilerIrCallArgs]
   [ty : AstType]) : String
-  (str-cat
+  (str_cat.str-cat
     "  tailcall* "
     (compiler-ir-value-render callee)
     "("
@@ -1532,11 +1560,11 @@
     [(IrInstrTailCallIndirect callee args ty)
       (compiler-ir-tail-call-indirect-render callee args ty)]
     [(IrInstrSwitch index base cases default-label)
-      (str-cat
+      (str_cat.str-cat
         "  switch "
         (compiler-ir-value-render index)
         " base "
-        (int->string base)
+        (string.int->string base)
         " ["
         (compiler-ir-switch-case-list-render cases)
         "] default "
@@ -1593,28 +1621,30 @@
     [_ true]))
 
 (define (compiler-ir-runtime-memory-read? [name : String]) : bool
-  (or (string-eq name "tl_region_mark") (string-eq name ".L_tl_stdin_eof")))
+  (or
+    (string.string-eq name "tl_region_mark")
+    (string.string-eq name ".L_tl_stdin_eof")))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or
-    (string-eq name "tl_alloc")
-    (string-eq name "tl_int_to_string")
-    (string-eq name "tl_substring")
-    (string-eq name "tl_string_concat")
-    (string-eq name "tl_string_concat3")
-    (string-eq name "tl_string_concat4")
-    (string-eq name "tl_string_concat5")
-    (string-eq name "tl_region_reset")
-    (string-eq name "tl_array_fill8")
-    (string-eq name "tl_array_zero")
-    (string-eq name ".L_tl_flush_stdout")))
+    (string.string-eq name "tl_alloc")
+    (string.string-eq name "tl_int_to_string")
+    (string.string-eq name "tl_substring")
+    (string.string-eq name "tl_string_concat")
+    (string.string-eq name "tl_string_concat3")
+    (string.string-eq name "tl_string_concat4")
+    (string.string-eq name "tl_string_concat5")
+    (string.string-eq name "tl_region_reset")
+    (string.string-eq name "tl_array_fill8")
+    (string.string-eq name "tl_array_zero")
+    (string.string-eq name ".L_tl_flush_stdout")))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or
-    (string-eq name ".L_tl_abort")
-    (string-eq name "tl_oob_abort")
-    (string-eq name "tl_div_abort")
-    (string-eq name "tl_shift_abort")))
+    (string.string-eq name ".L_tl_abort")
+    (string.string-eq name "tl_oob_abort")
+    (string.string-eq name "tl_div_abort")
+    (string.string-eq name "tl_shift_abort")))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
   (cond
@@ -1776,7 +1806,7 @@
         [rest : CompilerSourceSpansEntryList (box-get rest)]
         (match entry
           [(CompilerSourceSpansEntry entry-name span)
-            (if (string-eq entry-name name)
+            (if (string.string-eq entry-name name)
               (CompilerSomeSourceSpan span)
               (compiler-source-spans-entry-list-lookup rest name))]))]))
 
@@ -1788,10 +1818,10 @@
       (compiler-source-spans-entry-list-lookup entries name)]))
 
 (define (compiler-source-spans-value-key [function : String] [var-id : i64]) : String
-  (str-cat "value:" function ":" (int->string var-id)))
+  (str_cat.str-cat "value:" function ":" (string.int->string var-id)))
 
 (define (compiler-source-spans-store-key [function : String] [name : String]) : String
-  (str-cat "store:" function ":" name))
+  (str_cat.str-cat "store:" function ":" name))
 
 (define (compiler-source-spans-insert-instr-entry
   [spans : CompilerSourceSpans]
@@ -2724,7 +2754,7 @@
       (let
         [head : AstType (ty-node-get head)]
         [tail : AstTypeList (box-get tail)]
-        (str-cat
+        (str_cat.str-cat
           " "
           (compiler-ir-type-name head)
           (compiler-ir-type-list-name tail)))]))
@@ -2751,36 +2781,44 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (str-cat
+      (str_cat.str-cat
         "(->"
         (compiler-ir-type-list-name (box-get args))
         " "
         (compiler-ir-type-name (ty-node-get ret))
         ")")]
     [(AstTyTuple elems)
-      (str-cat "(Tuple" (compiler-ir-type-list-name (box-get elems)) ")")]
+      (str_cat.str-cat
+        "(Tuple"
+        (compiler-ir-type-list-name (box-get elems))
+        ")")]
     [(AstTyArray elem count)
-      (str-cat
+      (str_cat.str-cat
         "(Array "
         (compiler-ir-type-name (ty-node-get elem))
         " "
-        (int->string count)
+        (string.int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (str-cat "(Array " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat "(Array " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyBox elem)
-      (str-cat "(Box " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat "(Box " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyRegion region inner)
-      (str-cat
+      (str_cat.str-cat
         "(in "
         region
         " "
         (compiler-ir-type-name (ty-node-get inner))
         ")")]
     [(AstTyRef region inner)
-      (str-cat "(& " region " " (compiler-ir-type-name (ty-node-get inner)) ")")]
+      (str_cat.str-cat
+        "(& "
+        region
+        " "
+        (compiler-ir-type-name (ty-node-get inner))
+        ")")]
     [(AstTyMutRef region inner)
-      (str-cat
+      (str_cat.str-cat
         "(&mut "
         region
         " "
@@ -2796,37 +2834,50 @@
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyVar name) (str-cat "'" (intern-str name) "'")]
+    [(AstTyVar name) (str_cat.str-cat "'" (intern-str name) "'")]
     [(AstTyVarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
     [(AstTyPtr elem)
-      (str-cat "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
     [(AstTyMutPtr elem)
-      (str-cat "(MutPtr " (compiler-ir-type-name (ty-node-get elem)) ")")]))
+      (str_cat.str-cat
+        "(MutPtr "
+        (compiler-ir-type-name (ty-node-get elem))
+        ")")]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
-  (str-cat "(Vector " (compiler-ir-type-name elem) " " (int->string lanes) ")"))
+  (str_cat.str-cat
+    "(Vector "
+    (compiler-ir-type-name elem)
+    " "
+    (string.int->string lanes)
+    ")"))
 
 (define (compiler-ir-mask-type-name [lanes : i64]) : String
-  (str-cat "(Mask " (int->string lanes) ")"))
+  (str_cat.str-cat "(Mask " (string.int->string lanes) ")"))
 
 (define (compiler-ir-value-describe [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id) (str-cat "%" (int->string id) "")]
-    [(IrValueGlobal name) (str-cat "@" name "")]
-    [(IrValueGlobalAddr name) (str-cat "&@" name "")]
-    [(IrValueFunction name) (str-cat "fn@" name "")]
-    [(IrValueI64 n) (int->string n)]
-    [(IrValueF64 n) (str-cat "float-bits:" (compiler-ir-u64-payload-render n))]
+    [(IrValueVar id) (str_cat.str-cat "%" (string.int->string id) "")]
+    [(IrValueGlobal name) (str_cat.str-cat "@" name "")]
+    [(IrValueGlobalAddr name) (str_cat.str-cat "&@" name "")]
+    [(IrValueFunction name) (str_cat.str-cat "fn@" name "")]
+    [(IrValueI64 n) (string.int->string n)]
+    [(IrValueF64 n)
+      (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render n))]
     [(IrValueBool b)
       (if b
         "true"
         "false")]
-    [(IrValueChar c) (int->string (cast c : i64))]
+    [(IrValueChar c) (string.int->string (cast c : i64))]
     [(IrValueString s) s]
-    [(IrValueBytes s) (str-cat "<bytes:" (int->string (string-length s)) ">")]
+    [(IrValueBytes s)
+      (str_cat.str-cat
+        "<bytes:"
+        (string.int->string (string.string-length s))
+        ">")]
     [(IrValueUnit) "unit"]))
 
 (define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
@@ -2836,7 +2887,7 @@
       (match (box-get tail)
         [(IrValueNil) (compiler-ir-value-describe head)]
         [_
-          (str-cat
+          (str_cat.str-cat
             (compiler-ir-value-describe head)
             ", "
             (compiler-ir-value-list-describe (box-get tail)))])]))
@@ -2846,18 +2897,20 @@
   [index : i64]) : String
   (if (>= index (array-length values))
     ""
-    (str-cat
+    (str_cat.str-cat
       (compiler-ir-value-describe (array-ref values index))
       (if (= (+ index 1) (array-length values))
         ""
-        (str-cat ", " (compiler-ir-call-args-array-describe values (+ index 1)))))))
+        (str_cat.str-cat
+          ", "
+          (compiler-ir-call-args-array-describe values (+ index 1)))))))
 
 (define (compiler-ir-call-args-describe [args : CompilerIrCallArgs]) : String
   (match args
     [(IrCallArgsNil) ""]
     [(IrCallArgsOne a) (compiler-ir-value-describe a)]
     [(IrCallArgsTwo a b)
-      (str-cat
+      (str_cat.str-cat
         (compiler-ir-value-describe a)
         ", "
         (compiler-ir-value-describe b))]
@@ -2903,22 +2956,25 @@
     [(IrMaskReduceAny) "any"]))
 
 (define (compiler-ir-lane-type-name [lanes : i64] [elem : AstType]) : String
-  (str-cat (int->string lanes) " x " (compiler-ir-type-name elem)))
+  (str_cat.str-cat
+    (string.int->string lanes)
+    " x "
+    (compiler-ir-type-name elem)))
 
 (define (compiler-ir-vector-suffix [lanes : i64] [elem : AstType]) : String
-  (str-cat " : " (compiler-ir-lane-type-name lanes elem) ""))
+  (str_cat.str-cat " : " (compiler-ir-lane-type-name lanes elem) ""))
 
 (define (compiler-ir-instr-describe [instr : CompilerIrInstr]) : String
   (match instr
     [(IrInstrLaneId dst lanes ty)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = lane_id "
         (compiler-ir-lane-type-name lanes ty)
         "")]
     [(IrInstrSplat dst value lanes ty)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = splat "
@@ -2928,7 +2984,7 @@
     [(IrInstrVectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes elem-ty)
-          (str-cat
+          (str_cat.str-cat
             "  "
             (compiler-ir-value-describe (IrValueVar dst))
             " = vector_"
@@ -2939,7 +2995,7 @@
             (compiler-ir-value-describe rhs)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrVectorReduce dst op src lanes elem-ty)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = vector_reduce_"
@@ -2950,7 +3006,7 @@
     [(IrInstrVectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes elem-ty)
-          (str-cat
+          (str_cat.str-cat
             "  "
             (compiler-ir-value-describe (IrValueVar dst))
             " = vector_cmp_"
@@ -2961,7 +3017,7 @@
             (compiler-ir-value-describe rhs)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrMaskBinOp dst op lhs rhs lanes)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = "
@@ -2971,17 +3027,17 @@
         ", "
         (compiler-ir-value-describe rhs)
         " : "
-        (int->string lanes))]
+        (string.int->string lanes))]
     [(IrInstrMaskNot dst src lanes)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = mask_not "
         (compiler-ir-value-describe src)
         " : "
-        (int->string lanes))]
+        (string.int->string lanes))]
     [(IrInstrMaskReduce dst op src lanes)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = mask_reduce_"
@@ -2989,11 +3045,11 @@
         " "
         (compiler-ir-value-describe src)
         " : "
-        (int->string lanes))]
+        (string.int->string lanes))]
     [(IrInstrSelect payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload dst mask on-true on-false lanes ty)
-          (str-cat
+          (str_cat.str-cat
             "  "
             (compiler-ir-value-describe (IrValueVar dst))
             " = select "
@@ -3004,7 +3060,7 @@
             (compiler-ir-value-describe on-false)
             (compiler-ir-vector-suffix lanes ty))])]
     [(IrInstrVectorLoad dst base index lanes elem-ty)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = vector_load "
@@ -3015,7 +3071,7 @@
     [(IrInstrVectorStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorStorePayload base index value lanes elem-ty)
-          (str-cat
+          (str_cat.str-cat
             "  vector_store "
             (compiler-ir-value-describe base)
             ", "
@@ -3032,7 +3088,7 @@
             mask
             lanes
             elem-ty)
-          (str-cat
+          (str_cat.str-cat
             "  predicated_store "
             (compiler-ir-value-describe base)
             ", "
@@ -3051,7 +3107,7 @@
             mask
             lanes
             elem-ty)
-          (str-cat
+          (str_cat.str-cat
             "  "
             (compiler-ir-value-describe (IrValueVar dst))
             " = predicated_load "
@@ -3062,7 +3118,7 @@
             (compiler-ir-value-describe mask)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(IrInstrTailMask dst index len lanes)
-      (str-cat
+      (str_cat.str-cat
         "  "
         (compiler-ir-value-describe (IrValueVar dst))
         " = tail_mask "
@@ -3070,13 +3126,13 @@
         ", "
         (compiler-ir-value-describe len)
         " : "
-        (int->string lanes))]
+        (string.int->string lanes))]
     [(IrInstrSwitch index base cases default-label)
-      (str-cat
+      (str_cat.str-cat
         "  switch "
         (compiler-ir-value-describe index)
         " base "
-        (int->string base)
+        (string.int->string base)
         " ["
         (compiler-ir-switch-case-list-render cases)
         "] default "
@@ -3284,35 +3340,43 @@
 
 (define (compiler-ir-display-type-names-ok?) : bool
   (and
-    (string-eq (compiler-ir-vector-type-name (AstTyI32) 8) "(Vector i32 8)")
-    (string-eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
+    (string.string-eq
+      (compiler-ir-vector-type-name (AstTyI32) 8)
+      "(Vector i32 8)")
+    (string.string-eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
 
 (define (compiler-ir-display-op-names-ok?) : bool
   (and
-    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceSum) "sum")
-    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMin) "min")
-    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMax) "max")
-    (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAll) "all")
-    (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAny) "any")
-    (string-eq (compiler-ir-mask-binop-name IrMaskAnd) "mask_and")
-    (string-eq (compiler-ir-mask-binop-name IrMaskOr) "mask_or")))
+    (string.string-eq
+      (compiler-ir-vector-reduce-op-name IrVectorReduceSum)
+      "sum")
+    (string.string-eq
+      (compiler-ir-vector-reduce-op-name IrVectorReduceMin)
+      "min")
+    (string.string-eq
+      (compiler-ir-vector-reduce-op-name IrVectorReduceMax)
+      "max")
+    (string.string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAll) "all")
+    (string.string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAny) "any")
+    (string.string-eq (compiler-ir-mask-binop-name IrMaskAnd) "mask_and")
+    (string.string-eq (compiler-ir-mask-binop-name IrMaskOr) "mask_or")))
 
 (define (compiler-ir-display-instrs-ok?) : bool
   (let
     [ok : bool true]
     (begin
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe (IrInstrLaneId 0 4 (AstTyI64)))
         "  %0 = lane_id 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (IrInstrSplat 1 (IrValueI64 7) 4 (AstTyI64)))
         "  %1 = splat 7 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-vector-bin-op
             2
@@ -3324,7 +3388,7 @@
         "  %2 = vector_add %0, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (IrInstrVectorReduce
             8
@@ -3335,7 +3399,7 @@
         "  %8 = vector_reduce_sum %2 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-vector-compare
             3
@@ -3347,24 +3411,24 @@
         "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (IrInstrMaskBinOp 4 (IrMaskOr) (IrValueVar 3) (IrValueVar 3) 4))
         "  %4 = mask_or %3, %3 : 4")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe (IrInstrMaskNot 5 (IrValueVar 4) 4))
         "  %5 = mask_not %4 : 4")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (IrInstrMaskReduce 9 (IrMaskReduceAny) (IrValueVar 5) 4))
         "  %9 = mask_reduce_any %5 : 4")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-select
             6
@@ -3376,13 +3440,13 @@
         "  %6 = select %5, %2, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (IrInstrVectorLoad 7 (IrValueVar 10) (IrValueVar 11) 4 (AstTyI64)))
         "  %7 = vector_load %10, %11 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-vector-store
             (IrValueVar 12)
@@ -3393,7 +3457,7 @@
         "  vector_store %12, %11, %6 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-predicated-store
             (IrValueVar 12)
@@ -3405,7 +3469,7 @@
         "  predicated_store %12, %11, %6, %5 : 4 x i64")
         unit
         (set! ok false))
-      (if (string-eq
+      (if (string.string-eq
         (compiler-ir-instr-describe
           (ir-instr-predicated-load
             10
@@ -3424,7 +3488,7 @@
     [instr : CompilerIrInstr
       (IrInstrTailMask 9 (IrValueVar 1) (IrValueVar 2) 8)]
     (and
-      (string-eq
+      (string.string-eq
         (compiler-ir-instr-describe instr)
         "  %9 = tail_mask %1, %2 : 8")
       (compiler-ir-effect-is? instr IrEffectPure)
@@ -3445,7 +3509,7 @@
     (compiler-ir-display-tail-mask-ok?)))
 
 (define (compiler-ir-tail-call-render-ok?) : bool
-  (string-eq
+  (string.string-eq
     (compiler-ir-instr-render
       (IrInstrTailCall
         "fact_loop"
@@ -3462,10 +3526,10 @@
         (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
     [instr : CompilerIrInstr (IrInstrSwitch (IrValueVar 9) 4 cases "other")]
     (and
-      (string-eq
+      (string.string-eq
         (compiler-ir-instr-render instr)
         "  switch %9 base 4 [4:four, 5:five] default other")
-      (string-eq
+      (string.string-eq
         (compiler-ir-instr-describe instr)
         "  switch %9 base 4 [4:four, 5:five] default other"))))
 
@@ -3510,7 +3574,7 @@
   (match (compiler-ir-block-list-force-cons blocks)
     [(IrBlockCons block _)
       (match block
-        [(IrBlock label _) (string-eq label want)])]
+        [(IrBlock label _) (string.string-eq label want)])]
     [(IrBlockNil) false]
     [(IrBlockArray _) false]))
 

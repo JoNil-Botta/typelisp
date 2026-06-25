@@ -4,7 +4,7 @@
 ;; synthetic byte buffers into it, flips code pages from RW to RX, keeps data
 ;; pages non-executable, and releases the mapping. Container parsing, fixups,
 ;; callback ABI entry, and real comptime images belong to later tlci slices.
-(import "../stdlib/io.tl")
+(import stdlib.io)
 
 (defstruct TlciPageRegion
   (addr i64)
@@ -293,7 +293,7 @@
 
 (define (tlci-pages-test-panic-if [failed : bool] [message : String]) : unit
   (if failed
-    (panic message)
+    (io.panic message)
     unit))
 
 (test
@@ -303,7 +303,7 @@
     [(OkTlciPageRegion region)
       (begin
         (tlci-pages-release region)
-        (panic "tlci pages: expected invalid size failure"))]))
+        (io.panic "tlci pages: expected invalid size failure"))]))
 
 (test
   tlci-pages-map-data-non-executable
@@ -311,7 +311,7 @@
     [bytes : (Array u8)
       (tlci-pages-test-bytes (cast 17 : u8) (cast 34 : u8) (cast 51 : u8))]
     (match (tlci-pages-map-data bytes)
-      [(ErrTlciPageRegion message) (panic message)]
+      [(ErrTlciPageRegion message) (io.panic message)]
       [(OkTlciPageRegion region)
         (let
           [content-ok : bool
@@ -341,7 +341,7 @@
     [bytes : (Array u8)
       (tlci-pages-test-bytes (cast 195 : u8) (cast 144 : u8) (cast 144 : u8))]
     (match (tlci-pages-map-code bytes)
-      [(ErrTlciPageRegion message) (panic message)]
+      [(ErrTlciPageRegion message) (io.panic message)]
       [(OkTlciPageRegion region)
         (let
           [content-ok : bool

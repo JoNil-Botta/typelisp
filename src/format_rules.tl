@@ -5,11 +5,11 @@
 ;; formatting path renders those rules directly from the CST; doc-algebra
 ;; compatibility coverage lives in format_rules_doc_compat.tl so production CLI
 ;; builds do not import the full document algebra.
-(import "../stdlib/io.tl")
+(import stdlib.io)
 (import "format_tokens.tl")
 (import "format_cst.tl")
 (import "format_render_buf.tl")
-(import "../stdlib/string.tl")
+(import stdlib.string)
 
 (defenum ResultFormatString
   (OkFormatString String)
@@ -19,7 +19,7 @@
   (match node
     [(FmtCstAtom tok)
       (match tok
-        [(FmtSymbol name) (string-eq name wanted)]
+        [(FmtSymbol name) (string.string-eq name wanted)]
         [_ false])]
     [_ false]))
 
@@ -71,14 +71,15 @@
       (let
         [head-name : String (format-rules-node-symbol-name head)]
         (cond
-          [(string-eq head-name "import") "import"]
-          [(string-eq head-name "extern") "extern"]
-          [(string-eq head-name "include-str") "include-str"]
-          [(string-eq head-name "define")
+          [(string.string-eq head-name "import") "import"]
+          [(string.string-eq head-name "extern") "extern"]
+          [(string.string-eq head-name "include-str") "include-str"]
+          [(string.string-eq head-name "define")
             (if (format-rules-define-value-rest? rest)
               "define"
               "")]
-          [(string-eq head-name "cfg") (format-rules-cfg-top-form-family rest)]
+          [(string.string-eq head-name "cfg")
+            (format-rules-cfg-top-form-family rest)]
           [else ""]))]
     [_ ""]))
 
@@ -94,8 +95,8 @@
     [previous-family : String (format-rules-top-form-family previous)]
     [node-family : String (format-rules-top-form-family node)]
     (and
-      (> (string-length previous-family) 0)
-      (string-eq previous-family node-family))))
+      (> (string.string-length previous-family) 0)
+      (string.string-eq previous-family node-family))))
 
 (define (format-rules-list-append
   [left : FormatCstList]
@@ -146,13 +147,13 @@
   [buf : FmtRenderBuf]) : i64
   (if emit
     (let
-      [text-width : i64 (string-length text)]
+      [text-width : i64 (string.string-length text)]
       (begin
         (fmt-render-buf-append buf text)
         (+ col text-width)))
     (if (> col limit)
       col
-      (+ col (string-length text)))))
+      (+ col (string.string-length text)))))
 
 (define (format-rules-layout-soft-line
   [emit : bool]
@@ -2289,7 +2290,7 @@
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
-      [(string-eq head-name "import")
+      [(string.string-eq head-name "import")
         (format-rules-layout-inline-form
           "import"
           rest
@@ -2300,7 +2301,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "include-str")
+      [(string.string-eq head-name "include-str")
         (format-rules-layout-inline-form
           "include-str"
           rest
@@ -2311,7 +2312,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "extern")
+      [(string.string-eq head-name "extern")
         (format-rules-layout-inline-form
           "extern"
           rest
@@ -2322,11 +2323,11 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "define")
+      [(string.string-eq head-name "define")
         (format-rules-layout-define rest emit width indent col flat limit buf)]
-      [(string-eq head-name "defmacro")
+      [(string.string-eq head-name "defmacro")
         (format-rules-layout-defmacro rest emit width indent col flat limit buf)]
-      [(string-eq head-name "defenum")
+      [(string.string-eq head-name "defenum")
         (format-rules-layout-first-or-line-form
           "defenum"
           rest
@@ -2337,7 +2338,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "defstruct")
+      [(string.string-eq head-name "defstruct")
         (format-rules-layout-first-or-line-form
           "defstruct"
           rest
@@ -2348,11 +2349,11 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "lambda")
+      [(string.string-eq head-name "lambda")
         (format-rules-layout-lambda rest emit width indent col flat limit buf)]
-      [(string-eq head-name "let")
+      [(string.string-eq head-name "let")
         (format-rules-layout-let rest emit width indent col flat limit buf)]
-      [(string-eq head-name "if")
+      [(string.string-eq head-name "if")
         (format-rules-layout-first-or-line-form
           "if"
           rest
@@ -2363,7 +2364,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "while")
+      [(string.string-eq head-name "while")
         (format-rules-layout-first-or-line-form
           "while"
           rest
@@ -2374,7 +2375,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "begin")
+      [(string.string-eq head-name "begin")
         (format-rules-layout-line-form
           "begin"
           rest
@@ -2385,7 +2386,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "unsafe")
+      [(string.string-eq head-name "unsafe")
         (format-rules-layout-line-form
           "unsafe"
           rest
@@ -2396,7 +2397,7 @@
           flat
           limit
           buf)]
-      [(string-eq head-name "match")
+      [(string.string-eq head-name "match")
         (format-rules-layout-first-or-line-form
           "match"
           rest
@@ -2433,9 +2434,9 @@
     [(FmtCstListStepItem key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
-        (if (> (string-length name) 0)
+        (if (> (string.string-length name) 0)
           (format-rules-layout-inline-form
-            (string-append ":" name)
+            (string.string-append ":" name)
             tail
             emit
             width
@@ -2585,8 +2586,8 @@
     (let
       [node-family : String (format-rules-top-form-family node)]
       (if (and
-        (> (string-length previous-family) 0)
-        (string-eq previous-family node-family))
+        (> (string.string-length previous-family) 0)
+        (string.string-eq previous-family node-family))
         (format-rules-layout-hard-line emit width indent col flat limit buf)
         (format-rules-layout-hard-line
           emit
@@ -2718,8 +2719,8 @@
     (let
       [node-family : String (format-rules-top-form-family node)]
       (if (and
-        (> (string-length previous-family) 0)
-        (string-eq previous-family node-family))
+        (> (string.string-length previous-family) 0)
+        (string.string-eq previous-family node-family))
         (format-rules-render-hard-line-into indent buf)
         (format-rules-render-gap-into indent buf)))))
 
@@ -2858,13 +2859,13 @@
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (format-rules-render-source-width-result src width)
     [(OkFormatString formatted) formatted]
-    [(ErrFormatString err) (panic (format-source-error-message err))]))
+    [(ErrFormatString err) (io.panic (format-source-error-message err))]))
 
 (define (format-rules-decls-source) : String
-  "(import \"std.tl\") (import \"ffi.tl\") (extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
+  "(import \"std.tl\") (import \"ffi.tl\") (extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
 
 (define (format-rules-decls-expected) : String
-  "(import \"std.tl\")\n(import \"ffi.tl\")\n\n(extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
+  "(import \"std.tl\")\n(import \"ffi.tl\")\n\n(extern (io.print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
 
 (define (format-rules-flow-source) : String
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")
@@ -2880,7 +2881,7 @@
 ;; stay attached
 (define answer : i64 42)
 (begin ; keep
- (print-string \"x\"))")
+ (io.print-string \"x\"))")
 
 (define (format-rules-comments-expected) : String
   ";; module header
@@ -2894,7 +2895,7 @@
 
 (begin
   ; keep
-  (print-string \"x\"))")
+  (io.print-string \"x\"))")
 
 (define (format-rules-quote-source) : String
   "(define (mk [e : Expr]) : Expr `(if ,e true false)) (define (body [xs : ExprList]) : Expr `(begin ,@xs))")
@@ -2971,8 +2972,8 @@
                   (box (FmtCstCons colon (box (FmtCstDense tail-slots 0 1)))))))
             80)]
         (and
-          (string-eq dense-render "(x : i64)")
-          (string-eq overlay-render dense-render))))))
+          (string.string-eq dense-render "(x : i64)")
+          (string.string-eq overlay-render dense-render))))))
 
 (define (format-rules-self-test) : i64
   (let
@@ -2997,19 +2998,25 @@
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
-      (unless (string-eq decls (format-rules-decls-expected)) (return 1))
-      (unless (string-eq flow (format-rules-flow-expected)) (return 2))
-      (unless (string-eq comments (format-rules-comments-expected)) (return 3))
-      (unless (string-eq quote (format-rules-quote-expected)) (return 4))
-      (unless (string-eq unsafe (format-rules-unsafe-expected)) (return 5))
+      (unless (string.string-eq decls (format-rules-decls-expected)) (return 1))
+      (unless (string.string-eq flow (format-rules-flow-expected)) (return 2))
       (unless
-        (string-eq metadata (format-rules-define-metadata-expected))
+        (string.string-eq comments (format-rules-comments-expected))
+        (return 3))
+      (unless (string.string-eq quote (format-rules-quote-expected)) (return 4))
+      (unless
+        (string.string-eq unsafe (format-rules-unsafe-expected))
+        (return 5))
+      (unless
+        (string.string-eq metadata (format-rules-define-metadata-expected))
         (return 6))
       (unless
-        (string-eq metadata-long (format-rules-define-metadata-long-expected))
+        (string.string-eq
+          metadata-long
+          (format-rules-define-metadata-long-expected))
         (return 7))
       (unless
-        (string-eq variadic (format-rules-variadic-macro-expected))
+        (string.string-eq variadic (format-rules-variadic-macro-expected))
         (return 8))
       (unless (format-rules-overlay-dense-tail-preserved?) (return 9))
       42)))

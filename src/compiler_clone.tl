@@ -12,53 +12,53 @@
 ;; clone-able named type. Function, reference, raw-pointer, str, and
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
-(import "../stdlib/io.tl")
+(import stdlib.io)
 (import "compiler_ast_types.tl")
-(import "../stdlib/hashmap.tl")
-(import "../stdlib/string.tl")
+(import stdlib.hashmap)
+(import stdlib.string)
 
 (defstruct CloneNameSet
-  (map StringI64Map))
+  (map hashmap.StringI64Map))
 
 (defenum CloneNameList
   (CloneNameNil)
   (CloneNameCons String (Box CloneNameList)))
 
 (define (clone-helper-name [type-name : String]) : String
-  (string-append "clone$" type-name))
+  (string.string-append "clone$" type-name))
 
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet (string-i64-map-with-capacity 8)))
+  (CloneNameSet (hashmap.string-i64-map-with-capacity 8)))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
 ;; type universe; seeding that accumulator at the input set's capacity (it can
 ;; only shrink relative to the input) avoids the rehash+fill-empty grow chain a
 ;; capacity-8 seed would walk on every step.
 (define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
-  (CloneNameSet (string-i64-map-with-capacity capacity)))
+  (CloneNameSet (hashmap.string-i64-map-with-capacity capacity)))
 
-(define (clone-name-set-map [names : CloneNameSet]) : StringI64Map
+(define (clone-name-set-map [names : CloneNameSet]) : hashmap.StringI64Map
   (struct-get names map))
 
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
-  (CloneNameSet (string-i64-map-put (clone-name-set-map names) name 1)))
+  (CloneNameSet (hashmap.string-i64-map-put (clone-name-set-map names) name 1)))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
-  (string-i64-map-contains? (clone-name-set-map names) name))
+  (hashmap.string-i64-map-contains? (clone-name-set-map names) name))
 
 (define (clone-type-name-base [name : String]) : String
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64 (string.string-length name)]
     [start : i64 0]
     (begin
       (while (< i n)
         (begin
-          (if (= (cast (string-ref name i) : i64) (cast '/' : i64))
+          (if (= (cast (string.string-ref name i) : i64) (cast '/' : i64))
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
-      (substring name start (- n start)))))
+      (string.substring name start (- n start)))))
 
 (define (clone-name-set-contains-type? [names : CloneNameSet] [name : String]) : bool
   (if (clone-name-set-contains? names name)
@@ -78,22 +78,24 @@
         (match cur
           [(CloneNameNil) unit]
           [(CloneNameCons head rest)
-            (if (string-eq head name)
+            (if (string.string-eq head name)
               (set! found true)
               (set! cur (box-get rest)))]))
       found)))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
-  (string-i64-map-len (clone-name-set-map names)))
+  (hashmap.string-i64-map-len (clone-name-set-map names)))
 
 (define (clone-name-set-capacity [names : CloneNameSet]) : i64
-  (string-i64-map-capacity (clone-name-set-map names)))
+  (hashmap.string-i64-map-capacity (clone-name-set-map names)))
 
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)
     names
     (clone-name-set-smoke-insert-count
-      (clone-name-set-insert names (string-append "T" (int->string count)))
+      (clone-name-set-insert
+        names
+        (string.string-append "T" (string.int->string count)))
       (- count 1))))
 
 (define (clone-name-set-smoke-ok?) : bool
@@ -294,7 +296,7 @@
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
-  (string-append "tlc" (int->string i)))
+  (string.string-append "tlc" (string.int->string i)))
 
 ;; Pattern args (AstPatBinding tlc0) (AstPatBinding tlc1) ... for `count` fields.
 (define (clone-variant-pat-args [count : i64] [i : i64]) : AstPatternList
@@ -407,8 +409,8 @@
 
 (define (clone-type-is-name? [ty : AstType] [name : String]) : bool
   (match ty
-    [(AstTyVar n) (string-eq (intern-str n) name)]
-    [(AstTyEnum n) (string-eq (intern-str n) name)]
+    [(AstTyVar n) (string.string-eq (intern-str n) name)]
+    [(AstTyEnum n) (string.string-eq (intern-str n) name)]
     [_ false]))
 
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
@@ -515,10 +517,10 @@
     [_ (CloneNotList)]))
 
 (define (clone-list-acc-name [type-name : String]) : String
-  (string-append (clone-helper-name type-name) "$acc"))
+  (string.string-append (clone-helper-name type-name) "$acc"))
 
 (define (clone-list-rev-name [type-name : String]) : String
-  (string-append (clone-helper-name type-name) "$rev"))
+  (string.string-append (clone-helper-name type-name) "$rev"))
 
 ;; `(Nil)` - a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [pools : AstNodePoolContext] [nil-ctor : String]) : i64
@@ -863,7 +865,7 @@
               [rest : AstDeclList (box-get rest)]
               (match decl
                 [(AstDeclDefEnum decl-name _ variants)
-                  (if (string-eq (intern-str decl-name) name)
+                  (if (string.string-eq (intern-str decl-name) name)
                     (begin
                       (set!
                         out
@@ -871,7 +873,7 @@
                       (set! done true))
                     (set! cur rest))]
                 [(AstDeclDefStruct decl-name _ _ fields)
-                  (if (string-eq (intern-str decl-name) name)
+                  (if (string.string-eq (intern-str decl-name) name)
                     (begin
                       (set!
                         out

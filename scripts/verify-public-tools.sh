@@ -1957,6 +1957,64 @@ EOF
     assert_stdout_empty
     assert_contains "$err" "cannot combine input paths with --manifest-path"
 
+    LINT_PKG_BIN="$WORKDIR/lint-pkg-bin"
+    mkdir -p "$LINT_PKG_BIN/src"
+    cat > "$LINT_PKG_BIN/typelisp.pkg" <<'EOF'
+(package
+  (name "lint_pkg_bin")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    maybe_strip_manifest_kind "$LINT_PKG_BIN/typelisp.pkg"
+    cat > "$LINT_PKG_BIN/src/main.tl" <<'EOF'
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-bin) : i64
+  7)
+
+;; lint-allow: dead-code
+(define (suppressed-bin) : i64
+  8)
+EOF
+    run_cmd lint-package-bin "$COMPILER" lint --check --manifest-path "$LINT_PKG_BIN/typelisp.pkg"
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "dead-bin"
+    assert_contains "$out" "unreachable from package entry/test roots"
+    assert_contains "$out" "lint: 1 finding(s)"
+    assert_not_contains "$out" "suppressed-bin"
+
+    LINT_PKG_LIB="$WORKDIR/lint-pkg-lib"
+    mkdir -p "$LINT_PKG_LIB/src"
+    cat > "$LINT_PKG_LIB/typelisp.pkg" <<'EOF'
+(package
+  (name "lint_pkg_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/main.tl"))
+EOF
+    maybe_strip_manifest_kind "$LINT_PKG_LIB/typelisp.pkg"
+    cat > "$LINT_PKG_LIB/src/main.tl" <<'EOF'
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-lib) : i64
+  7)
+EOF
+    run_cmd lint-package-lib "$COMPILER" lint --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_not_contains "$out" "dead-lib"
+
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
     assert_failure

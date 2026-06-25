@@ -2742,6 +2742,12 @@ Example:
   that reachable closure. Source files outside the closure are intentionally not
   package-check/build inputs; validate them through explicit file checks,
   `typelisp doc --test <file>`, or package test coverage.
+- Package `typelisp lint` checks every discovered package source. For package
+  dead-code lint, `staticlib`/`lib` packages treat every top-level declaration
+  as an external API root. `bin` packages use the declared `main`, top-level
+  test bodies, macro-import calls, and generated-declaration metadata as roots;
+  top-level declarations unreachable from those roots are lint findings unless
+  suppressed with `;; lint-allow: dead-code`.
 - Package builds accept `--profile dev|release` and `--release`. The default
   profile is `release`; `--release` is an alias for `--profile release`.
   `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
@@ -6389,9 +6395,13 @@ an explicit package manifest. `build --locked` requires a matching
 pins and rewrites `typelisp.lock`. These lock-policy flags are valid only for
 package builds. `fmt --check` reports files that would change
 without writing them, while `lint --check` exits non-zero when lint findings are
-present. `lint --deprecated-string-concat` enables the staged deprecation rule
-for user-facing concat primitives. Without explicit files, `fmt` and `lint`
-default to the nearest `typelisp.pkg` upward. `test --check` type-checks generated inline test
+present. Package lint discovers sources from the nearest manifest when no
+explicit file is supplied; dead-code lint keeps all library top-level
+declarations as API roots and reports unreachable binary-package declarations
+from entry/test/generated roots. `lint --deprecated-string-concat` enables the
+staged deprecation rule for user-facing concat primitives. Without explicit
+files, `fmt` and `lint` default to the nearest `typelisp.pkg` upward.
+`test --check` type-checks generated inline test
 harnesses without assembling or running them; `test` defaults to the host target
 unless `--target <target>` is supplied.
 

@@ -5097,11 +5097,12 @@ names directly. `length` remains a transitional compatibility builtin for
 arrays and string handles.
 
 User-facing fixed-arity string concatenation is the stdlib macro
-`stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
-`stdlib/text_buf.tl`. `str-cat` uses direct one-allocation helpers for two to
-five operands and expands longer calls to an internal `string-concat-all` call
-over a packed `(Array String)`, so long calls no longer allocate chunk
-intermediates. `string-append`, `string-concat`, and the fixed-arity
+`stdlib.str_cat`'s `(str_cat.str-cat ...)`; incremental builders should use
+`stdlib.text_buf`. Legacy path imports can still call unqualified `str-cat`.
+`str-cat` uses direct one-allocation helpers for two to five operands and
+expands longer calls to an internal `string-concat-all` call over a packed
+`(Array String)`, so long calls no longer allocate chunk intermediates.
+`string-append`, `string-concat`, and the fixed-arity
 `string-concat3`/`string-concat4`/`string-concat5` helpers remain accepted as
 deprecated low-level compatibility plumbing for legacy code, but they are not
 the documented public concatenation surface. The staged lint rule is enabled

@@ -45515,10 +45515,11 @@
 
 (define (compiler-lower-in-arena-source) : String
   (compiler-lower-with-arena-source
-    "(define (main) : String
+    "(define (main) : i64
   (let
     [scratch : Arena (arena-make)]
-    (in-arena scratch (int->string 42))))"))
+    (in-arena scratch
+      (let [text : String (int->string 42)] 42))))"))
 
 (define (compiler-lower-in-arena-return-source) : String
   (compiler-lower-with-arena-source

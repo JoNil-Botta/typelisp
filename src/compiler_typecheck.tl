@@ -2653,10 +2653,10 @@
 
 (define (compiler-typecheck-in-arena-string-source) : String
   (compiler-typecheck-with-arena-source
-    "(define (main) : String
+    "(define (main) : i64
   (let
     [scratch : Arena (arena-make)]
-    (in-arena scratch (int->string 42))))"))
+    (in-arena scratch (__tl_string_length (int->string 42)))))"))
 
 (define (compiler-typecheck-in-arena-array-result-source) : String
   (compiler-typecheck-with-arena-source
@@ -2691,12 +2691,14 @@
       (if (compiler-typecheck-ok? (compiler-typecheck-in-arena-string-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-in-arena-array-result-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-array-result-source)
+        "typecheck: reference value would escape lexical scope")
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-in-arena-box-result-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-box-result-source)
+        "typecheck: reference value would escape lexical scope")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4149,7 +4151,7 @@
       (compiler-typecheck-channel-atomic-string-send-bound-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-channel-ordinary-string-send-source)
-      "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))))
 
 (define (compiler-typecheck-reference-render-ok?) : bool

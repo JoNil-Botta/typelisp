@@ -4129,144 +4129,6 @@
     (array-ref ref-counts var)
     0))
 
-;; Is active `a` a better spill victim than active `b`? The cheaper value to
-;; spill wins: lower spill weight first, then the existing furthest-end /
-;; larger-var order for a total, var-id-stable tie-break (matches
-;; compiler-reg-active-before?), so the choice stays deterministic.
-(define (compiler-reg-active-more-spillable?
-  [a : CompilerRegActive]
-  [b : CompilerRegActive]
-  [ref-counts : (Array i64)]) : bool
-  (match a
-    [(CompilerRegActive a-var _ _)
-      (match b
-        [(CompilerRegActive b-var _ _)
-          (let
-            [wa : i64 (compiler-reg-spill-weight ref-counts a-var)]
-            [wb : i64 (compiler-reg-spill-weight ref-counts b-var)]
-            (cond
-              [(< wa wb) true]
-              [(> wa wb) false]
-              [else (compiler-reg-active-before? b a)]))])]))
-
-;; Lowest-spill-weight active var that is NOT a 2-word register-group var and
-;; whose interval OUTLIVES the incoming interval (end strictly past cur-end).
-;; Restricting victims to longer-lived values preserves the furthest-end policy's
-;; key property -- a short-lived temp is never spilled in favour of keeping a
-;; longer-lived value, since spilling such a temp would store-and-immediately-
-;; reload for no benefit. Among the eligible longer-lived values the cheapest to
-;; spill (lowest weighted use count) wins, so loop-carried/hot values stay in
-;; registers. The group exclusion mirrors compiler-reg-active-max-non-group: a
-;; paired var can never be evicted to one 8-byte slot.
-(define (compiler-reg-active-min-weight-outliving
-  [active : CompilerRegActiveList]
-  [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]
-  [cur-end : i64]) : CompilerRegMaybeActive
-  (match active
-    [(CompilerRegActiveNil) CompilerRegNoActive]
-    [(CompilerRegActiveCons item rest)
-      (let
-        [rest-best : CompilerRegMaybeActive
-          (compiler-reg-active-min-weight-outliving
-            (box-get rest)
-            group-vars
-            ref-counts
-            cur-end)]
-        (match item
-          [(CompilerRegActive id item-end _)
-            (if (or
-              (compiler-live-set-contains? group-vars id)
-              (<= item-end cur-end))
-              rest-best
-              (match rest-best
-                [(CompilerRegNoActive) (CompilerRegSomeActive item)]
-                [(CompilerRegSomeActive other)
-                  (if (compiler-reg-active-more-spillable?
-                    item
-                    other
-                    ref-counts)
-                    (CompilerRegSomeActive item)
-                    (CompilerRegSomeActive other))]))]))]))
-
-;; Pick the active interval to evict (Some) or fall back to spilling the incoming
-;; interval (None). With an empty ref-counts array (SIMD/AVX path and the XMM
-;; scalar stage) this is the original furthest-end policy verbatim, keeping that
-;; output byte-identical: evict the furthest-ending active only when it outlives
-;; the incoming interval. With ref counts (integer scalar opt2 stage) evict the
-;; lowest-weight value among those that outlive the incoming interval.
-(define (compiler-reg-spill-victim
-  [active : CompilerRegActiveList]
-  [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]
-  [cur-end : i64]) : CompilerRegMaybeActive
-  (if (= (array-length ref-counts) 0)
-    (match (compiler-reg-active-max-non-group active group-vars)
-      [(CompilerRegNoActive) CompilerRegNoActive]
-      [(CompilerRegSomeActive m)
-        (match m
-          [(CompilerRegActive _ m-end _)
-            (if (> m-end cur-end)
-              (CompilerRegSomeActive m)
-              CompilerRegNoActive)])])
-    (compiler-reg-active-min-weight-outliving
-      active
-      group-vars
-      ref-counts
-      cur-end)))
-
-(define (compiler-reg-spill-at-interval
-  [interval : CompilerRegInterval]
-  [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentTable]
-  [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]
-  [index : CompilerRegIntervalIndex]
-  [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegAssignState
-  (match interval
-    [(CompilerRegInterval var _ end)
-      (match (compiler-reg-spill-victim active group-vars ref-counts end)
-        [(CompilerRegNoActive)
-          (CompilerRegAssignState
-            active
-            (compiler-reg-assignment-table-insert
-              assignments
-              var
-              (CompilerRegSpill (compiler-reg-stack-slot-offset var))))]
-        [(CompilerRegSomeActive spill)
-          (match spill
-            [(CompilerRegActive spill-var spill-end spill-reg)
-              ;; #3489 (PR4): hole-aware oversubscription means spill-reg may host
-              ;; MORE than just the victim. Evicting the victim only frees the
-              ;; register for `var` if no OTHER active occupant of spill-reg
-              ;; interferes with `var`; otherwise reusing it would alias two live
-              ;; values (a miscompile). When the victim's register cannot be made
-              ;; conflict-free, spill `var` itself -- always sound.
-              (if (compiler-reg-active-register-conflicts?
-                (compiler-reg-active-remove-var active spill-var)
-                spill-reg
-                index
-                var
-                hole-aware-vars)
-                (CompilerRegAssignState
-                  active
-                  (compiler-reg-assignment-table-insert
-                    assignments
-                    var
-                    (CompilerRegSpill (compiler-reg-stack-slot-offset var))))
-                (CompilerRegAssignState
-                  (compiler-reg-active-insert
-                    (compiler-reg-active-remove-var active spill-var)
-                    (CompilerRegActive var end spill-reg))
-                  (compiler-reg-assignment-table-insert
-                    (compiler-reg-assignment-table-insert
-                      assignments
-                      spill-var
-                      (CompilerRegSpill
-                        (compiler-reg-stack-slot-offset spill-var)))
-                    var
-                    (CompilerRegRegister spill-reg))))])])]))
-
 ;; Does `var` already hold a hard register (single or pair) in the table? Used to
 ;; let the primary callee-saved pass skip values a prior pass already homed.
 (define (compiler-reg-assignment-table-register-assigned?
@@ -4325,46 +4187,6 @@
             (compiler-reg-count-clobber-spanning-candidates
               (box-get rest)
               clobber-points))])]))
-
-;; copy-hint biasing: copy-hints[root] is a move-neighbour root (or -1). If that
-;; neighbour is already assigned a register that lies in `regs` and does not
-;; conflict with `var` under the hole-aware segment test, prefer it so the copy
-;; var<->neighbour collapses to a self-move. Soundness rests entirely on the same
-;; compiler-reg-active-register-conflicts? test the first-free path uses; the hint
-;; only changes WHICH non-conflicting register is chosen.
-(define (compiler-reg-copy-hint-register
-  [assignments : CompilerRegAssignmentTable]
-  [active : CompilerRegActiveList]
-  [copy-hints : (Array i64)]
-  [interval-index : CompilerRegIntervalIndex]
-  [var : i64]
-  [regs : CompilerRegStringList]
-  [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegMaybeString
-  (if (if (< var 0)
-    true
-    (>= var (array-length copy-hints)))
-    (CompilerRegNoString)
-    (let
-      [hint : i64 (array-ref copy-hints var)]
-      (if (< hint 0)
-        (CompilerRegNoString)
-        (match (compiler-reg-assignment-table-lookup assignments hint)
-          [(CompilerRegSomeLocation location)
-            (match location
-              [(CompilerRegRegister reg)
-                (if (if (compiler-reg-string-list-contains? regs reg)
-                  (not
-                    (compiler-reg-active-register-conflicts?
-                      active
-                      reg
-                      interval-index
-                      var
-                      hole-aware-vars))
-                  false)
-                  (CompilerRegSomeString reg)
-                  (CompilerRegNoString))]
-              [_ (CompilerRegNoString)])]
-          [(CompilerRegNoLocation) (CompilerRegNoString)])))))
 
 (define (compiler-reg-copy-hints-add-move!
   [hints : (Array i64)]
@@ -4427,306 +4249,6 @@
       (compiler-reg-fill-i64-array hints -1)
       (compiler-reg-copy-hints-from-moves! hints parents moves)
       hints)))
-
-(define (compiler-reg-assign-candidates
-  [candidates : CompilerRegIntervalList]
-  [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentTable]
-  [moves : CompilerRegMoveList]
-  [coalesce : CompilerRegCoalesceMap]
-  [use-fixpoint-coalesce : bool]
-  [interval-index : CompilerRegIntervalIndex]
-  [hole-aware-vars : CompilerLiveI64Set]
-  [types : CompilerRegVarTypes]
-  [group-vars : CompilerLiveI64Set]
-  [ref-counts : (Array i64)]
-  [copy-hints : (Array i64)]) : CompilerRegAssignState
-  (match candidates
-    [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
-    [(CompilerRegIntervalCons interval rest)
-      (match interval
-        [(CompilerRegInterval var start end)
-          (let
-            [expired : CompilerRegActiveList
-              (compiler-reg-expire-active active start)]
-            (match (if (compiler-live-set-contains? group-vars var)
-              ;; #2386 (C5): a register-group (2-word) var must NEVER be coalesced
-              ;; onto a single GP register. Coalescing runs before the group check
-              ;; below, and the only thing that stopped a group var from coalescing
-              ;; was an indirect scalar-type guard that holds only on -O2-normalized
-              ;; IR; on lighter -O1 IR an un-normalized Pack dst could coalesce onto
-              ;; one register and crash emit-pack. Forcing the NoLocation path makes
-              ;; group membership authoritative (-> register PAIR or 16-byte spill)
-              ;; independent of opt level. No-op at -O2 (the guard already excluded
-              ;; aggregate-typed vars from coalescing there).
-              (CompilerRegNoLocation)
-              (if use-fixpoint-coalesce
-                (compiler-reg-coalesce-location
-                  coalesce
-                  assignments
-                  interval-index
-                  var)
-                (compiler-reg-coalesce-location-legacy
-                  moves
-                  assignments
-                  interval-index
-                  types
-                  var)))
-              [(CompilerRegSomeLocation location)
-                (match location
-                  [(CompilerRegRegister reg)
-                    (compiler-reg-assign-candidates
-                      (box-get rest)
-                      regs
-                      (compiler-reg-active-insert
-                        expired
-                        (CompilerRegActive var end reg))
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        var
-                        location)
-                      moves
-                      coalesce
-                      use-fixpoint-coalesce
-                      interval-index
-                      hole-aware-vars
-                      types
-                      group-vars
-                      ref-counts
-                      copy-hints)]
-                  [(CompilerRegRegisterPair reg-a reg-b)
-                    ;; #2386: a coalesced register-pair occupies both registers for
-                    ;; the var's lifetime -- two active entries that expire together.
-                    (compiler-reg-assign-candidates
-                      (box-get rest)
-                      regs
-                      (compiler-reg-active-insert
-                        (compiler-reg-active-insert
-                          expired
-                          (CompilerRegActive var end reg-a))
-                        (CompilerRegActive var end reg-b))
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        var
-                        location)
-                      moves
-                      coalesce
-                      use-fixpoint-coalesce
-                      interval-index
-                      hole-aware-vars
-                      types
-                      group-vars
-                      ref-counts
-                      copy-hints)]
-                  [(CompilerRegSpill _)
-                    (compiler-reg-assign-candidates
-                      (box-get rest)
-                      regs
-                      expired
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        var
-                        location)
-                      moves
-                      coalesce
-                      use-fixpoint-coalesce
-                      interval-index
-                      hole-aware-vars
-                      types
-                      group-vars
-                      ref-counts
-                      copy-hints)]
-                  ;; Unreachable: rematerialisation is assigned in a post-allocation
-                  ;; pass, so coalesce-location never yields Remat here. Mirror the
-                  ;; spill arm for exhaustiveness.
-                  [(CompilerRegRemat _)
-                    (compiler-reg-assign-candidates
-                      (box-get rest)
-                      regs
-                      expired
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        var
-                        location)
-                      moves
-                      coalesce
-                      use-fixpoint-coalesce
-                      interval-index
-                      hole-aware-vars
-                      types
-                      group-vars
-                      ref-counts
-                      copy-hints)])]
-              [(CompilerRegNoLocation)
-                (if (compiler-live-set-contains? group-vars var)
-                  ;; #2386: a 2-word register-group var needs TWO free GP registers
-                  ;; (a register pair). If two are not free it stays UNASSIGNED and
-                  ;; the backend homes both words in the var's dedicated 16-byte
-                  ;; stack region (group-word0-slot / group-word1-slot).
-                  (if (compiler-reg-var-register-group-has-sse? types var)
-                    ;; #2601: mixed/SSE register groups need per-word register
-                    ;; banks. Until the allocator has a true mixed pair home,
-                    ;; leave them in the existing two-slot stack fallback instead
-                    ;; of assigning an SSE word to a GP register.
-                    (compiler-reg-assign-candidates
-                      (box-get rest)
-                      regs
-                      expired
-                      assignments
-                      moves
-                      coalesce
-                      use-fixpoint-coalesce
-                      interval-index
-                      hole-aware-vars
-                      types
-                      group-vars
-                      ref-counts
-                      copy-hints)
-                    (if (>=
-                      (-
-                        (compiler-reg-string-list-count regs)
-                        (compiler-reg-active-count expired))
-                      2)
-                      (let
-                        [reg-a : String
-                          (compiler-reg-first-free-register regs expired)]
-                        [active-a : CompilerRegActiveList
-                          (compiler-reg-active-insert
-                            expired
-                            (CompilerRegActive var end reg-a))]
-                        [reg-b : String
-                          (compiler-reg-first-free-register regs active-a)]
-                        (compiler-reg-assign-candidates
-                          (box-get rest)
-                          regs
-                          (compiler-reg-active-insert
-                            active-a
-                            (CompilerRegActive var end reg-b))
-                          (compiler-reg-assignment-table-insert
-                            assignments
-                            var
-                            (CompilerRegRegisterPair reg-a reg-b))
-                          moves
-                          coalesce
-                          use-fixpoint-coalesce
-                          interval-index
-                          hole-aware-vars
-                          types
-                          group-vars
-                          ref-counts
-                          copy-hints))
-                      ;; Fewer than two GP registers free: a group var cannot live in
-                      ;; one register or an 8-byte spill slot, so leave it UNASSIGNED
-                      ;; (NoLocation). The backend then homes both words in the var's
-                      ;; reserved 16-byte stack region -- the same path stack-only mode
-                      ;; uses. (compiler-reg-spill-at-interval would hand it a single
-                      ;; register / 8-byte slot and crash emit-pack.)
-                      (compiler-reg-assign-candidates
-                        (box-get rest)
-                        regs
-                        expired
-                        assignments
-                        moves
-                        coalesce
-                        use-fixpoint-coalesce
-                        interval-index
-                        hole-aware-vars
-                        types
-                        group-vars
-                        ref-counts
-                        copy-hints)))
-                  ;; copy-hint biasing: if var is move-related to a value already
-                  ;; assigned a register that is free for var (hole-aware), reuse
-                  ;; that register so the copy becomes a self-move. Sound because the
-                  ;; choice is gated by the same hole-aware conflict test as the
-                  ;; first-free fallback below.
-                  (match (compiler-reg-copy-hint-register
-                    assignments
-                    expired
-                    copy-hints
-                    interval-index
-                    var
-                    regs
-                    hole-aware-vars)
-                    [(CompilerRegSomeString reg)
-                      (compiler-reg-assign-candidates
-                        (box-get rest)
-                        regs
-                        (compiler-reg-active-insert
-                          expired
-                          (CompilerRegActive var end reg))
-                        (compiler-reg-assignment-table-insert
-                          assignments
-                          var
-                          (CompilerRegRegister reg))
-                        moves
-                        coalesce
-                        use-fixpoint-coalesce
-                        interval-index
-                        hole-aware-vars
-                        types
-                        group-vars
-                        ref-counts
-                        copy-hints)]
-                    [(CompilerRegNoString)
-                      ;; #3489 (PR4, hole-aware): take the first register no active
-                      ;; value's live SEGMENTS conflict with -- a value may reuse a
-                      ;; register during another value's hole (e.g. a merged loop
-                      ;; class's loop body). Spill only when every register is held by
-                      ;; an interfering value, not merely when the count is full.
-                      (match (compiler-reg-first-free-register-holes
-                        regs
-                        expired
-                        interval-index
-                        var
-                        hole-aware-vars)
-                        [(CompilerRegSomeString reg)
-                          (compiler-reg-assign-candidates
-                            (box-get rest)
-                            regs
-                            (compiler-reg-active-insert
-                              expired
-                              (CompilerRegActive var end reg))
-                            (compiler-reg-assignment-table-insert
-                              assignments
-                              var
-                              (CompilerRegRegister reg))
-                            moves
-                            coalesce
-                            use-fixpoint-coalesce
-                            interval-index
-                            hole-aware-vars
-                            types
-                            group-vars
-                            ref-counts
-                            copy-hints)]
-                        [(CompilerRegNoString)
-                          (match (compiler-reg-spill-at-interval
-                            interval
-                            expired
-                            assignments
-                            group-vars
-                            ref-counts
-                            interval-index
-                            hole-aware-vars)
-                            [(CompilerRegAssignState
-                                next-active
-                                next-assignments)
-                              (compiler-reg-assign-candidates
-                                (box-get rest)
-                                regs
-                                next-active
-                                next-assignments
-                                moves
-                                coalesce
-                                use-fixpoint-coalesce
-                                interval-index
-                                hole-aware-vars
-                                types
-                                group-vars
-                                ref-counts
-                                copy-hints)])])]))]))])]))
 
 (define (compiler-reg-fixed-preferred-register
   [assignments : CompilerRegAssignmentTable]
@@ -8676,7 +8198,7 @@
         (array-ref ends var))
       true)))
 
-(define (compiler-reg-greedy-integer-state
+(define (compiler-reg-greedy-state
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [assignments : CompilerRegAssignmentTable]
@@ -8805,21 +8327,19 @@
           (- (array-length (struct-get eff-index starts)) 1)
           CompilerRegIntervalNil)
         intervals)]
-    [eff-coalesce : CompilerRegCoalesceMap
-      (CompilerRegCoalesceMap (make-array i64 0))]
-    [hole-aware-vars : CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (compiler-reg-coalesce-merged-root-set coalesce)
-        (compiler-live-set-empty))]
-    ;; copy-hint biasing: per-root preferred move-neighbour for the integer pass.
-    ;; Only built on the scalar-opt2 path (empty elsewhere -> hint always -1).
-    [copy-hints : (Array i64)
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-copy-hints
-          moves
-          coalesce
-          (array-length (struct-get interval-index starts)))
-        (make-array i64 0))]
+    ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
+    [copy-hints
+      : (Array i64)
+      ;; Built unconditionally now that the greedy allocates the SIMD-integer path
+      ;; too: with the empty false-path coalesce, copy-hints-add-move! falls back to
+      ;; identity roots, so this yields direct var->move-neighbour hints -- letting
+      ;; the SIMD-integer greedy bias a copy's dst onto its src register (LLVM-style
+      ;; copy hint for every class), which the old linear-scan did via `moves`. The
+      ;; float->XMM call passes its own empty copy-hints, so floats are unaffected.
+      (compiler-reg-function-copy-hints
+        moves
+        coalesce
+        (array-length (struct-get interval-index starts)))]
     ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -8867,10 +8387,14 @@
     ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
     ;; registers). Hoisted so the call-spanning-aware pre-pass and the existing
     ;; caller-saved overflow pass share one computation.
-    [clobber-points : CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (compiler-reg-backend-caller-clobber-points func)
-        (compiler-live-set-empty))]
+    [clobber-points
+      : CompilerLiveI64Set
+      ;; Unconditional: the greedy now allocates the integer (both opt2 and SIMD)
+      ;; AND float->XMM classes, all of which use clobber-points for call-clobber
+      ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
+      ;; pool register callee-saved, so the clobber test never restricts there; on
+      ;; the XMM path call-spanning floats are already excluded pre-allocation.
+      (compiler-reg-backend-caller-clobber-points func)]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
     ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
@@ -8883,7 +8407,7 @@
       ;; as interference). SIMD/AVX (allow-caller-saved-zero-call = false) keeps the
       ;; linear-scan assign-candidates -> byte-identical vector codegen.
       (if allow-caller-saved-zero-call
-        (compiler-reg-greedy-integer-state
+        (compiler-reg-greedy-state
           integer-candidates
           (compiler-reg-greedy-integer-pool)
           prepass-assignments
@@ -8894,20 +8418,23 @@
           clobber-points
           integer-registers
           (compiler-reg-greedy-caller-saved-count))
-        (compiler-reg-assign-candidates
+        ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
+        ;; integer registers (= the old SIMD pool) with caller-saved-count=0 so every
+        ;; register is treated callee-saved (no caller-saved-first ordering; the SIMD
+        ;; path never partitioned). ref-counts/copy-hints are empty here -> the
+        ;; greedy's bounds-guarded spill-weight/hint accesses fall back to var-id
+        ;; order / no-hint, matching the old linear-scan's defaults.
+        (compiler-reg-greedy-state
           integer-candidates
           integer-registers
-          CompilerRegActiveNil
           prepass-assignments
-          moves
-          eff-coalesce
-          allow-caller-saved-zero-call
           eff-index
-          hole-aware-vars
-          type-info
           group-vars
           eviction-ref-counts
-          copy-hints))]
+          copy-hints
+          clobber-points
+          integer-registers
+          0))]
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]
@@ -8935,21 +8462,27 @@
     [call-save-shadows : CompilerLiveI64Set
       (match integer-with-call-save-state
         [(CompilerRegCallSaveAssignState _ shadows) shadows])]
-    [scalar-state : CompilerRegAssignState
-      (compiler-reg-assign-candidates
+    [scalar-state
+      : CompilerRegAssignState
+      ;; float -> XMM allocation: the unified greedy over the XMM registers. SysV has
+      ;; NO callee-saved XMM, so callee-regs=nil and caller-saved-count=|xmm| -> every
+      ;; xmm is caller-saved; a float crossing a call would get no register and spill.
+      ;; But call-spanning floats are already excluded pre-allocation
+      ;; (mark-float-spanning on the scalar path / ineligible-vars-simd on the SIMD
+      ;; path), so only non-call-spanning floats reach here -- exactly the set the old
+      ;; linear-scan allocated; only the register CHOICE differs. group-vars /
+      ;; ref-counts / copy-hints empty -> bounds-guarded var-id order, no hint.
+      (compiler-reg-greedy-state
         (compiler-reg-candidates eff-intervals type-info eff-blocked true)
         (compiler-reg-xmm-registers)
-        CompilerRegActiveNil
         integer-call-assignments
-        moves
-        eff-coalesce
-        allow-caller-saved-zero-call
         eff-index
-        hole-aware-vars
-        type-info
         (compiler-live-set-empty)
         (make-array i64 0)
-        (make-array i64 0))]
+        (make-array i64 0)
+        clobber-points
+        CompilerRegStringNil
+        (compiler-reg-string-list-count (compiler-reg-xmm-registers)))]
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
         [(CompilerRegAssignState _ assignments) assignments])]

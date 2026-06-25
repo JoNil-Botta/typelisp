@@ -133,6 +133,8 @@ spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_rejec
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
 spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
+spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
+spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String

@@ -921,6 +921,15 @@
     (foreach ([i : i64 0 n]) (return i))
     0))")
 
+(define (compiler-typecheck-foreach-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 i64))
+(define (main [out : (Array i64)] [flag : bool] [n : i64]) : ResultI64
+  (begin
+    (foreach
+      ([i : i64 0 n])
+      (array-set! out i (try (if flag (OkI64 1) (ErrI64 i)))))
+    (OkI64 0)))")
+
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
@@ -1083,7 +1092,10 @@
       "typecheck: return requires enclosing function")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-return-source)
-      "typecheck: return inside foreach is not supported")))
+      "typecheck: return inside foreach is not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-try-source)
+      "typecheck: try inside foreach is not supported")))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?

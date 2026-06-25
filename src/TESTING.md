@@ -237,6 +237,8 @@ TYPELISP_BIN=target/stage0/typelisp scripts/measure-typecheck-prefix-cache.sh
 
 Each line includes elapsed time plus `hits`, `misses`, `stores`, `lookups`, and
 integer `hit-rate-per-mille` from the compiler's `--prefix-cache-stats` report.
+The repeated compile-batch and doctest workloads also fail when they do not
+produce the expected cache hits.
 
 ### Coverage policy
 

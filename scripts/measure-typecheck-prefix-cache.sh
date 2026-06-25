@@ -38,7 +38,8 @@ now_ms() {
 
 run_report() {
     label=$1
-    shift
+    min_hits=$2
+    shift 2
     stdout="$WORKDIR/$label.stdout"
     stderr="$WORKDIR/$label.stderr"
     start_ms=$(now_ms)
@@ -60,6 +61,15 @@ run_report() {
         echo "[prefix-cache] $label did not emit typecheck prefix-cache stats" >&2
         sed 's/^/  stdout: /' "$stdout" >&2 || true
         sed 's/^/  stderr: /' "$stderr" >&2 || true
+        exit 1
+    fi
+    hits=$(printf '%s\n' "$stats" | sed -n 's/.*|hits=\([0-9][0-9]*\)|.*/\1/p')
+    if [ -z "$hits" ]; then
+        echo "[prefix-cache] $label emitted unparsable stats: $stats" >&2
+        exit 1
+    fi
+    if [ "$hits" -lt "$min_hits" ]; then
+        echo "[prefix-cache] $label expected at least $min_hits cache hit(s): $stats" >&2
         exit 1
     fi
     echo "[prefix-cache] $label elapsed_ms=$elapsed_ms $stats"
@@ -132,18 +142,21 @@ doctest_batch=$(write_doctest_batch)
 
 run_report \
     repeated-stdlib-import \
+    1 \
     "$COMPILER" compile --batch "$stdlib_batch" \
     --stdlib-root "$ROOT/stdlib" \
     --prefix-cache-stats
 
 run_report \
     selfhost-compile-manifest-chunk \
+    0 \
     "$COMPILER" compile --batch "$selfhost_batch" \
     --stdlib-root "$ROOT/stdlib" \
     --prefix-cache-stats
 
 run_report \
     doctest-batch \
+    1 \
     "$COMPILER" doc --test --batch "$doctest_batch" \
     --stdlib-root "$ROOT/stdlib" \
     --prefix-cache-stats

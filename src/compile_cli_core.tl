@@ -965,9 +965,8 @@
         (let
           [status : i64
             (begin
-              (if prefix-cache-stats
-                (tc-prefix-snapshot-cache-clear!)
-                unit)
+              (tc-prefix-snapshot-cache-enable!)
+              (tc-prefix-snapshot-cache-clear!)
               (compile-cli-run-batch-from
                 state
                 (read-file batch-path)
@@ -983,6 +982,8 @@
             (if prefix-cache-stats
               (tc-prefix-snapshot-cache-print-stats "compile-batch")
               unit)
+            (tc-prefix-snapshot-cache-clear!)
+            (tc-prefix-snapshot-cache-disable!)
             status))])))
 
 (define (compile-cli-run [count : i64]) : i64

@@ -153,7 +153,9 @@
         (compiler-load-session-floors-set! 0 0 0)
         (compiler-load-program-cache-clear!)
         (compiler-load-runtime-prelude-cache-clear!)
-        (tc-prefix-snapshot-cache-clear!)
+        (if (tc-prefix-snapshot-cache-active?)
+          unit
+          (tc-prefix-snapshot-cache-clear!))
         (array-set! (struct-get state pool-arena) 0 new-arena)
         (array-set!
           (struct-get state expr-pool)

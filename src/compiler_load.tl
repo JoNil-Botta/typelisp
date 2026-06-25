@@ -5168,7 +5168,7 @@
     (write-file
       "target/cl_dotted_src/entry.tl"
       "(module dotted.entry)
-(import nested.dep as dep)
+(import nested.dep)
 (define (main) : i64 dep-val)")
     (match (compiler-load-file-with-paths
       "target/cl_dotted_src/entry.tl"

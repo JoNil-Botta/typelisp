@@ -499,7 +499,7 @@
           (+ (profile-alloc-live) (profile-alloc-peak))))))")
 
 (define (compiler-check-private-dynamic-buffer-vector-source) : String
-  "(import stdlib.vector as vector)
+  "(import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 (define (main) : i64
   (let

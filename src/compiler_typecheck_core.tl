@@ -19193,15 +19193,8 @@
     [(AstExprUnquoteSplicing _)
       (ErrTcSpmdExprInfo
         "typecheck: unquote-splicing is only valid inside quasiquote")]
-    [(AstExprTry inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
-          [(OkTcSpmdExprInfo info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprTry _)
+      (ErrTcSpmdExprInfo "typecheck: try inside foreach is not supported")]
     [(AstExprReturn _)
       (ErrTcSpmdExprInfo "typecheck: return inside foreach is not supported")]
     [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]

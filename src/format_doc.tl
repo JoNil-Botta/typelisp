@@ -3,7 +3,7 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
-(import stdlib.string as string)
+(import stdlib.string)
 (import "format_render_buf.tl")
 
 (defenum Doc

@@ -136,6 +136,15 @@
 (define (lint-rule-unused-import-suggestion) : String
   "remove the import or prefix an intentionally unused alias with _")
 
+(define (lint-rule-redundant-import-alias-id) : String
+  "redundant-import-alias")
+
+(define (lint-rule-redundant-import-alias-message) : String
+  "redundant import alias: dotted module import already binds that alias")
+
+(define (lint-rule-redundant-import-alias-suggestion) : String
+  "remove the explicit as clause")
+
 (define (lint-rule-dead-code-id) : String
   "dead-code")
 
@@ -261,6 +270,12 @@
     (lint-rule-unused-import-message)
     (lint-rule-unused-import-suggestion)))
 
+(define (lint-rule-redundant-import-alias) : LintRule
+  (LintRule
+    (lint-rule-redundant-import-alias-id)
+    (lint-rule-redundant-import-alias-message)
+    (lint-rule-redundant-import-alias-suggestion)))
+
 (define (lint-rule-dead-code) : LintRule
   (LintRule
     (lint-rule-dead-code-id)
@@ -316,14 +331,16 @@
                         (lint-rule-cons
                           (lint-rule-unused-import)
                           (lint-rule-cons
-                            (lint-rule-dead-code)
+                            (lint-rule-redundant-import-alias)
                             (lint-rule-cons
-                              (lint-rule-unused-assignment)
+                              (lint-rule-dead-code)
                               (lint-rule-cons
-                                (lint-rule-unused-variable)
+                                (lint-rule-unused-assignment)
                                 (lint-rule-cons
-                                  (lint-rule-unused-unsafe)
-                                  LintRuleNil)))))))))))))))))
+                                  (lint-rule-unused-variable)
+                                  (lint-rule-cons
+                                    (lint-rule-unused-unsafe)
+                                    LintRuleNil))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -1956,29 +1973,116 @@
     0
     span))
 
-(define (lint-unused-import-add-if-needed
-  [all-decls : AstDeclList]
+(define (lint-redundant-import-alias-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-redundant-import-alias-message)
+    (lint-rule-redundant-import-alias-id)
+    0
+    span))
+
+(define (lint-module-default-alias [module-name : String]) : String
+  (let
+    [n : i64 (string-length module-name)]
+    [i : i64 0]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (string-ref module-name i) '.')
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring module-name start (- n start)))))
+
+(define (lint-source-span-end-index [source : String] [span : AstSourceSpan]) : i64
+  (let
+    [idx : i64
+      (lint-source-span-start-index
+        source
+        (AstSourceSpan
+          (struct-get span end-line)
+          (struct-get span end-col)
+          (struct-get span end-line)
+          (struct-get span end-col)))]
+    (if (< idx 0)
+      (string-length source)
+      idx)))
+
+(define (lint-source-name-in-range?
+  [source : String]
+  [name : String]
+  [start : i64]
+  [limit : i64]) : bool
+  (let
+    [found : i64 (lint-source-find-name-from source name start)]
+    (and (>= found 0) (< found limit))))
+
+(define (lint-import-span-has-explicit-alias?
+  [source : String]
+  [span : AstSourceSpan]) : bool
+  (let
+    [start : i64 (lint-source-span-start-index source span)]
+    [limit : i64 (lint-source-span-end-index source span)]
+    (if (< start 0)
+      false
+      (or
+        (lint-source-name-in-range? source "as" start limit)
+        (lint-source-name-in-range? source ":as" start limit)))))
+
+(define (lint-redundant-import-alias-add-if-needed
+  [source : String]
   [spec : AstImportSpec]
   [acc : LintFindings]) : LintFindings
   (match spec
     [(AstImportSpec kind _ expected maybe-alias span)
-      (if (not (lint-import-kind-lintable? kind expected))
-        acc
-        (match expected
-          [(AstNoModuleName) acc]
-          [(AstSomeModuleName module-name)
-            (match maybe-alias
-              [(AstNoImportAlias) acc]
-              [(AstSomeImportAlias alias)
-                (if (lint-underscore-prefixed? alias)
-                  acc
-                  (if (lint-decl-list-uses-import? all-decls alias module-name)
-                    acc
+      (match kind
+        [(AstImportModule)
+          (match expected
+            [(AstNoModuleName) acc]
+            [(AstSomeModuleName module-name)
+              (match maybe-alias
+                [(AstNoImportAlias) acc]
+                [(AstSomeImportAlias alias)
+                  (if (and
+                    (string-eq alias (lint-module-default-alias module-name))
+                    (lint-import-span-has-explicit-alias? source span))
                     (lint-findings-add
-                      (lint-unused-import-finding module-name alias span)
-                      acc)))])]))]))
+                      (lint-redundant-import-alias-finding span)
+                      acc)
+                    acc)])])]
+        [_ acc])]))
+
+(define (lint-unused-import-add-if-needed
+  [source : String]
+  [all-decls : AstDeclList]
+  [spec : AstImportSpec]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [acc : LintFindings
+      (lint-redundant-import-alias-add-if-needed source spec acc)]
+    (match spec
+      [(AstImportSpec kind _ expected maybe-alias span)
+        (if (not (lint-import-kind-lintable? kind expected))
+          acc
+          (match expected
+            [(AstNoModuleName) acc]
+            [(AstSomeModuleName module-name)
+              (match maybe-alias
+                [(AstNoImportAlias) acc]
+                [(AstSomeImportAlias alias)
+                  (if (lint-underscore-prefixed? alias)
+                    acc
+                    (if (lint-decl-list-uses-import?
+                      all-decls
+                      alias
+                      module-name)
+                      acc
+                      (lint-findings-add
+                        (lint-unused-import-finding module-name alias span)
+                        acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list
+  [source : String]
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
@@ -1988,11 +2092,12 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (lint-unused-imports-in-decl-list
+          source
           all-decls
           rest
           (match decl
             [(AstDeclImport spec)
-              (lint-unused-import-add-if-needed all-decls spec acc)]
+              (lint-unused-import-add-if-needed source all-decls spec acc)]
             [_ acc])))]))
 
 (defenum LintNameList
@@ -5180,6 +5285,7 @@
           source
           decls
           (lint-unused-imports-in-decl-list
+            source
             decls
             decls
             (lint-unused-assignments-in-decl-list
@@ -5204,6 +5310,7 @@
             source
             decls
             (lint-unused-imports-in-decl-list
+              source
               decls
               decls
               (lint-unused-assignments-in-decl-list
@@ -6017,6 +6124,16 @@
         "unused import: imported module alias is never referenced")
         unit
         (panic "lint: unused-import message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-redundant-import-alias-id))
+        "remove the explicit as clause")
+        unit
+        (panic "lint: redundant-import-alias suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-redundant-import-alias-id))
+        "redundant import alias: dotted module import already binds that alias")
+        unit
+        (panic "lint: redundant-import-alias message should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-unused-variable-id))
         "remove the binding or prefix an intentionally unused name with _")

@@ -7615,24 +7615,26 @@
           (set! v (+ v 1))))
       out)))
 
-;; Shared linear-scan body: assign the integer pool, then XMM, then vector, then
-;; mask registers over the given intervals/ineligible set.
 ;; ============================================================================
-;; LLVM-style per-vreg Greedy integer allocator (Milestone 1) -- --cfg greedy-regalloc
-;; Replaces the integer-PRIMARY assign pass on the scalar-opt2 path. Allocates the
-;; coalesced integer ROOTS over the callee-saved pool {r12,r13,r14,r15,rbx} (every
-;; member is call-safe, so no clobber concern in this pass) using:
-;;   * spill-weight PRIORITY ORDER (ref-counts desc, var asc) -- the LLVM enqueue;
-;;   * a GLOBAL per-register interference union: a register is free for a root iff
-;;     the SOUND segmented-index test clears against EVERY var holding it (prepass
-;;     picks + already-assigned roots);
+;; LLVM-style per-vreg Greedy register allocator (RAGreedy). The single allocation
+;; algorithm across the whole compiler: integer (all 8 registers, caller/callee-
+;; saved with call-clobber as interference), SIMD/AVX integer (the 5 callee-saved),
+;; and float->XMM (all caller-saved). For each register class one selectOrSplit
+;; pass over the coalesced ROOTS:
+;;   * spill-weight PRIORITY ORDER (remat-discounted ref-counts desc, var asc) --
+;;     the LLVM enqueue priority;
+;;   * a GLOBAL per-physreg interference union (LiveIntervalUnion): a register is
+;;     free for a root iff the SOUND segmented-index test clears against EVERY var
+;;     holding it (prepass picks + already-assigned roots);
+;;   * CALL-CLOBBER as interference: a caller-saved register is unavailable to a
+;;     value whose live range crosses a call (the regmask clobbers it);
 ;;   * COPY-HINT biasing: try the copy-neighbour's register first;
-;;   * spill-weight EVICTION: clear a register all of whose interferers are strictly
-;;     lower weight (spilling them), then take it. Single pass + strict weight order
-;;     => terminating (an evicted var is lower weight, set to Spill, skipped when
-;;     reached). Group/pair roots are left UNASSIGNED (backend stack-homes them --
-;;     the existing fallback); spills use the var-keyed slot so the downstream
-;;     caller-saved / call-spanning passes run unchanged.
+;;   * remat-aware spill-weight EVICTION + the RS_* stage machine: clear a register
+;;     all of whose interferers are strictly lower weight, else (split-eligible)
+;;     mark RS_Split for the region-split post-pass, else spill. Strict weight order
+;;     => terminating. Group/pair roots are left UNASSIGNED (backend stack-homes
+;;     them); the call-spanning save/restore rescue then runs over the integer
+;;     result.
 (define (compiler-reg-greedy-string-list-to-array
   [regs : CompilerRegStringList]
   [out : (Array String)]
@@ -8402,10 +8404,11 @@
     [prepass-assignments : CompilerRegAssignmentTable assignment-table]
     [integer-state
       : CompilerRegAssignState
-      ;; Scalar-opt2 integer allocation: the unified per-vreg Greedy allocator
-      ;; (priority-queue selectOrSplit over all 8 integer registers, call-clobber
-      ;; as interference). SIMD/AVX (allow-caller-saved-zero-call = false) keeps the
-      ;; linear-scan assign-candidates -> byte-identical vector codegen.
+      ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
+      ;; selectOrSplit, per-physreg LiveIntervalUnion, call-clobber as interference).
+      ;; Scalar-opt2 (true) uses all 8 integer registers + coalescing; the SIMD/AVX
+      ;; branch below (false) uses the 5 callee-saved (the old SIMD pool) with no
+      ;; coalescing -- the same algorithm, a conservative config.
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
           integer-candidates

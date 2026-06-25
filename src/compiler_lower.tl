@@ -38314,37 +38314,6 @@
         [decls : AstDeclList (box-get decls-box)]
         (lower-source-decls-need-loader? decls decls))]))
 
-(define (lower-compiler-source-load-with-roots-cfg
-  [path : String]
-  [src : String]
-  [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-core-macro-prelude-with-roots-cfg
-    (sym-i64-empty)
-    stdlib-roots
-    cfgs)
-    [(OkCompilerLoadWithPaths
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
-      (match (compiler-load-source-with-paths-and-roots-cfg
-        path
-        src
-        prelude-seen
-        stdlib-roots
-        cfgs)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
-            (compiler-load-decl-list-append prelude-decls entry-decls)
-            (compiler-load-decl-path-list-append prelude-paths entry-paths)
-            (compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
-            seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
-
 (define (lower-compiler-source-with-path-mode
   [path : String]
   [src : String]
@@ -38363,11 +38332,7 @@
           (let
             [stdlib-roots : vector.StringVec (vector.string-vec-new)]
             [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
-            (match (lower-compiler-source-load-with-roots-cfg
-              path
-              src
-              stdlib-roots
-              cfgs)
+            (match (typecheck-compiler-source-load src)
               [(OkCompilerLoadWithPaths decls paths _ _)
                 (lower-compiler-program-with-decl-paths-mode-cache
                   path

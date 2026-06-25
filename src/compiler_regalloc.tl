@@ -4580,6 +4580,91 @@
         (compiler-live-set-empty))
         [(CompilerRegCallScan _ set) set])]))
 
+;; Per-register clobber model (15c). The merged caller-clobber set above is too
+;; coarse for the greedy: it treats a div/shift exactly like a call (all
+;; caller-saved unavailable across it). But idiv clobbers only rax:rdx (+ the
+;; r10/r11 overflow guard) and a variable shift only rcx, so a value CAN cross a
+;; div in %r9/%rcx and a shift in %r9/%rdx. These per-kind point sets let the
+;; greedy forbid only the registers an op actually clobbers.
+;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv   kind 2 = shift
+(define (compiler-reg-clobber-binop-div? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) true]
+    [(IrBinMod) true]
+    [(IrBinSafeDiv) true]
+    [(IrBinSafeMod) true]
+    [_ false]))
+
+(define (compiler-reg-clobber-binop-shift? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinShl) true]
+    [(IrBinShr) true]
+    [_ false]))
+
+(define (compiler-reg-clobber-instr-kind? [instr : CompilerIrInstr] [kind : i64]) : bool
+  (match instr
+    [(IrInstrBinOp _ op _ _ _)
+      (if (= kind 1)
+        (compiler-reg-clobber-binop-div? op)
+        (if (= kind 2)
+          (compiler-reg-clobber-binop-shift? op)
+          false))]
+    [_
+      (if (= kind 0)
+        (compiler-reg-backend-caller-clobber-instr? instr)
+        false)]))
+
+(define (compiler-reg-clobber-kind-points-seq
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [set : CompilerLiveI64Set]
+  [kind : i64]) : CompilerRegCallScan
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (if (compiler-reg-clobber-instr-kind? (array-ref slots index) kind)
+            (set! out (compiler-live-set-insert out p))
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      (CompilerRegCallScan p out))))
+
+(define (compiler-reg-clobber-kind-points-blocks
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [set : CompilerLiveI64Set]
+  [kind : i64]) : CompilerRegCallScan
+  (match blocks
+    [(IrBlockNil) (CompilerRegCallScan point set)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (compiler-reg-clobber-kind-points-seq instrs point set kind)
+            [(CompilerRegCallScan p2 s2)
+              (compiler-reg-clobber-kind-points-blocks (box-get rest) p2 s2 kind)])])]
+    [(IrBlockArray seq)
+      (compiler-reg-clobber-kind-points-blocks
+        (compiler-ir-block-seq-to-list seq)
+        point
+        set
+        kind)]))
+
+(define (compiler-reg-clobber-kind-points [func : CompilerIrFunction] [kind : i64]) : CompilerLiveI64Set
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (compiler-reg-clobber-kind-points-blocks
+        blocks
+        0
+        (compiler-live-set-empty)
+        kind)
+        [(CompilerRegCallScan _ set) set])]))
+
 (define (compiler-reg-call-word-in-range?
   [bits : i64]
   [var-base : i64]
@@ -7943,6 +8028,33 @@
       (- 0 1))
     (- 0 1)))
 
+;; {rax,rdx,r10,r11}: the registers an idiv clobbers (rax:rdx outputs + the
+;; INT_MIN/-1 overflow guard). rax/r10/r11 are reserved (not in the pool); listing
+;; them is harmless and future-proofs pooling them.
+(define (compiler-reg-greedy-div-clobber-registers) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%rax"
+    (compiler-reg-string-cons
+      "%rdx"
+      (compiler-reg-string-cons
+        "%r10"
+        (compiler-reg-string-cons "%r11" CompilerRegStringNil)))))
+
+;; Caller-saved registers a div/shift-spanning (but NOT call-spanning) var may not
+;; use: div-span -> {rax,rdx,r10,r11}, shift-span -> {rcx}, unioned. The call-span
+;; case is handled separately by the start-idx skip, so it is not represented here.
+(define (compiler-reg-greedy-forbidden-regs
+  [spans-div : bool]
+  [spans-shift : bool]) : CompilerRegStringList
+  (let
+    [div-part : CompilerRegStringList
+      (if spans-div
+        (compiler-reg-greedy-div-clobber-registers)
+        CompilerRegStringNil)]
+    (if spans-shift
+      (compiler-reg-string-cons "%rcx" div-part)
+      div-part)))
+
 (define (compiler-reg-greedy-first-free
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -7951,18 +8063,21 @@
   [reg-arr : (Array String)]
   [ridx : i64]
   [rcount : i64]
-  [n : i64]) : String
+  [n : i64]
+  [forbidden : CompilerRegStringList]) : String
   (if (>= ridx rcount)
     ""
     (let
       [reg : String (array-ref reg-arr ridx)]
-      (if (compiler-reg-greedy-reg-free?
-        assignments
-        interval-index
-        ref-counts
-        var
-        reg
-        n)
+      (if (and
+        (not (compiler-reg-string-list-contains? forbidden reg))
+        (compiler-reg-greedy-reg-free?
+          assignments
+          interval-index
+          ref-counts
+          var
+          reg
+          n))
         reg
         (compiler-reg-greedy-first-free
           assignments
@@ -7972,7 +8087,8 @@
           reg-arr
           (+ ridx 1)
           rcount
-          n)))))
+          n
+          forbidden)))))
 
 ;; Copy-hint register: the reg held by the copy-neighbour, if it is in the pool
 ;; and free for `var`. Biases `var` onto its move-partner's register.
@@ -7983,7 +8099,8 @@
   [copy-hints : (Array i64)]
   [regs : CompilerRegStringList]
   [var : i64]
-  [n : i64]) : String
+  [n : i64]
+  [forbidden : CompilerRegStringList]) : String
   (if (or (< var 0) (>= var (array-length copy-hints)))
     ""
     (let
@@ -7995,6 +8112,7 @@
             (match loc
               [(CompilerRegRegister r)
                 (if (and
+                  (not (compiler-reg-string-list-contains? forbidden r))
                   (compiler-reg-string-list-contains? regs r)
                   (compiler-reg-greedy-reg-free?
                     assignments
@@ -8021,7 +8139,8 @@
   [reg-arr : (Array String)]
   [ridx : i64]
   [rcount : i64]
-  [n : i64]) : String
+  [n : i64]
+  [forbidden : CompilerRegStringList]) : String
   (if (>= ridx rcount)
     ""
     (let
@@ -8036,7 +8155,10 @@
           0
           n
           (- 0 1))]
-      (if (and (>= m 0) (< m weight))
+      (if (and
+        (not (compiler-reg-string-list-contains? forbidden reg))
+        (>= m 0)
+        (< m weight))
         reg
         (compiler-reg-greedy-first-evictable
           assignments
@@ -8047,7 +8169,8 @@
           reg-arr
           (+ ridx 1)
           rcount
-          n)))))
+          n
+          forbidden)))))
 
 (define (compiler-reg-greedy-evict-reg!
   [assignments : CompilerRegAssignmentTable]
@@ -8125,7 +8248,9 @@
   [rcount : i64]
   [var : i64]
   [n : i64]
-  [clobber-points : CompilerLiveI64Set]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : i64
   (if (or
@@ -8133,22 +8258,39 @@
     (compiler-live-set-contains? group-vars var))
     (compiler-reg-greedy-stage-rs-new)
     (let
-      ;; regmask-as-interference: a value spanning a clobber-point may only use
-      ;; callee-saved regs, so it starts its search past the caller-saved prefix
-      ;; and only accepts callee-saved copy-hints.
-      [spans : bool
+      ;; Per-register clobber (15c). A call-spanning value may use NO caller-saved
+      ;; reg (start past the caller-saved prefix, callee-saved copy-hints only) --
+      ;; the original coarse rule. A value that spans only a div/shift may still use
+      ;; the caller-saved regs that op does NOT clobber: it searches the whole pool
+      ;; (start-idx 0) with `forbidden` excluding just {rax,rdx,r10,r11} (div) and/or
+      ;; {rcx} (shift).
+      [spans-call : bool
         (compiler-reg-greedy-var-spans-clobber?
           interval-index
-          clobber-points
+          call-points
+          var)]
+      [spans-div : bool
+        (compiler-reg-greedy-var-spans-clobber?
+          interval-index
+          div-points
+          var)]
+      [spans-shift : bool
+        (compiler-reg-greedy-var-spans-clobber?
+          interval-index
+          shift-points
           var)]
       [start-idx : i64
-        (if spans
+        (if spans-call
           caller-saved-count
           0)]
       [hint-regs : CompilerRegStringList
-        (if spans
+        (if spans-call
           callee-regs
           regs)]
+      [forbidden : CompilerRegStringList
+        (if spans-call
+          CompilerRegStringNil
+          (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
       [hint : String
         (compiler-reg-greedy-hint-free-reg
           assignments
@@ -8157,7 +8299,8 @@
           copy-hints
           hint-regs
           var
-          n)]
+          n
+          forbidden)]
       (if (not (string-eq hint ""))
         (begin
           (compiler-reg-assignment-table-insert
@@ -8175,7 +8318,8 @@
               reg-arr
               start-idx
               rcount
-              n)]
+              n
+              forbidden)]
           (if (not (string-eq free ""))
             (begin
               (compiler-reg-assignment-table-insert
@@ -8198,7 +8342,8 @@
                   reg-arr
                   start-idx
                   rcount
-                  n)]
+                  n
+                  forbidden)]
               (if (not (string-eq ev ""))
                 (begin
                   (compiler-reg-greedy-evict-reg!
@@ -8348,7 +8493,9 @@
   [rcount : i64]
   [stages : (Array i64)]
   [n : i64]
-  [clobber-points : CompilerLiveI64Set]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : unit
   (if (>= i count)
@@ -8367,7 +8514,9 @@
           rcount
           v
           n
-          clobber-points
+          call-points
+          div-points
+          shift-points
           callee-regs
           caller-saved-count)]
       (begin
@@ -8388,7 +8537,9 @@
           rcount
           stages
           n
-          clobber-points
+          call-points
+          div-points
+          shift-points
           callee-regs
           caller-saved-count)))))
 
@@ -8437,7 +8588,9 @@
   [group-vars : CompilerLiveI64Set]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
-  [clobber-points : CompilerLiveI64Set]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : CompilerRegAssignState
   (let
@@ -8483,7 +8636,9 @@
             rcount
             stages
             n
-            clobber-points
+            call-points
+            div-points
+            shift-points
             callee-regs
             caller-saved-count)
           (CompilerRegAssignState CompilerRegActiveNil assignments))))))
@@ -8614,17 +8769,19 @@
             (compiler-reg-function-spill-weights func)
             (array-length (struct-get interval-index starts))))
         (make-array i64 0))]
-    ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
-    ;; registers). Hoisted so the call-spanning-aware pre-pass and the existing
-    ;; caller-saved overflow pass share one computation.
-    [clobber-points
-      : CompilerLiveI64Set
-      ;; Unconditional: the greedy now allocates the integer (both opt2 and SIMD)
-      ;; AND float->XMM classes, all of which use clobber-points for call-clobber
-      ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
-      ;; pool register callee-saved, so the clobber test never restricts there; on
-      ;; the XMM path call-spanning floats are already excluded pre-allocation.
-      (compiler-reg-backend-caller-clobber-points func)]
+    ;; Per-register clobber point sets (15c): kind 0 = call sites (all caller-saved),
+    ;; kind 1 = idiv (rax:rdx + r10/r11 guard), kind 2 = shift (rcx). Splitting the
+    ;; old merged set lets the greedy forbid only the registers each op actually
+    ;; clobbers, so a div/shift-spanning value keeps the caller-saved regs the op
+    ;; leaves alone instead of being forced callee-saved. On the SIMD-integer path
+    ;; caller-saved-count=0 makes every pool register callee-saved (no restriction);
+    ;; on the XMM path call-spanning floats are already excluded pre-allocation.
+    [call-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 0)]
+    [div-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 1)]
+    [shift-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 2)]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
     ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
@@ -8646,7 +8803,9 @@
           group-vars
           eviction-ref-counts
           copy-hints
-          clobber-points
+          call-points
+          div-points
+          shift-points
           integer-registers
           (compiler-reg-greedy-caller-saved-count))
         ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
@@ -8663,7 +8822,9 @@
           group-vars
           eviction-ref-counts
           copy-hints
-          clobber-points
+          call-points
+          div-points
+          shift-points
           integer-registers
           0))]
     [integer-assignments : CompilerRegAssignmentTable
@@ -8711,7 +8872,9 @@
         (compiler-live-set-empty)
         (make-array i64 0)
         (make-array i64 0)
-        clobber-points
+        call-points
+        div-points
+        shift-points
         CompilerRegStringNil
         (compiler-reg-string-list-count (compiler-reg-xmm-registers)))]
     [scalar-assignments : CompilerRegAssignmentTable

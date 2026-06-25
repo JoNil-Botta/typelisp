@@ -36,6 +36,9 @@ src/compiler_backend_runtime_fixture
 *.s
 !tests/golden/*.s
 
+# Inline test scratch artifacts
+/tests/scratch/io_edges_*
+
 # Downloaded stage0 compiler cache
 /tools/stage0/
 

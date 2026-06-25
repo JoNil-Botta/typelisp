@@ -52,7 +52,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live
   map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
-  aliasing entries, value borrows, puts, and resizes.
+  aliasing entries, value borrows, puts, and resizes. The
+  `hashmap_macro_*_live.tl` fixtures verify the generated module wrappers keep
+  the same borrowed-value and mutable-entry aliasing policy.
 - `stdlib/set.tl` inline tests cover generated `(set String)` and `(set i64)`
   modules, borrowed string-key contains/remove wrappers, duplicate insert,
   collision chains, tombstone reuse, growth/rehash, missing remove,

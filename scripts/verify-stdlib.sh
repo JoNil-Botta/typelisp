@@ -280,6 +280,8 @@ stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot read mutabl
 stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
+stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope

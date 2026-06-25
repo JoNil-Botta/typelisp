@@ -631,7 +631,7 @@
                                   (doc-item-ok?
                                     print
                                     3
-                                    "print"
+                                    "io.print"
                                     "external doc"
                                     "(extern (io.print")
                                   (return false))

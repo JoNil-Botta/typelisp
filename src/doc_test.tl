@@ -2157,7 +2157,7 @@
           (string.string-append
             ";# ;; doctest-stderr: literal:error\\tline\\r\n"
             (string.string-append
-              ";# (import \"stdlib/tl\")\n"
+              ";# (import stdlib.io)\n"
               (string.string-append
                 ";# (define (main) : i64\n"
                 (string.string-append
@@ -2454,7 +2454,7 @@
   ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stdout: literal:expected\\n
-;# (import \"stdlib/tl\")
+;# (import stdlib.io)
 ;# (define (main) : i64
 ;#   (begin
 ;#     (let [text : String \"actual\\n\"] (io.stdout-write (& text)))
@@ -2466,7 +2466,7 @@
   ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stderr: literal:expected-error\\n
-;# (import \"stdlib/tl\")
+;# (import stdlib.io)
 ;# (define (main) : i64
 ;#   (begin
 ;#     (let [text : String \"actual-error\\n\"] (io.stderr-write (& text)))

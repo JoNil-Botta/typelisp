@@ -1883,7 +1883,7 @@
           (compiler-backend-string-contains? asm "    call tl_string_to_int\n"))
         (not
           (compiler-backend-string-contains? asm ".extern tl_string_to_int\n"))
-        (compiler-backend-string-contains? asm "    call _tl_string_append\n")
+        (compiler-backend-string-contains? asm "_tl_string_string_append\n")
         (not
           (compiler-backend-string-contains? asm "    call tl_string_concat\n"))
         (not

@@ -2892,10 +2892,10 @@
 
 (define (compiler-typecheck-init-cleanup-owning-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (main) : io.FileHandle (init : io.FileHandle))")
+(define (main) : FileHandle (init : FileHandle))")
 
 (define (compiler-typecheck-init-tests-ok?) : bool
   (and
@@ -2918,7 +2918,7 @@
       "typecheck: init unsupported type (& n i64)")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-init-cleanup-owning-source)
-      "typecheck: init does not support cleanup-owning aggregate io.FileHandle")))
+      "typecheck: init does not support cleanup-owning aggregate FileHandle")))
 
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
@@ -3045,11 +3045,11 @@
 
 (define (compiler-typecheck-resource-fresh-let-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (main) : i64
-  (let ([h : io.FileHandle (io.FileHandle 1)])
+  (let ([h : FileHandle (FileHandle 1)])
     0))")
 
 (define (compiler-typecheck-resource-with-escape-source) : String
@@ -3162,19 +3162,19 @@
 
 (define (compiler-typecheck-cleanup-struct-valid-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (main [h : io.FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
 
 (define (compiler-typecheck-cleanup-struct-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct BufferedFile
   (:cleanup cleanup-buffered-file)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
 (define (main [b : BufferedFile]) : i64 (struct-get b size))")
 
@@ -3183,26 +3183,26 @@
 (define (close-fd [fd : i64]) : unit unit)
 (module main)
 (import \"cleanup.tl\" module cleanup :as c)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup c/close-fd)))
-(define (main [h : io.FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
 
 (define (compiler-typecheck-cleanup-struct-comptime-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (comptime-decl
-  (defstruct io.FileHandle
+  (defstruct FileHandle
     (:cleanup cleanup-file-handle)
     (fd i64 (:cleanup close-fd))))
-(define (main [h : io.FileHandle]) : i64 (struct-get h fd))")
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
 
 (define (compiler-typecheck-cleanup-struct-ordinary-store-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Bad
-  (handle io.FileHandle))")
+  (handle FileHandle))")
 
 (define (compiler-typecheck-cleanup-struct-cleanup-mismatch-source) : String
   "(define (close-bool [fd : bool]) : unit unit)
@@ -3267,7 +3267,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-struct-ordinary-store-source)
-        "typecheck: struct Bad field handle stores cleanup-owning type io.FileHandle without :owned")
+        "typecheck: struct Bad field handle stores cleanup-owning type FileHandle without :owned")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3300,23 +3300,23 @@
 (define (compiler-typecheck-cleanup-enum-valid-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (define (close-code [code : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defenum MaybeHandle
   (:cleanup cleanup-maybe-handle)
   (None)
-  (Some io.FileHandle (:owned))
+  (Some FileHandle (:owned))
   (Code i64 (:cleanup close-code)))
 (define (main [m : MaybeHandle]) : i64 0)")
 
 (define (compiler-typecheck-cleanup-enum-ordinary-store-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defenum Bad
-  (Some io.FileHandle))")
+  (Some FileHandle))")
 
 (define (compiler-typecheck-cleanup-enum-cleanup-mismatch-source) : String
   "(define (close-bool [fd : bool]) : unit unit)
@@ -3361,7 +3361,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-enum-ordinary-store-source)
-        "typecheck: enum Bad variant Some stores cleanup-owning type io.FileHandle without :owned")
+        "typecheck: enum Bad variant Some stores cleanup-owning type FileHandle without :owned")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5675,32 +5675,32 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-int-source)
-        "typecheck: unbound name int->string")
+        "typecheck: unknown qualified name string.int->string; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-append-source)
-        "typecheck: unbound name string-append")
+        "typecheck: unknown qualified name string.string-append; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-substring-source)
-        "typecheck: unbound name substring")
+        "typecheck: unknown qualified name string.substring; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-slice-source)
-        "typecheck: unbound name string-slice")
+        "typecheck: unknown qualified name string.string-slice; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-concat-source)
-        "typecheck: unbound name string-concat")
+        "typecheck: unknown qualified name string.string-concat; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-borrowed-alloc-source)
-        "typecheck: unbound name string-append")
+        "typecheck: unknown qualified name string.string-append; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5752,7 +5752,7 @@
       "typecheck: argument type mismatch")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-arg-arity-source)
-      "typecheck: call arity mismatch: arg expected 1 argument, got 2 arguments")
+      "typecheck: call arity mismatch: io.arg expected 1 argument, got 2 arguments")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-count-arity-source)
       "typecheck: call arity mismatch: arg-count expected 0 arguments, got 1 argument")
@@ -5761,7 +5761,7 @@
       "typecheck: unbound name arg-count")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-no-import-arg-source)
-      "typecheck: unbound name arg")
+      "typecheck: unknown qualified name io.arg; import the module or use a visible dotted module alias")
     (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-shadow-source))))
 
 (define (compiler-typecheck-lambda-ok-typed-source) : String
@@ -6343,7 +6343,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : String]) : unit (io.write-file p))")
-        "typecheck: call arity mismatch: write-file expected 2 arguments, got 1 argument")
+        "typecheck: call arity mismatch: io.write-file expected 2 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6391,7 +6391,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f) : i64 (io.file-flush-status))")
-        "typecheck: call arity mismatch: file-flush-status expected 1 argument, got 0 arguments")
+        "typecheck: call arity mismatch: io.file-flush-status expected 1 argument, got 0 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6412,12 +6412,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [p : String]) : String (io.read-file p))"
-        "typecheck: unbound name read-file")
+        "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [p : String]) : i64 (io.file-open-status p 0))"
-        "typecheck: unbound name file-open-status")
+        "typecheck: unknown qualified name io.file-open-status; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6842,14 +6842,16 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-defmacro-pure-string-source) : String
-  "(defmacro (answer-name) : i64 (expr-var (string.string-concat \"ans\" \"wer\")))
+  "(import stdlib.comptime)
+(defmacro (answer-name) : i64 (expr-var (comptime.string-append \"ans\" \"wer\")))
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 
 (define (compiler-typecheck-defmacro-expr-struct-get-source) : String
-  "(defstruct Point (x i64) (y i64))
+  "(import stdlib.comptime)
+(defstruct Point (x i64) (y i64))
 (defmacro (field-x [target : Expr]) : i64
-  (comptime.expr-struct-get target (string.string-concat \"x\" \"\")))
+  (comptime.expr-struct-get target (comptime.string-append \"x\" \"\")))
 (define (main) : i64 (field-x (Point 42 7)))")
 
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
@@ -6932,7 +6934,7 @@
       "typecheck: comptime purity rejects unsafe block; reference path: bad -> unsafe")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-extern-source)
-      "typecheck: comptime purity rejects extern reference read-file; reference path: bad -> read-file")
+      "typecheck: comptime purity rejects extern reference io.read-file; reference path: bad -> io.read-file")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-transitive-extern-source)
       "typecheck: comptime purity rejects extern reference raw-read; reference path: bad -> helper -> raw-read")
@@ -7790,15 +7792,15 @@
 (define (compiler-typecheck-move-cleanup-enum-payload-prefix) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (define (close-code [code : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defenum MaybeHandle
   (:cleanup cleanup-maybe-handle)
-  (Some io.FileHandle (:owned))
+  (Some FileHandle (:owned))
   (Code i64 (:cleanup close-code))
   (None))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 ")
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
@@ -7832,7 +7834,7 @@
   (string.string-append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-shadow
-  [h : io.FileHandle]
+  [h : FileHandle]
   [m : MaybeHandle]) : unit
   (begin
     (match m
@@ -7843,42 +7845,42 @@
 
 (define (compiler-typecheck-move-owner-call-ok-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (valid-owner-call [h : io.FileHandle]) : unit (take-handle h))")
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (valid-owner-call [h : FileHandle]) : unit (take-handle h))")
 
 (define (compiler-typecheck-move-owner-call-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-call [h : io.FileHandle]) : i64
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-call [h : FileHandle]) : i64
   (begin (take-handle h) (struct-get h fd)))")
 
 (define (compiler-typecheck-move-owner-constructor-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
 (define (take-holder [holder : Holder]) : unit unit)
-(define (bad-owner-constructor [h : io.FileHandle]) : i64
+(define (bad-owner-constructor [h : FileHandle]) : i64
   (begin
     (take-holder (Holder h 1))
     (struct-get h fd)))")
 
 (define (compiler-typecheck-move-owner-return-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-return [h : io.FileHandle]) : io.FileHandle
+(define (bad-owner-return [h : FileHandle]) : FileHandle
   (begin (return h) h))")
 
 (define (compiler-typecheck-move-ordinary-projection-source) : String
@@ -7895,14 +7897,14 @@
 
 (define (compiler-typecheck-move-owner-projection-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-other-field [p : Holder]) : i64
   (begin
     (take-handle (struct-get p handle))
@@ -7910,25 +7912,25 @@
 
 (define (compiler-typecheck-move-owner-projection-one-shot-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-one-shot [p : Holder]) : unit
   (take-handle (struct-get p handle)))")
 
 (define (compiler-typecheck-move-owner-projection-bind-other-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
 (define (owner-projection-bind-other-field [p : Holder]) : i64
   (with ([h (struct-get p handle) cleanup-file-handle])
@@ -7936,36 +7938,36 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested [p : Holder]) : unit
   (take-handle (struct-get (struct-get p inner) handle)))")
 
 (define (compiler-typecheck-move-owner-projection-nested-siblings-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
-  (backup io.FileHandle (:owned))
+  (handle FileHandle (:owned))
+  (backup FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-siblings [p : Holder]) : unit
   (begin
     (take-handle (struct-get (struct-get p inner) handle))
@@ -7973,18 +7975,18 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-projection-nested-repeat [p : Holder]) : unit
   (begin
     (take-handle (struct-get (struct-get p inner) handle))
@@ -7992,18 +7994,18 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-root-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (take-holder [h : Holder]) : unit unit)
 (define (bad-owner-projection-nested-root-reuse [p : Holder]) : unit
   (begin
@@ -8012,18 +8014,18 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-parent-after-child-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (take-inner [h : Inner]) : unit unit)
 (define (bad-owner-projection-nested-parent-after-child [p : Holder]) : unit
   (begin
@@ -8032,18 +8034,18 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-child-after-parent-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (take-inner [h : Inner]) : unit unit)
 (define (bad-owner-projection-nested-child-after-parent [p : Holder]) : unit
   (begin
@@ -8052,57 +8054,57 @@
 
 (define (compiler-typecheck-move-owner-projection-nested-set-reset-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-set-reset [p : Holder]) : unit
   (begin
     (take-handle (struct-get (struct-get p inner) handle))
-    (set! p (Holder (Inner (io.FileHandle 10) 11) 12))
+    (set! p (Holder (Inner (FileHandle 10) 11) 12))
     (take-handle (struct-get (struct-get p inner) handle))))")
 
 (define (compiler-typecheck-move-owner-projection-nested-shadow-reset-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Inner
   (:cleanup cleanup-inner)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (tag i64))
 (defstruct Holder
   (:cleanup cleanup-holder)
   (inner Inner (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-nested-shadow-reset [p : Holder]) : unit
   (with ([q p cleanup-holder])
     (begin
       (struct-get (struct-get (struct-get q inner) handle) fd)
-      (with ([q (Holder (Inner (io.FileHandle 20) 21) 22) cleanup-holder])
+      (with ([q (Holder (Inner (FileHandle 20) 21) 22) cleanup-holder])
         (begin
           (struct-get (struct-get (struct-get q inner) handle) fd)
           unit)))))")
 
 (define (compiler-typecheck-move-owner-projection-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-projection-repeat [p : Holder]) : unit
   (begin
     (take-handle (struct-get p handle))
@@ -8110,14 +8112,14 @@
 
 (define (compiler-typecheck-move-owner-projection-root-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (take-holder [h : Holder]) : unit unit)
 (define (bad-owner-projection-root-reuse [p : Holder]) : unit
   (begin
@@ -8126,14 +8128,14 @@
 
 (define (compiler-typecheck-move-owner-projection-key-collision-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (owner-projection-key-collision
   [p : Holder]
   [p.handle : Holder]
@@ -8144,187 +8146,187 @@
 
 (define (compiler-typecheck-move-owner-tuple-ref-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-tuple-ref-other-element [p : (Tuple io.FileHandle i64)]) : i64
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-tuple-ref-other-element [p : (Tuple FileHandle i64)]) : i64
   (begin
     (take-handle (tuple-ref p 0))
     (tuple-ref p 1)))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-tuple-ref-repeat [p : (Tuple io.FileHandle i64)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref-repeat [p : (Tuple FileHandle i64)]) : unit
   (begin
     (take-handle (tuple-ref p 0))
     (take-handle (tuple-ref p 0))))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-tuple-ref-nested [p : (Tuple (Tuple io.FileHandle i64) i64)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-tuple-ref-nested [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
   (take-handle (tuple-ref (tuple-ref p 0) 0)))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-tuple-ref-nested-repeat [p : (Tuple (Tuple io.FileHandle i64) i64)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-tuple-ref-nested-repeat [p : (Tuple (Tuple FileHandle i64) i64)]) : unit
   (begin
     (take-handle (tuple-ref (tuple-ref p 0) 0))
     (take-handle (tuple-ref (tuple-ref p 0) 0))))")
 
 (define (compiler-typecheck-move-owner-tuple-ref-nested-sibling-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-tuple-ref-nested-sibling [p : (Tuple (Tuple io.FileHandle io.FileHandle) i64)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-tuple-ref-nested-sibling [p : (Tuple (Tuple FileHandle FileHandle) i64)]) : unit
   (begin
     (take-handle (tuple-ref (tuple-ref p 0) 0))
     (take-handle (tuple-ref (tuple-ref p 0) 1))))")
 
 (define (compiler-typecheck-move-owner-array-ref-other-element-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-array-ref-other-element [items : (Array io.FileHandle 2)]) : i64
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-other-element [items : (Array FileHandle 2)]) : i64
   (begin
     (take-handle (array-ref items 0))
     (struct-get (array-ref items 1) fd)))")
 
 (define (compiler-typecheck-move-owner-array-ref-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-array-ref-repeat [items : (Array io.FileHandle 1)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-repeat [items : (Array FileHandle 1)]) : unit
   (begin
     (take-handle (array-ref items 0))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-array-ref-reinit [items : (Array io.FileHandle 1)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-reinit [items : (Array FileHandle 1)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 0 (io.FileHandle 7))
+    (array-set! items 0 (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-root-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-array-ref-reinit-root [items : (Array io.FileHandle 1)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-reinit-root [items : (Array FileHandle 1)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 0 (io.FileHandle 7))
-    (let [next : (Array io.FileHandle 1) items] unit)))")
+    (array-set! items 0 (FileHandle 7))
+    (let [next : (Array FileHandle 1) items] unit)))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-sibling-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-array-ref-reinit-sibling [items : (Array io.FileHandle 2)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-reinit-sibling [items : (Array FileHandle 2)]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items 1 (io.FileHandle 7))
+    (array-set! items 1 (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-array-ref-reinit-nonliteral
-  [items : (Array io.FileHandle 2)]
+  [items : (Array FileHandle 2)]
   [index : i64]) : unit
   (begin
     (take-handle (array-ref items 0))
-    (array-set! items index (io.FileHandle 7))
+    (array-set! items index (FileHandle 7))
     (take-handle (array-ref items 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-array-ref-nested [items : (Array (Array io.FileHandle 2) 2)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-nested [items : (Array (Array FileHandle 2) 2)]) : unit
   (take-handle (array-ref (array-ref items 0) 1)))")
 
 (define (compiler-typecheck-move-owner-array-ref-nested-repeat-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-array-ref-nested-repeat [items : (Array (Array io.FileHandle 2) 2)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-array-ref-nested-repeat [items : (Array (Array FileHandle 2) 2)]) : unit
   (begin
     (take-handle (array-ref (array-ref items 0) 1))
     (take-handle (array-ref (array-ref items 0) 1))))")
 
 (define (compiler-typecheck-move-owner-array-ref-nested-sibling-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (owner-array-ref-nested-sibling [items : (Array (Array io.FileHandle 2) 2)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (owner-array-ref-nested-sibling [items : (Array (Array FileHandle 2) 2)]) : unit
   (begin
     (take-handle (array-ref (array-ref items 0) 1))
     (take-handle (array-ref (array-ref items 0) 0))))")
 
 (define (compiler-typecheck-move-owner-array-ref-nonliteral-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-owner-array-ref-nonliteral
-  [items : (Array io.FileHandle 2)]
+  [items : (Array FileHandle 2)]
   [index : i64]) : unit
   (take-handle (array-ref items index)))")
 
 (define (compiler-typecheck-move-owner-dyn-array-ref-call-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-dyn-array-ref-call [items : (Array io.FileHandle)] [i : i64]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-dyn-array-ref-call [items : (Array FileHandle)] [i : i64]) : unit
   (take-handle (array-ref items i)))")
 
 (define (compiler-typecheck-move-owner-dyn-array-ref-bind-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-dyn-array-ref-bind [items : (Array io.FileHandle)] [i : i64]) : i64
-  (let [h : io.FileHandle (array-ref items i)]
+(define (bad-owner-dyn-array-ref-bind [items : (Array FileHandle)] [i : i64]) : i64
+  (let [h : FileHandle (array-ref items i)]
     (struct-get h fd)))")
 
 (define (compiler-typecheck-move-box-get-copyable-source) : String
@@ -8335,28 +8337,28 @@
 
 (define (compiler-typecheck-move-owner-box-get-call-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (bad-owner-box-get-call [cell : (Box io.FileHandle)]) : unit
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (bad-owner-box-get-call [cell : (Box FileHandle)]) : unit
   (take-handle (box-get cell)))")
 
 (define (compiler-typecheck-move-owner-box-get-bind-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-box-get-bind [cell : (Box io.FileHandle)]) : i64
-  (let [h : io.FileHandle (box-get cell)]
+(define (bad-owner-box-get-bind [cell : (Box FileHandle)]) : i64
+  (let [h : FileHandle (box-get cell)]
     (struct-get h fd)))")
 
 (define (compiler-typecheck-move-owner-box-get-return-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-box-get-return [cell : (Box io.FileHandle)]) : io.FileHandle
+(define (bad-owner-box-get-return [cell : (Box FileHandle)]) : FileHandle
   (return (box-get cell)))")
 
 (define (compiler-typecheck-move-box-take-reuse-source) : String
@@ -8383,10 +8385,10 @@
 
 (define (compiler-typecheck-move-owner-lambda-capture-cleanup-reuse-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (bad-owner-lambda-capture-cleanup-reuse [h : io.FileHandle]) : i64
+(define (bad-owner-lambda-capture-cleanup-reuse [h : FileHandle]) : i64
   (begin (lambda () : i64 (struct-get h fd)) (struct-get h fd)))")
 
 (define (compiler-typecheck-move-owner-lambda-body-reuse-source) : String
@@ -8442,48 +8444,48 @@
 
 (define (compiler-typecheck-move-with-cleanup-owner-read-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (with-cleanup-owner-read [fd : i64]) : i64
-  (with ([h (io.FileHandle fd) cleanup-file-handle])
+  (with ([h (FileHandle fd) cleanup-file-handle])
     (struct-get h fd)))")
 
 (define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-with-cleanup-owner-whole [fd : i64]) : i64
-  (with ([h (io.FileHandle fd) cleanup-file-handle])
+  (with ([h (FileHandle fd) cleanup-file-handle])
     (begin
       (take-handle h)
       0)))")
 
 (define (compiler-typecheck-move-with-cleanup-owner-field-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
-(define (take-handle [h : io.FileHandle]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
 (define (bad-with-cleanup-owner-field [fd : i64]) : i64
-  (with ([h (Holder (io.FileHandle fd) 7) cleanup-holder])
+  (with ([h (Holder (FileHandle fd) 7) cleanup-holder])
     (begin
       (take-handle (struct-get h handle))
       0)))")
 
 (define (compiler-typecheck-live-borrow-owner-prefix) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (take-handle [h : io.FileHandle]) : unit unit)
-(define (read-handle-ref [h : (& h io.FileHandle)]) : unit unit)
+(define (take-handle [h : FileHandle]) : unit unit)
+(define (read-handle-ref [h : (& h FileHandle)]) : unit unit)
 ")
 
 (define (compiler-typecheck-live-borrow-holder-prefix) : String
@@ -8491,7 +8493,7 @@
     (compiler-typecheck-live-borrow-owner-prefix)
     "(defstruct Holder
   (:cleanup cleanup-holder)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (size i64))
 (define (take-holder [h : Holder]) : unit unit)
 (define (read-holder-ref [h : (& h Holder)]) : unit unit)
@@ -8508,9 +8510,9 @@
 (define (compiler-typecheck-live-borrow-owner-post-scope-source) : String
   (string.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
-    "(define (main [h : io.FileHandle]) : unit
+    "(define (main [h : FileHandle]) : unit
   (begin
-    (let [r : (& h io.FileHandle) (& h)] unit)
+    (let [r : (& h FileHandle) (& h)] unit)
     (take-handle h)))"))
 
 (define (compiler-typecheck-live-borrow-shadowed-local-source) : String
@@ -8524,8 +8526,8 @@
 (define (compiler-typecheck-live-borrow-whole-move-source) : String
   (string.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
-    "(define (bad [h : io.FileHandle]) : unit
-  (let [r : (& h io.FileHandle) (& h)]
+    "(define (bad [h : FileHandle]) : unit
+  (let [r : (& h FileHandle) (& h)]
     (begin
       (take-handle h)
       (read-handle-ref r))))"))
@@ -8542,7 +8544,7 @@
   (string.string-append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
-  (let [r : (& p io.FileHandle) (& (struct-get p handle))]
+  (let [r : (& p FileHandle) (& (struct-get p handle))]
     (begin
       (take-holder p)
       (read-handle-ref r))))"))
@@ -8602,10 +8604,10 @@
   (string.string-append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [fd : i64]) : i64
-  (with ([h (io.FileHandle fd) cleanup-file-handle])
-    (let [borrowed : (& h io.FileHandle) (& h)]
+  (with ([h (FileHandle fd) cleanup-file-handle])
+    (let [borrowed : (& h FileHandle) (& h)]
       (begin
-        (set! h (io.FileHandle 2))
+        (set! h (FileHandle 2))
         (read-handle-ref borrowed)
         0))))"))
 
@@ -9605,17 +9607,17 @@
     (begin
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print 1) 0))"
-        "typecheck: unbound name print")
+        "typecheck: unknown qualified name io.print; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-runtime-builtin-no-import-source)
-        "typecheck: unbound name print-string")
+        "typecheck: unknown qualified name io.print-string; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print-str \"hi\") 0))"
-        "typecheck: unbound name print-str")
+        "typecheck: unknown qualified name io.print-str; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -9625,32 +9627,32 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print-bool true) 0))"
-        "typecheck: unbound name print-bool")
+        "typecheck: unknown qualified name io.print-bool; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print-char 'A') 0))"
-        "typecheck: unbound name print-char")
+        "typecheck: unknown qualified name io.print-char; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print-float 1.5) 0))"
-        "typecheck: unbound name print-float")
+        "typecheck: unknown qualified name io.print-float; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (begin (io.print-error \"hi\") 0))"
-        "typecheck: unbound name print-error")
+        "typecheck: unknown qualified name io.print-error; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (io.panic \"stop\"))"
-        "typecheck: unbound name panic")
+        "typecheck: unknown qualified name io.panic; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (main) : i64 (io.error \"stop\"))"
-        "typecheck: unbound name error")
+        "typecheck: unknown qualified name io.error; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       ok)))
@@ -9755,13 +9757,13 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.panic))")
-        "typecheck: call arity mismatch: panic expected 1 argument, got 0 arguments")
+        "typecheck: call arity mismatch: io.panic expected 1 argument, got 0 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source
           "(define (f) : i64 (io.error \"a\" \"b\"))")
-        "typecheck: call arity mismatch: error expected 1 argument, got 2 arguments")
+        "typecheck: call arity mismatch: io.error expected 1 argument, got 2 arguments")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

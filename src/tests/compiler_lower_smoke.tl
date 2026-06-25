@@ -1,4 +1,5 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
+(import stdlib.vector)
 (import "../compiler_driver_core.tl")
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
@@ -32,7 +33,8 @@
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : StringVec (string-vec-push (string-vec-new) root)]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) root)]
     (begin
       (compiler-load-test-mkdir root)
       (write-file
@@ -65,7 +67,8 @@
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
       (BackendTargetLinux)

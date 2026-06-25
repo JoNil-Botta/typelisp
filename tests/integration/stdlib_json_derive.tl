@@ -1,6 +1,6 @@
-(import "stdlib/json.tl")
-(import "stdlib/str_cat.tl")
-(import "stdlib/string.tl")
+(import stdlib.json)
+(import stdlib.str_cat)
+(import stdlib.string)
 
 (defstruct Address
   (zip i64)
@@ -27,62 +27,62 @@
   (defstruct PersonJson
     (__json_derive_request i64)))
 
-(define (json-derive-home-json) : Json
-  (JsonObject
+(define (json-derive-home-json) : json.Json
+  (json.JsonObject
     (box
-      (JsonMemberListCons
+      (json.JsonMemberListCons
         "zip"
-        (JsonNumber "12345")
+        (json.JsonNumber "12345")
         (box
-          (JsonMemberListCons
+          (json.JsonMemberListCons
             "city"
-            (JsonString "London")
-            (box JsonMemberListNil)))))))
+            (json.JsonString "London")
+            (box json.JsonMemberListNil)))))))
 
-(define (json-derive-person-json [age : Json]) : Json
-  (JsonObject
+(define (json-derive-person-json [age : json.Json]) : json.Json
+  (json.JsonObject
     (box
-      (JsonMemberListCons
+      (json.JsonMemberListCons
         "name"
-        (JsonString "Ada\nLovelace")
+        (json.JsonString "Ada\nLovelace")
         (box
-          (JsonMemberListCons
+          (json.JsonMemberListCons
             "age"
             age
             (box
-              (JsonMemberListCons
+              (json.JsonMemberListCons
                 "active"
-                (JsonBool true)
+                (json.JsonBool true)
                 (box
-                  (JsonMemberListCons
+                  (json.JsonMemberListCons
                     "home"
                     (json-derive-home-json)
-                    (box JsonMemberListNil)))))))))))
+                    (box json.JsonMemberListNil)))))))))))
 
-(define (json-derive-person-missing-age) : Json
-  (JsonObject
+(define (json-derive-person-missing-age) : json.Json
+  (json.JsonObject
     (box
-      (JsonMemberListCons
+      (json.JsonMemberListCons
         "name"
-        (JsonString "Ada")
+        (json.JsonString "Ada")
         (box
-          (JsonMemberListCons
+          (json.JsonMemberListCons
             "active"
-            (JsonBool true)
+            (json.JsonBool true)
             (box
-              (JsonMemberListCons
+              (json.JsonMemberListCons
                 "home"
                 (json-derive-home-json)
-                (box JsonMemberListNil)))))))))
+                (box json.JsonMemberListNil)))))))))
 
 (define (json-derive-address-ok? [home : Address]) : bool
   (and
     (= (struct-get home zip) 12345)
-    (string-eq (struct-get home city) "London")))
+    (string.string-eq (struct-get home city) "London")))
 
 (define (json-derive-person-ok? [person : Person]) : bool
   (and
-    (string-eq (struct-get person name) "Ada\nLovelace")
+    (string.string-eq (struct-get person name) "Ada\nLovelace")
     (= (struct-get person age) (cast 36 : i32))
     (struct-get person active)
     (json-derive-address-ok? (struct-get person home))))
@@ -91,10 +91,10 @@
   (let
     [person : Person
       (Person "Ada\nLovelace" (cast 36 : i32) true (Address 12345 "London"))]
-    [json : Json (person-to-json person)]
+    [json : json.Json (person-to-json person)]
     [encoded : String (stdlib.json.json-stringify json)]
     (and
-      (string-eq
+      (string.string-eq
         encoded
         "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"home\":{\"zip\":12345,\"city\":\"London\"}}")
       (match (person-from-json json)
@@ -107,17 +107,17 @@
     [(ErrPersonJson _) true]))
 
 (define (json-derive-wrong-kind-ok?) : bool
-  (match (person-from-json (json-derive-person-json (JsonString "36")))
+  (match (person-from-json (json-derive-person-json (json.JsonString "36")))
     [(OkPersonJson _) false]
     [(ErrPersonJson _) true]))
 
 (define (json-derive-invalid-integer-ok?) : bool
-  (match (person-from-json (json-derive-person-json (JsonNumber "36.5")))
+  (match (person-from-json (json-derive-person-json (json.JsonNumber "36.5")))
     [(OkPersonJson _) false]
     [(ErrPersonJson _) true]))
 
 (define (json-derive-direct-parse-ok?) : bool
-  (match (person-from-json (json-derive-person-json (JsonNumber "36")))
+  (match (person-from-json (json-derive-person-json (json.JsonNumber "36")))
     [(OkPersonJson parsed) (json-derive-person-ok? parsed)]
     [(ErrPersonJson _) false]))
 

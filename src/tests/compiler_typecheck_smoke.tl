@@ -1055,7 +1055,8 @@
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-import-incompatible-key-source) : String
-  "(defmacro (gen [key : Expr]) : Module
+  "(import stdlib.comptime)
+(defmacro (gen [key : Expr]) : Module
   (match key
     [(ExprCall _ _)
       `(begin
@@ -1066,7 +1067,7 @@
       (module generated.module)
       (define (answer) : i64 42))]))
 (defmacro (later) : Decls
-  `(import (gen (string.string-append \"sa\" \"me\"))))
+  `(import (gen (comptime.string-append \"sa\" \"me\"))))
 (import (gen \"same\"))
 (later)
 (define (main) : i64 (answer))")
@@ -1108,11 +1109,12 @@
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-type-key-source) : String
-  "(defstruct Pair (value i64))
+  "(import stdlib.comptime)
+(defstruct Pair (value i64))
 (defstruct Other (value i64))
 (defmacro (boxmod [T : type]) : Module
   (let
-    [mod-name : Expr (expr-var (string.string-append \"generated.box.\" (type-key T)))]
+    [mod-name : Expr (expr-var (comptime.string-append \"generated.box.\" (type-key T)))]
     `(begin
       (module ,mod-name)
       (defstruct Boxed (value ,T))
@@ -1207,7 +1209,8 @@
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
 (define (compiler-typecheck-smoke-module-macro-extension-incompatible-source) : String
-  "(defmacro (base [key : String]) : Module
+  "(import stdlib.comptime)
+(defmacro (base [key : String]) : Module
   `(begin
     (module generated.shared)
     (define (answer) : i64 40)))
@@ -1223,7 +1226,7 @@
         (define (bonus) : i64 1))]))
 (import (base \"same\") as base)
 (import (extra \"same\") as extra)
-(import (extra (string.string-append \"sa\" \"me\")) as extra2)
+(import (extra (comptime.string-append \"sa\" \"me\")) as extra2)
 (define (main) : i64
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
@@ -1310,11 +1313,12 @@
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-import-source) : String
-  "(defstruct Pair (value i64))
+  "(import stdlib.comptime)
+(defstruct Pair (value i64))
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string.string-append \"generated.vector.\" (type-key T)))]
+      (expr-var (comptime.string-append \"generated.vector.\" (type-key T)))]
     `(begin
       (module ,module-name)
       (defstruct Vec (len i64))
@@ -1325,7 +1329,7 @@
 (defmacro (sliceish [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string.string-append \"generated.sliceish.\" (type-key T)))]
+      (expr-var (comptime.string-append \"generated.sliceish.\" (type-key T)))]
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)
@@ -1375,14 +1379,15 @@
 (define (main) : i64 (bundle-score (BundleSome \"x\")))")
 
 (define (compiler-typecheck-smoke-decls-macro-generated-incompatible-source) : String
-  "(defmacro (bundle [key : Expr]) : Decls
+  "(import stdlib.comptime)
+(defmacro (bundle [key : Expr]) : Decls
   (match key
     [(ExprCall _ _)
       `(defstruct BundleBox (value i64))]
     [_
       `(defstruct BundleBox (value String))]))
 (bundle \"same\")
-(bundle (string.string-append \"sa\" \"me\"))
+(bundle (comptime.string-append \"sa\" \"me\"))
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String

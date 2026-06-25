@@ -5094,21 +5094,21 @@
           [(string.string-eq type-source "bool")
             (OkGenJsonSource
               (string.string-append
-                "(JsonBool "
+                "(json.JsonBool "
                 (string.string-append field-access ")")))]
           [(string.string-eq type-source "String")
             (OkGenJsonSource
               (string.string-append
-                "(JsonString "
+                "(json.JsonString "
                 (string.string-append field-access ")")))]
           [(gen-json-supported-int? type-key)
             (OkGenJsonSource
               (if (string.string-eq type-key "i64")
                 (string.string-append
-                  "(json-i64->number "
+                  "(json.json-i64->number "
                   (string.string-append field-access ")"))
                 (string.string-append
-                  "(json-i64->number (cast "
+                  "(json.json-i64->number (cast "
                   (string.string-append field-access " : i64))"))))]
           [else
             (match (gen-hashmap-nominal-name type-key "struct_")
@@ -5128,7 +5128,7 @@
   [infos : CtfeReflectInfoList]
   [index : i64]) : ResultGenJsonSource
   (if (>= index (ctfe-reflect-field-list-count fields))
-    (OkGenJsonSource "JsonMemberListNil")
+    (OkGenJsonSource "json.JsonMemberListNil")
     (match (ctfe-reflect-field-list-ref fields index)
       [(CtfeReflectField field-name ty)
         (match (gen-json-field-to-json-source field-name infos ty)
@@ -5144,7 +5144,7 @@
                       buf
                       (gen-tb5
                         buf
-                        "(JsonMemberListCons \""
+                        "(json.JsonMemberListCons \""
                         field-name
                         "\" "
                         value-source
@@ -5306,7 +5306,7 @@
                 (string.string-append
                   value-name
                   (string.string-append
-                    "\n        [(JsonBool parsed) (set! "
+                    "\n        [(json.JsonBool parsed) (set! "
                     (string.string-append
                       local-name
                       (string.string-append
@@ -5324,7 +5324,7 @@
                 (string.string-append
                   value-name
                   (string.string-append
-                    "\n        [(JsonString parsed) (set! "
+                    "\n        [(json.JsonString parsed) (set! "
                     (string.string-append
                       local-name
                       (string.string-append
@@ -5351,13 +5351,13 @@
                   buf
                   (text_buf.text-buf-append
                     buf
-                    "        [(JsonNumber text)\n          (match (json-number-owned->i64 text)\n            [(OkJsonNumberI64 parsed) "))
+                    "        [(json.JsonNumber text)\n          (match (json.json-number-owned->i64 text)\n            [(json.OkJsonNumberI64 parsed) "))
                 (set! buf (text_buf.text-buf-append buf set-source))
                 (set!
                   buf
                   (text_buf.text-buf-append
                     buf
-                    "]\n            [(ErrJsonNumberI64 err) "))
+                    "]\n            [(json.ErrJsonNumberI64 err) "))
                 (set!
                   buf
                   (text_buf.text-buf-append
@@ -5444,13 +5444,13 @@
                 key-name
                 " : String \""
                 field-name
-                "\"]\n            (match (json-object-get-owned value "
+                "\"]\n            (match (json.json-object-get-owned value "
                 key-name))
             (set!
               buf
               (gen-tb3
                 buf
-                ")\n              [(JsonFound "
+                ")\n              [(json.JsonFound "
                 value-name
                 ")\n                "))
             (set! buf (text_buf.text-buf-append buf value-source))
@@ -5458,7 +5458,7 @@
               buf
               (gen-tb7
                 buf
-                "]\n              [(JsonMissing) (return ("
+                "]\n              [(json.JsonMissing) (return ("
                 err-name
                 " \"json-derive: missing field "
                 field-name
@@ -5583,20 +5583,24 @@
                     to-name
                     " [value : "
                     type-name
-                    "]) : Json\n  "))
+                    "]) : json.Json\n  "))
                 (set!
                   buf
-                  (text_buf.text-buf-append buf "(JsonObject\n    (box\n      "))
+                  (text_buf.text-buf-append
+                    buf
+                    "(json.JsonObject\n    (box\n      "))
                 (set! buf (text_buf.text-buf-append buf members-source))
                 (set! buf (text_buf.text-buf-append buf ")))\n(define ("))
                 (set! buf (text_buf.text-buf-append buf from-name))
-                (set! buf (text_buf.text-buf-append buf " [value : Json]) : "))
+                (set!
+                  buf
+                  (text_buf.text-buf-append buf " [value : json.Json]) : "))
                 (set! buf (text_buf.text-buf-append buf result-name))
                 (set!
                   buf
                   (text_buf.text-buf-append
                     buf
-                    "\n  (match value\n    [(JsonObject _)\n      "))
+                    "\n  (match value\n    [(json.JsonObject _)\n      "))
                 (set! buf (text_buf.text-buf-append buf from-body))
                 (set!
                   buf

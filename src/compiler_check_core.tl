@@ -469,37 +469,40 @@
         (+ (arr.array-ref items 0) (arr.array-ref items 1))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
-  "(import \"stdlib/tl\")
+  "(import stdlib.io)
+(import stdlib.string)
 (define (main [path : String]) : i64
   (begin
     (io.print-string \"\")
-    (flush-stdout)
+    (io.flush-stdout)
     (+ (string.string-length (io.read-file path))
        (io.file-open-status path 0))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String
-  "(import \"stdlib/env.tl\")
+  "(import stdlib.env)
+(import stdlib.string)
 (define (main [name : String]) : i64
-  (+ (if (env-var-exists? name) 1 0)
-     (+ (string.string-length (env-var-value name))
-        (string.string-length (env-path-separator)))))")
+  (+ (if (env.env-var-exists? name) 1 0)
+     (+ (string.string-length (env.env-var-value name))
+        (string.string-length (env.env-path-separator)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-fs-source) : String
-  "(import \"stdlib/fs.tl\")
+  "(import stdlib.fs)
+(import stdlib.string)
 (define (main [path : String]) : i64
-  (+ (fs-process-id)
-     (+ (fs-current-dir-status)
-        (+ (string.string-length (fs-current-dir))
-           (fs-file-size-status path)))))")
+  (+ (fs.fs-process-id)
+     (+ (fs.fs-current-dir-status)
+        (+ (string.string-length (fs.fs-current-dir))
+           (fs.fs-file-size-status path)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-profile-source) : String
-  "(import \"stdlib/profile.tl\")
+  "(import stdlib.profile)
 (define (main) : i64
   (begin
-    (profile-alloc-reset-peak)
-    (+ (profile-now-ms)
-       (+ (profile-alloc-total)
-          (+ (profile-alloc-live) (profile-alloc-peak))))))")
+    (profile.profile-alloc-reset-peak)
+    (+ (profile.profile-now-ms)
+       (+ (profile.profile-alloc-total)
+          (+ (profile.profile-alloc-live) (profile.profile-alloc-peak))))))")
 
 (define (compiler-check-private-dynamic-buffer-vector-source) : String
   "(import stdlib.vector)
@@ -612,7 +615,7 @@
       (if (compiler-check-source-error-ok?
         "tests/runtime_boundary_no_file.tl"
         "(define (main [path : String]) : String (io.read-file path))"
-        "typecheck: unbound name read-file")
+        "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-check-source-error-ok?

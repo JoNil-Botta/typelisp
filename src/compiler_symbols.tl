@@ -3103,7 +3103,7 @@
               1)
             (+
               (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value symbols "print-string")
+                (compiler-symbols-lookup-value symbols "io.print-string")
                 (compiler-symbol-kind-extern)
                 2)
               (+
@@ -3657,7 +3657,7 @@
               (compiler-symbol-lookup-score
                 (compiler-symbols-lookup-value
                   symbols
-                  "stdlib.comptime/int->string")
+                  "stdlib.comptime/string.int->string")
                 (compiler-symbol-kind-function-define)
                 1)
               1)
@@ -3665,7 +3665,7 @@
               (compiler-symbol-lookup-score
                 (compiler-symbols-lookup-value
                   symbols
-                  "stdlib.comptime/string-append")
+                  "stdlib.comptime/string.string-append")
                 (compiler-symbol-kind-function-define)
                 2)
               1)
@@ -3673,7 +3673,7 @@
               (compiler-symbol-lookup-score
                 (compiler-symbols-lookup-value
                   symbols
-                  "stdlib.comptime/string-concat")
+                  "stdlib.comptime/string.string-concat")
                 (compiler-symbol-kind-function-define)
                 3)
               1)

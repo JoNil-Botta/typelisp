@@ -38888,13 +38888,24 @@
         [(OkCompilerLower lowered _)
           (match lowered
             [(IrProgram _ functions _)
-              (or
-                (lower-test-function-defined?
-                  functions
-                  "stdlib/string.tl::stdlib.string/string-length")
-                (lower-test-function-defined?
-                  functions
-                  "string.tl::stdlib.string/string-length"))])]
+              (and
+                (lower-test-function-defined? functions "tl::stdlib.io/io-len")
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "stdlib/string.tl::stdlib.string/string.string-length"))
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "string.tl::stdlib.string/string.string-length"))
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "stdlib/string.tl::stdlib.string/string-length"))
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "string.tl::stdlib.string/string-length")))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -40151,25 +40162,25 @@
 (define (close-fd [fd : i64]) : unit unit)
 (define (use-fd [ok : bool] [fd : i64]) : ResultI64
   (if ok (OkI64 fd) (ErrI64 \"use fd\")))
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (main [use-ok : bool]) : ResultI64
-  (with ([h (io.FileHandle 10) cleanup-file-handle])
+  (with ([h (FileHandle 10) cleanup-file-handle])
     (OkI64 (try (use-fd use-ok (struct-get h fd))))))")
 
 (define (compiler-lower-cleanup-struct-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (define (close-buffer [buffer : i64]) : unit unit)
-(defstruct io.FileHandle
+(defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (defstruct BufferedFile
   (:cleanup cleanup-buffered-file)
-  (handle io.FileHandle (:owned))
+  (handle FileHandle (:owned))
   (buffer i64 (:cleanup close-buffer)))
 (define (main) : i64
-  (with ([b (BufferedFile (io.FileHandle 10) 20) cleanup-buffered-file])
+  (with ([b (BufferedFile (FileHandle 10) 20) cleanup-buffered-file])
     42))")
 
 (define (compiler-lower-ok? [src : String]) : bool
@@ -43089,7 +43100,7 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string.string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
+(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
@@ -44611,21 +44622,23 @@
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-functions-direct-call-count functions "substring")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "string.substring")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string-append")
+                  "string.string-append")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string-concat")
+                  "string.string-concat")
                 0)
                 unit
                 (set! ok false))
@@ -44644,12 +44657,14 @@
               (if (=
                 (lower-test-functions-direct-call-count
                   functions
-                  "print-string")
+                  "io.print-string")
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count functions "print-str")
+                (lower-test-functions-direct-call-count
+                  functions
+                  "io.print-str")
                 1)
                 unit
                 (set! ok false))
@@ -44687,7 +44702,7 @@
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string-append")
+                  "string.string-append")
                 0)
                 unit
                 (set! ok false))
@@ -44702,9 +44717,13 @@
           (and
             (= (lower-test-functions-call-count functions "tl_print_str") 0)
             (=
-              (lower-test-functions-direct-call-count functions "print-string")
+              (lower-test-functions-direct-call-count
+                functions
+                "io.print-string")
               2)
-            (= (lower-test-functions-direct-call-count functions "print-str") 1))])]
+            (=
+              (lower-test-functions-direct-call-count functions "io.print-str")
+              1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -44871,10 +44890,16 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "string-length") 0)
-            (> (lower-test-functions-call-count functions "string-append") 0)
-            (> (lower-test-functions-call-count functions "string-ref") 0)
-            (> (lower-test-functions-call-count functions "char-at") 0)
+            (>
+              (lower-test-functions-call-count functions "string.string-length")
+              0)
+            (>
+              (lower-test-functions-call-count functions "string.string-append")
+              0)
+            (>
+              (lower-test-functions-call-count functions "string.string-ref")
+              0)
+            (> (lower-test-functions-call-count functions "string.char-at") 0)
             (= (lower-test-functions-call-count functions "tl_string_concat") 0)
             (= (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
     [(ErrCompilerLower _) false]))
@@ -47340,7 +47365,9 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "read-stdin-bytes")
+                (lower-test-functions-call-count
+                  functions
+                  "io.read-stdin-bytes")
                 1)
                 unit
                 (set! ok false))

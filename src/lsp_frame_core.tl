@@ -2029,11 +2029,11 @@
 (define (lsp-definition-smoke-stdlib-symbol?) : bool
   (let
     [src : String
-      "(import \"stdlib/tl\")\n(define (main) : i64 (io.panic \"boom\"))\n"]
-    [stdlib-suffix : String "/stdlib/tl"]
+      "(import stdlib.io)\n(define (main) : i64 (io.panic \"boom\"))\n"]
+    [stdlib-suffix : String "/stdlib/io.tl"]
     [off : i64 (lsp-offset-at-position src 1 23)]
     [sym : String (lsp-symbol-at-offset src off)]
-    (if (not (string.string-eq sym "panic"))
+    (if (not (string.string-eq sym "io.panic"))
       false
       (match (lsp-find-definition
         (lsp-documents-new)

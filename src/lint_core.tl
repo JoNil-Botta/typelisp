@@ -678,7 +678,11 @@
           (string.string-eq text "io.error")
           (or
             (string.string-eq text "stdlib.io.panic")
-            (string.string-eq text "stdlib.io.error")))))))
+            (or
+              (string.string-eq text "stdlib.io.error")
+              (or
+                (string.string-eq text "stdlib/io.panic")
+                (string.string-eq text "stdlib/io.error")))))))))
 
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr
@@ -5512,10 +5516,20 @@
       (ast-expr-call (lint-test-var "panic") (ast-expr-cons one AstExprNil))]
     [spanned-panic-call : i64
       (ast-expr-spanned panic-call (AstSourceSpan 43 9 43 24))]
+    [qualified-panic-call : i64
+      (ast-expr-call (lint-test-var "io.panic") (ast-expr-cons one AstExprNil))]
+    [spanned-qualified-panic-call : i64
+      (ast-expr-spanned qualified-panic-call (AstSourceSpan 44 9 44 27))]
     [redundant-padding-begin : i64
       (ast-node-push
         (AstExprBegin
           (ast-expr-cons spanned-panic-call (ast-expr-cons vx AstExprNil))))]
+    [qualified-padding-begin : i64
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons
+            spanned-qualified-panic-call
+            (ast-expr-cons vx AstExprNil))))]
     [clean-panic-tail-begin : i64
       (ast-node-push
         (AstExprBegin
@@ -6029,6 +6043,15 @@
         unit
         (io.panic
           "lint: redundant divergence padding should flag with unreachable"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            qualified-padding-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        2)
+        unit
+        (io.panic "lint: qualified panic padding should flag with unreachable"))
       (match (lint-findings-get
         (lint-test-walk-tail
           redundant-padding-begin

@@ -122,6 +122,7 @@
           [size : i64 (tc-inlay-hints-size)]
           [i : i64 0]
           [found-ok : bool false]
+          [near-ok : bool false]
           (begin
             (while (and (< i size) (not found-ok))
               (let
@@ -134,8 +135,15 @@
                     (set! found-ok (string-eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
+            (let
+              [near-idx : i64 (lsp-nearest-inlay-hint-index 1 (+ total-off 3))]
+              (if (>= near-idx 0)
+                (set!
+                  near-ok
+                  (string-eq (tc-inlay-hint-type-at near-idx) "i32"))
+                unit))
             (tc-inlay-hints-disable!)
-            found-ok))))))
+            (and found-ok near-ok)))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let

@@ -4618,29 +4618,105 @@
           name-cache
           ""))]))
 
+;; #3792: copy a clone-root name list into the active (persistent) arena. The
+;; clone-helper names are re-interned (so they live in the persistent intern
+;; arena) and the cons cells are rebuilt, so the result is independent of the
+;; scratch arena the original list was discovered in.
+(define (lower-clone-name-list-escape [names : CloneNameList]) : CloneNameList
+  (match names
+    [(CloneNameNil) (CloneNameNil)]
+    [(CloneNameCons name rest)
+      (CloneNameCons
+        (intern-str (intern name))
+        (box (lower-clone-name-list-escape (box-get rest))))]))
+
+;; #3792: copy a clone-roots result into the active (persistent) arena. On the
+;; (program-valid) Ok path this re-homes the name list; the rare Err path
+;; rebuilds the diagnostic with a persistent copy of its message so neither
+;; references the rewound scratch arena.
+(define (lower-clone-roots-result-escape [result : ResultLowerCloneRoots]) : ResultLowerCloneRoots
+  (match result
+    [(OkLowerCloneRoots names)
+      (OkLowerCloneRoots (lower-clone-name-list-escape names))]
+    [(ErrLowerCloneRoots diag)
+      (let
+        [message : String (compiler-diagnostic-message diag)]
+        (ErrLowerCloneRoots (lower-diagnostic (string-copy (& message)))))]))
+
 (define (lower-reachable-clone-roots
   [pools : AstNodePoolContext]
   [program : AstProgram]
   [_paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
-  (match (build-compiler-symbols program)
-    [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries-with-symbols program symbols)
-        [(OkCompilerRegistries registries)
+  ;; #3792: clone-root discovery rebuilds the whole-program symbols, registries
+  ;; and top-env plus the clone-ability fixpoint -- ~132MB of the opt1 lower
+  ;; peak that adds only a couple dozen AST/type pool nodes, i.e. almost pure
+  ;; transient scratch. Build it inside the dedicated lower scratch arena and
+  ;; rewind it once the clone-root names are copied back into the persistent
+  ;; arena. The only escaping value is the CloneNameList (interned clone-helper
+  ;; names), copied by lower-clone-roots-result-escape; the only global cache
+  ;; clone-root discovery can leave pointing at the scratch arena is the
+  ;; nominal-owner cache, reset on entry and after the rewind (mirrors
+  ;; lower-function-escaping and the real typecheck, which also resets it before
+  ;; reuse). Persistent intern storage is enabled across the region so names
+  ;; interned during discovery never dangle the global intern table.
+  (let
+    [prev-arena : i64 (tl_arena_current)]
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [scratch : i64 (lower-scratch-arena-get)]
+    (begin
+      (tc-nominal-owner-cache-reset!)
+      (intern-persistent-storage-enable!)
+      (unsafe
+        (tl_arena_set scratch))
+      (let
+        [mark : i64 (tl_region_mark)]
+        [raw : ResultLowerCloneRoots
+          (match (build-compiler-symbols program)
+            [(OkCompilerSymbols symbols)
+              (match (build-compiler-registries-with-symbols program symbols)
+                [(OkCompilerRegistries registries)
+                  (let
+                    [ctx : TcContext
+                      (TcContext program symbols registries "" pools)]
+                    (match (tc-build-top-env ctx program)
+                      [(OkTcEnv top-env)
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          (OkLowerCloneRoots
+                            (lower-clone-roots-program
+                              ctx
+                              top-env
+                              names
+                              program)))]
+                      [(ErrTcEnv message)
+                        (ErrLowerCloneRoots (lower-diagnostic message))]))]
+                [(ErrCompilerRegistries message)
+                  (ErrLowerCloneRoots (lower-diagnostic message))])]
+            [(ErrCompilerSymbols message)
+              (ErrLowerCloneRoots (lower-diagnostic message))])]
+        [scratch-head : i64 (tl_arena_current)]
+        (begin
+          ;; Re-home the result in the persistent arena while the scratch is
+          ;; still live, then rewind the scratch arena.
+          (unsafe
+            (tl_arena_set prev-arena))
           (let
-            [ctx : TcContext (TcContext program symbols registries "" pools)]
-            (match (tc-build-top-env ctx program)
-              [(OkTcEnv top-env)
-                (begin
-                  (tc-context-capture-active-pools! ctx)
-                  (OkLowerCloneRoots
-                    (lower-clone-roots-program ctx top-env names program)))]
-              [(ErrTcEnv message)
-                (ErrLowerCloneRoots (lower-diagnostic message))]))]
-        [(ErrCompilerRegistries message)
-          (ErrLowerCloneRoots (lower-diagnostic message))])]
-    [(ErrCompilerSymbols message)
-      (ErrLowerCloneRoots (lower-diagnostic message))]))
+            [result : ResultLowerCloneRoots
+              (lower-clone-roots-result-escape raw)]
+            (begin
+              (unsafe
+                (tl_arena_set scratch-head)
+                (tl_region_reset mark)
+                (tl_arena_set prev-arena))
+              ;; The nominal-owner cache may now hold name strings allocated in
+              ;; the rewound scratch arena; clear them so no slot compares
+              ;; against freed memory before the real typecheck repopulates it.
+              (tc-nominal-owner-cache-reset!)
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              result)))))))
 
 (define (lower-reach-call-callee
   [all-functions : StringI64Map]

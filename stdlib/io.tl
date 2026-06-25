@@ -35,7 +35,6 @@
 ;# ```
 (module stdlib.io)
 
-(import stdlib.byte_buf)
 (import stdlib.string)
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
@@ -1846,9 +1845,10 @@
             (string-from-bytes (io-array-const-ptr buf) offset)))))))
 
 ;: Read one stdin line without the trailing newline.
+;: Private compatibility builder; the API returns `String`, not bytes.
 (define (read-stdin-line) : String
   (let
-    [bytes : byte_buf.ByteBuf (byte_buf.byte-buf-new)]
+    [bytes : (Array u8) (make-array u8 0)]
     [one : (Array u8) (make-array u8 1)]
     [done : bool false]
     (begin
@@ -1866,9 +1866,10 @@
                 (if (= (cast byte : i64) 10)
                   (set! done true)
                   (begin
-                    (set! bytes (byte_buf.byte-buf-push bytes byte))
+                    (array-push! bytes byte)
                     (set! done false))))))))
-      (byte_buf.byte-buf-to-string bytes))))
+      (unsafe
+        (string-from-bytes (io-array-const-ptr bytes) (array-length bytes))))))
 
 ;: Return the sticky stdin EOF state.
 (define (stdin-eof?) : bool

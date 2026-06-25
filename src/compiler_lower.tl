@@ -24,12 +24,16 @@
 ;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
 ;; `LowerNameParentNone` is a complete cache (a miss returns the source name
 ;; unchanged). `LowerNameParentGlobal` marks a small per-module overlay that, on
-;; a miss, falls through to the process-global decl-lowering name cache
-;; `lower-decls-global-name-cache` (set once per lower-decls run). This makes each
-;; module's name cache a small overlay of just its module-local names over the
-;; shared global cache instead of rebuilding the whole global name set per module
-;; (was O(modules x global-names)). A global marker is used rather than an owned
-;; parent because the one global cache must be shared by every module overlay.
+;; a miss, falls through to the process-global lowering name cache
+;; `lower-active-global-name-cache`. Each lowering sub-phase that builds
+;; per-module name caches (the prune body-index reachability pass and the decl
+;; lowering loop) sets that global to its whole-program name cache once before
+;; building module overlays; the phases never overlap, so they share the slot.
+;; This makes each module's name cache a small overlay of just its module-local
+;; names over the shared global cache instead of rebuilding the whole global name
+;; set per module (was O(modules x global-names)). A global marker is used rather
+;; than an owned parent because the one global cache must be shared by every
+;; module overlay.
 (defenum LowerNameParent
   (LowerNameParentNone)
   (LowerNameParentGlobal))
@@ -39,9 +43,10 @@
   (values (Array String))
   (parent LowerNameParent))
 
-;; #3759: the shared global decl-lowering name cache (built once per lower-decls
-;; from the whole-program name env). Per-module overlays fall through here.
-(define lower-decls-global-name-cache : LowerNameCache
+;; #3759/#3786: the shared global lowering name cache. Set once per sub-phase
+;; (prune body-index build, then decl lowering) from that phase's whole-program
+;; name env; per-module overlays fall through here.
+(define lower-active-global-name-cache : LowerNameCache
   (LowerNameCache
     (string-i64-map-with-capacity 8)
     (make-array String 0)
@@ -730,7 +735,7 @@
 
 ;; #3759: build a small overlay name cache from `names` (the module-local names
 ;; only). On a miss it falls through to the shared global cache
-;; `lower-decls-global-name-cache` (see lower-name-cache-resolve).
+;; `lower-active-global-name-cache` (see lower-name-cache-resolve).
 (define (lower-name-cache-overlay [names : LowerNameEnv]) : LowerNameCache
   (let
     [count : i64 (lower-name-env-count names)]
@@ -750,7 +755,7 @@
       (match (struct-get cache parent)
         [(LowerNameParentNone) source-name]
         [(LowerNameParentGlobal)
-          (lower-name-cache-resolve lower-decls-global-name-cache source-name)])]))
+          (lower-name-cache-resolve lower-active-global-name-cache source-name)])]))
 
 (define (lower-name-cache-resolve-dotted
   [cache : LowerNameCache]
@@ -5292,9 +5297,14 @@
     (make-array LowerMaybeFunctionBody count)
     0))
 
-(define (lower-function-body-local-names-in-module
+;; #3786: accumulate a module's local decl names onto `base-names` while
+;; resolving dispatch logical names against `resolve-names` (the full module
+;; env), so a module-local-only env can be built for the per-module body
+;; name-cache overlay without changing dispatch results.
+(define (lower-function-body-local-names-in-module-resolve
   [decls : AstDeclList]
   [base-names : LowerNameEnv]
+  [resolve-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
@@ -5306,28 +5316,35 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule next-module)
-            (lower-function-body-local-names-in-module
+            (lower-function-body-local-names-in-module-resolve
               rest
               base-names
+              resolve-names
               base-cache
               target-module
               target-module-id
               next-module)]
           [_
-            (lower-function-body-local-names-in-module
+            (lower-function-body-local-names-in-module-resolve
               rest
               (if (= module-id target-module-id)
-                (lower-name-env-add-local-decl
+                (lower-name-env-add-local-decl-resolve
                   base-names
+                  resolve-names
                   base-cache
                   target-module
                   decl)
                 base-names)
+              resolve-names
               base-cache
               target-module
               target-module-id
               module-id)]))]))
 
+;; #3786: build a small per-module overlay name cache holding only the module's
+;; import aliases + local decl names; misses fall through to the shared global
+;; cache `lower-active-global-name-cache` (set by the prune body-index pass).
+;; Was O(modules x global-names): a fresh full cache was rebuilt per module.
 (define (lower-function-body-name-cache-for-module
   [decls : AstDeclList]
   [_paths : AstDeclPathList]
@@ -5344,9 +5361,16 @@
           base-names
           base-cache
           module)]
-      (lower-name-cache-from-env
-        (lower-function-body-local-names-in-module
+      [alias-only-names : LowerNameEnv
+        (lower-name-env-with-import-aliases-in-module-cache
           decls
+          (LowerNameNil)
+          base-cache
+          module)]
+      (lower-name-cache-overlay
+        (lower-function-body-local-names-in-module-resolve
+          decls
+          alias-only-names
           module-base-names
           base-cache
           module
@@ -6070,6 +6094,15 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        ;; #3786: publish the whole-program global name cache so the per-module
+        ;; body name-cache overlays built inside lower-function-body-index-from-decls
+        ;; (and resolved during lower-reach-process below) can fall through to it.
+        [_set-global : unit
+          (begin
+            (set!
+              lower-active-global-name-cache
+              (lower-name-cache-from-env names))
+            unit)]
         [all-functions : StringI64Map
           (lower-function-set-from-decls decls paths entry-path)]
         [body-index : LowerFunctionBodyIndex
@@ -36978,7 +37011,7 @@
       ;; are small overlays that fall through to them. The initial cur caches are
       ;; empty overlays (everything resolves via the global caches) for decls in
       ;; the leading "" module before the first (module ...) marker.
-      (set! lower-decls-global-name-cache (lower-name-cache-from-env names))
+      (set! lower-active-global-name-cache (lower-name-cache-from-env names))
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
       (lower-decls-in-module
         ctx

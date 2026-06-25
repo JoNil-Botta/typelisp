@@ -21,9 +21,18 @@
   (LowerNameNil)
   (LowerNameBind String String (Box LowerNameEnv)))
 
+;; Mirrors LowerTypeParent below: whole-program name resolution is stable within
+;; a lower pass, while each module only needs a small overlay for its unqualified
+;; locals/import aliases. A global parent avoids rebuilding all names at every
+;; module boundary.
+(defenum LowerNameParent
+  (LowerNameParentNone)
+  (LowerNameParentGlobal))
+
 (defstruct LowerNameCache
   (ids StringI64Map)
-  (values (Array String)))
+  (values (Array String))
+  (parent LowerNameParent))
 
 ;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
 ;; is a complete cache (a miss = unbound). `LowerTypeParentGlobal` marks a small
@@ -49,6 +58,11 @@
 ;; here on a miss. Set by lower-decls before the per-module loop runs.
 (define lower-decls-global-type-cache : LowerTypeCache
   (LowerNoTypeCache))
+(define lower-decls-global-name-cache : LowerNameCache
+  (LowerNameCache
+    (string-i64-map-with-capacity 8)
+    (make-array String 0)
+    (LowerNameParentNone)))
 
 (defenum LowerStringSet
   (LowerStringNil)
@@ -634,6 +648,7 @@
   (let
     [ids : StringI64Map (struct-get cache ids)]
     [values : (Array String) (struct-get cache values)]
+    [parent : LowerNameParent (struct-get cache parent)]
     (match (string-i64-map-get ids source-name)
       [(StringI64MapFound _) cache]
       [(StringI64MapMissing)
@@ -641,7 +656,10 @@
           [next : i64 (string-i64-map-len ids)]
           (begin
             (array-set! values next logical-name)
-            (LowerNameCache (string-i64-map-put ids source-name next) values)))])))
+            (LowerNameCache
+              (string-i64-map-put ids source-name next)
+              values
+              parent)))])))
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
@@ -653,21 +671,34 @@
         (box-get rest)
         (lower-name-cache-add cache source logical))]))
 
-(define (lower-name-cache-from-env [names : LowerNameEnv]) : LowerNameCache
+(define (lower-name-cache-from-env-parent
+  [names : LowerNameEnv]
+  [parent : LowerNameParent]) : LowerNameCache
   (let
     [count : i64 (lower-name-env-count names)]
     (lower-name-cache-from-env-into
       names
       (LowerNameCache
         (string-i64-map-with-capacity (lower-name-cache-capacity count))
-        (make-array String count)))))
+        (make-array String count)
+        parent))))
+
+(define (lower-name-cache-from-env [names : LowerNameEnv]) : LowerNameCache
+  (lower-name-cache-from-env-parent names (LowerNameParentNone)))
+
+(define (lower-name-cache-overlay [names : LowerNameEnv]) : LowerNameCache
+  (lower-name-cache-from-env-parent names (LowerNameParentGlobal)))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
   [source-name : String]) : String
   (match (string-i64-map-get (struct-get cache ids) source-name)
     [(StringI64MapFound index) (array-ref (struct-get cache values) index)]
-    [(StringI64MapMissing) source-name]))
+    [(StringI64MapMissing)
+      (match (struct-get cache parent)
+        [(LowerNameParentNone) source-name]
+        [(LowerNameParentGlobal)
+          (lower-name-cache-resolve lower-decls-global-name-cache source-name)])]))
 
 (define (lower-name-cache-resolve-dotted
   [cache : LowerNameCache]
@@ -2183,7 +2214,7 @@
         [name-str : String (intern-str name)]
         (LowerNameBind
           name-str
-          (lower-current-decl-logical-name names module name-str)
+          (lower-current-decl-logical-name-cache name-cache module name-str)
           (box names)))]
     [(AstDeclExtern name _ _ _)
       (let
@@ -2459,7 +2490,7 @@
           [module-names : LowerNameEnv
             (lower-name-env-with-import-aliases-in-module-cache
               decls
-              names
+              LowerNameNil
               name-cache
               module)]
           (lower-module-local-envs-list
@@ -5261,7 +5292,7 @@
   [decls : AstDeclList]
   [_paths : AstDeclPathList]
   [_entry-path : String]
-  [base-names : LowerNameEnv]
+  [_base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [module : String]) : LowerNameCache
   (if (string-eq module "")
@@ -5270,10 +5301,10 @@
       [module-base-names : LowerNameEnv
         (lower-name-env-with-import-aliases-in-module-cache
           decls
-          base-names
+          LowerNameNil
           base-cache
           module)]
-      (lower-name-cache-from-env
+      (lower-name-cache-overlay
         (lower-function-body-local-names-in-module
           decls
           module-base-names
@@ -5480,17 +5511,19 @@
   [count : i64]) : LowerFunctionBodyIndex
   (let
     [name-cache : LowerNameCache (lower-name-cache-from-env names)]
-    (lower-function-body-index-from-decls-in-module
-      decls
-      paths
-      entry-path
-      ""
-      decls
-      paths
-      names
-      name-cache
-      name-cache
-      (lower-function-body-index-empty count))))
+    (begin
+      (set! lower-decls-global-name-cache (lower-name-cache-from-env names))
+      (lower-function-body-index-from-decls-in-module
+        decls
+        paths
+        entry-path
+        ""
+        decls
+        paths
+        names
+        name-cache
+        name-cache
+        (lower-function-body-index-empty count)))))
 
 (define (lower-reach-process
   [all-functions : StringI64Map]
@@ -35997,6 +36030,7 @@
         "<source>"
         dispatch-name-cache)]
     (begin
+      (set! lower-decls-global-name-cache (lower-name-cache-from-env names))
       ;; #3759: build the shared global type cache once; per-module caches are
       ;; small overlays that fall through to it. The initial cur-type-cache is an
       ;; empty overlay (everything resolves via the global cache) for decls in
@@ -36317,7 +36351,7 @@
                           (set! cur-local-top-env next-local-top-env)
                           (set!
                             cur-name-cache
-                            (lower-name-cache-from-env local-names))
+                            (lower-name-cache-overlay local-names))
                           ;; #3759: overlay just this module's local type
                           ;; bindings; misses fall through to the shared global
                           ;; type cache (set once from top-env) instead of

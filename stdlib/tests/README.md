@@ -197,8 +197,9 @@ Inline stdlib coverage:
   accessors, vector-backed env override construction, validation,
   duplicate-name order, list conversion, and result/error predicates.
 - `sync.tl` owns inline tests for invalid bounded channel capacities and raw
-  handle field-count constants. Native blocking send/recv and mutex behavior
-  remains in `sync_api.tl`.
+  handle field-count constants. Native blocking send/recv, generated
+  `(channel i64)` module use, duplicate module identity, and mutex behavior
+  remain in `sync_api.tl`.
 - `thread.tl` owns inline tests for worker-count shape, deterministic affinity
   helper math, and invalid semaphore creation. Native spawn/join behavior
   remains in `thread_api.tl`.

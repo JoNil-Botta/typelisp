@@ -1,36 +1,49 @@
 (import stdlib.arena)
 (import stdlib.sync)
+(import (sync.channel i64) as channel_i64)
+(import (sync.channel i64) as channel_i64_again)
 (import stdlib.string)
 
 (define (sync-api-create-rejects-invalid?) : bool
   (and
-    (not (sync.channel-i64-create-capacity-ok? 0))
-    (not
-      (sync.channel-i64-create-capacity-ok? (+ sync.channel-i64-max-capacity 1)))
+    (not (channel_i64.create-capacity-ok? 0))
+    (not (channel_i64.create-capacity-ok? (+ (channel_i64.max-capacity) 1)))
     (not (sync.channel-string-create-capacity-ok? 0))
     (not
-      (sync.channel-string-create-capacity-ok?
-        (+ sync.channel-i64-max-capacity 1)))))
+      (sync.channel-string-create-capacity-ok? (+ (channel_i64.max-capacity) 1)))))
 
-(define (sync-api-run-channel [channel : sync.ChannelI64]) : i64
+(define (sync-api-empty-i64-channel) : channel_i64.Channel
   (let
-    [packed : (Array i64) (make-array i64 sync.channel-i64-raw-field-count)]
+    [raw : (Array i64) (make-array i64 (channel_i64.raw-field-count))]
+    (channel_i64.load-raw raw 0)))
+
+(define (sync-api-duplicate-channel-score
+  [_channel : channel_i64_again.Channel]) : i64
+  (if (= (channel_i64_again.raw-field-count) (channel_i64.raw-field-count))
+    42
+    0))
+
+(define (sync-api-run-channel [channel : channel_i64.Channel]) : i64
+  (let
+    [packed : (Array i64) (make-array i64 (channel_i64.raw-field-count))]
     (begin
-      (sync.channel-i64-store-raw! channel packed 0)
+      (channel_i64.store-raw! channel packed 0)
       (let
-        [loaded : sync.ChannelI64 (sync.channel-i64-load-raw packed 0)]
-        [send-a : bool (sync.channel-i64-send-value-ok? loaded 11)]
-        [send-b : bool (sync.channel-i64-send-value-ok? loaded 31)]
-        [first : i64 (sync.channel-i64-recv-or loaded -1)]
-        [send-c : bool (sync.channel-i64-send-value-ok? loaded 43)]
-        [second : i64 (sync.channel-i64-recv-or loaded -1)]
-        [third : i64 (sync.channel-i64-recv-or loaded -1)]
-        [closed : bool (sync.channel-i64-close loaded)]
+        [loaded : channel_i64.Channel (channel_i64.load-raw packed 0)]
+        [send-a : bool (channel_i64.send-value-ok? loaded 11)]
+        [send-b : bool (channel_i64.send-value-ok? loaded 31)]
+        [first : i64 (channel_i64.recv-or loaded -1)]
+        [send-c : bool (channel_i64.send-value-ok? loaded 43)]
+        [second : i64 (channel_i64.recv-or loaded -1)]
+        [third : i64 (channel_i64.recv-or loaded -1)]
+        [dedup : i64 (sync-api-duplicate-channel-score loaded)]
+        [closed : bool (channel_i64.close loaded)]
         (if (and
           send-a
           send-b
           send-c
           closed
+          (= dedup 42)
           (= first 11)
           (= second 31)
           (= third 43))
@@ -190,8 +203,8 @@
 
 (define (sync-api-run-channel-create) : i64
   (let
-    [channel : sync.ChannelI64
-      (sync.channel-i64-create-capacity-or 2 (sync.ChannelI64 0 0 0 0 0 0 0))]
+    [channel : channel_i64.Channel
+      (channel_i64.create-capacity-or 2 (sync-api-empty-i64-channel))]
     [channel-code : i64 (sync-api-run-channel channel)]
     (if (not (= channel-code 42))
       channel-code

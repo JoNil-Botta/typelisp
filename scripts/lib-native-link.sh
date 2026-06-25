@@ -18,17 +18,13 @@
 # compiler needs a generous stack to self-compile on Windows (a 16MB reserve
 # STATUS_STACK_OVERFLOWs; 64MB sufficed for cli.tl). #2357: making local
 # struct/enum aggregates inline-by-value enlarged the per-frame footprint of
-# those recursive descents. The deepest scenario is an unoptimised whole-program
-# build (`typelisp build --opt-level 0` of the root package, which skips DCE so
-# functions carry their full IR through the backend's recursive descent); that
-# peaks between 512MB and 1GB of stack. The bootstrap fixpoint (compile.tl at
-# -O1) peaks near ~384MB. We reserve 1GB for headroom across both. The reserve
-# is virtual address space, not committed RAM (it commits lazily up to the
-# recursion's actual peak), so the larger reserve costs no resident memory until
-# the deep descent needs it. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# those recursive descents. #2599 moved the large declaration walks out of native
+# recursion; current selfhost Windows builds pass the compiler smoke workloads
+# with a 48MB reserve, so the default keeps 64MB of headroom. Override with
+# TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
-NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-1073741824}
+NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-67108864}
 TYPELISP_WINDOWS_LINK_POSIX=
 TYPELISP_WINDOWS_CLANG_POSIX=
 

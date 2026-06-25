@@ -7829,11 +7829,15 @@
                 (compiler-backend-value-scalar-register assignments rhs)]
               [lhs-reg : String
                 (compiler-backend-value-scalar-register assignments lhs)]
+              ;; Exclude dst-home + lhs-reg: at this point the dst is not yet live
+              ;; (so the query reads its home "free") and lhs goes into dst-home,
+              ;; so the rhs scratch must avoid both or it collides (e.g. subq
+              ;; %r8,%r8). Uses the emission's own homes (authoritative).
               [scav-rhs : String
                 (compiler-backend-scavenge-reg
                   dst
-                  (compiler-backend-binop-scavenge-exclude-build)
-                  5
+                  (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
+                  7
                   "%r8")]
               (if (if (string-eq mnem "addq")
                 (if (string-eq lhs-reg "")
@@ -9521,10 +9525,13 @@
       [(OkCompilerBackend base-asm)
         (let
           [scale : i64 (compiler-backend-type-size elem-ty)]
+          ;; Exclude base + src homes: src (and a loop-invariant base) are live
+          ;; across this copy but the liveness query may not see their registers
+          ;; occupied at the scavenge point, so the index scratch could clobber them.
           [scav-idx : String
             (compiler-backend-scavenge-reg-here
-              (compiler-backend-binop-scavenge-exclude-build)
-              5
+              (compiler-backend-scavenge-exclude-ops2 assignments base src)
+              7
               "%r8")]
           (match (compiler-backend-value-as-i64 offset)
             [(CompilerBackendSomeI64 n)
@@ -22558,6 +22565,63 @@
       (array-set! a 4 "%r11")
       a)))
 
+;; Append one register to an exclude array (returns a fresh size-(n+1) array).
+(define (compiler-backend-scavenge-exclude-append
+  [exclude : (Array String)]
+  [n : i64]
+  [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String (+ n 1))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! a i (array-ref exclude i))
+          (set! i (+ i 1))))
+      (array-set! a n extra)
+      a)))
+
+;; Exclude set = the HW-fixed regs PLUS the home registers of two source operands.
+;; Robustly prevents a scavenged scratch from clobbering an operand whose value is
+;; needed by THIS instruction (e.g. a loop-invariant base/src whose register the
+;; liveness query may not see occupied at the scavenge point). Non-register-homed
+;; operands map to "%rax" (already excluded), a harmless no-op. n = 7.
+(define (compiler-backend-scavenge-exclude-ops2
+  [assignments : CompilerRegAssignmentList]
+  [v1 : CompilerIrValue]
+  [v2 : CompilerIrValue]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 7)]
+    [h1 : String (compiler-backend-value-scalar-register assignments v1)]
+    [h2 : String (compiler-backend-value-scalar-register assignments v2)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 (if (string-eq h1 "") "%rax" h1))
+      (array-set! a 6 (if (string-eq h2 "") "%rax" h2))
+      a)))
+
+;; Exclude set = HW-fixed regs PLUS two given register names (caller already knows
+;; them, e.g. the emission's dst-home + an operand's home reg). "" maps to "%rax"
+;; (already excluded). n = 7.
+(define (compiler-backend-scavenge-exclude-regs2
+  [r1 : String]
+  [r2 : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 7)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 (if (string-eq r1 "") "%rax" r1))
+      (array-set! a 6 (if (string-eq r2 "") "%rax" r2))
+      a)))
+
 ;; Callee-saved pool registers: usable as transient scratch ONLY if the function
 ;; already saves them (some var is assigned to them), so the prologue preserves
 ;; the caller's value across our transient clobber.
@@ -22727,35 +22791,51 @@
     [assignments : CompilerRegAssignmentList
       compiler-backend-scavenge-ctx-assignments]
     [vars : i64 compiler-backend-scavenge-ctx-vars]
-    (if (or (< dst-var 0) (>= dst-var vars))
-      fallback
-      (let
-        [point : i64 (array-ref starts dst-var)]
-        (if (< point 0)
-          fallback
-          (let
-            [reg : String
-              (compiler-backend-scavenge-pick
-                starts
-                ends
-                assignments
-                vars
-                point
-                exclude
-                exclude-n
-                fallback)]
-            (begin
-              (cfg
-                scavenge-self-check
-                (compiler-backend-scavenge-freeness-check!
-                  starts
-                  ends
-                  assignments
-                  vars
-                  point
-                  reg)
-                unit)
-              reg)))))))
+    ;; Query at the emit POSITION (2*position), where this instruction's operands
+    ;; are still live (their uses extend their intervals to this point) -- NOT
+    ;; starts[dst]. For a FUSED gep-load, starts[dst] is the load's def point, one
+    ;; instruction past the gep's operands, so a live operand (e.g. a loop-invariant
+    ;; base) reads "free" and the scratch clobbers it. Same coordinate as
+    ;; scavenge-reg-here. Exclude the dst home (not live yet at this point) so the
+    ;; scratch never overwrites the result register.
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [dst-home : String
+      (if (and (>= dst-var 0) (< dst-var vars))
+        (compiler-backend-var-register-home assignments dst-var)
+        "")]
+    [ex : (Array String)
+      (if (string-eq dst-home "")
+        exclude
+        (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
+    [ex-n : i64
+      (if (string-eq dst-home "") exclude-n (+ exclude-n 1))]
+    [reg : String
+      (compiler-backend-scavenge-pick
+        starts
+        ends
+        assignments
+        vars
+        point
+        ex
+        ex-n
+        fallback)]
+    (begin
+      (cfg
+        scavenge-self-check
+        (compiler-backend-scavenge-freeness-check!
+          starts
+          ends
+          assignments
+          vars
+          point
+          reg)
+        unit)
+      reg)))
 
 ;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
 ;; per-instruction position (post-base - length(current-instrs)) instead of a dst
@@ -23169,11 +23249,16 @@
             emit-blocks-list
             program-index)]
         [_scavenge-install-ctx : unit
+          ;; Use remat-vars (the FULL var count the assignments are sized for), NOT
+          ;; slot-vars (the compacted stack-slot count): register-homed vars keep
+          ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
+          ;; free-register query would false-free their registers (e.g. a pooled %r8
+          ;; holding a register var).
           (compiler-backend-scavenge-install-ctx!
             name
             params
             ret-ty
-            slot-vars
+            remat-vars
             emit-blocks-list
             assignments)]
         [_scavenge-self-check : unit

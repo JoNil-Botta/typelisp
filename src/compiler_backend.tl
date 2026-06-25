@@ -8718,26 +8718,33 @@
                       true-jcc
                       false-jcc))))]
             [(CompilerBackendNoImmediate)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                rhs
-                "%r8")
-                [(OkCompilerBackend rhs-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      ptr-asm
+              (let
+                [scav-rhs : String
+                  (compiler-backend-scavenge-reg-here
+                    (compiler-backend-binop-scavenge-exclude-build)
+                    5
+                    "%r8")]
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  rhs
+                  scav-rhs)
+                  [(OkCompilerBackend rhs-asm)
+                    (OkCompilerBackend
                       (string-append
-                        rhs-asm
+                        ptr-asm
                         (string-append
-                          (compiler-backend-emit-compare-memory-flags "%r8")
-                          (compiler-backend-emit-compare-branch-jumps
-                            function
-                            true-label
-                            false-label
-                            fallthrough
-                            true-jcc
-                            false-jcc)))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                          rhs-asm
+                          (string-append
+                            (compiler-backend-emit-compare-memory-flags
+                              scav-rhs)
+                            (compiler-backend-emit-compare-branch-jumps
+                              function
+                              true-label
+                              false-label
+                              fallthrough
+                              true-jcc
+                              false-jcc)))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
@@ -8787,29 +8794,35 @@
                             true-jcc
                             false-jcc))))]
                   [(CompilerBackendNoImmediate)
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      rhs
-                      "%r8")
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            base-asm
+                    (let
+                      [scav-rhs : String
+                        (compiler-backend-scavenge-reg-here
+                          (compiler-backend-binop-scavenge-exclude-build)
+                          5
+                          "%r8")]
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        rhs
+                        scav-rhs)
+                        [(OkCompilerBackend rhs-asm)
+                          (OkCompilerBackend
                             (string-append
-                              rhs-asm
+                              base-asm
                               (string-append
-                                (compiler-backend-emit-compare-memory-address-flags
-                                  "%r8"
-                                  addr)
-                                (compiler-backend-emit-compare-branch-jumps
-                                  function
-                                  true-label
-                                  false-label
-                                  fallthrough
-                                  true-jcc
-                                  false-jcc)))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])]
+                                rhs-asm
+                                (string-append
+                                  (compiler-backend-emit-compare-memory-address-flags
+                                    scav-rhs
+                                    addr)
+                                  (compiler-backend-emit-compare-branch-jumps
+                                    function
+                                    true-label
+                                    false-label
+                                    fallthrough
+                                    true-jcc
+                                    false-jcc)))))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)]))])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
         [(CompilerBackendNoI64)
           (ErrCompilerBackend
@@ -21503,6 +21516,13 @@
 (define compiler-backend-emit-instr-post-base : i64
   0)
 
+;; The remaining-instruction count at the current emit step, captured per step so
+;; the no-dst scavenge (compiler-backend-scavenge-reg-here) can derive its point =
+;; 2*(post-base - count). Stored as a count, not the list, because the list is a
+;; loop-carried owner value that cannot be moved into a global. No asm output.
+(define compiler-backend-emit-current-count : i64
+  0)
+
 (define (compiler-backend-emit-instrs-loop
   [target : CompilerBackendTarget]
   [function : String]
@@ -21539,6 +21559,9 @@
         (let
           [step-result : ResultCompilerBackend
             (begin
+              (set!
+                compiler-backend-emit-current-count
+                (compiler-ir-instr-list-count current-instrs))
               (cfg
                 scavenge-self-check
                 (match current-instrs
@@ -22395,6 +22418,38 @@
               fallback))
             fallback
             fallback))))))
+
+;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
+;; per-instruction position (post-base - length(current-instrs)) instead of a dst
+;; var's def point -- for instructions that define no variable (compare-branch,
+;; GEP store/copy, etc.). Returns `fallback` until the fallback register is pooled.
+(define (compiler-backend-scavenge-reg-here
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (let
+    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [vars : i64 compiler-backend-scavenge-ctx-vars]
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    (if (and
+      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+      (compiler-backend-scavenge-free-at-point?
+        starts
+        ends
+        assignments
+        vars
+        point
+        fallback))
+      fallback
+      fallback)))
 
 ;; Self-check one instruction at `point` (= 2*global-index): every var it USES
 ;; must (a) have a live interval covering `point` -- which validates the walk

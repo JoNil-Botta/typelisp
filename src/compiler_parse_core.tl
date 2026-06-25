@@ -247,11 +247,17 @@
 (define (compiler-cfg-key [name : String]) : String
   (string-append "cfg:" name))
 
+(define (compiler-cfg-private-dynamic-buffer-key) : String
+  "cfg:feature-compiler-private-dynamic-buffer")
+
 (define (compiler-cfg-empty) : SymI64Env
   (sym-i64-empty))
 
 (define (compiler-cfg-enable [cfgs : SymI64Env] [name : String]) : SymI64Env
   (sym-i64-bind cfgs (compiler-cfg-key name) 1))
+
+(define (compiler-cfg-enable-private-dynamic-buffer [cfgs : SymI64Env]) : SymI64Env
+  (sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))
 
 (define (compiler-cfg-merge [base : SymI64Env] [cfgs : SymI64Env]) : SymI64Env
   (match cfgs
@@ -264,6 +270,9 @@
 
 (define (compiler-cfg-enabled? [dispatch : SymI64Env] [name : String]) : bool
   (sym-i64-contains dispatch (compiler-cfg-key name)))
+
+(define (compiler-cfg-private-dynamic-buffer-enabled? [cfgs : SymI64Env]) : bool
+  (sym-i64-contains cfgs (compiler-cfg-private-dynamic-buffer-key)))
 
 (define (compiler-cfg-eval-list-all
   [dispatch : SymI64Env]
@@ -825,6 +834,9 @@
         (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
       out)))
 
+(define (compiler-parse-dispatch-private-types [e : SymI64Env]) : SymI64Env
+  (compiler-cfg-enable-private-dynamic-buffer e))
+
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
   (let
     [out : SymI64Env e]
@@ -1359,21 +1371,26 @@
                       [_ (ErrAstType "parse: malformed array type")])]
                   [_ (ErrAstType "parse: malformed array type")])]
               [(= tag (compiler-parse-tag-ty-dyn-array))
-                (match rest
-                  [(SCons elem tail)
-                    (match (box-get tail)
-                      [(SNil)
-                        (match (parse-ast-type dispatch pools (box-get elem))
-                          [(OkAstType elem-ty)
-                            (OkAstType
-                              (ast-ty-dyn-array-with-pools pools elem-ty))]
-                          [(ErrAstType message) (ErrAstType message)])]
-                      [_
-                        (ErrAstType
-                          "parse: __tl_dyn-array expects exactly one type")])]
-                  [_
-                    (ErrAstType
-                      "parse: __tl_dyn-array expects exactly one type")])]
+                (if (not
+                  (compiler-cfg-private-dynamic-buffer-enabled? dispatch))
+                  (ErrAstType
+                    (compiler-parse-generic-type-policy-message
+                      "__tl_dyn-array"))
+                  (match rest
+                    [(SCons elem tail)
+                      (match (box-get tail)
+                        [(SNil)
+                          (match (parse-ast-type dispatch pools (box-get elem))
+                            [(OkAstType elem-ty)
+                              (OkAstType
+                                (ast-ty-dyn-array-with-pools pools elem-ty))]
+                            [(ErrAstType message) (ErrAstType message)])]
+                        [_
+                          (ErrAstType
+                            "parse: __tl_dyn-array expects exactly one type")])]
+                    [_
+                      (ErrAstType
+                        "parse: __tl_dyn-array expects exactly one type")]))]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match rest
                   [(SCons elem tail)
@@ -6539,7 +6556,9 @@
   (compiler-parse-dispatch-env))
 
 (define (parse-ast-program-dispatch-with-cfg [cfgs : SymI64Env]) : SymI64Env
-  (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs))
+  (match cfgs
+    [(SymI64Nil) (compiler-parse-dispatch-env)]
+    [_ (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)]))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array SpannedToken)]
@@ -7346,6 +7365,14 @@
 ;; messages so a regression that drops or relabels an error is caught (#655).
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
+    [(ErrAstProgram message) (string-eq message want)]
+    [(OkAstProgram _) false]))
+
+(define (compiler-parse-error-ok-with-cfg?
+  [src : String]
+  [cfgs : SymI64Env]
+  [want : String]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
     [(ErrAstProgram message) (string-eq message want)]
     [(OkAstProgram _) false]))
 
@@ -9114,6 +9141,11 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
+    [(OkAstProgram _) true]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-cfg-decl-count-ok?
   [src : String]
   [cfgs : SymI64Env]
@@ -9336,21 +9368,31 @@
       "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
-  (and
-    (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
-    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
-    (compiler-parse-ok?
-      "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
-    (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
-      "parse: __tl_dyn-array expects exactly one type")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (type))"
-      "parse: type expects exactly one type")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (type i64 bool))"
-      "parse: type expects exactly one type")))
+  (let
+    [private-cfg : SymI64Env
+      (compiler-cfg-enable
+        (compiler-cfg-empty)
+        "feature-compiler-private-dynamic-buffer")]
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+      (compiler-parse-ok-with-cfg?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
+        private-cfg)
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+      (compiler-parse-error-ok-with-cfg?
+        "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
+        private-cfg
+        "parse: __tl_dyn-array expects exactly one type")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (type))"
+        "parse: type expects exactly one type")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (type i64 bool))"
+        "parse: type expects exactly one type"))))
 
 ;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
 ;; multi-expression body, nested region) and rejects missing binder,
@@ -9961,10 +10003,6 @@
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42
-          (begin
-            (panic "parse: error-path self-tests failed")))
-        (begin
-          (panic "parse: compiler AST smoke score mismatch")))]
-    [(ErrAstProgram message)
-      (begin
-        (panic message))]))
+          (panic "parse: error-path self-tests failed"))
+        (panic "parse: compiler AST smoke score mismatch"))]
+    [(ErrAstProgram message) (panic message)]))

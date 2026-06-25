@@ -9,12 +9,11 @@
     [found : bool false]
     (begin
       (while (< idx (string-vec-len items))
-        (begin
-          (if (string.string-eq (string-vec-get items idx "") needle)
-            (begin
-              (set! found true)
-              (set! idx (string-vec-len items)))
-            (set! idx (+ idx 1)))))
+        (if (string.string-eq (string-vec-get items idx "") needle)
+          (begin
+            (set! found true)
+            (set! idx (string-vec-len items)))
+          (set! idx (+ idx 1))))
       found)))
 
 (define (lsp-completion-smoke-ok?) : bool
@@ -123,6 +122,7 @@
           [size : i64 (tc-inlay-hints-size)]
           [i : i64 0]
           [found-ok : bool false]
+          [near-ok : bool false]
           (begin
             (while (and (< i size) (not found-ok))
               (let
@@ -135,8 +135,15 @@
                     (set! found-ok (string-eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
+            (let
+              [near-idx : i64 (lsp-nearest-inlay-hint-index 1 (+ total-off 3))]
+              (if (>= near-idx 0)
+                (set!
+                  near-ok
+                  (string-eq (tc-inlay-hint-type-at near-idx) "i32"))
+                unit))
             (tc-inlay-hints-disable!)
-            found-ok))))))
+            (and found-ok near-ok)))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let
@@ -162,8 +169,7 @@
     [src : String
       "; first comment line\n; second comment line\n; third comment line\n(define b : i64 2)"]
     [decls : LspDeclList (lsp-scan-decls src)]
-    [entry : LspDeclEntry
-      (lsp-decl-list-get decls 0 (lsp-decl-entry-fallback))]
+    [entry : LspDeclEntry (lsp-decl-list-get decls 0 (lsp-decl-entry-fallback))]
     (and
       (= (lsp-decl-list-len first) 1)
       (= (lsp-decl-list-len decls) 1)

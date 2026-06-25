@@ -137,16 +137,23 @@
   (compiler-symbol-map-bind-id map (compiler-symbol-name-key-id name) handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclImport _) (compiler-decl-list-index-count rest)]
-          [(AstDeclModule _) (compiler-decl-list-index-count rest)]
-          [(AstDeclTest _ _ _) (compiler-decl-list-index-count rest)]
-          [_ (+ 1 (compiler-decl-list-index-count rest))]))]))
+  (let
+    [cursor : AstDeclList decls]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons decl rest)
+            (begin
+              (match decl
+                [(AstDeclImport _) unit]
+                [(AstDeclModule _) unit]
+                [(AstDeclTest _ _ _) unit]
+                [_ (set! count (+ count 1))])
+              (set! cursor (box-get rest)))]))
+      count)))
 
 (define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
   (CompilerSymbols
@@ -1420,8 +1427,9 @@
         (compiler-symbols-remove-decl-macro-alias symbols inner index))]
     [_ symbols]))
 
-;; An explicit `module ... as alias` import should expose macros as `alias/name`
-;; without leaving the module's legacy bare macro alias in the importer.
+;; An explicit `module ... as alias` import resolves dotted uses through the
+;; import target directly. It should not leave the module's legacy bare macro
+;; alias in the importer.
 (define (compiler-symbols-remove-module-macro-aliases-list
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
@@ -1471,8 +1479,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-symbols-remove-decl-macro-alias symbols decl index)
                   symbols)]
               (compiler-symbols-remove-module-macro-aliases-list
@@ -1548,8 +1557,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-symbols : CompilerSymbols
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-symbols-add-decl-alias-in-module
                     symbols
                     alias
@@ -1603,14 +1613,19 @@
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)
                   _))
-              (compiler-symbols-add-module-aliases
-                (compiler-symbols-remove-module-macro-aliases
-                  symbols
-                  all-decls
-                  target-module)
-                all-decls
-                target-module
-                (compiler-symbols-import-alias-key module alias))]
+              (let
+                [without-bare-macros : CompilerSymbols
+                  (compiler-symbols-remove-module-macro-aliases
+                    symbols
+                    all-decls
+                    target-module)]
+                (if (string-eq alias "")
+                  (compiler-symbols-add-module-aliases
+                    without-bare-macros
+                    all-decls
+                    target-module
+                    (compiler-symbols-import-alias-key module alias))
+                  without-bare-macros))]
             [_ symbols])]
         (match decl
           [(AstDeclModule next-module)
@@ -1800,6 +1815,8 @@
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclExtern name _ _ _)
       (compiler-symbol-module-key module (intern-str name))]
+    [(AstDeclDefMacro name _ _ _)
+      (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefDispatch name _)
       (compiler-symbol-module-key module (intern-str name))]
     [(AstDeclDefEnum name _ _)
@@ -1913,98 +1930,94 @@
   [symbols : CompilerSymbols]
   [index : i64]
   [module : String]) : ResultCompilerSymbols
-  (match decls
-    [(AstDeclNil) (OkCompilerSymbols symbols)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclImport _)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              module)]
-          [(AstDeclModule next-module)
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-symbols : CompilerSymbols symbols]
+    [cur-index : i64 index]
+    [cur-module : String module]
+    [result : ResultCompilerSymbols
+      (ErrCompilerSymbols "symbols: internal decls walk")]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set! result (OkCompilerSymbols cur-symbols))
+              (set! done true))]
+          [(AstDeclCons decl rest)
             (let
-              [next-module-name : String (intern-str next-module)]
-              (build-compiler-symbol-list-with-paths-in-module
-                all-decls
-                all-paths
-                rest
-                rest-paths
-                symbols
-                index
-                next-module-name))]
-          [(AstDeclTest _ _ _)
-            (build-compiler-symbol-list-with-paths-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              symbols
-              index
-              module)]
-          [_
-            (match (compiler-symbols-duplicate-value-message-for-decl-with-paths
-              symbols
-              all-decls
-              all-paths
-              module
-              decl
-              index
-              decl-path)
-              [(CompilerSomeString message) (ErrCompilerSymbols message)]
-              [CompilerNoString
-                (begin
-                  (compiler-symbols-index-decl! symbols decl index module)
-                  (match (compiler-symbols-add-decl-in-module
-                    symbols
-                    module
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclImport _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclIncludeStr _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclIncludeBin _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths)
+                    (set! cur-module (intern-str next-module)))]
+                [(AstDeclTest _ _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [_
+                  (match (compiler-symbols-duplicate-value-message-for-decl-with-paths
+                    cur-symbols
+                    all-decls
+                    all-paths
+                    cur-module
                     decl
-                    index)
-                    [(OkCompilerSymbols next-symbols)
-                      (build-compiler-symbol-list-with-paths-in-module
-                        all-decls
-                        all-paths
-                        rest
-                        rest-paths
-                        next-symbols
-                        (+ index 1)
-                        module)]
-                    [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))])]))]))
+                    cur-index
+                    decl-path)
+                    [(CompilerSomeString message)
+                      (begin
+                        (set! result (ErrCompilerSymbols message))
+                        (set! done true))]
+                    [CompilerNoString
+                      (begin
+                        (compiler-symbols-index-decl!
+                          cur-symbols
+                          decl
+                          cur-index
+                          cur-module)
+                        (match (compiler-symbols-add-decl-in-module
+                          cur-symbols
+                          cur-module
+                          decl
+                          cur-index)
+                          [(OkCompilerSymbols next-symbols)
+                            (begin
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths)
+                              (set! cur-symbols next-symbols)
+                              (set! cur-index (+ cur-index 1)))]
+                          [(ErrCompilerSymbols message)
+                            (begin
+                              (set! result (ErrCompilerSymbols message))
+                              (set! done true))]))])]))]))
+      result)))
 
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
@@ -2359,8 +2372,9 @@
               module)]
           [_
             (let
+              [in-target : bool (string-eq module target-module)]
               [next-registries : CompilerRegistries
-                (if (string-eq module target-module)
+                (if in-target
                   (compiler-registries-add-decl-alias-in-module
                     registries
                     alias
@@ -2407,11 +2421,13 @@
                   (AstSomeModuleName target-module)
                   (AstSomeImportAlias alias)
                   _))
-              (compiler-registries-add-module-aliases
-                registries
-                all-decls
-                target-module
-                (compiler-symbols-import-alias-key module alias))]
+              (if (string-eq alias "")
+                (compiler-registries-add-module-aliases
+                  registries
+                  all-decls
+                  target-module
+                  (compiler-symbols-import-alias-key module alias))
+                registries)]
             [_ registries])]
         (match decl
           [(AstDeclModule next-module)
@@ -2519,182 +2535,186 @@
   [registries : CompilerRegistries]
   [index : i64]
   [module : String]) : ResultCompilerRegistries
-  (match decls
-    [(AstDeclNil) (OkCompilerRegistries registries)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclImport _)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              module)]
-          [(AstDeclModule next-module)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              (intern-str next-module))]
-          [(AstDeclTest _ _ _)
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              index
-              module)]
-          [(AstDeclDefEnum name _ variants)
-            (match (build-compiler-variant-registry-list-in-module
-              variants
-              registries
-              module
-              (intern-str name)
-              index
-              0)
-              [(OkCompilerRegistries next-registries)
-                (build-compiler-registry-list-in-module
-                  rest
-                  next-registries
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclDefEnumLifetimes name _ _ variants)
-            (match (build-compiler-variant-registry-list-in-module
-              variants
-              registries
-              module
-              (intern-str name)
-              index
-              0)
-              [(OkCompilerRegistries next-registries)
-                (build-compiler-registry-list-in-module
-                  rest
-                  next-registries
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclDefStruct name _ _ fields)
-            (match (build-compiler-field-registry-list
-              fields
-              registries
-              (sym-i64-empty)
-              (compiler-symbol-module-key module (intern-str name))
-              index
-              0)
-              [(OkCompilerRegistries next-registries)
-                (build-compiler-registry-list-in-module
-                  rest
-                  next-registries
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclDefStructLifetimes name _ _ _ fields)
-            (match (build-compiler-field-registry-list
-              fields
-              registries
-              (sym-i64-empty)
-              (compiler-symbol-module-key module (intern-str name))
-              index
-              0)
-              [(OkCompilerRegistries next-registries)
-                (build-compiler-registry-list-in-module
-                  rest
-                  next-registries
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclComptimeDecl _ template-box)
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-registries : CompilerRegistries registries]
+    [cur-index : i64 index]
+    [cur-module : String module]
+    [result : ResultCompilerRegistries
+      (ErrCompilerRegistries "symbols: internal registry walk")]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set! result (OkCompilerRegistries cur-registries))
+              (set! done true))]
+          [(AstDeclCons decl rest)
             (let
-              [template : AstDecl (box-get template-box)]
-              (match template
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclImport _) (set! cur-decls rest)]
+                [(AstDeclIncludeStr _ _) (set! cur-decls rest)]
+                [(AstDeclIncludeBin _ _) (set! cur-decls rest)]
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-module (intern-str next-module)))]
+                [(AstDeclTest _ _ _) (set! cur-decls rest)]
                 [(AstDeclDefEnum name _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
-                    registries
-                    module
+                    cur-registries
+                    cur-module
                     (intern-str name)
-                    index
+                    cur-index
                     0)
                     [(OkCompilerRegistries next-registries)
-                      (build-compiler-registry-list-in-module
-                        rest
-                        next-registries
-                        (+ index 1)
-                        module)]
+                      (begin
+                        (set! cur-decls rest)
+                        (set! cur-registries next-registries)
+                        (set! cur-index (+ cur-index 1)))]
                     [(ErrCompilerRegistries message)
-                      (ErrCompilerRegistries message)])]
+                      (begin
+                        (set! result (ErrCompilerRegistries message))
+                        (set! done true))])]
                 [(AstDeclDefEnumLifetimes name _ _ variants)
                   (match (build-compiler-variant-registry-list-in-module
                     variants
-                    registries
-                    module
+                    cur-registries
+                    cur-module
                     (intern-str name)
-                    index
+                    cur-index
                     0)
                     [(OkCompilerRegistries next-registries)
-                      (build-compiler-registry-list-in-module
-                        rest
-                        next-registries
-                        (+ index 1)
-                        module)]
+                      (begin
+                        (set! cur-decls rest)
+                        (set! cur-registries next-registries)
+                        (set! cur-index (+ cur-index 1)))]
                     [(ErrCompilerRegistries message)
-                      (ErrCompilerRegistries message)])]
+                      (begin
+                        (set! result (ErrCompilerRegistries message))
+                        (set! done true))])]
                 [(AstDeclDefStruct name _ _ fields)
                   (match (build-compiler-field-registry-list
                     fields
-                    registries
+                    cur-registries
                     (sym-i64-empty)
-                    (compiler-symbol-module-key module (intern-str name))
-                    index
+                    (compiler-symbol-module-key cur-module (intern-str name))
+                    cur-index
                     0)
                     [(OkCompilerRegistries next-registries)
-                      (build-compiler-registry-list-in-module
-                        rest
-                        next-registries
-                        (+ index 1)
-                        module)]
+                      (begin
+                        (set! cur-decls rest)
+                        (set! cur-registries next-registries)
+                        (set! cur-index (+ cur-index 1)))]
                     [(ErrCompilerRegistries message)
-                      (ErrCompilerRegistries message)])]
+                      (begin
+                        (set! result (ErrCompilerRegistries message))
+                        (set! done true))])]
                 [(AstDeclDefStructLifetimes name _ _ _ fields)
                   (match (build-compiler-field-registry-list
                     fields
-                    registries
+                    cur-registries
                     (sym-i64-empty)
-                    (compiler-symbol-module-key module (intern-str name))
-                    index
+                    (compiler-symbol-module-key cur-module (intern-str name))
+                    cur-index
                     0)
                     [(OkCompilerRegistries next-registries)
-                      (build-compiler-registry-list-in-module
-                        rest
-                        next-registries
-                        (+ index 1)
-                        module)]
+                      (begin
+                        (set! cur-decls rest)
+                        (set! cur-registries next-registries)
+                        (set! cur-index (+ cur-index 1)))]
                     [(ErrCompilerRegistries message)
-                      (ErrCompilerRegistries message)])]
+                      (begin
+                        (set! result (ErrCompilerRegistries message))
+                        (set! done true))])]
+                [(AstDeclComptimeDecl _ template-box)
+                  (let
+                    [template : AstDecl (box-get template-box)]
+                    (match template
+                      [(AstDeclDefEnum name _ variants)
+                        (match (build-compiler-variant-registry-list-in-module
+                          variants
+                          cur-registries
+                          cur-module
+                          (intern-str name)
+                          cur-index
+                          0)
+                          [(OkCompilerRegistries next-registries)
+                            (begin
+                              (set! cur-decls rest)
+                              (set! cur-registries next-registries)
+                              (set! cur-index (+ cur-index 1)))]
+                          [(ErrCompilerRegistries message)
+                            (begin
+                              (set! result (ErrCompilerRegistries message))
+                              (set! done true))])]
+                      [(AstDeclDefEnumLifetimes name _ _ variants)
+                        (match (build-compiler-variant-registry-list-in-module
+                          variants
+                          cur-registries
+                          cur-module
+                          (intern-str name)
+                          cur-index
+                          0)
+                          [(OkCompilerRegistries next-registries)
+                            (begin
+                              (set! cur-decls rest)
+                              (set! cur-registries next-registries)
+                              (set! cur-index (+ cur-index 1)))]
+                          [(ErrCompilerRegistries message)
+                            (begin
+                              (set! result (ErrCompilerRegistries message))
+                              (set! done true))])]
+                      [(AstDeclDefStruct name _ _ fields)
+                        (match (build-compiler-field-registry-list
+                          fields
+                          cur-registries
+                          (sym-i64-empty)
+                          (compiler-symbol-module-key
+                            cur-module
+                            (intern-str name))
+                          cur-index
+                          0)
+                          [(OkCompilerRegistries next-registries)
+                            (begin
+                              (set! cur-decls rest)
+                              (set! cur-registries next-registries)
+                              (set! cur-index (+ cur-index 1)))]
+                          [(ErrCompilerRegistries message)
+                            (begin
+                              (set! result (ErrCompilerRegistries message))
+                              (set! done true))])]
+                      [(AstDeclDefStructLifetimes name _ _ _ fields)
+                        (match (build-compiler-field-registry-list
+                          fields
+                          cur-registries
+                          (sym-i64-empty)
+                          (compiler-symbol-module-key
+                            cur-module
+                            (intern-str name))
+                          cur-index
+                          0)
+                          [(OkCompilerRegistries next-registries)
+                            (begin
+                              (set! cur-decls rest)
+                              (set! cur-registries next-registries)
+                              (set! cur-index (+ cur-index 1)))]
+                          [(ErrCompilerRegistries message)
+                            (begin
+                              (set! result (ErrCompilerRegistries message))
+                              (set! done true))])]
+                      [_
+                        (begin
+                          (set! cur-decls rest)
+                          (set! cur-index (+ cur-index 1)))]))]
                 [_
-                  (build-compiler-registry-list-in-module
-                    rest
-                    registries
-                    (+ index 1)
-                    module)]))]
-          [_
-            (build-compiler-registry-list-in-module
-              rest
-              registries
-              (+ index 1)
-              module)]))]))
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-index (+ cur-index 1)))]))]))
+      result)))
 
 (define (build-compiler-registries-with-symbols
   [program : AstProgram]
@@ -2898,6 +2918,11 @@
     [(NoneI64) 0]))
 
 (define (compiler-symbols-miss-score [found : MaybeI64]) : i64
+  (match found
+    [(NoneI64) 1]
+    [(SomeI64 _) 0]))
+
+(define (compiler-registry-miss-score [found : MaybeI64]) : i64
   (match found
     [(NoneI64) 1]
     [(SomeI64 _) 0]))
@@ -3472,10 +3497,8 @@
             [(OkCompilerRegistries registries)
               (and
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "d/get")
-                    (compiler-symbol-kind-function-define)
-                    1)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-value symbols "d/get"))
                   1)
                 (=
                   (compiler-symbol-lookup-score
@@ -3484,20 +3507,16 @@
                     1)
                   1)
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-macro symbols "d/all")
-                    (compiler-symbol-kind-defmacro)
-                    2)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-macro symbols "d/all"))
                   1)
                 (=
                   (compiler-symbols-miss-score
                     (compiler-symbols-lookup-macro symbols "all"))
                   1)
                 (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "d/Point")
-                    (compiler-symbol-kind-defstruct)
-                    4)
+                  (compiler-symbols-miss-score
+                    (compiler-symbols-lookup-type symbols "d/Point"))
                   1)
                 (=
                   (compiler-symbol-lookup-score
@@ -3506,11 +3525,8 @@
                     4)
                   1)
                 (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-variant registries "d/Some")
-                    (compiler-symbol-kind-enum-variant)
-                    3
-                    1)
+                  (compiler-registry-miss-score
+                    (compiler-registries-lookup-variant registries "d/Some"))
                   1)
                 (=
                   (compiler-registry-lookup-score
@@ -3520,14 +3536,11 @@
                     1)
                   1)
                 (=
-                  (compiler-registry-lookup-score
+                  (compiler-registry-miss-score
                     (compiler-registries-lookup-struct-field
                       registries
                       "d/Point"
-                      "x")
-                    (compiler-symbol-kind-struct-field)
-                    4
-                    0)
+                      "x"))
                   1))]
             [(ErrCompilerRegistries _) false])]
         [(ErrCompilerSymbols _) false])]
@@ -3688,14 +3701,7 @@
                     (set! ok false))
                   (if ok
                     42
-                    (begin
-                      (panic "symbols: smoke score mismatch")))))]
-            [(ErrCompilerRegistries message)
-              (begin
-                (panic message))])]
-        [(ErrCompilerSymbols message)
-          (begin
-            (panic message))])]
-    [(ErrAstProgram message)
-      (begin
-        (panic message))]))
+                    (panic "symbols: smoke score mismatch"))))]
+            [(ErrCompilerRegistries message) (panic message)])]
+        [(ErrCompilerSymbols message) (panic message)])]
+    [(ErrAstProgram message) (panic message)]))

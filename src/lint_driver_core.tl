@@ -6,7 +6,6 @@
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/io.tl")
-(import "../stdlib/list.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
@@ -238,6 +237,175 @@
         start
         source-len))))
 
+(define (selfhost-lint-span-start-index
+  [source : String]
+  [span : AstSourceSpan]) : i64
+  (+
+    (selfhost-lint-line-start-index source (struct-get span start-line))
+    (- (struct-get span start-col) 1)))
+
+(define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    (begin
+      (while (and (< j n) (not (= (string-ref source j) '\n')))
+        (set! j (+ j 1)))
+      (if (< j n)
+        (+ j 1)
+        j))))
+
+(define (selfhost-lint-skip-string [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 (+ idx 1)]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (if (= c '\\')
+            (set! j (+ j 2))
+            (if (= c '"')
+              (begin
+                (set! done true)
+                (set! j (+ j 1)))
+              (set! j (+ j 1))))))
+      j)))
+
+(define (selfhost-lint-apostrophe-char-escape? [c : char]) : bool
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
+
+(define (selfhost-lint-skip-apostrophe-char-literal
+  [source : String]
+  [idx : i64]
+  [n : i64]) : i64
+  (if (< (+ idx 1) n)
+    (let
+      [payload : char (string-ref source (+ idx 1))]
+      (cond
+        [(= payload '\\')
+          (if (and
+            (< (+ idx 3) n)
+            (selfhost-lint-apostrophe-char-escape?
+              (string-ref source (+ idx 2)))
+            (= (string-ref source (+ idx 3)) '\''))
+            (+ idx 4)
+            (+ idx 1))]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
+        [else
+          (if (and (< (+ idx 2) n) (= (string-ref source (+ idx 2)) '\''))
+            (+ idx 3)
+            (+ idx 1))]))
+    (+ idx 1)))
+
+(define (selfhost-lint-skip-ws-comments [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (cond
+            [(selfhost-lint-space? c) (set! j (+ j 1))]
+            [(= c ';') (set! j (selfhost-lint-skip-line source j n))]
+            [else (set! done true)])))
+      j)))
+
+(define (selfhost-lint-source-form-delim? [c : char]) : bool
+  (or
+    (selfhost-lint-space? c)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c ';')))
+
+(define (selfhost-lint-skip-atom [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    (begin
+      (while (and
+        (< j n)
+        (not (selfhost-lint-source-form-delim? (string-ref source j))))
+        (set! j (+ j 1)))
+      j)))
+
+(define (selfhost-lint-skip-source-group
+  [source : String]
+  [idx : i64]
+  [n : i64]) : i64
+  (let
+    [j : i64 (+ idx 1)]
+    [depth : i64 1]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (cond
+            [(= c ';') (set! j (selfhost-lint-skip-line source j n))]
+            [(= c '"') (set! j (selfhost-lint-skip-string source j n))]
+            [(= c '\'')
+              (set! j (selfhost-lint-skip-apostrophe-char-literal source j n))]
+            [(or (= c '(') (= c '['))
+              (begin
+                (set! depth (+ depth 1))
+                (set! j (+ j 1)))]
+            [(or (= c ')') (= c ']'))
+              (begin
+                (set! depth (- depth 1))
+                (set! j (+ j 1))
+                (if (<= depth 0)
+                  (set! done true)
+                  unit))]
+            [else (set! j (+ j 1))])))
+      j)))
+
+(define (selfhost-lint-skip-source-form [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 (selfhost-lint-skip-ws-comments source idx n)]
+    (if (>= j n)
+      j
+      (let
+        [c : char (string-ref source j)]
+        (cond
+          [(or (= c '(') (= c '['))
+            (selfhost-lint-skip-source-group source j n)]
+          [(= c '"') (selfhost-lint-skip-string source j n)]
+          [(= c '\'') (selfhost-lint-skip-apostrophe-char-literal source j n)]
+          [else (selfhost-lint-skip-atom source j n)])))))
+
+(define (selfhost-lint-begin-source-form-count
+  [source : String]
+  [span : AstSourceSpan]) : i64
+  (let
+    [start : i64 (selfhost-lint-span-start-index source span)]
+    [n : i64 (string-length source)]
+    [needle : String "(begin"]
+    [needle-len : i64 (string-length needle)]
+    (if (and
+      (selfhost-lint-prefix-at? source start needle)
+      (selfhost-lint-form-delim? source (+ start needle-len)))
+      (let
+        [idx : i64 (+ start needle-len)]
+        [count : i64 0]
+        [done : bool false]
+        (begin
+          (while (and (< idx n) (not done))
+            (begin
+              (set! idx (selfhost-lint-skip-ws-comments source idx n))
+              (if (>= idx n)
+                (set! done true)
+                (let
+                  [c : char (string-ref source idx)]
+                  (if (or (= c ')') (= c ']'))
+                    (set! done true)
+                    (begin
+                      (set! count (+ count 1))
+                      (set! idx (selfhost-lint-skip-source-form source idx n))))))))
+          count))
+      1)))
+
 ;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
 ;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
 ;; stops at its newline; `and`/`or` are not short-circuiting, so the `string-ref`
@@ -301,6 +469,15 @@
     (selfhost-lint-form-origin? source span "when")
     (selfhost-lint-form-origin? source span "unless")))
 
+(define (selfhost-lint-source-multiform-single-begin?
+  [source : String]
+  [finding : LintFinding]) : bool
+  (and
+    (string-eq (struct-get finding rule-id) (lint-rule-single-begin-id))
+    (>
+      (selfhost-lint-begin-source-form-count source (struct-get finding span))
+      1)))
+
 (define (selfhost-lint-filter-derived-origins-from
   [source : String]
   [items : LintFindings]
@@ -313,6 +490,7 @@
       [next : LintFindings
         (if (or
           (selfhost-lint-derived-form-origin? source (struct-get finding span))
+          (selfhost-lint-source-multiform-single-begin? source finding)
           (selfhost-lint-suppressed? source finding))
           out
           (lint-findings-add finding out))]
@@ -2059,6 +2237,27 @@
       [b : i64 (+ a 1)]
       (+ a b))))")
 
+(define (selfhost-lint-single-begin-source) : String
+  "(define (main) : i64
+  (begin 42))")
+
+(define (selfhost-lint-clean-begin-source) : String
+  "(define (main) : i64
+  (begin
+    unit
+    42))")
+
+(define (selfhost-lint-cfg-begin-source) : String
+  "(define (main) : i64
+  (begin
+    (cfg compile-profile (panic \"profile\"))
+    42))")
+
+(define (selfhost-lint-suppressed-single-begin-source) : String
+  "(define (main) : i64
+  ;; lint-allow: single-begin
+  (begin 42))")
+
 (define (selfhost-lint-cascading-and-source) : String
   "(define (check [a : bool] [b : bool] [c : bool]) : bool
   (and a (and b c)))")
@@ -2574,6 +2773,33 @@
               (selfhost-lint-suppressed-nested-let-source))
             0))
         12]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-begin-source)
+              (lint-rule-single-begin-id))
+            1))
+        33]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-clean-begin-source))
+            0))
+        34]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-cfg-begin-source)
+              (lint-rule-single-begin-id))
+            0))
+        36]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-suppressed-single-begin-source)
+              (lint-rule-single-begin-id))
+            0))
+        35]
       [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
       [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]
       [(not (= (selfhost-lint-enforce-exit false 1) 0)) 8]

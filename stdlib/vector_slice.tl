@@ -15,8 +15,7 @@
       (expr-var (string-append "stdlib.vector_slice.generated." (type-key T)))]
     `(begin
       (module ,module-name)
-      (import stdlib.vector)
-      (import (vector.vector ,T) as vec)
+      (import (vector ,T) as vec)
       (defenum Source
         (:lifetimes source)
         (FromVec (& source vec.Vec))

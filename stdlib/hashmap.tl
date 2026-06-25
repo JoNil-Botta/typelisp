@@ -315,14 +315,13 @@
       next)))
 
 ;: Read the slot at `index`. Probe/iteration indices are always in
-;: `[0, capacity)`, so the bounds check never fires. Keep this on `array-ref`
-;: until the published stage0 includes aggregate raw-pointer read/offset fixes;
-;: stdlib/hashmap.tl is compiled into the next compiler by the previous seed
-;: (#2840).
+;: `[0, capacity)`, so skip the redundant dynamic-array bounds check.
 (define (string-i64-map-slot-at
   [slots : (Array StringI64MapSlot)]
   [index : i64]) : StringI64MapSlot
-  (array-ref slots index))
+  (unsafe
+    (ptr-read
+      (ptr-offset (ptr-cast (array-data slots) : (Ptr StringI64MapSlot)) index))))
 
 ;: Pick the insertion slot for an absent key: reuse the first tombstone seen
 ;: (`first-tombstone` >= 0) so deletes do not strand keys, otherwise the empty

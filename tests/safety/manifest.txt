@@ -100,6 +100,9 @@ float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|u
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
 in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
+in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
+in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
+in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
 arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: argument type mismatch
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
@@ -125,6 +128,9 @@ spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_r
 spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
 spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
 spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
+
+# SPMD v1 private-call ABI policy: public vector/mask/varying source types
+# stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred
@@ -133,9 +139,11 @@ spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_rejec
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
 spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
+spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
+spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
-spmd_masked_if_match_reject|check-fail|tests/safety/spmd_masked_if_match_reject.tl|-|SPMD masked if does not support varying match
+spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String
 spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
 spmd_masked_if_scatter_index_reject|check-fail|tests/safety/spmd_masked_if_scatter_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_masked_if_gather_read_reject|check-fail|tests/safety/spmd_masked_if_gather_read_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
@@ -170,13 +178,14 @@ sync_channel_i64_pair_use_after_send_reject|check-fail|tests/safety/sync_channel
 sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
 sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-
 sync_channel_string_default_arena_reject|check-fail|tests/safety/sync_channel_string_default_arena_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+sync_channel_string_ordinary_arena_reject|check-fail|tests/safety/sync_channel_string_ordinary_arena_reject.tl|-|cannot pass region-tagged value to function parameter
 sync_channel_string_use_after_send_reject|check-fail|tests/safety/sync_channel_string_use_after_send_reject.tl|-|use of moved value `message`
 thread_spawn_i64_aggregate_capture_ok|check-ok|tests/safety/thread_spawn_i64_aggregate_capture_ok.tl|-|-
 thread_spawn_i64_atomic_string_capture_ok|check-ok|tests/safety/thread_spawn_i64_atomic_string_capture_ok.tl|-|-
 thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_string_capture_reject.tl|-|thread_i64.spawn cannot capture `text` of type String
 thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
-thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
 thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof

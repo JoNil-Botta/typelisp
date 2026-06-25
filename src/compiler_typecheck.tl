@@ -60,10 +60,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
@@ -159,10 +161,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
@@ -256,8 +260,8 @@
               "feature-str-view")
             "feature-private-string-intrinsics")
           "feature-compiler-private-string-intrinsics")
-        "feature-compiler-private-dynamic-buffer")
-      "array-helper-intrinsics")
+        "array-helper-intrinsics")
+      "feature-tl-memchr")
     "feature-plain-comptime-well-known"))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
@@ -382,6 +386,19 @@
                   paths)]
               [(ErrCompilerLoadWithPaths diag) (ErrCompilerTypecheck diag)])
             (typecheck-compiler-program program))]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      result)))
+
+(define (typecheck-compiler-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultCompilerTypecheck
+  (let
+    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
+    [_dedup-reset : unit (ty-node-dedup-clear!)]
+    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
+    [result : ResultCompilerTypecheck
+      (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
+        [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
@@ -673,6 +690,11 @@
     [(OkCompilerTypecheck _) true]
     [(ErrCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+  (match (typecheck-compiler-source-with-cfg src cfgs)
+    [(OkCompilerTypecheck _) true]
+    [(ErrCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-unbound-source) : String
   "(define (main) : i64 missing)")
 
@@ -905,6 +927,15 @@
     (foreach ([i : i64 0 n]) (return i))
     0))")
 
+(define (compiler-typecheck-foreach-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 i64))
+(define (main [out : (Array i64)] [flag : bool] [n : i64]) : ResultI64
+  (begin
+    (foreach
+      ([i : i64 0 n])
+      (array-set! out i (try (if flag (OkI64 1) (ErrI64 i)))))
+    (OkI64 0)))")
+
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
@@ -1067,7 +1098,10 @@
       "typecheck: return requires enclosing function")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-return-source)
-      "typecheck: return inside foreach is not supported")))
+      "typecheck: return inside foreach is not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-try-source)
+      "typecheck: try inside foreach is not supported")))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
@@ -1288,6 +1322,20 @@
 (define (main) : i64
   (+ (match left [Left.Same 1] [_ 0])
      (match right [Right.Same 2] [_ 0])))")
+
+(define (compiler-typecheck-cross-enum-qualified-payload-source) : String
+  "(defenum Left (Ok i64) (Err i64))
+(defenum Right (Ok i64) (Err i64))
+(define (left-score [item : Left]) : i64
+  (match item
+    [(Left.Ok value) value]
+    [(Left.Err error) error]))
+(define (right-score [item : Right]) : i64
+  (match item
+    [(Right.Ok value) value]
+    [(Right.Err error) error]))
+(define (main) : i64
+  (+ (left-score (Left.Ok 1)) (right-score (Right.Err 2))))")
 
 (define (compiler-typecheck-module-local-variant-shadows-prior-flat-source) : String
   "(module prior)
@@ -2367,6 +2415,10 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        (compiler-typecheck-cross-enum-qualified-payload-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         (compiler-typecheck-module-local-variant-shadows-prior-flat-source))
         unit
         (set! ok false))
@@ -2625,10 +2677,10 @@
 
 (define (compiler-typecheck-in-arena-string-source) : String
   (compiler-typecheck-with-arena-source
-    "(define (main) : String
+    "(define (main) : i64
   (let
     [scratch : Arena (arena-make)]
-    (in-arena scratch (int->string 42))))"))
+    (in-arena scratch (__tl_string_length (int->string 42)))))"))
 
 (define (compiler-typecheck-in-arena-array-result-source) : String
   (compiler-typecheck-with-arena-source
@@ -2663,12 +2715,14 @@
       (if (compiler-typecheck-ok? (compiler-typecheck-in-arena-string-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-in-arena-array-result-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-array-result-source)
+        "typecheck: reference value would escape lexical scope")
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-in-arena-box-result-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-in-arena-box-result-source)
+        "typecheck: reference value would escape lexical scope")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -4121,7 +4175,7 @@
       (compiler-typecheck-channel-atomic-string-send-bound-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-channel-ordinary-string-send-source)
-      "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))))
 
 (define (compiler-typecheck-reference-render-ok?) : bool
@@ -6018,31 +6072,40 @@
 (define (main) : i64 (field-count 1))")
 
 (define (compiler-typecheck-type-literal-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (twice [comptime n : i64]) : i64 (* n 2))
+  (let
+    [private-cfg : SymI64Env
+      (compiler-cfg-enable
+        (compiler-cfg-empty)
+        "feature-compiler-private-dynamic-buffer")]
+    (and
+      (compiler-typecheck-ok?
+        "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
-    (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
-    (compiler-typecheck-ok?
-      "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type i64) 0))"
-      "type value i64 is compile-time only")
-    (compiler-typecheck-error-ok?
-      "(define (main) : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (f [value : type]) : i64 0)"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define value : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type Missing) 0))"
-      (compiler-typecheck-unknown-type-policy-message "Missing"))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-type-valued-comptime-scalar-arg-source)
-      "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
+      (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+      (compiler-typecheck-error-ok?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+      (compiler-typecheck-ok-with-cfg?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        private-cfg)
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type i64) 0))"
+        "type value i64 is compile-time only")
+      (compiler-typecheck-error-ok?
+        "(define (main) : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (f [value : type]) : i64 0)"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define value : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type Missing) 0))"
+        (compiler-typecheck-unknown-type-policy-message "Missing"))
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-type-valued-comptime-scalar-arg-source)
+        "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`"))))
 
 (define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
   "(defenum Expr
@@ -6772,6 +6835,12 @@
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 
+(define (compiler-typecheck-defmacro-expr-struct-get-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defmacro (field-x [target : Expr]) : i64
+  (comptime.expr-struct-get target (string-concat \"x\" \"\")))
+(define (main) : i64 (field-x (Point 42 7)))")
+
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
   "(defmacro (all [args : bool ...]) : bool
   (if (comptime.expr-list-empty? args)
@@ -6837,6 +6906,8 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-pure-string-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-expr-struct-get-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defmacro-comptime-qualified-helper-source))
     (compiler-typecheck-error-ok?
@@ -7628,9 +7699,7 @@
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
           (panic "typecheck: smoke score mismatch"))]
-      [(ErrCompilerTypecheck diag)
-        (begin
-          (panic (compiler-diagnostic-message diag)))])
+      [(ErrCompilerTypecheck diag) (panic (compiler-diagnostic-message diag))])
     unit))
 
 ;; --- move checker fixtures (#1048) ------------------------------------------
@@ -9737,16 +9806,13 @@
       (panic "typecheck: comptime reflection tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: layout query tests failed")))
+      (panic "typecheck: layout query tests failed"))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: defmacro tests failed")))
+      (panic "typecheck: defmacro tests failed"))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: macro expansion tests failed")))))
+      (panic "typecheck: macro expansion tests failed"))))
 
 (define (compiler-typecheck-self-test) : i64
   (begin

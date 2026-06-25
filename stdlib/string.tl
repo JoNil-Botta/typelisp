@@ -47,6 +47,16 @@
     [src : (Ptr u8)]
     [n : i64]) : unit (:symbol "tl_memcpy")))
 
+;; Internal raw byte-search primitive backed by the always-emitted runtime
+;; helper. Returns the zero-based offset in `ptr[0..len)` or -1 when absent.
+(cfg
+  feature-tl-memchr
+  (unsafe
+    (extern (string-runtime-index-of-byte
+      [ptr : (Ptr u8)]
+      [len : i64]
+      [byte : u8]) : i64 (:symbol "tl_memchr"))))
+
 ;: Bootstrap compatibility aliases for compiler sources that call private
 ;: intrinsics directly. Published stage0 compilers only have the legacy public
 ;: primitive names, so map the private spellings back until the compiler
@@ -383,6 +393,48 @@
     [(char-eq c '\n') true]
     [else (char-eq c '\r')]))
 
+;: Return the first byte index at or after start, or -1 when absent.
+(cfg
+  feature-tl-memchr
+  (define (string-index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
+    (let
+      [n : i64 (__tl_string_length text)]
+      (if (or (< start 0) (>= start n))
+        -1
+        (let
+          [offset : i64
+            (unsafe
+              (string-runtime-index-of-byte
+                (ptr-offset (string-data text) start)
+                (- n start)
+                byte))]
+          (if (< offset 0)
+            -1
+            (+ start offset)))))))
+
+;: Return the first byte index at or after start, or -1 when absent.
+(cfg
+  (not feature-tl-memchr)
+  (define (string-index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
+    (let
+      [n : i64 (__tl_string_length text)]
+      [i : i64 start]
+      [found : i64 -1]
+      [done : bool false]
+      (begin
+        (if (or (< start 0) (>= start n))
+          (set! done true)
+          unit)
+        (while (not done)
+          (if (< i n)
+            (if (= (cast (__tl_string_ref text i) : u8) byte)
+              (begin
+                (set! found i)
+                (set! done true))
+              (set! i (+ i 1)))
+            (set! done true)))
+        found))))
+
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (string-eq [left : (& left str)] [right : (& right str)]) : bool
   (let
@@ -571,16 +623,7 @@
 
 ;: Return true if borrowed haystack contains the character c.
 (define (string-contains-char [haystack : (& haystack str)] [c : char]) : bool
-  (let
-    [n : i64 (__tl_string_length haystack)]
-    [found : bool false]
-    [i : i64 0]
-    (begin
-      (while (and (not found) (< i n))
-        (if (char-eq (__tl_string_ref haystack i) c)
-          (set! found true)
-          (set! i (+ i 1))))
-      found)))
+  (>= (string-index-of-byte haystack 0 (cast c : u8)) 0))
 
 ;: Replace first occurrence of old with new in s.
 ;:
@@ -606,11 +649,10 @@
               (set! found true)
               (set! i (+ i 1))))))
       (if found
-        (begin
-          (string-concat3
-            (substring s 0 i)
-            new
-            (substring s (+ i olen) (- (- hlen i) olen))))
+        (string-concat3
+          (substring s 0 i)
+          new
+          (substring s (+ i olen) (- (- hlen i) olen)))
         s))))
 
 ;: Return true if haystack has needle at position start.
@@ -784,6 +826,21 @@
   test
   (define (string-test-contains-char [haystack : String] [c : char]) : bool
     (string-contains-char (& haystack) c)))
+
+(cfg
+  test
+  (define (string-test-with-nul) : String
+    (let
+      [bytes : (Array u8) (make-array u8 3)]
+      [dst : (MutPtr u8)
+        (unsafe
+          (array-data bytes))]
+      (begin
+        (array-set! bytes 0 (cast 'a' : u8))
+        (array-set! bytes 1 (cast 0 : u8))
+        (array-set! bytes 2 (cast 'b' : u8))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))))
 
 (cfg
   test
@@ -1151,6 +1208,36 @@
       (test.assert-false
         (string-test-contains-char "" 'z')
         "contains-char handles empty string")
+      (test.assert-i64-eq
+        (string-index-of-byte "hello" 0 (cast 'h' : u8))
+        0
+        "string-index-of-byte finds first byte")
+      (test.assert-i64-eq
+        (string-index-of-byte "hello" 3 (cast 'l' : u8))
+        3
+        "string-index-of-byte honors nonzero start")
+      (test.assert-i64-eq
+        (string-index-of-byte "hello" 0 (cast 'z' : u8))
+        -1
+        "string-index-of-byte reports miss")
+      (test.assert-i64-eq
+        (string-index-of-byte "hello" 5 (cast 'o' : u8))
+        -1
+        "string-index-of-byte rejects start at length")
+      (test.assert-i64-eq
+        (string-index-of-byte "hello" -1 (cast 'h' : u8))
+        -1
+        "string-index-of-byte rejects negative start")
+      (test.assert-i64-eq
+        (string-index-of-byte "" 0 (cast 'h' : u8))
+        -1
+        "string-index-of-byte handles empty string")
+      (let
+        [with-nul : String (string-test-with-nul)]
+        (test.assert-i64-eq
+          (string-index-of-byte (& with-nul) 0 (cast 0 : u8))
+          1
+          "string-index-of-byte finds embedded nul"))
       (string-test-assert-owned-string-eq
         (string-replace "hello" "ell" "ipp")
         "hippo"

@@ -28,7 +28,7 @@
 ;;     point against ASCII constants.
 (import "stdlib/io.tl")
 (import "stdlib/string.tl")
-(import stdlib.vector as vector)
+(import stdlib.vector)
 
 (defenum Token
   (TIdent String)
@@ -96,9 +96,7 @@
     [(= c '/') TSlash]
     [(= c '(') TLParen]
     [(= c ')') TRParen]
-    [else
-      (begin
-        (panic "lexer: unexpected character"))]))
+    [else (panic "lexer: unexpected character")]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.

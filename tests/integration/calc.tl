@@ -41,7 +41,7 @@
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
 (import "stdlib/io.tl")
-(import stdlib.vector as vector)
+(import stdlib.vector)
 (import "token.tl")
 (import (vector.vector Token) as tokvec)
 
@@ -106,9 +106,7 @@
     [(= c '/') TSlash]
     [(= c '(') TLParen]
     [(= c ')') TRParen]
-    [else
-      (begin
-        (panic "lexer: unexpected character"))]))
+    [else (panic "lexer: unexpected character")]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is the shape of a real lexer: a cursor over the input, a
@@ -204,8 +202,7 @@
             (begin
               (expect toks cur (tag-rparen))
               inner)))
-        (begin
-          (panic "parser: expected an integer or '('"))))))
+        (panic "parser: expected an integer or '('")))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `EMul`/`EDiv` nodes over the

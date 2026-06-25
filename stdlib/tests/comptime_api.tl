@@ -1,5 +1,5 @@
 (import stdlib.string)
-(import stdlib.comptime as comptime)
+(import stdlib.comptime)
 
 (defmacro (stdlib-comptime-id [x : comptime.Expr]) : i64
   x)

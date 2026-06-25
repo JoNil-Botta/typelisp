@@ -19,7 +19,7 @@
 ;# ```
 (module stdlib.core_macros)
 
-(import stdlib.comptime as comptime)
+(import stdlib.comptime)
 
 ;: Short-circuiting boolean conjunction.
 ;:
@@ -73,23 +73,25 @@
     (let
       [arm : ExprClause (comptime.expr-clause-list-head arms)]
       [rest : ExprClauseList (comptime.expr-clause-list-tail arms)]
-      (match (comptime.expr-clause-first arm)
-        [(ExprVar name)
-          (if (string-eq name "else")
-            (if (comptime.expr-clause-list-empty? rest)
-              (comptime.expr-clause-second arm)
-              (comptime.expr-var "core-cond-else-must-be-final"))
-            (if (comptime.expr-clause-list-empty? rest)
-              (comptime.expr-var "core-cond-missing-else")
-              `(if ,(comptime.expr-clause-first arm)
-                ,(comptime.expr-clause-second arm)
-                (cond ,@(comptime.expr-clause-list->expr-list rest)))))]
-        [_
-          (if (comptime.expr-clause-list-empty? rest)
-            (comptime.expr-var "core-cond-missing-else")
-            `(if ,(comptime.expr-clause-first arm)
-              ,(comptime.expr-clause-second arm)
-              (cond ,@(comptime.expr-clause-list->expr-list rest))))]))))
+      (match arm
+        [(ExprClause test result)
+          (match test
+            [(ExprVar name)
+              (if (string-eq name "else")
+                (if (comptime.expr-clause-list-empty? rest)
+                  result
+                  (comptime.expr-var "core-cond-else-must-be-final"))
+                (if (comptime.expr-clause-list-empty? rest)
+                  (comptime.expr-var "core-cond-missing-else")
+                  `(if ,test
+                    ,result
+                    (cond ,@(comptime.expr-clause-list->expr-list rest)))))]
+            [_
+              (if (comptime.expr-clause-list-empty? rest)
+                (comptime.expr-var "core-cond-missing-else")
+                `(if ,test
+                  ,result
+                  (cond ,@(comptime.expr-clause-list->expr-list rest))))])]))))
 
 (test
   core-macros-api

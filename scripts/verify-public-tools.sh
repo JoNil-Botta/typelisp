@@ -607,6 +607,168 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
 
+echo "[public-tools] normal command inline test typechecking"
+INLINE_NORMAL="$WORKDIR/normal-inline-tests"
+mkdir -p "$INLINE_NORMAL"
+
+INLINE_BAD="$INLINE_NORMAL/bad-inline.tl"
+cat > "$INLINE_BAD" <<'EOF'
+(define (main) : i64 0)
+(test bad-inline
+  (+ true 1))
+EOF
+INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
+
+run_cmd normal-inline-check "$COMPILER" check "$INLINE_BAD"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+INLINE_BAD_ASM="$INLINE_NORMAL/bad-inline.s"
+run_cmd normal-inline-compile "$COMPILER" compile "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_ASM"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+[ ! -f "$INLINE_BAD_ASM" ] || fail "normal-inline-compile wrote assembly despite inline test failure"
+
+INLINE_BAD_BATCH_ASM="$INLINE_NORMAL/bad-inline-batch.s"
+INLINE_BAD_BATCH_LIST="$INLINE_NORMAL/bad-inline-batch.txt"
+INLINE_BAD_BATCH_INPUT=$(native_arg_path "$INLINE_BAD")
+INLINE_BAD_BATCH_ASM_ARG=$(native_arg_path "$INLINE_BAD_BATCH_ASM")
+printf '%s|%s\n' "$INLINE_BAD_BATCH_INPUT" "$INLINE_BAD_BATCH_ASM_ARG" > "$INLINE_BAD_BATCH_LIST"
+run_cmd normal-inline-compile-batch "$COMPILER" compile --batch "$INLINE_BAD_BATCH_LIST" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_contains "$err" "compile: batch source failed: $INLINE_BAD_BATCH_INPUT"
+[ ! -f "$INLINE_BAD_BATCH_ASM" ] || fail "normal-inline-compile-batch wrote assembly despite inline test failure"
+
+INLINE_BAD_EXE="$INLINE_NORMAL/bad-inline$HOST_EXE_SUFFIX"
+run_cmd normal-inline-build "$COMPILER" build "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_EXE"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+[ ! -f "$INLINE_BAD_EXE" ] || fail "normal-inline-build wrote an executable despite inline test failure"
+
+run_cmd normal-inline-run "$COMPILER" run "$INLINE_BAD" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+INLINE_CFG_PROD="$INLINE_NORMAL/cfg-helper-production-use.tl"
+cat > "$INLINE_CFG_PROD" <<'EOF'
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(define (main) : i64
+  (inline-helper))
+
+(test helper-visible-to-tests
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+EOF
+INLINE_CFG_PROD_DIAG=$(native_arg_path "$INLINE_CFG_PROD")
+run_cmd normal-inline-cfg-helper-production-use "$COMPILER" check "$INLINE_CFG_PROD"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_CFG_PROD_DIAG:5:"
+assert_contains "$err" "typecheck: unbound name inline-helper"
+
+INLINE_SAME="$INLINE_NORMAL/same-path.tl"
+INLINE_BACKENDS="$INLINE_NORMAL/backends.txt"
+cat > "$INLINE_BACKENDS" <<'EOF'
+scalar
+avx2
+avx512
+EOF
+
+while IFS= read -r mode || [ -n "$mode" ]; do
+    [ -n "$mode" ] || continue
+    opt=0
+    while [ "$opt" -le 2 ]; do
+        case_base="normal-inline-codegen-$mode-opt$opt"
+        with_asm="$INLINE_NORMAL/$case_base.with-tests.s"
+        without_asm="$INLINE_NORMAL/$case_base.without-tests.s"
+
+        cat > "$INLINE_SAME" <<'EOF'
+(define (main) : i64 42)
+
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(test helper-visible
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+EOF
+        run_cmd "$case_base-with-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$with_asm"
+        if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$mode" != scalar ]; then
+            assert_failure
+            assert_stdout_empty
+            assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
+            opt=$((opt + 1))
+            continue
+        fi
+        if [ "$HOST_ACTION_ENABLED" -eq 0 ] && [ "$mode" != scalar ]; then
+            if grep -F -- "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+                assert_failure
+                assert_stdout_empty
+                opt=$((opt + 1))
+                continue
+            fi
+        fi
+        assert_success
+        assert_stderr_empty
+
+        cat > "$INLINE_SAME" <<'EOF'
+(define (main) : i64 42)
+EOF
+        run_cmd "$case_base-without-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$without_asm"
+        assert_success
+        assert_stderr_empty
+
+        if ! cmp -s "$with_asm" "$without_asm"; then
+            fail "$case_base emitted different assembly with inline tests present"
+        fi
+
+        opt=$((opt + 1))
+    done
+done < "$INLINE_BACKENDS"
+
+INLINE_PKG="$INLINE_NORMAL/package-source-enumeration"
+mkdir -p "$INLINE_PKG/src"
+cat > "$INLINE_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "inline-owned")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+maybe_strip_manifest_kind "$INLINE_PKG/typelisp.pkg"
+cat > "$INLINE_PKG/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+cat > "$INLINE_PKG/src/orphan.tl" <<'EOF'
+(define (orphan) : i64 1)
+(test orphan-bad
+  (+ true 1))
+EOF
+INLINE_PKG_ORPHAN_DIAG="inline-owned/src/orphan.tl"
+
+run_cmd normal-inline-package-check "$COMPILER" check --manifest-path "$INLINE_PKG/typelisp.pkg"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_PKG_ORPHAN_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+run_cmd normal-inline-package-build "$COMPILER" build --manifest-path "$INLINE_PKG/typelisp.pkg" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_PKG_ORPHAN_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
 UNSAFE_REACH="$WORKDIR/unsafe-import-reach"
 mkdir -p "$UNSAFE_REACH"
 cat > "$UNSAFE_REACH/lib.tl" <<'EOF'
@@ -1558,7 +1720,7 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
-    SELFHOST_OPT2_REGALLOC='    addq %r8, %r9'
+    SELFHOST_OPT2_REGALLOC='    leaq (%rcx,%r9), %r9'
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"

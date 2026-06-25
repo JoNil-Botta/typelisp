@@ -22,6 +22,7 @@
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
+(import "test_cli_core.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
 
@@ -680,54 +681,96 @@
   [stdlib-roots : StringVec]
   [cfg-names : StringVec]
   [backend-mode : CompilerBackendMode]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [inline-preflight : bool]) : i64
   (let
     [doctest-status : i64
       (compile-cli-typecheck-doctests input-path stdlib-roots)]
     (if (= doctest-status 0)
-      (begin
-        (compiler-driver-state-reset-file-state! state)
-        (let
-          [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
-          [status : i64
-            (if emit-ir
-              (compiler-driver-write-result
-                (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                  state
-                  input-path
-                  target
-                  stdlib-roots
-                  opt-level
-                  backend-mode
-                  cfgs)
-                output-path)
-              (if pic
-                (compiler-driver-write-pic-result
-                  (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
-                    state
-                    input-path
-                    target
-                    true
-                    stdlib-roots
-                    opt-level
-                    backend-mode
-                    cfgs)
-                  output-path)
-                (compiler-driver-write-buffer-result
-                  (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-                    state
-                    input-path
-                    target
-                    true
-                    stdlib-roots
-                    opt-level
-                    backend-mode
-                    cfgs)
-                  output-path)))]
+      (let
+        [inline-test-status : i64
+          (if inline-preflight
+            (let
+              [preflight-cfgs : SymI64Env
+                (compile-cli-cfg-names-to-env cfg-names)]
+              (tltest-inline-typecheck-file-with-cfg
+                input-path
+                stdlib-roots
+                (compiler-driver-target-cfgs target preflight-cfgs)
+                "typecheck-prefix-inline-compile"))
+            0)]
+        (if (= inline-test-status 0)
           (begin
-            (compiler-driver-state-capture-session-floors! state)
-            status)))
+            (compiler-driver-state-reset-file-state! state)
+            (let
+              [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+              [status : i64
+                (if emit-ir
+                  (compiler-driver-write-result
+                    (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                      state
+                      input-path
+                      target
+                      stdlib-roots
+                      opt-level
+                      backend-mode
+                      cfgs)
+                    output-path)
+                  (if pic
+                    (compiler-driver-write-pic-result
+                      (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                        state
+                        input-path
+                        target
+                        true
+                        stdlib-roots
+                        opt-level
+                        backend-mode
+                        cfgs)
+                      output-path)
+                    (compiler-driver-write-buffer-result
+                      (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                        state
+                        input-path
+                        target
+                        true
+                        stdlib-roots
+                        opt-level
+                        backend-mode
+                        cfgs)
+                      output-path)))]
+              (begin
+                (compiler-driver-state-capture-session-floors! state)
+                status)))
+          inline-test-status))
       doctest-status)))
+
+(define (compile-cli-run-batch-inline-tests
+  [entries : CompileCliBatchEntryList]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : StringVec]
+  [cfg-names : StringVec]) : i64
+  (match entries
+    [(CompileCliBatchEntryNil) 0]
+    [(CompileCliBatchEntryCons input-path _ rest)
+      (let
+        [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+        [status : i64
+          (tltest-inline-typecheck-file-with-cfg
+            input-path
+            stdlib-roots
+            (compiler-driver-target-cfgs target cfgs)
+            "typecheck-prefix-inline-compile-batch")]
+        (if (= status 0)
+          (compile-cli-run-batch-inline-tests
+            (box-get rest)
+            target
+            stdlib-roots
+            cfg-names)
+          (begin
+            (print-error
+              (str-cat "\ncompile: batch source failed: " input-path "\n"))
+            status)))]))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -850,7 +893,8 @@
               stdlib-roots
               cfg-names
               backend-mode
-              opt-level))]
+              opt-level
+              false))]
         (if (= status 0)
           (compile-cli-run-batch-entries
             state
@@ -883,15 +927,24 @@
     line
     (string-length text))
     [(OkCompileCliBatchEntryList entries)
-      (compile-cli-run-batch-entries
-        state
-        entries
-        has-target
-        target
-        stdlib-roots
-        cfg-names
-        backend-mode
-        opt-level)]
+      (let
+        [inline-test-status : i64
+          (compile-cli-run-batch-inline-tests
+            entries
+            target
+            stdlib-roots
+            cfg-names)]
+        (if (= inline-test-status 0)
+          (compile-cli-run-batch-entries
+            state
+            entries
+            has-target
+            target
+            stdlib-roots
+            cfg-names
+            backend-mode
+            opt-level)
+          inline-test-status))]
     [(ErrCompileCliBatchEntryList status) status]))
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
@@ -958,19 +1011,29 @@
             stdlib-roots
             cfg-names
             backend-mode
-            opt-level)])]
+            opt-level
+            true)])]
     [(CompileCliBatch config) (compile-cli-run-batch config)]
     [(CompileCliCheck input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(OkCompilerCheck _)
           (let
-            [doctest-status : i64
-              (compile-cli-typecheck-doctests input-path stdlib-roots)]
-            (if (= doctest-status 0)
-              (begin
-                (print-string "Type checking passed!\n")
-                0)
-              doctest-status))]
+            [inline-test-status : i64
+              (tltest-inline-typecheck-file-with-cfg
+                input-path
+                stdlib-roots
+                (compiler-check-language-cfgs)
+                "typecheck-prefix-inline-compile-check")]
+            (if (= inline-test-status 0)
+              (let
+                [doctest-status : i64
+                  (compile-cli-typecheck-doctests input-path stdlib-roots)]
+                (if (= doctest-status 0)
+                  (begin
+                    (print-string "Type checking passed!\n")
+                    0)
+                  doctest-status))
+              inline-test-status))]
         [(ErrCompilerCheck diag)
           (begin
             (print-error (compiler-diagnostic-render diag))

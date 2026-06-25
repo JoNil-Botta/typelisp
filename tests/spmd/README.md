@@ -62,6 +62,12 @@ falling back to scalar code.
   condition calls a direct helper returning a varying bool and whose taken
   branch calls a direct source-known helper with a varying scalar argument.
   Exit 42.
+- `masked_if_match_i64.tl` - AVX-512-only varying `match` nested inside a
+  masked varying `if` branch, covering branch-mask composition with match arm
+  masks. Exit 42.
+- `varying_match_i64.tl` - AVX-512-only value-producing varying `match` over
+  scalar i64 literal patterns, wildcard fallback, and catch-all lane binding.
+  Exit 42.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
@@ -117,9 +123,15 @@ Coverage map:
   `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`,
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
   `masked_if_i16_u16.tl`.
+- AVX-512 scalar-lane varying `match` coverage lives in
+  `varying_match_i64.tl` and `masked_if_match_i64.tl`; AVX2 keeps explicit
+  staged diagnostics for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
-  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified
+  v1 private out-of-line SPMD call ABI is feature-pending under #2852; the
+  current corpus keeps function-value/indirect varying calls rejected by the
+  safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`.
@@ -138,8 +150,8 @@ Coverage map:
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
   including outer mutation, unsupported `f64` min reduction, unsupported
-  floating-point scans, nested scan bodies, and indirect calls with varying
-  arguments.
+  floating-point scans, nested scan bodies, and function-value/indirect varying
+  calls that are outside the v1 private out-of-line call ABI.
 ## Running
 
 ```sh

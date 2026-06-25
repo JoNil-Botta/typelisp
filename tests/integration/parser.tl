@@ -43,7 +43,7 @@
 ;; `token-tag`) and a value vector (the integer payload of a `TInt`, else 0) -
 ;; so the cursor is a plain `i64` index the helpers advance.
 (import "stdlib/io.tl")
-(import stdlib.vector as vector)
+(import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
 (defenum Token
@@ -174,11 +174,10 @@
             (begin
               (expect tags cur (tag-rparen))
               inner)))
-        (begin
-          (panic "parser: expected an integer or '('")
-          ;; Compatibility-style dead code; builtin `panic` can now satisfy
-          ;; the `Expr` result directly.
-          )))))
+        (panic "parser: expected an integer or '('")
+        ;; Compatibility-style dead code; builtin `panic` can now satisfy
+        ;; the `Expr` result directly.
+        ))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then while the next token is '*' or '/', consume it, parse the

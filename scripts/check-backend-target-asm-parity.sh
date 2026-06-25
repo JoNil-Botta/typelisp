@@ -357,12 +357,14 @@ expected_target_asm_mismatch() {
     # #perf call-spanning-aware partition: the scalar opt2 allocator homes
     # non-call-spanning values in the caller-saved zero-call pool (%r9/%rcx/%rdx),
     # which overlap the SysV and Win64 parameter registers at DIFFERENT positions
-    # (Win64 passes only 4 args in registers vs SysV's 6). For arg-heavy / capture
-    # bodies the two targets therefore pick different but equally-correct register
-    # homes; the divergence is register-choice only (opt2 cross-fixpoint + 26/26
+    # (Win64 passes only 4 args in registers vs SysV's 6). For arg-combining /
+    # arg-heavy / capture bodies the two targets therefore pick different but
+    # equally-correct register homes; the divergence is register-choice only
+    # (opt2 cross-fixpoint + 26/26
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
     case "${_etm_opt}:${_etm_name}" in
+        2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
     esac

@@ -21,7 +21,6 @@
 (include-str compiler-embedded-stdlib-io "stdlib/io.tl")
 (include-str compiler-embedded-stdlib-iterator "stdlib/iterator.tl")
 (include-str compiler-embedded-stdlib-json "stdlib/json.tl")
-(include-str compiler-embedded-stdlib-list "stdlib/list.tl")
 (include-str compiler-embedded-stdlib-math "stdlib/math.tl")
 (include-str compiler-embedded-stdlib-msvc "stdlib/msvc.tl")
 (include-str compiler-embedded-stdlib-process "stdlib/process.tl")
@@ -106,8 +105,6 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-iterator)]
     [(string-eq suffix "json.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-json)]
-    [(string-eq suffix "list.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-list)]
     [(string-eq suffix "math.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-math)]
     [(string-eq suffix "msvc.tl")

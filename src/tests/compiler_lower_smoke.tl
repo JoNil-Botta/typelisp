@@ -1,7 +1,7 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
 (import "../compiler_driver_core.tl")
 
-(define (compiler-lower-smoke-imported-local-enum-vector-source) : String
+(define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
 (defstruct StringVec (len i64) (first String))
 (define (string-vec-new) : StringVec
@@ -12,65 +12,43 @@
   (if (< index (struct-get v len))
     (struct-get v first)
     fallback))
-(module stdlib.list)
-(import stdlib.vector)
-(defenum StringList (StringNil) (StringCons String (Box StringList)))
-(define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))
-(define (string-list-count [items : StringList]) : i64
-  (match items
-    [(StringNil) 0]
-    [(StringCons _ rest) (+ 1 (string-list-count (box-get rest)))]))
-(define (string-list-to-vec-into
-  [items : StringList]
-  [out : vector.StringVec]) : vector.StringVec
-  (match items
-    [(StringNil) out]
-    [(StringCons head rest)
-      (string-list-to-vec-into
-        (box-get rest)
-        (vector.string-vec-push out head))]))
-(define (string-list-to-vec [items : StringList]) : vector.StringVec
-  (string-list-to-vec-into items (vector.string-vec-new)))
-(define (string-list-from-vec-single [v : vector.StringVec]) : StringList
-  (StringCons (vector.string-vec-get v 0 \"\") (box StringNil)))
-(define (string-list-roundtrip-count [items : StringList]) : i64
-  (string-list-count (string-list-from-vec-single (string-list-to-vec items))))
 (module main)
-(import stdlib.list)
+(import stdlib.vector)
 (define (main) : i64
-  (list.string-list-roundtrip-count (list.string-list-single \"a\")))")
+  (__tl_string_length
+    (vector.string-vec-get
+      (vector.string-vec-push (vector.string-vec-new) \"a\")
+      0
+      \"\")))")
 
-(define (compiler-lower-smoke-imported-local-enum-vector-ok?) : bool
+(define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower-compiler-source
-    (compiler-lower-smoke-imported-local-enum-vector-source))
+    (compiler-lower-smoke-imported-local-vector-source))
     [(OkCompilerLower _ _) true]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
     [root : String "target/lower_nullary_stdlib"]
-    [dep : String "target/lower_nullary_stdlib/list.tl"]
+    [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
     [roots : StringVec (string-vec-push (string-vec-new) root)]
     (begin
       (compiler-load-test-mkdir root)
       (write-file
         dep
-        "(module stdlib.list)
-(defenum StringList (StringNil) (StringCons String (Box StringList)))
-(define (string-list-cons [value : String] [rest : StringList]) : StringList
-  (StringCons value (box rest)))
-(define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))")
+        "(module stdlib.maybe_string)
+(defenum MaybeString (NoString) (SomeString String))
+(define (maybe-string-single [value : String]) : MaybeString
+  (SomeString value))")
       (write-file
         entry
-        "(import stdlib.list)
+        "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
-    (match (list.string-list-single \"a\")
-      [(list.StringNil) \"\"]
-      [(list.StringCons head _) head])))")
+    (match (maybe_string.maybe-string-single \"a\")
+      [(maybe_string.NoString) \"\"]
+      [(maybe_string.SomeString head) head])))")
       (match (compiler-load-file-with-paths-and-roots
         entry
         (sym-i64-empty)
@@ -94,14 +72,14 @@
       roots
       (BackendModeScalar)
       (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
-      [(OkCompilerDriverLowered _ _ _ _) true]
+      [(OkCompilerDriverLowered _ _ _) true]
       [(ErrCompilerDriverLowered _) false])))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
     (unless
-      (compiler-lower-smoke-imported-local-enum-vector-ok?)
-      (panic "lower: issue3494 imported local enum vector failed"))
+      (compiler-lower-smoke-imported-local-vector-ok?)
+      (panic "lower: issue3494 imported local vector failed"))
     (unless
       (compiler-lower-smoke-imported-nullary-file-ok?)
       (panic "lower: issue3494 imported nullary file failed"))

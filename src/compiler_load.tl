@@ -850,6 +850,25 @@
                 (set! ok false)))
             (= i prefix-len)))))))
 
+(define (compiler-load-string-contains-from?
+  [text : String]
+  [needle : String]
+  [start : i64]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [needle-len : i64 (string-length needle)]
+    [i : i64 start]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= (+ i needle-len) text-len))
+        (if (compiler-load-string-prefix-at? text needle i)
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+(define (compiler-load-string-contains? [text : String] [needle : String]) : bool
+  (compiler-load-string-contains-from? text needle 0))
+
 (define (compiler-load-stdlib-import? [path : String]) : bool
   (compiler-load-string-prefix-at? path "stdlib/" 0))
 
@@ -929,6 +948,43 @@
           effective-roots
           0
           (string-vec-len effective-roots))))))
+
+(define (compiler-load-stdlib-private-path?
+  [path : String]
+  [stdlib-roots : StringVec]) : bool
+  (if (compiler-load-string-contains? path "vector")
+    (let
+      [normalized : String (compiler-load-normalize-path path)]
+      [stdlib-path : String
+        (if (compiler-load-stdlib-import? normalized)
+          normalized
+          (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
+      (or
+        (string-eq stdlib-path "stdlib/vector.tl")
+        (string-eq stdlib-path "stdlib/vector_family.tl")))
+    false))
+
+(define (compiler-load-stdlib-private-module? [module : String]) : bool
+  (or
+    (string-eq module "stdlib.vector")
+    (string-eq module "stdlib.vector_family")))
+
+(define (compiler-load-stdlib-private-cfgs
+  [path : String]
+  [stdlib-roots : StringVec]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]) : SymI64Env
+  (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
+    cfgs
+    (match expected-module
+      [(AstSomeModuleName module)
+        (if (compiler-load-stdlib-private-module? module)
+          (compiler-cfg-enable-private-dynamic-buffer cfgs)
+          cfgs)]
+      [(AstNoModuleName)
+        (if (compiler-load-stdlib-private-path? path stdlib-roots)
+          (compiler-cfg-enable-private-dynamic-buffer cfgs)
+          cfgs)])))
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
@@ -2960,49 +3016,62 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym-i64-contains seen path-key))
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
-      (if (file-exists? path)
-        (match (if cache-current
-          (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
-          (compiler-load-parse-file-diagnostic-escaping path cfgs))
-          [(OkAstProgramDiagnostic program)
-            (compiler-load-bind-path-dedup
-              (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                path
-                program
-                seen
-                stdlib-roots
-                expected-module
-                import-root
-                cfgs)
-              path-dedup
-              path-key)]
-          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-        (match (compiler-load-embedded-stdlib-source-for-path path)
-          [(CompilerEmbeddedStdlibSomeSource source)
-            (match (if cache-current
-              (compiler-load-parse-embedded-source-diagnostic-session
-                path
-                source
-                cfgs)
-              (compiler-load-parse-source-diagnostic-escaping path source cfgs))
-              [(OkAstProgramDiagnostic program)
-                (compiler-load-bind-path-dedup
-                  (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                    path
-                    program
-                    seen
-                    stdlib-roots
-                    expected-module
-                    import-root
-                    cfgs)
-                  path-dedup
-                  path-key)]
-              [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
-          [(CompilerEmbeddedStdlibNoSource)
-            (ErrCompilerLoadWithPaths
-              (compiler-diagnostic-at-start
-                path
-                (string-append "compiler-load: cannot read import " path)))])))))
+      (let
+        [parse-cfgs : SymI64Env
+          (compiler-load-stdlib-private-cfgs
+            path
+            stdlib-roots
+            expected-module
+            cfgs)]
+        (if (file-exists? path)
+          (match (if cache-current
+            (compiler-load-parse-file-diagnostic-session
+              path
+              stdlib-roots
+              parse-cfgs)
+            (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
+            [(OkAstProgramDiagnostic program)
+              (compiler-load-bind-path-dedup
+                (compiler-load-program-with-paths-and-roots-expect-cfg-root
+                  path
+                  program
+                  seen
+                  stdlib-roots
+                  expected-module
+                  import-root
+                  parse-cfgs)
+                path-dedup
+                path-key)]
+            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+          (match (compiler-load-embedded-stdlib-source-for-path path)
+            [(CompilerEmbeddedStdlibSomeSource source)
+              (match (if cache-current
+                (compiler-load-parse-embedded-source-diagnostic-session
+                  path
+                  source
+                  parse-cfgs)
+                (compiler-load-parse-source-diagnostic-escaping
+                  path
+                  source
+                  parse-cfgs))
+                [(OkAstProgramDiagnostic program)
+                  (compiler-load-bind-path-dedup
+                    (compiler-load-program-with-paths-and-roots-expect-cfg-root
+                      path
+                      program
+                      seen
+                      stdlib-roots
+                      expected-module
+                      import-root
+                      parse-cfgs)
+                    path-dedup
+                    path-key)]
+                [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+            [(CompilerEmbeddedStdlibNoSource)
+              (ErrCompilerLoadWithPaths
+                (compiler-diagnostic-at-start
+                  path
+                  (string-append "compiler-load: cannot read import " path)))]))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
@@ -3018,63 +3087,70 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym-i64-contains seen path-key))
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
-      (if (file-exists? path)
-        (match (if cache-current
-          (compiler-load-parse-file-diagnostic-session-with-pools
+      (let
+        [parse-cfgs : SymI64Env
+          (compiler-load-stdlib-private-cfgs
             path
             stdlib-roots
-            cfgs
-            pools)
-          (compiler-load-parse-file-diagnostic-escaping-with-pools
-            path
-            cfgs
-            pools))
-          [(OkAstProgramDiagnostic program)
-            (compiler-load-bind-path-dedup
-              (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
-                path
-                program
-                seen
-                stdlib-roots
-                expected-module
-                import-root
-                cfgs
-                pools)
-              path-dedup
-              path-key)]
-          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-        (match (compiler-load-embedded-stdlib-source-for-path path)
-          [(CompilerEmbeddedStdlibSomeSource source)
-            (match (if cache-current
-              (compiler-load-parse-embedded-source-diagnostic-session-with-pools
-                path
-                source
-                cfgs
-                pools)
-              (compiler-load-parse-source-diagnostic-escaping-with-pools
-                path
-                source
-                cfgs
-                pools))
-              [(OkAstProgramDiagnostic program)
-                (compiler-load-bind-path-dedup
-                  (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
-                    path
-                    program
-                    seen
-                    stdlib-roots
-                    expected-module
-                    import-root
-                    cfgs
-                    pools)
-                  path-dedup
-                  path-key)]
-              [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
-          [(CompilerEmbeddedStdlibNoSource)
-            (ErrCompilerLoadWithPaths
-              (compiler-diagnostic-at-start
-                path
-                (string-append "compiler-load: cannot read import " path)))])))))
+            expected-module
+            cfgs)]
+        (if (file-exists? path)
+          (match (if cache-current
+            (compiler-load-parse-file-diagnostic-session-with-pools
+              path
+              stdlib-roots
+              parse-cfgs
+              pools)
+            (compiler-load-parse-file-diagnostic-escaping-with-pools
+              path
+              parse-cfgs
+              pools))
+            [(OkAstProgramDiagnostic program)
+              (compiler-load-bind-path-dedup
+                (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+                  path
+                  program
+                  seen
+                  stdlib-roots
+                  expected-module
+                  import-root
+                  parse-cfgs
+                  pools)
+                path-dedup
+                path-key)]
+            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+          (match (compiler-load-embedded-stdlib-source-for-path path)
+            [(CompilerEmbeddedStdlibSomeSource source)
+              (match (if cache-current
+                (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+                  path
+                  source
+                  parse-cfgs
+                  pools)
+                (compiler-load-parse-source-diagnostic-escaping-with-pools
+                  path
+                  source
+                  parse-cfgs
+                  pools))
+                [(OkAstProgramDiagnostic program)
+                  (compiler-load-bind-path-dedup
+                    (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+                      path
+                      program
+                      seen
+                      stdlib-roots
+                      expected-module
+                      import-root
+                      parse-cfgs
+                      pools)
+                    path-dedup
+                    path-key)]
+                [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+            [(CompilerEmbeddedStdlibNoSource)
+              (ErrCompilerLoadWithPaths
+                (compiler-diagnostic-at-start
+                  path
+                  (string-append "compiler-load: cannot read import " path)))]))))))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
@@ -4010,45 +4086,54 @@
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]
   [cache-current : bool]) : ResultCompilerLoadWithPaths
-  (if (file-exists? path)
-    (match (if cache-current
-      (compiler-load-parse-file-diagnostic-session path stdlib-roots cfgs)
-      (compiler-load-parse-file-diagnostic-escaping path cfgs))
-      [(OkAstProgramDiagnostic program)
-        (compiler-load-package-program-with-paths-and-roots-expect
+  (let
+    [parse-cfgs : SymI64Env
+      (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
+    (if (file-exists? path)
+      (match (if cache-current
+        (compiler-load-parse-file-diagnostic-session
           path
-          program
-          seen
           stdlib-roots
-          expected-module
-          manifest-dir
-          deps
-          cfgs)]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-    (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(CompilerEmbeddedStdlibSomeSource source)
-        (match (if cache-current
-          (compiler-load-parse-embedded-source-diagnostic-session
+          parse-cfgs)
+        (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
+        [(OkAstProgramDiagnostic program)
+          (compiler-load-package-program-with-paths-and-roots-expect
             path
-            source
-            cfgs)
-          (compiler-load-parse-source-diagnostic-escaping path source cfgs))
-          [(OkAstProgramDiagnostic program)
-            (compiler-load-package-program-with-paths-and-roots-expect
+            program
+            seen
+            stdlib-roots
+            expected-module
+            manifest-dir
+            deps
+            parse-cfgs)]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+      (match (compiler-load-embedded-stdlib-source-for-path path)
+        [(CompilerEmbeddedStdlibSomeSource source)
+          (match (if cache-current
+            (compiler-load-parse-embedded-source-diagnostic-session
               path
-              program
-              seen
-              stdlib-roots
-              expected-module
-              manifest-dir
-              deps
-              cfgs)]
-          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
-      [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadWithPaths
-          (compiler-diagnostic-at-start
-            path
-            (string-append "compiler-load: cannot read import " path)))])))
+              source
+              parse-cfgs)
+            (compiler-load-parse-source-diagnostic-escaping
+              path
+              source
+              parse-cfgs))
+            [(OkAstProgramDiagnostic program)
+              (compiler-load-package-program-with-paths-and-roots-expect
+                path
+                program
+                seen
+                stdlib-roots
+                expected-module
+                manifest-dir
+                deps
+                parse-cfgs)]
+            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+        [(CompilerEmbeddedStdlibNoSource)
+          (ErrCompilerLoadWithPaths
+            (compiler-diagnostic-at-start
+              path
+              (string-append "compiler-load: cannot read import " path)))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
@@ -4778,12 +4863,11 @@
                 (sym-i64-empty)
                 roots)
                 [(OkCompilerLoadWithPaths _ _ _ _)
-                  (begin
-                    (set!
-                      ok
-                      (and
-                        (> (compiler-load-program-cache-hit-count-value) 0)
-                        (>= (compiler-load-program-cache-store-count-value) 1))))]
+                  (set!
+                    ok
+                    (and
+                      (> (compiler-load-program-cache-hit-count-value) 0)
+                      (>= (compiler-load-program-cache-store-count-value) 1)))]
                 [(ErrCompilerLoadWithPaths _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
@@ -5084,7 +5168,7 @@
     (write-file
       "target/cl_dotted_src/entry.tl"
       "(module dotted.entry)
-(import nested.dep as dep)
+(import nested.dep)
 (define (main) : i64 dep-val)")
     (match (compiler-load-file-with-paths
       "target/cl_dotted_src/entry.tl"
@@ -7452,286 +7536,187 @@
   (begin
     (unless
       (compiler-load-normalize-ok?)
-      (return
-        (begin
-          (panic "compiler-load: normalize smoke mismatch"))))
+      (return (panic "compiler-load: normalize smoke mismatch")))
     (unless
       (compiler-load-relative-resolution-ok?)
-      (return
-        (begin
-          (panic "compiler-load: relative resolution smoke mismatch"))))
+      (return (panic "compiler-load: relative resolution smoke mismatch")))
     (unless
       (compiler-load-package-owner-paths-ok?)
-      (return
-        (begin
-          (panic "compiler-load: package owner path smoke mismatch"))))
+      (return (panic "compiler-load: package owner path smoke mismatch")))
     (unless
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
-        (begin
-          (panic "compiler-load: package owner extern symbol smoke mismatch"))))
+        (panic "compiler-load: package owner extern symbol smoke mismatch")))
     (unless
       (compiler-load-source-provenance-ok?)
-      (return
-        (begin
-          (panic "compiler-load: source provenance smoke mismatch"))))
+      (return (panic "compiler-load: source provenance smoke mismatch")))
     (unless
       (compiler-load-entry-moduled-main-ok?)
-      (return
-        (begin
-          (panic "compiler-load: entry moduled main smoke mismatch"))))
+      (return (panic "compiler-load: entry moduled main smoke mismatch")))
     (unless
       (compiler-load-expected-module-conflict-ok?)
-      (return
-        (begin
-          (panic "compiler-load: expected module smoke mismatch"))))
+      (return (panic "compiler-load: expected module smoke mismatch")))
     (unless
       (compiler-load-duplicate-module-ok?)
-      (return
-        (begin
-          (panic "compiler-load: duplicate module smoke mismatch"))))
+      (return (panic "compiler-load: duplicate module smoke mismatch")))
     (unless
       (compiler-load-seen-module-ok?)
-      (return
-        (begin
-          (panic "compiler-load: seen module smoke mismatch"))))
+      (return (panic "compiler-load: seen module smoke mismatch")))
     (unless
       (compiler-load-cfg-import-ok?)
-      (return
-        (begin
-          (panic "compiler-load: cfg import smoke mismatch"))))
+      (return (panic "compiler-load: cfg import smoke mismatch")))
     (unless
       (compiler-load-session-cache-common-dep-ok?)
-      (return
-        (begin
-          (panic "compiler-load: session cache common dep smoke mismatch"))))
+      (return (panic "compiler-load: session cache common dep smoke mismatch")))
     (unless
       (compiler-load-session-cache-root-isolation-ok?)
       (return
-        (begin
-          (panic "compiler-load: session cache root isolation smoke mismatch"))))
+        (panic "compiler-load: session cache root isolation smoke mismatch")))
     (unless
       (compiler-load-session-cache-entry-cold-ok?)
-      (return
-        (begin
-          (panic "compiler-load: session cache entry cold smoke mismatch"))))
+      (return (panic "compiler-load: session cache entry cold smoke mismatch")))
     (unless
       (compiler-load-session-program-cache-disable-persistent-off-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: disabled program cache left persistent intern storage on"))))
+        (panic
+          "compiler-load: disabled program cache left persistent intern storage on")))
     (unless
       (compiler-load-session-cache-enable-persistent-off-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: session cache enable left persistent intern storage on"))))
+        (panic
+          "compiler-load: session cache enable left persistent intern storage on")))
     (unless
       (compiler-load-session-persistent-floor-interns-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: session cache intern floor kept scratch storage"))))
+        (panic "compiler-load: session cache intern floor kept scratch storage")))
     (unless
       (compiler-load-session-cache-local-common-dep-ok?)
       (return
-        (begin
-          (panic "compiler-load: session cache local common dep smoke mismatch"))))
+        (panic "compiler-load: session cache local common dep smoke mismatch")))
     (unless
       (compiler-load-session-cache-package-common-dep-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: session cache package common dep smoke mismatch"))))
+        (panic "compiler-load: session cache package common dep smoke mismatch")))
     (unless
       (compiler-load-file-import-dedup-cycle-ok?)
-      (return
-        (begin
-          (panic "compiler-load: import dedup/cycle smoke mismatch"))))
+      (return (panic "compiler-load: import dedup/cycle smoke mismatch")))
     (unless
       (compiler-load-file-fallback-path-dedup-ok?)
-      (return
-        (begin
-          (panic "compiler-load: fallback path dedup smoke mismatch"))))
+      (return (panic "compiler-load: fallback path dedup smoke mismatch")))
     (unless
       (compiler-load-import-module-restore-ok?)
-      (return
-        (begin
-          (panic "compiler-load: import module restore smoke mismatch"))))
+      (return (panic "compiler-load: import module restore smoke mismatch")))
     (unless
       (compiler-load-import-alias-preserved-ok?)
-      (return
-        (begin
-          (panic "compiler-load: import alias preservation smoke mismatch"))))
+      (return (panic "compiler-load: import alias preservation smoke mismatch")))
     (unless
       (compiler-load-legacy-path-module-flat-alias-ok?)
       (return
-        (begin
-          (panic "compiler-load: legacy path module flat alias smoke mismatch"))))
+        (panic "compiler-load: legacy path module flat alias smoke mismatch")))
     (unless
       (compiler-load-seen-legacy-path-module-flat-alias-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: seen legacy path module flat alias smoke mismatch"))))
+        (panic
+          "compiler-load: seen legacy path module flat alias smoke mismatch")))
     (unless
       (compiler-load-package-legacy-path-module-flat-alias-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: package legacy path module flat alias smoke mismatch"))))
+        (panic
+          "compiler-load: package legacy path module flat alias smoke mismatch")))
     (unless
       (compiler-load-package-seen-legacy-path-module-flat-alias-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: package seen legacy path module flat alias smoke mismatch"))))
+        (panic
+          "compiler-load: package seen legacy path module flat alias smoke mismatch")))
     (unless
       (compiler-load-dotted-import-duplicate-alias-ok?)
       (return
-        (begin
-          (panic "compiler-load: dotted import duplicate alias smoke mismatch"))))
+        (panic "compiler-load: dotted import duplicate alias smoke mismatch")))
     (unless
       (compiler-load-dotted-import-resolution-ok?)
-      (return
-        (begin
-          (panic "compiler-load: dotted import resolution smoke mismatch"))))
+      (return (panic "compiler-load: dotted import resolution smoke mismatch")))
     (unless
       (compiler-load-dotted-source-root-ok?)
-      (return
-        (begin
-          (panic "compiler-load: dotted source root smoke mismatch"))))
+      (return (panic "compiler-load: dotted source root smoke mismatch")))
     (unless
       (compiler-load-package-dotted-import-resolution-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: package dotted import resolution smoke mismatch"))))
+        (panic "compiler-load: package dotted import resolution smoke mismatch")))
     (unless
       (compiler-load-generated-meta-preserved-ok?)
       (return
-        (begin
-          (panic
-            "compiler-load: generated metadata preservation smoke mismatch"))))
+        (panic "compiler-load: generated metadata preservation smoke mismatch")))
     (unless
       (compiler-load-diamond-import-ok?)
-      (return
-        (begin
-          (panic "compiler-load: diamond import smoke mismatch"))))
+      (return (panic "compiler-load: diamond import smoke mismatch")))
     (unless
       (compiler-load-transitive-import-ok?)
-      (return
-        (begin
-          (panic "compiler-load: transitive import smoke mismatch"))))
+      (return (panic "compiler-load: transitive import smoke mismatch")))
     (unless
       (compiler-load-missing-import-ok?)
-      (return
-        (begin
-          (panic "compiler-load: missing import smoke mismatch"))))
+      (return (panic "compiler-load: missing import smoke mismatch")))
     (unless
       (compiler-load-include-str-relative-ok?)
-      (return
-        (begin
-          (panic "compiler-load: include-str relative smoke mismatch"))))
+      (return (panic "compiler-load: include-str relative smoke mismatch")))
     (unless
       (compiler-load-include-str-stdlib-root-ok?)
-      (return
-        (begin
-          (panic "compiler-load: include-str stdlib root smoke mismatch"))))
+      (return (panic "compiler-load: include-str stdlib root smoke mismatch")))
     (unless
       (compiler-load-missing-include-str-ok?)
-      (return
-        (begin
-          (panic "compiler-load: missing include-str smoke mismatch"))))
+      (return (panic "compiler-load: missing include-str smoke mismatch")))
     (unless
       (compiler-load-include-str-raw-text-ok?)
-      (return
-        (begin
-          (panic "compiler-load: include-str raw text smoke mismatch"))))
+      (return (panic "compiler-load: include-str raw text smoke mismatch")))
     (unless
       (compiler-load-include-bin-relative-ok?)
-      (return
-        (begin
-          (panic "compiler-load: include-bin relative smoke mismatch"))))
+      (return (panic "compiler-load: include-bin relative smoke mismatch")))
     (unless
       (compiler-load-missing-include-bin-ok?)
-      (return
-        (begin
-          (panic "compiler-load: missing include-bin smoke mismatch"))))
+      (return (panic "compiler-load: missing include-bin smoke mismatch")))
     (unless
       (compiler-load-embedded-stdlib-lookup-ok?)
-      (return
-        (begin
-          (panic "compiler-load: embedded stdlib lookup smoke mismatch"))))
+      (return (panic "compiler-load: embedded stdlib lookup smoke mismatch")))
     (unless
       (compiler-load-embedded-stdlib-missing-ok?)
-      (return
-        (begin
-          (panic "compiler-load: embedded stdlib missing smoke mismatch"))))
+      (return (panic "compiler-load: embedded stdlib missing smoke mismatch")))
     (unless
       (compiler-load-embedded-stdlib-escape-rejected-ok?)
-      (return
-        (begin
-          (panic "compiler-load: embedded stdlib escape smoke mismatch"))))
+      (return (panic "compiler-load: embedded stdlib escape smoke mismatch")))
     (unless
       (compiler-load-imported-parse-error-path-ok?)
-      (return
-        (begin
-          (panic "compiler-load: imported parse error path smoke mismatch"))))
+      (return (panic "compiler-load: imported parse error path smoke mismatch")))
     (unless
       (compiler-load-imported-duplicate-module-path-ok?)
       (return
-        (begin
-          (panic "compiler-load: imported duplicate module path smoke mismatch"))))
+        (panic "compiler-load: imported duplicate module path smoke mismatch")))
     (unless
       (compiler-load-stdlib-root-fallback-ok?)
-      (return
-        (begin
-          (panic "compiler-load: stdlib root fallback smoke mismatch"))))
+      (return (panic "compiler-load: stdlib root fallback smoke mismatch")))
     (unless
       (compiler-load-stdlib-searched-root-ok?)
-      (return
-        (begin
-          (panic "compiler-load: stdlib searched root smoke mismatch"))))
+      (return (panic "compiler-load: stdlib searched root smoke mismatch")))
     (unless
       (compiler-load-stdlib-unresolved-ok?)
-      (return
-        (begin
-          (panic "compiler-load: stdlib unresolved smoke mismatch"))))
+      (return (panic "compiler-load: stdlib unresolved smoke mismatch")))
     (unless
       (compiler-load-stdlib-root-escape-rejected-ok?)
-      (return
-        (begin
-          (panic "compiler-load: stdlib root escape smoke mismatch"))))
+      (return (panic "compiler-load: stdlib root escape smoke mismatch")))
     (unless
       (compiler-load-pkg-manifest-ok?)
-      (return
-        (begin
-          (panic "compiler-load: pkg manifest smoke mismatch"))))
+      (return (panic "compiler-load: pkg manifest smoke mismatch")))
     (unless
       (compiler-load-manifest-path-inference-ok?)
-      (return
-        (begin
-          (panic "compiler-load: manifest path inference smoke mismatch"))))
+      (return (panic "compiler-load: manifest path inference smoke mismatch")))
     (unless
       (compiler-load-pkg-resolve-ok?)
-      (return
-        (begin
-          (panic "compiler-load: pkg resolve smoke mismatch"))))
+      (return (panic "compiler-load: pkg resolve smoke mismatch")))
     (unless
       (compiler-load-pkg-parent-dir-ok?)
-      (return
-        (begin
-          (panic "compiler-load: pkg parent-dir smoke mismatch"))))
+      (return (panic "compiler-load: pkg parent-dir smoke mismatch")))
     (unless
       (compiler-load-string-vec-roots-ok?)
-      (return
-        (begin
-          (panic "compiler-load: string vec roots smoke mismatch"))))
+      (return (panic "compiler-load: string vec roots smoke mismatch")))
     (unless
       (compiler-load-boxed-pkg-dep-list-ok?)
-      (return
-        (begin
-          (panic "compiler-load: boxed pkg-dep-list smoke mismatch"))))
+      (return (panic "compiler-load: boxed pkg-dep-list smoke mismatch")))
     42))

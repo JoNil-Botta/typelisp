@@ -33,7 +33,7 @@
 (define doc-site-status-ok : i64
   0)
 (define doc-site-stdlib-manifest-size : i64
-  20)
+  19)
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -138,9 +138,6 @@
       (doc-site-module-list-push
         (&mut modules)
         (DocSiteModule "stdlib/json.tl" "stdlib-json.html"))
-      (doc-site-module-list-push
-        (&mut modules)
-        (DocSiteModule "stdlib/list.tl" "stdlib-list.html"))
       (doc-site-module-list-push
         (&mut modules)
         (DocSiteModule "stdlib/msvc.tl" "stdlib-msvc.html"))
@@ -263,8 +260,7 @@
   (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
 
 (define (doc-site-panic-unit [message : String]) : unit
-  (begin
-    (panic message)))
+  (panic message))
 
 (define (doc-site-empty-docs) : DocExtraction
   (DocExtraction "" DocItemNil))
@@ -433,23 +429,25 @@
 (define (doc-site-css) : String
   "body.tl-docs {
   margin: 0;
-  color: #1f2933;
-  background: #f6f8fb;
+  color-scheme: dark;
+  color: #d6deea;
+  background: #0b1120;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;
   line-height: 1.55;
 }
 .tl-doc-header {
-  background: #ffffff;
-  border-bottom: 1px solid #d9e2ec;
+  background: #111827;
+  border-bottom: 1px solid #263244;
   padding: 2rem clamp(1rem, 4vw, 3rem);
 }
 .tl-doc-header h1 {
   margin: 0 0 0.25rem;
   font-size: 2rem;
+  color: #f8fafc;
 }
 .tl-doc-header p {
   margin: 0;
-  color: #52606d;
+  color: #95a3b8;
 }
 main {
   max-width: 72rem;
@@ -471,16 +469,32 @@ main {
   padding: 0;
 }
 a {
-  color: #075985;
+  color: #67e8f9;
+}
+a:hover {
+  color: #a7f3d0;
 }
 code,
 pre {
   font-family: ui-monospace, SFMono-Regular, Consolas, \"Liberation Mono\", monospace;
 }
+p code,
+li code,
+dt code,
+dd code,
+td code,
+th code {
+  background: #111827;
+  color: #e2e8f0;
+  border: 1px solid #263244;
+  border-radius: 4px;
+  padding: 0.05rem 0.25rem;
+}
 pre {
   overflow-x: auto;
-  background: #111827;
-  color: #f9fafb;
+  background: #020617;
+  color: #e5e7eb;
+  border: 1px solid #1f2a3a;
   padding: 1rem;
   border-radius: 6px;
 }
@@ -530,8 +544,8 @@ pre {
 .tl-doc-module-nav,
 .tl-doc-item-nav,
 .tl-doc-stdlib-sidebar {
-  background: #ffffff;
-  border: 1px solid #d9e2ec;
+  background: #111827;
+  border: 1px solid #263244;
   border-radius: 6px;
   padding: 1rem;
 }
@@ -571,8 +585,8 @@ pre {
 }
 .tl-doc-tree-link.is-current,
 .tl-doc-tree-root.is-current {
-  background: #e0f2fe;
-  color: #0c4a6e;
+  background: #164e63;
+  color: #ecfeff;
   font-weight: 700;
 }
 .tl-doc-module,
@@ -581,8 +595,9 @@ pre {
 }
 .tl-doc-module-text,
 .tl-doc-item-text {
-  background: #ffffff;
-  border-left: 4px solid #0f766e;
+  background: #0f172a;
+  border-left: 4px solid #14b8a6;
+  color: #dbeafe;
   padding: 0.75rem 1rem;
 }
 .tl-doc-meta {
@@ -591,7 +606,7 @@ pre {
   gap: 0.25rem 0.75rem;
 }
 .tl-doc-empty {
-  color: #6b7280;
+  color: #94a3b8;
 }
 .tl-doc-language h1,
 .tl-doc-language h2,
@@ -604,19 +619,23 @@ pre {
 .tl-doc-language table {
   border-collapse: collapse;
   width: 100%;
-  background: #ffffff;
+  background: #0f172a;
+}
+.tl-doc-language th {
+  background: #111c2e;
+  color: #f8fafc;
 }
 .tl-doc-language th,
 .tl-doc-language td {
-  border: 1px solid #d9e2ec;
+  border: 1px solid #263244;
   padding: 0.35rem 0.5rem;
   vertical-align: top;
 }
 .tl-doc-language blockquote {
   margin: 1rem 0;
-  border-left: 4px solid #94a3b8;
+  border-left: 4px solid #64748b;
   padding-left: 1rem;
-  color: #334155;
+  color: #cbd5e1;
 }
 @media (max-width: 760px) {
   .tl-doc-shell {
@@ -966,16 +985,14 @@ pre {
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (doc-extract-source (read-file source))
-      (begin
-        (panic (string-append "doc-site: missing input module: " source))))))
+      (panic (string-append "doc-site: missing input module: " source)))))
 
 (define (doc-site-read-markdown [source : String]) : String
   (let
     [status : i64 (read-file-status source)]
     (if (= status doc-site-status-ok)
       (read-file source)
-      (begin
-        (panic (string-append "doc-site: missing language reference: " source))))))
+      (panic (string-append "doc-site: missing language reference: " source)))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
@@ -1174,8 +1191,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
 (define (doc-site-require [ok : bool] [message : String]) : bool
   (if ok
     true
-    (begin
-      (panic message))))
+    (panic message)))
 
 (define (doc-site-smoke) : i64
   (let
@@ -1301,6 +1317,18 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         (doc-site-css)
         ".tl-syn-keyword"
         "doc-site: syntax css marker missing")
+      (doc-html-require-contains
+        (doc-site-css)
+        "color-scheme: dark;"
+        "doc-site: dark color-scheme marker missing")
+      (doc-html-require-contains
+        (doc-site-css)
+        "background: #0b1120;"
+        "doc-site: dark page background missing")
+      (doc-html-require-contains
+        (doc-site-css)
+        "background: #164e63;"
+        "doc-site: dark current-nav background missing")
       (doc-site-require
         (doc-site-output-list-has-duplicate?
           (let

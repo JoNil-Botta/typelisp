@@ -21013,6 +21013,9 @@
 (define (opt-inline-max-body) : i64
   8)
 
+(define (opt-inline-bounds-leaf-max-body) : i64
+  48)
+
 (define (opt-inline-cost-block-weight) : i64
   6)
 
@@ -21137,21 +21140,28 @@
     0
     (- (compiler-ir-instr-seq-count instrs) 1)))
 
+(define (opt-inline-single-block-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
+  (let
+    [n : i64 (compiler-ir-instr-seq-count seq)]
+    (if (< n 1)
+      false
+      (if (> (- n 1) (opt-inline-max-body))
+        false
+        (opt-inline-instr-seq-ok? seq np)))))
+
 (define (opt-inline-single-block-ok? [blocks : CompilerIrBlockList] [np : i64]) : bool
   (match blocks
     [(IrBlockCons block rest)
       (match (box-get rest)
         [(IrBlockNil)
           (match block
-            [(IrBlock _ seq)
-              (let
-                [n : i64 (compiler-ir-instr-seq-count seq)]
-                (if (< n 1)
-                  false
-                  (if (> (- n 1) (opt-inline-max-body))
-                    false
-                    (opt-inline-instr-seq-ok? seq np))))])]
+            [(IrBlock _ seq) (opt-inline-single-block-seq-ok? seq np)])]
         [_ false])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs) (opt-inline-single-block-seq-ok? instrs np)])
+        false)]
     [_ false]))
 
 (define (opt-inline-single-block-cost-instrs [blocks : CompilerIrBlockList]) : i64
@@ -21159,7 +21169,79 @@
     [(IrBlockCons block _)
       (match block
         [(IrBlock _ seq) (- (compiler-ir-instr-seq-count seq) 1)])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs) (- (compiler-ir-instr-seq-count instrs) 1)])
+        0)]
     [_ 0]))
+
+(define (opt-inline-bounds-leaf-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrCall _ _ _ _) false]
+    [(IrInstrCallIndirect _ _ _ _) false]
+    [(IrInstrCallIndirectC _ _ _ _) false]
+    [_ (opt-inline-body-instr-ok? instr np)]))
+
+(define (opt-inline-bounds-leaf-instr-seq-ok-from?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]
+  [last : i64]
+  [has-bounds : bool]) : bool
+  (if (> index last)
+    false
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (= index last)
+        (and has-bounds (opt-inline-is-return? instr))
+        (if (opt-inline-bounds-leaf-instr-ok? instr np)
+          (opt-inline-bounds-leaf-instr-seq-ok-from?
+            instrs
+            np
+            (+ index 1)
+            last
+            (or
+              has-bounds
+              (match instr
+                [(IrInstrBoundsCheck _ _ _) true]
+                [_ false])))
+          false)))))
+
+(define (opt-inline-bounds-leaf-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
+  (let
+    [n : i64 (compiler-ir-instr-seq-count seq)]
+    [body : i64 (- n 1)]
+    (and
+      (>= n 1)
+      (> body (opt-inline-max-body))
+      (<= body (opt-inline-bounds-leaf-max-body))
+      (opt-inline-bounds-leaf-instr-seq-ok-from? seq np 0 (- n 1) false))))
+
+(define (opt-inline-unit-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyUnit) true]
+    [_ false]))
+
+(define (opt-inline-bounds-leaf-ok?
+  [blocks : CompilerIrBlockList]
+  [np : i64]
+  [ret : AstType]) : bool
+  (and
+    (opt-inline-unit-type? ret)
+    (match blocks
+      [(IrBlockCons block rest)
+        (match (box-get rest)
+          [(IrBlockNil)
+            (match block
+              [(IrBlock _ seq) (opt-inline-bounds-leaf-seq-ok? seq np)])]
+          [_ false])]
+      [(IrBlockArray seq)
+        (if (= (compiler-ir-block-seq-count seq) 1)
+          (match (compiler-ir-block-seq-ref seq 0)
+            [(IrBlock _ instrs) (opt-inline-bounds-leaf-seq-ok? instrs np)])
+          false)]
+      [_ false])))
 
 (define (opt-inline-phi-input-label?
   [inputs : CompilerIrPhiInputList]
@@ -21360,14 +21442,16 @@
   [callee : CompilerIrFunction]
   [caller-name : String]) : bool
   (match callee
-    [(IrFunction cname cparams _ cvars cblocks)
+    [(IrFunction cname cparams cret cvars cblocks)
       (if (string-eq cname caller-name)
         false
         (let
           [np : i64 (opt-inline-param-count cparams)]
           (if (opt-inline-params-sequential? cparams 0)
             (if (>= cvars np)
-              (opt-inline-single-block-ok? cblocks np)
+              (or
+                (opt-inline-single-block-ok? cblocks np)
+                (opt-inline-bounds-leaf-ok? cblocks np cret))
               false)
             false)))]))
 
@@ -21978,6 +22062,12 @@
     [(IrBlockCons block _)
       (match block
         [(IrBlock _ seq) (opt-aggregate-instr-seq-append-from seq 0 IrInstrNil)])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs)
+            (opt-aggregate-instr-seq-append-from instrs 0 IrInstrNil)])
+        IrInstrNil)]
     [_ IrInstrNil]))
 
 (define (opt-inline-append [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : CompilerIrInstrList
@@ -22234,6 +22324,20 @@
     (or absorbable? (= const-args param-count))
     true))
 
+(define (opt-inline-bounds-leaf-cost-inline?
+  [callee-instrs : i64]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (<= callee-instrs (opt-inline-bounds-leaf-max-body))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))))
+
 (define (opt-inline-try
   [instr : CompilerIrInstr]
   [index : OptFunctionIndex]
@@ -22256,7 +22360,7 @@
         caller-scc)
         [(OptSomeFunction callee)
           (match callee
-            [(IrFunction callee-name cparams _ cvars cblocks)
+            [(IrFunction callee-name cparams callee-ret cvars cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
                 (if (opt-inline-arity-ok? cargs np)
@@ -22272,19 +22376,31 @@
                         callee-name)]
                     [has-bounds? : bool
                       (opt-inline-instr-list-has-bounds-check? body-instrs)]
-                    (if (and
-                      (opt-inline-bounds-inline-ok?
-                        has-bounds?
-                        absorbable?
-                        const-args
-                        np)
-                      (opt-inline-cost-inline?
-                        (opt-inline-single-block-cost-instrs cblocks)
-                        added-blocks
-                        const-args
-                        absorbable?
-                        caller-blocks
-                        added-so-far))
+                    [bounds-leaf? : bool
+                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
+                    [callee-instrs : i64
+                      (opt-inline-single-block-cost-instrs cblocks)]
+                    (if (or
+                      (and
+                        (opt-inline-bounds-inline-ok?
+                          has-bounds?
+                          absorbable?
+                          const-args
+                          np)
+                        (opt-inline-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          absorbable?
+                          caller-blocks
+                          added-so-far))
+                      (and
+                        bounds-leaf?
+                        (opt-inline-bounds-leaf-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          caller-blocks
+                          added-so-far)))
                       (OptInlineState
                         (opt-inline-expand-instrs
                           body-instrs
@@ -22349,7 +22465,7 @@
         caller-scc)
         [(OptSomeFunction callee)
           (match callee
-            [(IrFunction callee-name cparams _ cvars cblocks)
+            [(IrFunction callee-name cparams callee-ret cvars cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
                 (if (opt-inline-arity-ok? cargs np)
@@ -22365,19 +22481,31 @@
                         callee-name)]
                     [has-bounds? : bool
                       (opt-inline-instr-list-has-bounds-check? body-instrs)]
-                    (if (and
-                      (opt-inline-bounds-inline-ok?
-                        has-bounds?
-                        absorbable?
-                        const-args
-                        np)
-                      (opt-inline-cost-inline?
-                        (opt-inline-single-block-cost-instrs cblocks)
-                        added-blocks
-                        const-args
-                        absorbable?
-                        caller-blocks
-                        added-so-far))
+                    [bounds-leaf? : bool
+                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
+                    [callee-instrs : i64
+                      (opt-inline-single-block-cost-instrs cblocks)]
+                    (if (or
+                      (and
+                        (opt-inline-bounds-inline-ok?
+                          has-bounds?
+                          absorbable?
+                          const-args
+                          np)
+                        (opt-inline-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          absorbable?
+                          caller-blocks
+                          added-so-far))
+                      (and
+                        bounds-leaf?
+                        (opt-inline-bounds-leaf-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          caller-blocks
+                          added-so-far)))
                       (match (opt-inline-expand-instrs-with-spans
                         body-instrs
                         dst
@@ -30352,6 +30480,59 @@
     (opt-inline-call-bounds-twice)
     (compiler-ir-function-cons (opt-inline-bounds-callee) IrFunctionNil)))
 
+(define (opt-inline-bounds-leaf-instrs [index : i64] [limit : i64]) : CompilerIrInstrList
+  (if (>= index limit)
+    (compiler-ir-instr-cons (IrInstrReturn (IrNoValue)) IrInstrNil)
+    (compiler-ir-instr-cons
+      (if (= index 0)
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_leaf.ok")
+        (IrInstrMov (+ index 1) (IrValueI64 index) (AstTyI64)))
+      (opt-inline-bounds-leaf-instrs (+ index 1) limit))))
+
+(define (opt-inline-bounds-leaf-callee [body : i64]) : CompilerIrFunction
+  (compiler-ir-function-compact-blocks
+    (IrFunction
+      "bounds_leaf_inline"
+      (compiler-ir-param-cons
+        (IrParam "idx" (AstTyI64) 0)
+        (compiler-ir-param-cons (IrParam "len" (AstTyI64) 1) IrParamNil))
+      (AstTyUnit)
+      (+ body 1)
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" (opt-inline-bounds-leaf-instrs 0 body))
+        IrBlockNil))))
+
+(define (opt-inline-call-bounds-leaf) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 8) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "bounds_leaf_inline"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyUnit))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-bounds-leaf-functions [body : i64]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf)
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-callee body)
+      IrFunctionNil)))
+
 (define (opt-inline-multi-call-caller) : CompilerIrFunction
   (IrFunction
     "main"
@@ -30774,6 +30955,26 @@
             (opt-inline-revert-or-keep fallback duplicate)
             fallback))]
       [(OptNoFunction) false])))
+
+(define (compiler-optimize-inline-bounds-leaf-body-gate-ok?) : bool
+  (let
+    [accepted : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-bounds-leaf-functions (opt-inline-bounds-leaf-max-body))
+        2)]
+    [rejected : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-bounds-leaf-functions
+          (+ (opt-inline-bounds-leaf-max-body) 1))
+        2)]
+    [accepted-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs accepted "main")]
+    [rejected-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs rejected "main")]
+    (and
+      (= (opt-count-direct-call-name accepted-instrs "bounds_leaf_inline") 0)
+      (= (opt-count-bounds-instrs accepted-instrs) 1)
+      (= (opt-count-direct-call-name rejected-instrs "bounds_leaf_inline") 1))))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -31638,6 +31839,9 @@
                     (unless
                       (compiler-optimize-inline-bounds-label-guard-ok?)
                       (return 47))
+                    (unless
+                      (compiler-optimize-inline-bounds-leaf-body-gate-ok?)
+                      (return 48))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))
@@ -38019,6 +38223,17 @@
             (IrInstrLoad 3 (IrValueVar 4) (AstTyI64))
             (IrInstrNil)))))))
 
+(define (opt-load-cse-vector-data-pointer-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrLoad 2 (IrValueVar 0) (AstTyU64))
+    (compiler-ir-instr-cons
+      (IrInstrVectorLoad 4 (IrValueVar 2) (IrValueVar 1) 4 (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 0) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrVectorLoad 5 (IrValueVar 3) (IrValueVar 1) 4 (AstTyI64))
+          (IrInstrNil))))))
+
 (define (opt-load-cse-barrier-blocked? [barrier : CompilerIrInstr]) : bool
   (let
     [optimized : CompilerIrInstrList
@@ -38077,6 +38292,8 @@
       (opt-load-cse-run (opt-load-cse-type-mismatch-instrs))]
     [different-address : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-different-address-instrs))]
+    [vector-data-pointer : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-vector-data-pointer-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
         (compiler-ir-block "entry" (opt-load-cse-positive-instrs)))]
@@ -38100,6 +38317,8 @@
       [(not (= (opt-count-mov-dst-instrs result-redef 3) 0)) 14]
       [(not (= (opt-count-load-instrs type-mismatch) 2)) 15]
       [(not (= (opt-count-load-instrs different-address) 2)) 16]
-      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 17]
-      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 18]
+      [(not (= (opt-count-load-instrs vector-data-pointer) 1)) 17]
+      [(not (= (opt-count-mov-dst-instrs vector-data-pointer 3) 1)) 18]
+      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 19]
+      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 20]
       [else 42])))

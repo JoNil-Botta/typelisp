@@ -2603,16 +2603,23 @@ Declares a source-owned inline test. The name is an identifier. The body must
 contain one or more expressions; multiple expressions are sequenced like
 `begin`.
 
-Normal production commands (`check`, `compile`, `build`, and `run`) ignore
-`test` items. `typelisp test <file.tl>` loads the import graph, lowers inline
-tests owned by the requested source into private unit-returning functions, skips
-any production `main`, generates a test-owned `main`, and runs the resulting
-executable. Imported files provide runtime declarations but do not contribute
-their own inline tests to that source's harness. The test loader enables the
-`test` cfg predicate, allowing source-local fixture declarations to be written as
-`(cfg test ...)` so normal production commands skip them. `typelisp test --check
-<file.tl>` type-checks the generated harness without assembling or linking. The
-current runner is intended for unit-returning test bodies; assertion helpers in
+Normal production commands (`check`, `compile`, `build`, and `run`) type-check
+inline tests owned by the explicitly named source, or by the package's own
+discovered source files when operating on a package, before ordinary production
+emission. That preflight enables the `test` cfg predicate, allowing source-local
+fixture declarations to be written as `(cfg test ...)`; ordinary production
+loading still leaves those declarations inactive. `test` items and test-only
+helper declarations are dropped before production lowering and codegen, so
+valid inline tests cannot change emitted assembly. Imported stdlib files,
+dependency package files, and other imports provide runtime declarations but do
+not have their inline tests checked merely because they were imported.
+`typelisp test <file.tl>` loads the import graph, lowers inline tests owned by
+the requested source into private unit-returning functions, skips any production
+`main`, generates a test-owned `main`, and runs the resulting executable.
+Imported files provide runtime declarations but do not contribute their own
+inline tests to that source's harness. `typelisp test --check <file.tl>`
+type-checks the generated harness without assembling or linking. The current
+runner is intended for unit-returning test bodies; assertion helpers in
 `stdlib/test.tl` panic on failure.
 
 Example:
@@ -3657,6 +3664,10 @@ Semantics:
 - `start` and `end` are uniform `i64` expressions evaluated once before the
   loop. If `end <= start`, the loop has zero logical iterations.
 - `body` must have type `unit`; the `foreach` expression has type `unit`.
+- Function-local early exits are not part of the current SPMD control-flow
+  surface: `(return expr)` and recoverable `(try expr)` propagation are rejected
+  inside `foreach` bodies. Future `break`/`continue` forms are also outside this
+  surface until a separate SPMD ordering, mask, and cleanup policy is specified.
 - Programs that do not evaluate public lane identity forms must produce the
   same observable result as an ordinary scalar loop over the same range. SIMD
   lowering may group iterations into lanes, but those programs must not depend
@@ -3724,12 +3735,13 @@ Uniform and varying rules:
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
-- Non-inlineable calls with varying arguments or varying returns are rejected
-  until an out-of-line SPMD function ABI is designed (#2852). The implemented
-  exceptions are the explicit `stdlib/atomic.tl` integer element helpers,
-  direct source-known non-dispatch helper calls that can be inlined within the
-  current SPMD-safe expression subset, and built-in arithmetic/comparison
-  operators and array operations over supported lane types.
+- Direct source-known TypeLisp helper calls in SPMD may be handled by inlining
+  today when their body fits the current SPMD-safe expression subset. The v1
+  private out-of-line SPMD call ABI below specifies the non-inlined target for
+  the same class of helpers (#2852). Function values/indirect calls, extern
+  calls, `defdispatch` logical calls, recursive call cycles, and
+  cross-package/tlci SPMD-callable metadata remain deferred and must diagnose
+  instead of silently scalarizing.
 - `while` conditions must be uniform. Varying `if` is admitted with the
   restrictions below.
 
@@ -3810,6 +3822,50 @@ Tail behavior:
 - Inactive tail lanes must not perform bounds checks, loads, stores, calls, or
   other side effects.
 
+Private out-of-line SPMD call ABI (v1):
+
+- This ABI is compiler-private. It introduces no public `(varying T)`, vector,
+  or mask source types and no user-denotable helper symbols. Source functions
+  keep their ordinary scalar signature outside SPMD contexts.
+- A compiler may use the ABI for a direct call to a source-known,
+  non-dispatch, non-extern TypeLisp helper whose body is available in the same
+  whole-program compile. It may also inline the helper instead; the observable
+  behavior must match the scalar reference semantics either way.
+- Hidden helper variants are specialized by backend mode, lane count, source
+  callee identity, call-site argument SPMD classes, lane element types, and
+  result SPMD class. Implementations may create one hidden variant per call
+  site or reuse equivalent variants when those specialization keys match.
+- Every hidden helper receives an active-mask argument representing the current
+  tail mask, enclosing SPMD region mask, and any masked-branch condition masks.
+  Scalar implementation targets use a lane count of 1 and call the helper only
+  for the active logical iteration. AVX-512 implementation targets pass the
+  mask through private opmask/vector lowering. AVX2 keeps an explicit
+  diagnostic for out-of-line varying calls until an AVX2 private mask ABI is
+  specified and implemented.
+- Inactive lanes inside the hidden helper must not perform source-visible
+  effects, traps, bounds checks, loads, stores, atomics, or nested calls. This
+  rule applies to inactive tail lanes and to lanes disabled by nested masked
+  control flow.
+- Uniform arguments use the ordinary scalar ABI value representation. Varying
+  scalar arguments use private vector or mask values for the supported lane
+  element types `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`,
+  `f64`, and `bool`; `bool` lanes may be represented as a private mask.
+- Return passing supports `unit`, uniform scalar results using the ordinary
+  scalar result representation, and varying scalar lane results for the same
+  supported element type set. Aggregate, string, array, function, public vector,
+  and public mask returns remain rejected.
+- The helper body is typechecked/lowered as an SPMD body under the hidden active
+  mask. It may use the same SPMD-safe expression surface as the containing
+  `foreach` or masked branch. Unsupported constructs must report targeted SPMD
+  call diagnostics rather than falling back to a broader scalar-only surface.
+- Function values and indirect calls, extern calls, `defdispatch` logical
+  calls, recursion and mutual recursion through SPMD-callable helpers,
+  cross-package/tlci calls, and exported/imported SPMD-callable metadata remain
+  deferred. Diagnostics for these cases should name the specific boundary, for
+  example "SPMD out-of-line calls require a direct source-known TypeLisp
+  helper", "SPMD out-of-line calls do not support extern callees", or "SPMD
+  out-of-line calls do not support recursion".
+
 Masked varying `if` (v2):
 
 - V2 includes varying `if` before gather/scatter, public lane-index builtins,
@@ -3834,7 +3890,8 @@ Masked varying `if` (v2):
   `i64`, `u64`, `f32`, `f64`, or `bool`).
   Aggregate, string, function, array, and public vector/mask results remain
   deferred.
-- Branch bodies may use local `let`, `begin`, nested varying `if`, supported
+- Branch bodies may use local `let`, `begin`, nested varying `if`, varying
+  `match` over supported scalar lane values, supported
   arithmetic/comparison/boolean operators, and contiguous `array-ref` /
   `array-set!` over supported lane element types. Array indexes must still be
   the `foreach` index or a simple uniform offset from it.
@@ -3845,24 +3902,30 @@ Masked varying `if` (v2):
   This includes `set!` to bindings declared outside the `foreach`, `print*`,
   file/process I/O, `panic`/`error`, allocation whose result escapes the branch,
   nested `foreach`, nested `spmd-reduce`, and user-defined calls with varying
-  arguments or varying returns.
-- Varying `match` is not part of this slice. `match` on a varying scrutinee is
-  rejected; a `match` whose scrutinee is uniform follows ordinary scalar
-  control-flow rules.
-- Varying `while`, early exits, `return` from inside `foreach`, `break`,
-  `continue`, public mask values, gather reads and scatter writes through index
-  arrays inside masked branches, overlapping ordinary writes, general atomics,
-  and user-defined SPMD calls remain deferred.
+  arguments or varying returns unless they satisfy the v1 private out-of-line
+  SPMD call ABI above.
+- `match` on a varying scalar lane scrutinee is supported for literal patterns,
+  wildcard arms, and catch-all bindings whose bound type is a supported lane
+  value. A varying `match` creates one masked arm region per arm; each logical
+  lane evaluates exactly the first matching arm, and arm bodies follow the same
+  masked branch restrictions as varying `if`. Aggregate, string, borrowed,
+  enum payload, and other non-lane-value pattern bindings remain deferred.
+- Varying `while`, function-local early exits (`return` and `try`
+  propagation), future `break`/`continue` forms, public mask values, gather
+  reads and scatter writes through index arrays inside masked branches,
+  overlapping ordinary writes, general atomics, and user-defined SPMD calls
+  remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
   SIMD backend modes, and SIMD backend modes must not silently scalarize an
   unsupported masked branch.
 - Current implementation status: scalar lowering accepts the checked masked-if
-  surface as the reference path. AVX-512 supports unit-result masked branches,
-  nested branch-mask composition, contiguous predicated array reads/writes over
-  the covered lane types, and value-producing selects over the covered scalar
-  lane result types. AVX2 emits the staged masked-if diagnostic.
+  and varying-match surface as the reference path. AVX-512 supports unit-result
+  masked branches, nested branch-mask composition, scalar-lane literal
+  varying-match arms, contiguous predicated array reads/writes over the covered
+  lane types, and value-producing selects over the covered scalar lane result
+  types. AVX2 emits staged masked-if and varying-match diagnostics.
 
 Explicit SPMD atomic scatter:
 
@@ -4162,13 +4225,17 @@ Unsupported in the current SPMD implementation:
 - Scans, general shuffles, general atomics beyond the explicit integer element
   helpers, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
-- Varying `if` until the v2 masked-control-flow implementation lands; varying
-  `while`, varying `match`, early exits, `break`, and `continue`.
+- Varying `while`, enum/payload varying `match`, early exits, `break`, and
+  `continue`.
 - Non-inlineable user-defined function calls with varying arguments or varying
-  returns. Direct source-known, non-dispatch helper calls may be inlined when
-  their varying scalar arguments and result are `i8`, `u8`, `i32`, `i64`,
-  `f32`, `f64`, or `bool`, and the helper body uses only the same SPMD-safe
-  expression surface as the containing `foreach`/masked branch.
+  returns remain rejected until the v1 private out-of-line SPMD call ABI above
+  is implemented. Direct source-known, non-dispatch helper calls may be inlined
+  when their varying scalar arguments and result are supported SPMD scalar lane
+  values and the helper body uses only the same SPMD-safe expression surface as
+  the containing `foreach`/masked branch. Function values/indirect calls,
+  extern calls, `defdispatch` logical calls, recursive call cycles,
+  cross-package/tlci calls, and aggregate/string/array/function returns stay
+  rejected with named diagnostics.
 - Struct, enum, tuple, string, function, and nested array lane values.
 - Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
@@ -4311,7 +4378,11 @@ sequence evaluated with that arena as the active allocation target; the previous
 active arena is restored on normal exit and function-local early exit. The form
 does not mark, rewind, destroy, or clone. Its result type is the body result type
 unchanged, so owned values allocated in the target arena remain owned by that
-arena.
+arena. When `arena-expr` is a direct local binding initialized by `arena-make`
+or `arena-make-atomic`, owner-carrying aggregate results are checker-tagged with
+that first-class arena owner identity. Ordinary `arena-make` owners still do not
+prove thread-spanning lifetime; only `arena-make-atomic` owner tags can satisfy
+the task-thread transfer/share owner proof in section 6.5.
 
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
@@ -5091,7 +5162,7 @@ codegen:
 | Symbol(s) | Disposition |
 |-----------|-------------|
 | `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
-| `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
+| `tl_memcpy`, `tl_memchr` | Core byte-copy/search primitives; `tl_memcpy` is the overlap-safe primitive that source code and lowering use for bulk copies, and `tl_memchr` is the allocation-free primitive for borrowed byte searches. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
 | `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`, `tl_profile_alloc_reset_peak` | Stdlib profile accessors backed by counters maintained inside the allocator core. |
@@ -6029,8 +6100,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` subset are implemented, including value-producing scalar lane selects |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked `if`, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` and scalar-lane varying `match` subset are implemented, including value-producing scalar lane selects |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if/match subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked scalar-lane `if`/`match`, enum/payload varying match, and implementation of the specified v1 private out-of-line SPMD call ABI remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -6181,6 +6252,10 @@ than generic traits or implicit conversions.
   later stdlib/comptime work.
 - `(try expr)` is valid only inside an enclosing function whose return type is
   a compatible generated family or convention-compatible concrete family.
+- `(try expr)` is rejected inside `foreach`/SPMD bodies because its
+  error/absence path exits the enclosing function. Mask-aware recoverable
+  propagation from SPMD regions requires a separate design before it can be
+  accepted.
 - `(try expr)` is rejected when `expr` is not a result/option family, when the
   enclosing function is not result/option-producing, when the error/absence
   family is incompatible, or when manual matches over these enums are

@@ -15,8 +15,8 @@
     (string-ref text index)))
 
 (defenum ResultCompilerObjectCoff
-  (OkCompilerObjectCoff String)
-  (ErrCompilerObjectCoff String))
+  (Ok String)
+  (Err String))
 
 (define compiler-object-coff-machine-amd64 : i64
   0x8664)
@@ -1215,13 +1215,12 @@
   [reloc : CompilerObjectRelocation]) : unit
   (match reloc
     [(ObjectRelocation section site kind target)
-      (begin
-        (compiler-object-coff-render-relocation-record!
-          out
-          image
-          (compiler-object-coff-section-label-offset image section site)
-          kind
-          target))]))
+      (compiler-object-coff-render-relocation-record!
+        out
+        image
+        (compiler-object-coff-section-label-offset image section site)
+        kind
+        target)]))
 
 (define (compiler-object-coff-render-text-instr-relocations!
   [out : (Array u8)]
@@ -1632,8 +1631,8 @@
           image
           (struct-get image symbols))
         (compiler-object-coff-render-string-table! out image)
-        (OkCompilerObjectCoff (compiler-object-coff-bytes-string out))))
-    (ErrCompilerObjectCoff
+        (ResultCompilerObjectCoff.Ok (compiler-object-coff-bytes-string out))))
+    (ResultCompilerObjectCoff.Err
       "coff: object image contains unsupported text, f64, or relocation records")))
 
 (define (compiler-object-coff-u16-at [text : String] [offset : i64]) : i64
@@ -1772,7 +1771,7 @@
 
 (define (compiler-object-coff-smoke-ok?) : bool
   (match (compiler-object-coff-render (compiler-object-coff-smoke-image))
-    [(OkCompilerObjectCoff obj)
+    [(ResultCompilerObjectCoff.Ok obj)
       (and
         (=
           (compiler-object-coff-u16-at obj 0)
@@ -1787,7 +1786,7 @@
         (compiler-object-coff-contains? obj ".rdata")
         (compiler-object-coff-contains? obj "foreign_exact")
         (compiler-object-coff-contains? obj "long_rodata_label_name"))]
-    [(ErrCompilerObjectCoff _) false]))
+    [(ResultCompilerObjectCoff.Err _) false]))
 
 (define (compiler-object-coff-text-smoke-instrs) : CompilerObjectX64InstrList
   (compiler-object-instr-cons
@@ -2039,7 +2038,7 @@
   (let
     [image : CompilerObjectImage (compiler-object-coff-text-smoke-image)]
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj)
+      [(ResultCompilerObjectCoff.Ok obj)
         (let
           [text-header : i64
             (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -2054,4 +2053,4 @@
             (= reloc-count 8)
             (compiler-object-coff-text-smoke-bytes-ok? obj text-ptr)
             (compiler-object-coff-text-smoke-relocs-ok? image obj reloc-ptr)))]
-      [(ErrCompilerObjectCoff _) false])))
+      [(ResultCompilerObjectCoff.Err _) false])))

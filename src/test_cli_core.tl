@@ -1691,6 +1691,199 @@
                   (ast-decl-path-cons source AstDeclPathNil)))
               count))])]))
 
+(define (tltest-inline-typecheck-cfgs [cfgs : SymI64Env]) : SymI64Env
+  (compiler-cfg-enable cfgs "test"))
+
+(define (tltest-inline-typecheck-program
+  [decls : AstDeclList]
+  [tests : (Array InlineTest)]) : AstProgram
+  (ast-program
+    (compiler-load-decl-list-append
+      decls
+      (tltest-test-decls-onto tests (- (array-length tests) 1) AstDeclNil))))
+
+(define (tltest-inline-typecheck-paths
+  [paths : AstDeclPathList]
+  [tests : (Array InlineTest)]) : AstDeclPathList
+  (compiler-load-decl-path-list-append
+    paths
+    (tltest-test-paths-onto tests (- (array-length tests) 1) AstDeclPathNil)))
+
+(define (tltest-inline-typecheck-loaded
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : StringVec]
+  [cfgs : SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (match (tltest-collect source decls paths)
+    [(InlineCollect runtime-decls runtime-paths tests)
+      (let
+        [count : i64 (array-length tests)]
+        (if (= count 0)
+          0
+          (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+            [(InlineRuntimeDecls pruned-decls pruned-paths)
+              (match (typecheck-compiler-program-with-paths-cache
+                (tltest-inline-typecheck-program pruned-decls tests)
+                (tltest-inline-typecheck-paths pruned-paths tests)
+                roots
+                (compiler-typecheck-prefix-cache-scope
+                  cache-scope-prefix
+                  roots
+                  cfgs))
+                [(OkCompilerTypecheck _) 0]
+                [(ErrCompilerTypecheck diag)
+                  (begin
+                    (print-error
+                      (compiler-diagnostic-render
+                        (tltest-diagnostic-with-source-fallback source diag)))
+                    1)])])))]))
+
+(define (tltest-inline-stdlib-source? [source : String] [roots : StringVec]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path source)]
+    [stdlib-path : String
+      (if (compiler-load-stdlib-import? normalized)
+        normalized
+        (compiler-load-stdlib-owned-path-from-roots normalized roots))]
+    (compiler-load-stdlib-import? stdlib-path)))
+
+(define (tltest-inline-reset-load-state!) : unit
+  (begin
+    ;; Inline preflight runs after ordinary check/doctest phases in some CLI
+    ;; commands. Drop cached loaded ASTs so the test-cfg load cannot reuse decl
+    ;; nodes owned by a previous phase. Reset AST/type pools between package
+    ;; sources to keep large packages bounded, but keep interns live because
+    ;; callers may have already constructed cfg maps and path strings.
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (compiler-load-session-reset-pools!)
+    (compiler-driver-reset-analysis-state!)))
+
+(define (tltest-inline-typecheck-file-with-cfg
+  [source : String]
+  [roots : StringVec]
+  [cfgs : SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (if (or
+    (tltest-inline-stdlib-source? source roots)
+    (not (file-exists? source))
+    (not (tltest-source-has-inline-tests? source)))
+    0
+    (let
+      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      (begin
+        (tltest-inline-reset-load-state!)
+        (match (compiler-driver-load-file-with-runtime source roots test-cfgs)
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (tltest-inline-typecheck-loaded
+              source
+              decls
+              paths
+              roots
+              test-cfgs
+              cache-scope-prefix)]
+          [(ErrCompilerLoadWithPaths diag)
+            (begin
+              (print-error
+                (compiler-diagnostic-render
+                  (tltest-diagnostic-with-source-fallback source diag)))
+              1)])))))
+
+(define (tltest-inline-typecheck-package-source-with-cfg
+  [source : String]
+  [roots : StringVec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (if (tltest-source-has-inline-tests? source)
+    (let
+      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      (begin
+        (tltest-inline-reset-load-state!)
+        (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+          source
+          roots
+          manifest-dir
+          package-owner
+          deps
+          true
+          test-cfgs)
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (tltest-inline-typecheck-loaded
+              (compiler-load-package-owned-path
+                package-owner
+                manifest-dir
+                roots
+                source)
+              decls
+              paths
+              roots
+              test-cfgs
+              cache-scope-prefix)]
+          [(ErrCompilerLoadWithPaths diag)
+            (begin
+              (print-error
+                (compiler-diagnostic-render
+                  (tltest-diagnostic-with-source-fallback source diag)))
+              1)])))
+    0))
+
+(define (tltest-inline-typecheck-package-sources-from
+  [sources : StringVec]
+  [index : i64]
+  [roots : StringVec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (if (>= index (string-vec-len sources))
+    0
+    (let
+      [source : String (string-vec-get sources index "")]
+      [status : i64
+        (tltest-inline-typecheck-package-source-with-cfg
+          source
+          roots
+          manifest-dir
+          package-owner
+          deps
+          cfgs
+          cache-scope-prefix)]
+      (if (= status 0)
+        (tltest-inline-typecheck-package-sources-from
+          sources
+          (+ index 1)
+          roots
+          manifest-dir
+          package-owner
+          deps
+          cfgs
+          cache-scope-prefix)
+        status))))
+
+(define (tltest-inline-typecheck-package-sources-with-cfg
+  [sources : StringVec]
+  [roots : StringVec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (tltest-inline-typecheck-package-sources-from
+    sources
+    0
+    roots
+    manifest-dir
+    package-owner
+    deps
+    cfgs
+    cache-scope-prefix))
+
 (define (tltest-path-at [paths : AstDeclPathList] [index : i64]) : String
   (match paths
     [(AstDeclPathNil) ""]
@@ -2228,6 +2421,161 @@
   (if (tltest-macro-quasiquote-deps-self-test?)
     unit
     (panic "test CLI inline harness dropped macro quasiquote dependency")))
+
+(define (tltest-nested-module-macro-vector-source) : String
+  "(import stdlib.vector)
+(import stdlib.vector_slice)
+
+(defstruct Pair
+  (value i64))
+
+(defmacro (slice-user [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append \"generated.slice_user.\" (type-key T)))]
+    `(begin
+      (module ,module-name)
+      (import (vector ,T) as vec)
+      (import (stdlib.vector_slice.slice ,T) as slice)
+      (define (score [first : ,T] [fallback : ,T]) : i64
+        (let
+          [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) first)
+          (let
+            [has-one : bool
+              (let
+                [view : (slice.Slice items) (slice.all-vec (& items))]
+                (= (slice.len view) 1))]
+            (if has-one
+              (match (vec.pop (&mut items))
+                [(vec.Pop.Ok _) 42]
+                [(vec.Pop.Empty) 0])
+              0))))))))
+
+(import (slice-user i64) as user)
+(import (slice-user Pair) as pair-user)
+
+(test
+  generated-module-body-imports-slice-module-macro-i64
+  (begin
+    (user.score 7 0)
+    unit))
+
+(test
+  generated-module-body-imports-slice-module-macro-struct
+  (begin
+    (pair-user.score (Pair 7) (Pair 0))
+    unit))")
+
+(define (tltest-nested-module-macro-vector-typecheck-ok?
+  [program : AstProgram]
+  [harness-paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (typecheck-compiler-program-with-paths-cache
+    (tltest-program-with-print-runtime program target)
+    (tltest-paths-with-print-runtime target harness-paths)
+    roots
+    (tltest-typecheck-cache-scope roots target))
+    [(OkCompilerTypecheck _) true]
+    [(ErrCompilerTypecheck _) false]))
+
+(define (tltest-function-base-defined?
+  [funcs : CompilerIrFunctionList]
+  [base : String]) : bool
+  (match funcs
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ _)
+          (if (string-contains (& name) (& base))
+            true
+            (tltest-function-base-defined? (box-get rest) base))])]
+    [(IrFunctionArray seq)
+      (tltest-function-base-defined?
+        (compiler-ir-function-seq-to-list seq)
+        base)]))
+
+(define (tltest-nested-module-macro-vector-lower-roots-ok?
+  [source : String]
+  [program : AstProgram]
+  [harness-paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (lower-compiler-program-with-decl-paths-mode-cache
+    source
+    (tltest-program-with-print-runtime program target)
+    (tltest-paths-with-print-runtime target harness-paths)
+    (CompilerLowerScalar)
+    roots
+    (tltest-typecheck-cache-scope roots target))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (tltest-function-base-defined? functions "clone$Pair")])]
+    [(ErrCompilerLower _) false]))
+
+(define (tltest-nested-module-macro-vector-loaded-ok?
+  [source : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [roots : StringVec]
+  [target : CompilerBackendTarget]) : bool
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness program harness-paths count)
+      (begin
+        (unless (= count 2) (return false))
+        (unless
+          (tltest-nested-module-macro-vector-typecheck-ok?
+            program
+            harness-paths
+            roots
+            target)
+          (begin
+            (print-error "nested module macro vector fixture failed typecheck")
+            (return false)))
+        (unless
+          (tltest-nested-module-macro-vector-lower-roots-ok?
+            source
+            program
+            harness-paths
+            roots
+            target)
+          (begin
+            (print-error
+              "nested module macro vector fixture did not emit clone$Pair")
+            (return false)))
+        true)]))
+
+(define (tltest-nested-module-macro-vector-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-nested-module-macro-vector")
+    [(ErrSourceToolString _) false]
+    [(OkSourceToolString dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
+        [roots : StringVec (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (BackendTargetLinux)]
+        (begin
+          (write-file source (tltest-nested-module-macro-vector-source))
+          (match (compiler-driver-load-file-with-runtime
+            source
+            roots
+            (tltest-cfgs target))
+            [(ErrCompilerLoadWithPaths _) false]
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (tltest-nested-module-macro-vector-loaded-ok?
+                source
+                decls
+                paths
+                roots
+                target)])))]))
+
+(test
+  test-cli-inline-harness-nested-module-macro-vector-import
+  (if (tltest-nested-module-macro-vector-self-test?)
+    unit
+    (panic "test CLI nested module macro vector import mismatch")))
 
 (test
   test-cli-enables-test-cfg

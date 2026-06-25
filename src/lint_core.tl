@@ -1,10 +1,10 @@
 ;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
-;# findings. The rules flag body-only nested `let` forms, nested success-path
-;# `if` return chains, unit-branch return guards, no-effect expression
-;# statements, nested `str-cat` calls, and deprecated user-facing string
-;# concatenation primitives.
+;# findings. The rules flag body-only nested `let` forms, single-expression
+;# `begin` wrappers, nested success-path `if` return chains, unit-branch return
+;# guards, no-effect expression statements, nested `str-cat` calls, and
+;# deprecated user-facing string concatenation primitives.
 ;#
 ;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
@@ -45,6 +45,15 @@
 
 (define (lint-rule-nested-let-suggestion) : String
   "merge the nested let bindings into one sequential let")
+
+(define (lint-rule-single-begin-id) : String
+  "single-begin")
+
+(define (lint-rule-single-begin-message) : String
+  "single begin: begin with one expression is redundant")
+
+(define (lint-rule-single-begin-suggestion) : String
+  "remove the begin wrapper")
 
 (define (lint-rule-return-path-chain-id) : String
   "return-path-chain")
@@ -127,6 +136,15 @@
 (define (lint-rule-unused-import-suggestion) : String
   "remove the import or prefix an intentionally unused alias with _")
 
+(define (lint-rule-redundant-import-alias-id) : String
+  "redundant-import-alias")
+
+(define (lint-rule-redundant-import-alias-message) : String
+  "redundant import alias: dotted module import already binds that alias")
+
+(define (lint-rule-redundant-import-alias-suggestion) : String
+  "remove the explicit as clause")
+
 (define (lint-rule-dead-code-id) : String
   "dead-code")
 
@@ -192,6 +210,12 @@
     (lint-rule-nested-let-message)
     (lint-rule-nested-let-suggestion)))
 
+(define (lint-rule-single-begin) : LintRule
+  (LintRule
+    (lint-rule-single-begin-id)
+    (lint-rule-single-begin-message)
+    (lint-rule-single-begin-suggestion)))
+
 (define (lint-rule-return-path-chain) : LintRule
   (LintRule
     (lint-rule-return-path-chain-id)
@@ -246,6 +270,12 @@
     (lint-rule-unused-import-message)
     (lint-rule-unused-import-suggestion)))
 
+(define (lint-rule-redundant-import-alias) : LintRule
+  (LintRule
+    (lint-rule-redundant-import-alias-id)
+    (lint-rule-redundant-import-alias-message)
+    (lint-rule-redundant-import-alias-suggestion)))
+
 (define (lint-rule-dead-code) : LintRule
   (LintRule
     (lint-rule-dead-code-id)
@@ -281,32 +311,36 @@
     (lint-rule-cons
       (lint-rule-nested-let)
       (lint-rule-cons
-        (lint-rule-return-path-chain)
+        (lint-rule-single-begin)
         (lint-rule-cons
-          (lint-rule-unit-if-guard)
+          (lint-rule-return-path-chain)
           (lint-rule-cons
-            (lint-rule-no-effect)
+            (lint-rule-unit-if-guard)
             (lint-rule-cons
-              (lint-rule-unreachable-code)
+              (lint-rule-no-effect)
               (lint-rule-cons
-                (lint-rule-redundant-divergence-padding)
+                (lint-rule-unreachable-code)
                 (lint-rule-cons
-                  (lint-rule-deprecated-string-concat)
+                  (lint-rule-redundant-divergence-padding)
                   (lint-rule-cons
-                    (lint-rule-nested-str-cat)
+                    (lint-rule-deprecated-string-concat)
                     (lint-rule-cons
-                      (lint-rule-cascading-and-or)
+                      (lint-rule-nested-str-cat)
                       (lint-rule-cons
-                        (lint-rule-unused-import)
+                        (lint-rule-cascading-and-or)
                         (lint-rule-cons
-                          (lint-rule-dead-code)
+                          (lint-rule-unused-import)
                           (lint-rule-cons
-                            (lint-rule-unused-assignment)
+                            (lint-rule-redundant-import-alias)
                             (lint-rule-cons
-                              (lint-rule-unused-variable)
+                              (lint-rule-dead-code)
                               (lint-rule-cons
-                                (lint-rule-unused-unsafe)
-                                LintRuleNil))))))))))))))))
+                                (lint-rule-unused-assignment)
+                                (lint-rule-cons
+                                  (lint-rule-unused-variable)
+                                  (lint-rule-cons
+                                    (lint-rule-unused-unsafe)
+                                    LintRuleNil))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -545,6 +579,13 @@
   (LintFinding
     (lint-rule-message (lint-rule-nested-let-id))
     (lint-rule-nested-let-id)
+    0
+    span))
+
+(define (lint-single-begin-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-message (lint-rule-single-begin-id))
+    (lint-rule-single-begin-id)
     0
     span))
 
@@ -1932,29 +1973,116 @@
     0
     span))
 
-(define (lint-unused-import-add-if-needed
-  [all-decls : AstDeclList]
+(define (lint-redundant-import-alias-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-rule-redundant-import-alias-message)
+    (lint-rule-redundant-import-alias-id)
+    0
+    span))
+
+(define (lint-module-default-alias [module-name : String]) : String
+  (let
+    [n : i64 (string-length module-name)]
+    [i : i64 0]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (string-ref module-name i) '.')
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring module-name start (- n start)))))
+
+(define (lint-source-span-end-index [source : String] [span : AstSourceSpan]) : i64
+  (let
+    [idx : i64
+      (lint-source-span-start-index
+        source
+        (AstSourceSpan
+          (struct-get span end-line)
+          (struct-get span end-col)
+          (struct-get span end-line)
+          (struct-get span end-col)))]
+    (if (< idx 0)
+      (string-length source)
+      idx)))
+
+(define (lint-source-name-in-range?
+  [source : String]
+  [name : String]
+  [start : i64]
+  [limit : i64]) : bool
+  (let
+    [found : i64 (lint-source-find-name-from source name start)]
+    (and (>= found 0) (< found limit))))
+
+(define (lint-import-span-has-explicit-alias?
+  [source : String]
+  [span : AstSourceSpan]) : bool
+  (let
+    [start : i64 (lint-source-span-start-index source span)]
+    [limit : i64 (lint-source-span-end-index source span)]
+    (if (< start 0)
+      false
+      (or
+        (lint-source-name-in-range? source "as" start limit)
+        (lint-source-name-in-range? source ":as" start limit)))))
+
+(define (lint-redundant-import-alias-add-if-needed
+  [source : String]
   [spec : AstImportSpec]
   [acc : LintFindings]) : LintFindings
   (match spec
     [(AstImportSpec kind _ expected maybe-alias span)
-      (if (not (lint-import-kind-lintable? kind expected))
-        acc
-        (match expected
-          [(AstNoModuleName) acc]
-          [(AstSomeModuleName module-name)
-            (match maybe-alias
-              [(AstNoImportAlias) acc]
-              [(AstSomeImportAlias alias)
-                (if (lint-underscore-prefixed? alias)
-                  acc
-                  (if (lint-decl-list-uses-import? all-decls alias module-name)
-                    acc
+      (match kind
+        [(AstImportModule)
+          (match expected
+            [(AstNoModuleName) acc]
+            [(AstSomeModuleName module-name)
+              (match maybe-alias
+                [(AstNoImportAlias) acc]
+                [(AstSomeImportAlias alias)
+                  (if (and
+                    (string-eq alias (lint-module-default-alias module-name))
+                    (lint-import-span-has-explicit-alias? source span))
                     (lint-findings-add
-                      (lint-unused-import-finding module-name alias span)
-                      acc)))])]))]))
+                      (lint-redundant-import-alias-finding span)
+                      acc)
+                    acc)])])]
+        [_ acc])]))
+
+(define (lint-unused-import-add-if-needed
+  [source : String]
+  [all-decls : AstDeclList]
+  [spec : AstImportSpec]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [acc : LintFindings
+      (lint-redundant-import-alias-add-if-needed source spec acc)]
+    (match spec
+      [(AstImportSpec kind _ expected maybe-alias span)
+        (if (not (lint-import-kind-lintable? kind expected))
+          acc
+          (match expected
+            [(AstNoModuleName) acc]
+            [(AstSomeModuleName module-name)
+              (match maybe-alias
+                [(AstNoImportAlias) acc]
+                [(AstSomeImportAlias alias)
+                  (if (lint-underscore-prefixed? alias)
+                    acc
+                    (if (lint-decl-list-uses-import?
+                      all-decls
+                      alias
+                      module-name)
+                      acc
+                      (lint-findings-add
+                        (lint-unused-import-finding module-name alias span)
+                        acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list
+  [source : String]
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [acc : LintFindings]) : LintFindings
@@ -1964,11 +2092,12 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (lint-unused-imports-in-decl-list
+          source
           all-decls
           rest
           (match decl
             [(AstDeclImport spec)
-              (lint-unused-import-add-if-needed all-decls spec acc)]
+              (lint-unused-import-add-if-needed source all-decls spec acc)]
             [_ acc])))]))
 
 (defenum LintNameList
@@ -4147,6 +4276,22 @@
   [acc : LintFindings]) : LintFindings
   (lint-walk-tail-sequence-expr-list-after-terminal exprs threshold acc false))
 
+(define (lint-expr-list-single? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons _ rest)
+      (match (box-get rest)
+        [(AstExprNil) true]
+        [_ false])]))
+
+(define (lint-add-single-begin
+  [exprs : AstExprList]
+  [span : AstSourceSpan]
+  [acc : LintFindings]) : LintFindings
+  (if (lint-expr-list-single? exprs)
+    (lint-findings-add (lint-single-begin-finding span) acc)
+    acc))
+
 (define (lint-walk-tail-sequence-expr-list-after-terminal
   [exprs : AstExprList]
   [threshold : i64]
@@ -4563,6 +4708,11 @@
             (let
               [func : AstExpr (ast-node-get func-box)]
               (lint-walk-call func args span threshold acc))]
+          [(AstExprBegin exprs)
+            (lint-walk-tail-sequence-expr-list
+              exprs
+              threshold
+              (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-tail-expr inner threshold acc)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
@@ -4590,7 +4740,10 @@
             [body : AstExpr (ast-node-get body-box)]
             (lint-walk-tail-expr body threshold acc))])]
     [(AstExprBegin exprs)
-      (lint-walk-tail-sequence-expr-list exprs threshold acc)]
+      (lint-walk-tail-sequence-expr-list
+        exprs
+        threshold
+        (lint-add-single-begin exprs (lint-no-span) acc))]
     [(AstExprUnsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
     [(AstExprAnn inner-box _)
       (let
@@ -4734,6 +4887,11 @@
             (let
               [func : AstExpr (ast-node-get func-box)]
               (lint-walk-call func args span threshold acc))]
+          [(AstExprBegin exprs)
+            (lint-walk-value-sequence-expr-list
+              exprs
+              threshold
+              (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-expr inner threshold acc)]))]
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
@@ -4819,7 +4977,10 @@
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
     [(AstExprBegin exprs)
-      (lint-walk-value-sequence-expr-list exprs threshold acc)]
+      (lint-walk-value-sequence-expr-list
+        exprs
+        threshold
+        (lint-add-single-begin exprs (lint-no-span) acc))]
     [(AstExprUnsafe exprs)
       (lint-walk-plain-sequence-expr-list exprs threshold acc)]
     [(AstExprSet _ value-box)
@@ -5124,6 +5285,7 @@
           source
           decls
           (lint-unused-imports-in-decl-list
+            source
             decls
             decls
             (lint-unused-assignments-in-decl-list
@@ -5148,6 +5310,7 @@
             source
             decls
             (lint-unused-imports-in-decl-list
+              source
               decls
               decls
               (lint-unused-assignments-in-decl-list
@@ -5201,7 +5364,9 @@
     [unit-value-guard : i64 (ast-expr-if vx one unit-expr)]
     [unit-not-set-guard : i64 (ast-expr-if not-vx unit-expr set-ok-false)]
     [nested : i64
-      (ast-node-push (AstExprBegin (ast-expr-cons ladder3 (AstExprNil))))]
+      (ast-node-push
+        (AstExprBegin
+          (ast-expr-cons unit-expr (ast-expr-cons ladder3 AstExprNil))))]
     [in-let : i64
       (ast-expr-let
         (ast-let-binding-cons
@@ -5273,7 +5438,8 @@
         (AstExprBegin
           (ast-expr-cons discarded-cast (ast-expr-cons vx AstExprNil))))]
     [no-effect-tail-begin : i64
-      (ast-node-push (AstExprBegin (ast-expr-cons one AstExprNil)))]
+      (ast-node-push
+        (AstExprBegin (ast-expr-cons unit-expr (ast-expr-cons one AstExprNil))))]
     [no-effect-clean-call-begin : i64
       (ast-node-push
         (AstExprBegin
@@ -5311,7 +5477,10 @@
           (ast-expr-cons spanned-panic-call (ast-expr-cons vx AstExprNil))))]
     [clean-panic-tail-begin : i64
       (ast-node-push
-        (AstExprBegin (ast-expr-cons spanned-panic-call AstExprNil)))]
+        (AstExprBegin
+          (ast-expr-cons
+            unit-expr
+            (ast-expr-cons spanned-panic-call AstExprNil))))]
     [unreachable-panic-unsafe : i64
       (ast-node-push
         (AstExprUnsafe (ast-expr-cons panic-call (ast-expr-cons vx AstExprNil))))]
@@ -5321,6 +5490,11 @@
           (ast-expr-cons
             (ast-expr-if vx return-one return-one)
             (ast-expr-cons vx AstExprNil))))]
+    [single-begin : i64
+      (ast-node-push (AstExprBegin (ast-expr-cons vx AstExprNil)))]
+    [spanned-single-begin : i64
+      (ast-expr-spanned single-begin (AstSourceSpan 51 3 51 13))]
+    [empty-begin : i64 (ast-node-push (AstExprBegin AstExprNil))]
     (begin
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)
@@ -5457,6 +5631,51 @@
         1)
         unit
         (panic "lint: ladder nested in begin should be flagged once"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            single-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: single begin should be flagged once"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk-tail
+            single-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        1)
+        unit
+        (panic "lint: tail single begin should be flagged once"))
+      (if (=
+        (lint-findings-count
+          (lint-test-walk
+            empty-begin
+            (lint-default-ladder-threshold)
+            (lint-findings-empty)))
+        0)
+        unit
+        (panic "lint: empty begin should not be flagged as single begin"))
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned-single-begin
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintSomeFinding finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 51)
+              (string-eq
+                (struct-get finding rule-id)
+                (lint-rule-single-begin-id)))
+              unit
+              (panic "lint: single-begin finding should carry rule id and span")))]
+        [(LintNoFinding)
+          (panic "lint: spanned single begin should produce a finding")])
       ;; ... and into let-binding initializers
       (if (=
         (lint-findings-count
@@ -5829,6 +6048,16 @@
         unit
         (panic "lint: nested-let suggestion should be registered"))
       (if (string-eq
+        (lint-rule-suggestion (lint-rule-single-begin-id))
+        "remove the begin wrapper")
+        unit
+        (panic "lint: single-begin suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-single-begin-id))
+        "single begin: begin with one expression is redundant")
+        unit
+        (panic "lint: single-begin message should be registered"))
+      (if (string-eq
         (lint-rule-suggestion (lint-rule-return-path-chain-id))
         "prefer early return guards with (return ...)")
         unit
@@ -5895,6 +6124,16 @@
         "unused import: imported module alias is never referenced")
         unit
         (panic "lint: unused-import message should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-redundant-import-alias-id))
+        "remove the explicit as clause")
+        unit
+        (panic "lint: redundant-import-alias suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-message (lint-rule-redundant-import-alias-id))
+        "redundant import alias: dotted module import already binds that alias")
+        unit
+        (panic "lint: redundant-import-alias message should be registered"))
       (if (string-eq
         (lint-rule-suggestion (lint-rule-unused-variable-id))
         "remove the binding or prefix an intentionally unused name with _")

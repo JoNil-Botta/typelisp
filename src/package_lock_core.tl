@@ -717,8 +717,7 @@
 (define (package-lock-self-test) : i64
   (if (package-lock-self-test-ok?)
     42
-    (begin
-      (panic "package-lock: self-test mismatch"))))
+    (panic "package-lock: self-test mismatch")))
 
 (test
   package-lock-parse-emit-round-trip

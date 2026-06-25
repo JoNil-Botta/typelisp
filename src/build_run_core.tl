@@ -938,8 +938,8 @@
   [image : CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable? image)
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj) (OkSourceToolString obj)]
-      [(ErrCompilerObjectCoff message) (ErrSourceToolString message)])
+      [(ResultCompilerObjectCoff.Ok obj) (OkSourceToolString obj)]
+      [(ResultCompilerObjectCoff.Err message) (ErrSourceToolString message)])
     (ErrSourceToolString
       (source-tool-windows-direct-object-unavailable-message))))
 
@@ -1214,15 +1214,12 @@
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons "kernel32.lib" (process-args-empty)))
 
-;; #2357: 1GB (was 256MB), matching scripts/lib-native-link.sh's
-;; NL_WINDOWS_STACK_RESERVE. The inline-by-value aggregate flip (#1867)
-;; inflates the compiler's recursive-descent frames ~4x, so a SELF-BUILT
-;; compiler (branch codegen) linked with the old 256MB reserve overflowed its
-;; stack compiling the deepest whole-compiler sources -- the Windows CI
-;; "refreshed selfhost cli" SIGSEGV in the compile-manifest gate. The reserve
-;; is virtual address space and commits lazily to the recursion's actual peak.
+;; #2599: 64MB, matching scripts/lib-native-link.sh's
+;; NL_WINDOWS_STACK_RESERVE. The large compiler declaration walks that required
+;; the temporary 1GB reserve now run iteratively, and current selfhost Windows
+;; smoke workloads pass with a 48MB reserve.
 (define (source-tool-windows-stack-reserve-arg) : String
-  "/STACK:1073741824")
+  "/STACK:67108864")
 
 (define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
   (match dirs

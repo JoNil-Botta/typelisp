@@ -2242,7 +2242,7 @@
       (expr-var (string-append \"generated.slice_user.\" (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (stdlib.vector.vector ,T) as vec)
+      (import (vector ,T) as vec)
       (import (stdlib.vector_slice.slice ,T) as slice)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let

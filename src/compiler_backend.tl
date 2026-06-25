@@ -22558,6 +22558,158 @@
       (array-set! a 4 "%r11")
       a)))
 
+;; Callee-saved pool registers: usable as transient scratch ONLY if the function
+;; already saves them (some var is assigned to them), so the prologue preserves
+;; the caller's value across our transient clobber.
+(define (compiler-backend-scavenge-callee-saved? [reg : String]) : bool
+  (or
+    (string-eq reg "%r12")
+    (string-eq reg "%r13")
+    (string-eq reg "%r14")
+    (string-eq reg "%r15")
+    (string-eq reg "%rbx")))
+
+;; Is `reg` assigned to any var (so a callee-saved reg is saved by the prologue)?
+(define (compiler-backend-scavenge-reg-used-somewhere?
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [reg : String]) : bool
+  (let
+    [v : i64 0]
+    [used : bool false]
+    (begin
+      (while (and (< v vars) (not used))
+        (begin
+          (if (compiler-backend-scavenge-var-holds? assignments v reg)
+            (set! used true)
+            unit)
+          (set! v (+ v 1))))
+      used)))
+
+;; Scavenge candidate pool -- MUST stay in sync with
+;; compiler-reg-greedy-integer-pool: caller-saved r8/r9/rcx/rdx + callee-saved
+;; r12-r15/rbx. Non-pool registers (rax/rsi/rdi/r10/r11) are NOT candidates: the
+;; backend uses them untracked, so the liveness query cannot certify them free.
+(define (compiler-backend-scavenge-candidates) : (Array String)
+  (let
+    [a : (Array String) (make-array String 9)]
+    (begin
+      (array-set! a 0 "%r8")
+      (array-set! a 1 "%r9")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%rdx")
+      (array-set! a 4 "%r12")
+      (array-set! a 5 "%r13")
+      (array-set! a 6 "%r14")
+      (array-set! a 7 "%r15")
+      (array-set! a 8 "%rbx")
+      a)))
+
+;; A candidate is usable as scratch iff: free at `point`, not excluded, and
+;; (caller-saved OR already saved by the prologue).
+(define (compiler-backend-scavenge-candidate-ok?
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [reg : String]) : bool
+  (and
+    (not (compiler-backend-scavenge-excluded? exclude exclude-n reg))
+    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)
+    (or
+      (not (compiler-backend-scavenge-callee-saved? reg))
+      (compiler-backend-scavenge-reg-used-somewhere? assignments vars reg))))
+
+(define (compiler-backend-scavenge-pick-iter
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [cands : (Array String)]
+  [i : i64]
+  [n : i64]) : String
+  (if (>= i n)
+    fallback
+    (if (compiler-backend-scavenge-candidate-ok?
+      starts
+      ends
+      assignments
+      vars
+      point
+      exclude
+      exclude-n
+      (array-ref cands i))
+      (array-ref cands i)
+      (compiler-backend-scavenge-pick-iter
+        starts
+        ends
+        assignments
+        vars
+        point
+        exclude
+        exclude-n
+        fallback
+        cands
+        (+ i 1)
+        n))))
+
+;; Pick a register free at `point`: prefer `fallback` (keeps it byte-identical
+;; while the fallback is a reserved scratch), else the first usable pool
+;; candidate, else `fallback` (degraded -- the freeness self-check flags this as
+;; a no-free-register case).
+(define (compiler-backend-scavenge-pick
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (if (and
+    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point fallback))
+    fallback
+    (compiler-backend-scavenge-pick-iter
+      starts
+      ends
+      assignments
+      vars
+      point
+      exclude
+      exclude-n
+      fallback
+      (compiler-backend-scavenge-candidates)
+      0
+      9)))
+
+;; Freeness self-check (cfg-gated): the picked register MUST be free at `point`.
+;; If not, the pick fell through to an OCCUPIED fallback (no free register found)
+;; -- a latent miscompile the coordinate check cannot see.
+(define (compiler-backend-scavenge-freeness-check!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [reg : String]) : unit
+  (if (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)
+    unit
+    (panic
+      (str-cat
+        "SCAVENGE-FREENESS-VIOLATION reg="
+        reg
+        " point="
+        (int->string point)
+        " -- pick returned an occupied register (no free scratch)"))))
+
 ;; Return a register free at dst-var's def point (via the proven query),
 ;; excluding `exclude`, preferring `fallback`. While the fallback is a reserved
 ;; scratch it is always free here -> wiring a hardcoded scratch through this is
@@ -22581,18 +22733,29 @@
         [point : i64 (array-ref starts dst-var)]
         (if (< point 0)
           fallback
-          (if (and
-            (not
-              (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-            (compiler-backend-scavenge-free-at-point?
-              starts
-              ends
-              assignments
-              vars
-              point
-              fallback))
-            fallback
-            fallback))))))
+          (let
+            [reg : String
+              (compiler-backend-scavenge-pick
+                starts
+                ends
+                assignments
+                vars
+                point
+                exclude
+                exclude-n
+                fallback)]
+            (begin
+              (cfg
+                scavenge-self-check
+                (compiler-backend-scavenge-freeness-check!
+                  starts
+                  ends
+                  assignments
+                  vars
+                  point
+                  reg)
+                unit)
+              reg)))))))
 
 ;; No-dst scavenge: same as scavenge-reg but the point comes from the drift-proof
 ;; per-instruction position (post-base - length(current-instrs)) instead of a dst
@@ -22614,17 +22777,28 @@
         (-
           compiler-backend-emit-instr-post-base
           compiler-backend-emit-current-count))]
-    (if (and
-      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-      (compiler-backend-scavenge-free-at-point?
+    [reg : String
+      (compiler-backend-scavenge-pick
         starts
         ends
         assignments
         vars
         point
-        fallback))
-      fallback
-      fallback)))
+        exclude
+        exclude-n
+        fallback)]
+    (begin
+      (cfg
+        scavenge-self-check
+        (compiler-backend-scavenge-freeness-check!
+          starts
+          ends
+          assignments
+          vars
+          point
+          reg)
+        unit)
+      reg)))
 
 ;; Self-check one instruction at `point` (= 2*global-index): every var it USES
 ;; must (a) have a live interval covering `point` -- which validates the walk

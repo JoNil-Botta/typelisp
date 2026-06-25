@@ -162,6 +162,35 @@
     [line0-ok : bool (string-contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
+(define (lsp-document-decls-cache-empty-ok?) : bool
+  (let
+    [uri : String "file:///tmp/cache.tl"]
+    [path : String "/tmp/cache.tl"]
+    [docs0 : LspDocuments (lsp-documents-new)]
+    [docs1 : LspDocuments (lsp-documents-set docs0 uri path "" uri)]
+    [doc1 : LspDocument (lsp-documents-get docs1 0 (lsp-document-fallback))]
+    [empty-decls : LspDeclList (lsp-document-decls doc1 docs1)]
+    [cached-empty-doc : LspDocument
+      (lsp-documents-get docs1 0 (lsp-document-fallback))]
+    [docs2 : LspDocuments (lsp-documents-set docs1 uri path "" "diag")]
+    [same-text-doc : LspDocument
+      (lsp-documents-get docs2 0 (lsp-document-fallback))]
+    [docs3 : LspDocuments
+      (lsp-documents-set docs2 uri path "(define cached : i64 1)" "diag")]
+    [changed-doc : LspDocument
+      (lsp-documents-get docs3 0 (lsp-document-fallback))]
+    [changed-decls : LspDeclList (lsp-document-decls changed-doc docs3)]
+    [cached-changed-doc : LspDocument
+      (lsp-documents-get docs3 0 (lsp-document-fallback))]
+    (and
+      (= (lsp-decl-list-len empty-decls) 0)
+      (struct-get cached-empty-doc decls-valid)
+      (= (lsp-decl-list-len (struct-get cached-empty-doc decls)) 0)
+      (struct-get same-text-doc decls-valid)
+      (not (struct-get changed-doc decls-valid))
+      (= (lsp-decl-list-len changed-decls) 1)
+      (struct-get cached-changed-doc decls-valid))))
+
 (define (lsp-scan-decls-cache-local-smoke-ok?) : bool
   (let
     [first : String "(define (alpha) : i64 1)"]
@@ -199,5 +228,6 @@
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))
-        (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 12))
+        (unless (lsp-document-decls-cache-empty-ok?) (return 12))
+        (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         42))))

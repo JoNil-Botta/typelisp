@@ -37915,10 +37915,12 @@
       [(OkGenProgramWithPaths generated generated-paths)
         (begin
           (ast-node-pool-context-install! pools)
-          (match (macro-expand-program-with-paths-and-pools
+          (match (macro-expand-program-with-paths-and-pools-roots-cfg
             generated
             generated-paths
-            pools)
+            pools
+            stdlib-roots
+            (typecheck-compiler-source-language-cfgs))
             [(OkMacroExpand expanded expanded-paths)
               (begin
                 (ast-node-pool-context-install! pools)

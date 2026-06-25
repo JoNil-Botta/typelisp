@@ -651,12 +651,13 @@ argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 Import `stdlib/string.tl` for public string inspection and parsing helpers:
 `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, and
 `string->int`.
-For user-facing string concatenation, import `stdlib/str_cat.tl` and use
-`str-cat` for fixed-arity joins; use `stdlib/text_buf.tl` for incremental
-builders. `string-append`/`string-concat` are deprecated low-level
-compatibility primitives kept for legacy code. The
-staged lint rule is available with `typelisp lint --deprecated-string-concat`
-while the remaining in-tree migrations land.
+For user-facing string concatenation, import `stdlib.str_cat` and use
+`str_cat.str-cat` for fixed-arity joins; use `stdlib.text_buf` for incremental
+builders. Legacy path imports can still use unqualified `str-cat`.
+`string-append`/`string-concat` are deprecated low-level compatibility
+primitives kept for legacy code. The staged lint rule is available with
+`typelisp lint --deprecated-string-concat` while the remaining in-tree
+migrations land.
 
 ### Memory and aliasing
 

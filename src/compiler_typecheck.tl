@@ -60,10 +60,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
@@ -159,10 +161,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
@@ -251,11 +255,13 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
-      "array-helper-intrinsics")
+            (compiler-cfg-enable
+              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "array-helper-intrinsics")
+      "feature-tl-memchr")
     "feature-plain-comptime-well-known"))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths

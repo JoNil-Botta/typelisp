@@ -34833,11 +34833,9 @@
   [key : String]) : AstDecl
   (match decl
     [(AstDeclModule _) decl]
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
-      (if (macro-import-placeholder-kind? kind)
-        (ast-decl-comptime-decl-with-meta
-          (macro-generated-meta generator "import" key)
-          decl)
+    [(AstDeclImport _)
+      (ast-decl-comptime-decl-with-meta
+        (macro-generated-meta generator "import" key)
         decl)]
     [_
       (match (gen-decl-visible-name decl)
@@ -34959,6 +34957,14 @@
       (macro-decl-generated-import-placeholder? (box-get inner-box) key)]
     [_ false]))
 
+(define (macro-decl-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport _) true]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-import? (box-get template-box))]
+    [(AstDeclUnsafe inner-box) (macro-decl-import? (box-get inner-box))]
+    [_ false]))
+
 (define (macro-decls-contain-generated-key?
   [decls : AstDeclList]
   [key : String]) : bool
@@ -34978,7 +34984,7 @@
           (macro-decls-filter-generated-key (box-get rest) key)]
         (if (and
           (macro-decl-generated-key? decl key)
-          (not (macro-decl-generated-import-placeholder? decl key)))
+          (not (macro-decl-import? decl)))
           (ast-decl-cons decl filtered-rest)
           filtered-rest))]))
 
@@ -39954,6 +39960,342 @@
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
     [_ false]))
 
+;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
+;; fire a macro/compat call anywhere inside this expression". It is used as a
+;; decl-level pre-filter in `macro-expand-decls`: a decl whose body cannot fire
+;; is pushed to the output unchanged (shared, never copied through the expander),
+;; skipping the per-decl `tc-context-with-module` allocation and the precise
+;; `macro-decl-uses-macro?` walk (which resolves candidate calls via
+;; `macro-call-decl`).
+;;
+;; SAFE BY CONSTRUCTION (must guarantee: `macro-expr-uses-macro? = true` =>
+;; `macro-expr-might-fire? = true`, i.e. we never share what the expander would
+;; expand). This is achieved by mirroring `macro-expr-uses-macro?` EXACTLY:
+;;   - It handles the SAME arms with the SAME child recursion. Modelling on the
+;;     authoritative expansion gate (not the slightly different
+;;     `tc-expr-uses-free-name?` walk) is what makes the implication hold for
+;;     every arm.
+;;   - At `AstExprCall` it uses `macro-call-callee-maybe-macro?` -- the registry
+;;     gate the expander itself checks before attempting expansion -- which is a
+;;     superset of `macro-call-is-expandable?` (it skips the `macro-call-decl`
+;;     resolution and treats any registry-name callee as a possible fire). So at
+;;     every call mine flags at least whatever the precise walk flags.
+;;   - Every arm `macro-expr-uses-macro?` leaves to its `[_ true]` catch-all
+;;     (WithRegion/WithResource/Spmd reduce-scan-broadcast-shuffle/quote family,
+;;     etc.) is ALSO left to the `[_ true]` here -- handling one of those with a
+;;     `false` result would be the one way to wrongly share, so they are
+;;     deliberately not handled.
+;; A bare `AstExprVar`/`AstExprSet` target/`AstExprPtrAddrOf` is never a call ->
+;; false (matching the gate). This walk covers expr/compat macros only; the call
+;; site additionally gates on `has-expr-type-macros` being false (type macros
+;; expand from type positions the gate does not see).
+(define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (let
+        [expr : AstExpr (ast-node-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (or (macro-expr-might-fire? expr) (macro-expr-list-might-fire? rest)))]))
+
+(define (macro-let-binding-list-might-fire? [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              (or
+                (macro-expr-might-fire? init)
+                (macro-let-binding-list-might-fire? rest)))]))]))
+
+(define (macro-match-arms-might-fire? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm _ body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (or
+                (macro-expr-might-fire? body)
+                (macro-match-arms-might-fire? rest)))]))]))
+
+(define (macro-expr-might-fire? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprLiteral _) false]
+    [(AstExprVar _) false]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ast-node-get func-box)]
+        (or
+          (macro-call-callee-maybe-macro? func)
+          (macro-expr-might-fire? func)
+          (macro-expr-list-might-fire? args)))]
+    [(AstExprBracketClause items) (macro-expr-list-might-fire? items)]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (ast-node-get left-box)]
+        [right : AstExpr (ast-node-get right-box)]
+        (or (macro-expr-might-fire? left) (macro-expr-might-fire? right)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [then-branch : AstExpr (ast-node-get then-branch-box)]
+        [else-branch : AstExpr (ast-node-get else-branch-box)]
+        (or
+          (macro-expr-might-fire? cond)
+          (macro-expr-might-fire? then-branch)
+          (macro-expr-might-fire? else-branch)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (or
+              (macro-let-binding-list-might-fire? bindings)
+              (macro-expr-might-fire? body)))])]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda _ _ body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            (macro-expr-might-fire? body))])]
+    [(AstExprTuple exprs) (macro-expr-list-might-fire? exprs)]
+    [(AstExprTupleRef tuple-box index-box)
+      (let
+        [tuple : AstExpr (ast-node-get tuple-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or (macro-expr-might-fire? tuple) (macro-expr-might-fire? index)))]
+    [(AstExprArray exprs) (macro-expr-list-might-fire? exprs)]
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (ast-node-get len-box)]
+        (macro-expr-might-fire? len))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or (macro-expr-might-fire? array) (macro-expr-might-fire? index)))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or
+          (macro-expr-might-fire? array)
+          (macro-expr-might-fire? index)
+          (macro-expr-might-fire? value)))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or (macro-expr-might-fire? array) (macro-expr-might-fire? value)))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (ast-node-get str-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or (macro-expr-might-fire? str) (macro-expr-might-fire? index)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (or (macro-expr-might-fire? cond) (macro-expr-might-fire? body)))]
+    [(AstExprBegin exprs) (macro-expr-list-might-fire? exprs)]
+    [(AstExprUnsafe exprs) (macro-expr-list-might-fire? exprs)]
+    [(AstExprSet _ value-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        (macro-expr-might-fire? value))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprBorrow _ _ place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (macro-expr-might-fire? place))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (or
+              (macro-expr-might-fire? scrutinee)
+              (macro-match-arms-might-fire? arms)))])]
+    [(AstExprForeach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach _ _ start-box end-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (or
+              (macro-expr-might-fire? start)
+              (macro-expr-might-fire? end)
+              (macro-expr-might-fire? body)))])]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        (macro-expr-might-fire? receiver))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or (macro-expr-might-fire? receiver) (macro-expr-might-fire? value)))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (ast-node-get scratch-box)]
+        (or (macro-expr-might-fire? scratch) (macro-expr-list-might-fire? body)))]
+    [(AstExprWithScratch body) (macro-expr-list-might-fire? body)]
+    [(AstExprInArena arena-box body)
+      (let
+        [arena : AstExpr (ast-node-get arena-box)]
+        (or (macro-expr-might-fire? arena) (macro-expr-list-might-fire? body)))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprBoxSet inner-box value-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or (macro-expr-might-fire? inner) (macro-expr-might-fire? value)))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (macro-expr-might-fire? inner))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        (macro-expr-might-fire? ptr))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [value : AstExpr (ast-node-get value-box)]
+        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? value)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [offset : AstExpr (ast-node-get offset-box)]
+        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? offset)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        (macro-expr-might-fire? ptr))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        (macro-expr-might-fire? ptr))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        (macro-expr-might-fire? value))]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (ast-node-get str-box)]
+        (macro-expr-might-fire? str))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (ast-node-get ptr-box)]
+        [len : AstExpr (ast-node-get len-box)]
+        (or (macro-expr-might-fire? ptr) (macro-expr-might-fire? len)))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        (macro-expr-might-fire? array))]
+    [(AstExprBinaryData _) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (ast-node-get leaf-box)]
+        [subleaf : AstExpr (ast-node-get subleaf-box)]
+        (or (macro-expr-might-fire? leaf) (macro-expr-might-fire? subleaf)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (ast-node-get index-box)]
+        (macro-expr-might-fire? index))]
+    [(AstExprSyscall args) (macro-expr-list-might-fire? args)]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrAddrOf _) false]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [_ true]))
+
+;; Decl-level companion to `macro-expr-might-fire?`. Returns true only for the
+;; value-bearing decl kinds whose entire macro-expandable surface is a single
+;; body expression that provably contains no fireable call -- such a decl can be
+;; pushed to the macro-expand output unchanged (shared). Every other decl kind
+;; returns false so it falls through to the precise `macro-expand-decl-with-path`
+;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
+;; comptime templates, etc. correctly). Consulted only when the program has no
+;; expr-type macros.
+(define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+    [(AstDeclDefFn _ _ _ body-box _)
+      (not (macro-expr-might-fire? (ast-node-get body-box)))]
+    [(AstDeclTest _ expr-box _)
+      (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+    [_ false]))
+
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
 ;; and every reflection/layout builtin -- size-of/struct-field-*/enum-variant-*/
@@ -40141,7 +40483,8 @@
   [orig-decls : AstDeclList]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [module : String]) : ResultMacroDeclsWithPaths
+  [module : String]
+  [can-share : bool]) : ResultMacroDeclsWithPaths
   (let
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
@@ -40214,32 +40557,48 @@
                         (begin
                           (set! result (ErrMacroDeclsWithPaths diag))
                           (set! done true))])
-                    (match (macro-expand-decl-with-path
-                      ctx
-                      top-env
-                      orig-decls
-                      cur-module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
-                        (begin
-                          (set!
-                            out-rev
-                            (macro-decl-list-reverse-into expanded out-rev))
-                          (set!
-                            out-paths-rev
-                            (macro-decl-path-list-reverse-into
-                              expanded-paths
-                              out-paths-rev))
-                          (set!
-                            cur-module
-                            (macro-decls-final-module expanded cur-module))
-                          (set! cur-decls rest)
-                          (set! cur-paths rest-paths))]
-                      [(ErrMacroDeclExpansion diag)
-                        (begin
-                          (set! result (ErrMacroDeclsWithPaths diag))
-                          (set! done true))]))]))]))
+                    (if (and can-share (macro-decl-cannot-fire? decl))
+                      ;; Predict-skip: a macro-free value decl can never fire a
+                      ;; macro, so share it unchanged (like the AstDeclModule
+                      ;; arm) instead of copying it through the expander. This
+                      ;; avoids the per-decl `tc-context-with-module` allocation
+                      ;; and the single-element relist that
+                      ;; `macro-expand-decl-with-path` would otherwise retain in
+                      ;; the installed pools. A non-module value decl never
+                      ;; changes the active module, so `cur-module` is unchanged.
+                      (begin
+                        (set! out-rev (ast-decl-cons decl out-rev))
+                        (set!
+                          out-paths-rev
+                          (ast-decl-path-cons decl-path out-paths-rev))
+                        (set! cur-decls rest)
+                        (set! cur-paths rest-paths))
+                      (match (macro-expand-decl-with-path
+                        ctx
+                        top-env
+                        orig-decls
+                        cur-module
+                        decl
+                        decl-path)
+                        [(OkMacroDeclExpansion expanded expanded-paths)
+                          (begin
+                            (set!
+                              out-rev
+                              (macro-decl-list-reverse-into expanded out-rev))
+                            (set!
+                              out-paths-rev
+                              (macro-decl-path-list-reverse-into
+                                expanded-paths
+                                out-paths-rev))
+                            (set!
+                              cur-module
+                              (macro-decls-final-module expanded cur-module))
+                            (set! cur-decls rest)
+                            (set! cur-paths rest-paths))]
+                        [(ErrMacroDeclExpansion diag)
+                          (begin
+                            (set! result (ErrMacroDeclsWithPaths diag))
+                            (set! done true))])))]))]))
       result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
@@ -40438,7 +40797,8 @@
                                         decls
                                         decls
                                         paths
-                                        "")
+                                        ""
+                                        (not has-expr-type-macros))
                                         [(OkMacroDeclsWithPaths ndecls npaths)
                                           (begin
                                             (tc-context-capture-active-pools!
@@ -40499,10 +40859,279 @@
           (macro-expand-fixed-point-limit)
           (macro-program-module-placeholder-count (box-get decls-box))))]))
 
+(defenum MacroMaybeGeneratedNormalImport
+  (MacroNoGeneratedNormalImport)
+  (MacroSomeGeneratedNormalImport
+    AstImportKind
+    String
+    AstMaybeModuleName
+    AstMaybeImportAlias
+    AstSourceSpan
+    AstDecl))
+
+(defenum ResultMacroMaterializeImport
+  (OkMacroMaterializeImport AstDeclList AstDeclPathList SymI64Env bool)
+  (ErrMacroMaterializeImport CompilerDiagnostic))
+
+(define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstSomeGeneratedDeclMeta _ _ _ _)
+            (match template
+              [(AstDeclImport
+                  (AstImportSpec kind import-path expected alias span))
+                (if (macro-import-placeholder-kind? kind)
+                  (MacroNoGeneratedNormalImport)
+                  (MacroSomeGeneratedNormalImport
+                    kind
+                    import-path
+                    expected
+                    alias
+                    span
+                    template))]
+              [_ (MacroNoGeneratedNormalImport)])]
+          [(AstNoGeneratedDeclMeta) (macro-generated-normal-import template)]))]
+    [(AstDeclUnsafe inner-box)
+      (macro-generated-normal-import (box-get inner-box))]
+    [_ (MacroNoGeneratedNormalImport)]))
+
+(define (macro-materialize-seen-from
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [seen : SymI64Env]) : SymI64Env
+  (match decls
+    [(AstDeclNil) seen]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        [seen-path : SymI64Env
+          (if (> (string-length decl-path) 0)
+            (sym-i64-bind seen (compiler-load-seen-path-key decl-path) 1)
+            seen)]
+        [seen-decl : SymI64Env
+          (match decl
+            [(AstDeclModule name)
+              (let
+                [module-name : String (intern-str name)]
+                (if (> (string-length module-name) 0)
+                  (sym-i64-bind seen-path module-name 1)
+                  seen-path))]
+            [_ seen-path])]
+        (macro-materialize-seen-from rest rest-paths seen-decl))]))
+
+(define (macro-materialize-import-diagnostic
+  [path : String]
+  [span : AstSourceSpan]
+  [message : String]) : CompilerDiagnostic
+  (tc-canonical-diagnostic
+    (compiler-diagnostic-from-ast-span path span message)))
+
+(define (macro-materialize-generated-import
+  [decl : AstDecl]
+  [decl-path : String]
+  [module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (match (macro-generated-normal-import decl)
+    [(MacroNoGeneratedNormalImport)
+      (OkMacroMaterializeImport
+        (ast-decl-cons decl AstDeclNil)
+        (ast-decl-path-cons decl-path AstDeclPathNil)
+        seen
+        false)]
+    [(MacroSomeGeneratedNormalImport kind import-path expected alias span _)
+      (let
+        [import-root : String (compiler-load-dirname decl-path)]
+        (match (compiler-load-resolve-import-spec-with-roots
+          decl-path
+          import-root
+          kind
+          import-path
+          stdlib-roots)
+          [(OkPkgResolve resolved)
+            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+              resolved
+              seen
+              stdlib-roots
+              expected
+              import-root
+              cfgs
+              pools)
+              [(OkCompilerLoadWithPaths
+                  imported-decls
+                  imported-paths
+                  _
+                  next-seen)
+                (let
+                  [after-import-expected : AstMaybeModuleName
+                    (compiler-load-after-import-expected-module
+                      kind
+                      expected
+                      alias
+                      imported-decls)]
+                  [after-import-alias : AstMaybeImportAlias
+                    (compiler-load-after-import-alias
+                      kind
+                      expected
+                      alias
+                      imported-decls)]
+                  [tail-decls : AstDeclList
+                    (compiler-load-decls-after-import
+                      kind
+                      resolved
+                      after-import-expected
+                      after-import-alias
+                      module
+                      imported-decls
+                      AstDeclNil)]
+                  [tail-paths : AstDeclPathList
+                    (compiler-load-paths-after-import
+                      decl-path
+                      after-import-alias
+                      imported-decls
+                      AstDeclPathNil)]
+                  (OkMacroMaterializeImport
+                    (macro-decl-list-append imported-decls tail-decls)
+                    (macro-decl-path-list-append imported-paths tail-paths)
+                    next-seen
+                    true))]
+              [(ErrCompilerLoadWithPaths diag) (ErrMacroMaterializeImport diag)])]
+          [(ErrPkgResolve message)
+            (ErrMacroMaterializeImport
+              (macro-materialize-import-diagnostic decl-path span message))]))]))
+
+(define (macro-materialize-generated-imports-in
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (let
+    [seen : SymI64Env (macro-materialize-seen-from decls paths (sym-i64-empty))]
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-module : String ""]
+    [out-rev : AstDeclList AstDeclNil]
+    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [changed : bool false]
+    [result : ResultMacroMaterializeImport
+      (ErrMacroMaterializeImport
+        (tc-diag-at-start "macro: internal generated import materialization"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set!
+                result
+                (OkMacroMaterializeImport
+                  (macro-decl-list-reverse out-rev)
+                  (macro-decl-path-list-reverse out-paths-rev)
+                  seen
+                  changed))
+              (set! done true))]
+          [(AstDeclCons decl rest-box)
+            (let
+              [rest : AstDeclList (box-get rest-box)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! out-rev (ast-decl-cons decl out-rev))
+                    (set!
+                      out-paths-rev
+                      (ast-decl-path-cons decl-path out-paths-rev))
+                    (set! cur-module (intern-str next-module))
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [_
+                  (match (macro-materialize-generated-import
+                    decl
+                    decl-path
+                    cur-module
+                    seen
+                    stdlib-roots
+                    cfgs
+                    pools)
+                    [(OkMacroMaterializeImport
+                        materialized-decls
+                        materialized-paths
+                        next-seen
+                        materialized?)
+                      (begin
+                        (set!
+                          out-rev
+                          (macro-decl-list-reverse-into
+                            materialized-decls
+                            out-rev))
+                        (set!
+                          out-paths-rev
+                          (macro-decl-path-list-reverse-into
+                            materialized-paths
+                            out-paths-rev))
+                        (set! seen next-seen)
+                        (set! changed (or changed materialized?))
+                        (set!
+                          cur-module
+                          (macro-decls-final-module
+                            materialized-decls
+                            cur-module))
+                        (set! cur-decls rest)
+                        (set! cur-paths rest-paths))]
+                    [(ErrMacroMaterializeImport diag)
+                      (begin
+                        (set! result (ErrMacroMaterializeImport diag))
+                        (set! done true))])]))]))
+      result)))
+
+(define (macro-materialize-generated-imports
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (match program
+    [(AstProgram decls-box)
+      (macro-materialize-generated-imports-in
+        (box-get decls-box)
+        paths
+        stdlib-roots
+        cfgs
+        pools)]))
+
 (define (macro-expand-program-with-paths-loop-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ErrMacroExpand
@@ -40518,31 +41147,47 @@
         paths
         pools)
         [(OkMacroExpand expanded expanded-paths)
-          (let
-            [normalized-result : ResultGenProgramWithPaths
-              (if (compiler-specialize-needed? expanded)
-                (gen-normalize-program-with-paths-and-pools
-                  expanded
-                  expanded-paths
-                  (tc-decl-path-list-last expanded-paths "")
-                  pools)
-                (OkGenProgramWithPaths expanded expanded-paths))]
-            (match normalized-result
-              [(OkGenProgramWithPaths normalized normalized-paths)
-                (match normalized
-                  [(AstProgram decls-box)
-                    (let
-                      [decls : AstDeclList (box-get decls-box)]
-                      (if (or
-                        had-placeholders
-                        (macro-program-has-module-placeholder? decls))
-                        (macro-expand-program-with-paths-loop-and-pools
-                          normalized
-                          normalized-paths
-                          pools
-                          (- fuel 1))
-                        (OkMacroExpand normalized normalized-paths)))])]
-              [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+          (match (macro-materialize-generated-imports
+            expanded
+            expanded-paths
+            stdlib-roots
+            cfgs
+            pools)
+            [(OkMacroMaterializeImport
+                materialized-decls
+                materialized-paths
+                _
+                materialized-imports?)
+              (let
+                [materialized : AstProgram (ast-program materialized-decls)]
+                [normalized-result : ResultGenProgramWithPaths
+                  (if (compiler-specialize-needed? materialized)
+                    (gen-normalize-program-with-paths-and-pools
+                      materialized
+                      materialized-paths
+                      (tc-decl-path-list-last materialized-paths "")
+                      pools)
+                    (OkGenProgramWithPaths materialized materialized-paths))]
+                (match normalized-result
+                  [(OkGenProgramWithPaths normalized normalized-paths)
+                    (match normalized
+                      [(AstProgram decls-box)
+                        (let
+                          [decls : AstDeclList (box-get decls-box)]
+                          (if (or
+                            had-placeholders
+                            materialized-imports?
+                            (macro-program-has-module-placeholder? decls))
+                            (macro-expand-program-with-paths-loop-and-pools
+                              normalized
+                              normalized-paths
+                              pools
+                              stdlib-roots
+                              cfgs
+                              (- fuel 1))
+                            (OkMacroExpand normalized normalized-paths)))])]
+                  [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+            [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
         [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
 
 (define (macro-expand-program-with-paths-loop
@@ -40553,17 +41198,34 @@
     program
     paths
     (ast-node-pool-context-capture-active)
+    (string-vec-new)
+    (compiler-cfg-empty)
     fuel))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    pools
+    stdlib-roots
+    cfgs
+    (macro-expand-fixed-point-limit-for-program program)))
 
 (define (macro-expand-program-with-paths-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop-and-pools
+  (macro-expand-program-with-paths-and-pools-roots-cfg
     program
     paths
     pools
-    (macro-expand-fixed-point-limit-for-program program)))
+    (string-vec-new)
+    (compiler-cfg-empty)))
 
 (define (macro-expand-program-with-paths
   [program : AstProgram]

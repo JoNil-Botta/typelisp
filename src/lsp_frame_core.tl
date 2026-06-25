@@ -53,6 +53,11 @@
   (line i64)
   (col i64))
 
+(defstruct LspLineColCache
+  (offset i64)
+  (line i64)
+  (col i64))
+
 (defenum LspDefLocation
   (FoundDefLoc String i64 i64 i64)
   (MissingDefLoc))
@@ -1325,37 +1330,44 @@
       i)))
 
 ;; 1-based line/column of a byte offset.
-(define lsp-line-col-cache-offset : i64
-  -1)
-(define lsp-line-col-cache-line : i64
-  1)
-(define lsp-line-col-cache-col : i64
-  1)
-
-(define (lsp-line-col-cache-reset!) : unit
-  (begin
-    (set! lsp-line-col-cache-offset -1)
-    (set! lsp-line-col-cache-line 1)
-    (set! lsp-line-col-cache-col 1)))
-
 (define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol
-  (if (= off lsp-line-col-cache-offset)
-    (LspLineCol lsp-line-col-cache-line lsp-line-col-cache-col)
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [line : i64 1]
+    [col : i64 1]
+    (begin
+      (while (and (< i n) (< i off))
+        (begin
+          (if (= (string-ref text i) '\n')
+            (begin
+              (set! line (+ line 1))
+              (set! col 1))
+            (set! col (+ col 1)))
+          (set! i (+ i 1))))
+      (LspLineCol line col))))
+
+(define (lsp-line-col-cache-at-offset!
+  [cache : LspLineColCache]
+  [text : String]
+  [off : i64]) : LspLineCol
+  (if (= off (struct-get cache offset))
+    (LspLineCol (struct-get cache line) (struct-get cache col))
     (let
       [n : i64 (string-length text)]
       [resume : bool
-        (and (>= lsp-line-col-cache-offset 0) (< lsp-line-col-cache-offset off))]
+        (and (>= (struct-get cache offset) 0) (< (struct-get cache offset) off))]
       [start : i64
         (if resume
-          lsp-line-col-cache-offset
+          (struct-get cache offset)
           0)]
       [line : i64
         (if resume
-          lsp-line-col-cache-line
+          (struct-get cache line)
           1)]
       [col : i64
         (if resume
-          lsp-line-col-cache-col
+          (struct-get cache col)
           1)]
       [i : i64 start]
       (begin
@@ -1367,9 +1379,9 @@
                 (set! col 1))
               (set! col (+ col 1)))
             (set! i (+ i 1))))
-        (set! lsp-line-col-cache-offset off)
-        (set! lsp-line-col-cache-line line)
-        (set! lsp-line-col-cache-col col)
+        (set! (struct-get cache offset) off)
+        (set! (struct-get cache line) line)
+        (set! (struct-get cache col) col)
         (LspLineCol line col)))))
 
 (define (lsp-def-keyword? [kw : String]) : bool
@@ -1506,15 +1518,13 @@
   [text : String]
   [off : i64]
   [needle : String]) : LspDefLocation
-  (begin
-    (lsp-line-col-cache-reset!)
-    (let
-      [lc : LspLineCol (lsp-line-col-at-offset text off)]
-      (FoundDefLoc
-        uri
-        (struct-get lc line)
-        (struct-get lc col)
-        (string-length needle)))))
+  (let
+    [lc : LspLineCol (lsp-line-col-at-offset text off)]
+    (FoundDefLoc
+      uri
+      (struct-get lc line)
+      (struct-get lc col)
+      (string-length needle))))
 
 (define (lsp-find-definition-in-docs
   [docs : LspDocuments]
@@ -2270,19 +2280,17 @@
 ;; mangles in-progress code.
 ;; --------------------------------------------------------------------------
 (define (lsp-formatting-edit [text : String] [formatted : String]) : json.Json
-  (begin
-    (lsp-line-col-cache-reset!)
-    (let
-      [end : LspLineCol (lsp-line-col-at-offset text (string-length text))]
+  (let
+    [end : LspLineCol (lsp-line-col-at-offset text (string-length text))]
+    (lsp-json-object2
+      "range"
       (lsp-json-object2
-        "range"
-        (lsp-json-object2
-          "start"
-          (lsp-position 1 1)
-          "end"
-          (lsp-position (struct-get end line) (struct-get end col)))
-        "newText"
-        (json.JsonString formatted)))))
+        "start"
+        (lsp-position 1 1)
+        "end"
+        (lsp-position (struct-get end line) (struct-get end col)))
+      "newText"
+      (json.JsonString formatted))))
 
 (define (lsp-formatting-respond
   [id : json.Json]
@@ -3251,7 +3259,6 @@
     [i : i64 0]
     [acc : json.JsonList json.JsonListNil]
     (begin
-      (lsp-line-col-cache-reset!)
       (while (< i n)
         (let
           [c : char (string-ref text i)]
@@ -3351,8 +3358,8 @@
     [i : i64 0]
     [depth : i64 0]
     [result : LspDeclList (lsp-decl-list-with-capacity 16)]
+    [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
     (begin
-      (lsp-line-col-cache-reset!)
       (while (< i n)
         (let
           [c : char (string-ref text i)]
@@ -3372,11 +3379,11 @@
                         [kind : String (lsp-decl-kind-at text i n)]
                         [form-end : i64 (lsp-skip-paren-group text i n)]
                         [form-start-lc : LspLineCol
-                          (lsp-line-col-at-offset text i)]
+                          (lsp-line-col-cache-at-offset! lc-cache text i)]
                         [name-lc : LspLineCol
-                          (lsp-line-col-at-offset text name-off)]
+                          (lsp-line-col-cache-at-offset! lc-cache text name-off)]
                         [form-end-lc : LspLineCol
-                          (lsp-line-col-at-offset text form-end)]
+                          (lsp-line-col-cache-at-offset! lc-cache text form-end)]
                         (set!
                           result
                           (lsp-decl-list-push
@@ -3940,9 +3947,7 @@
         (LspContinue docs))
       (match (lsp-documents-lookup docs uri)
         [(FoundLspDocument path text _)
-          (match (lsp-with-fresh-pools
-            (lambda ()
-              (compiler-check-source-with-roots path text stdlib-roots)))
+          (match (compiler-check-source-with-roots path text stdlib-roots)
             [(OkCompilerCheck _)
               (begin
                 (lsp-write-response
@@ -3974,9 +3979,10 @@
                         "error"
                         (json.JsonString "Could not read document")))
                     (LspContinue docs))
-                  (match (lsp-with-fresh-pools
-                    (lambda ()
-                      (compiler-check-source-with-roots path text stdlib-roots)))
+                  (match (compiler-check-source-with-roots
+                    path
+                    text
+                    stdlib-roots)
                     [(OkCompilerCheck _)
                       (begin
                         (lsp-write-response
@@ -4052,9 +4058,7 @@
               [col1 : i64 (+ char0 1)]
               (begin
                 (tc-inlay-hints-enable!)
-                (match (lsp-with-fresh-pools
-                  (lambda ()
-                    (compiler-check-source-with-roots path text stdlib-roots)))
+                (match (compiler-check-source-with-roots path text stdlib-roots)
                   [(OkCompilerCheck _) unit]
                   [(ErrCompilerCheck _) unit])
                 (let
@@ -4099,32 +4103,28 @@
   [i : i64]
   [n : i64]
   [acc : json.JsonList]) : json.JsonList
-  (begin
-    (if (= i 0)
-      (lsp-line-col-cache-reset!)
-      unit)
-    (if (>= i n)
-      acc
-      (let
-        [name-len : i64 (string-length name)]
-        (if (and
-          (<= (+ i name-len) n)
-          (is-string-prefix-at (& text) (& name) i)
-          (or (= i 0) (not (lsp-ident-char? (string-ref text (- i 1)))))
-          (or
-            (>= (+ i name-len) n)
-            (not (lsp-ident-char? (string-ref text (+ i name-len))))))
-          (let
-            [lc : LspLineCol (lsp-line-col-at-offset text i)]
-            (lsp-find-references-in-text
-              text
-              name
-              (+ i 1)
-              n
-              (lsp-json-list-cons
-                (lsp-position (struct-get lc line) (struct-get lc col))
-                acc)))
-          (lsp-find-references-in-text text name (+ i 1) n acc))))))
+  (if (>= i n)
+    acc
+    (let
+      [name-len : i64 (string-length name)]
+      (if (and
+        (<= (+ i name-len) n)
+        (is-string-prefix-at (& text) (& name) i)
+        (or (= i 0) (not (lsp-ident-char? (string-ref text (- i 1)))))
+        (or
+          (>= (+ i name-len) n)
+          (not (lsp-ident-char? (string-ref text (+ i name-len))))))
+        (let
+          [lc : LspLineCol (lsp-line-col-at-offset text i)]
+          (lsp-find-references-in-text
+            text
+            name
+            (+ i 1)
+            n
+            (lsp-json-list-cons
+              (lsp-position (struct-get lc line) (struct-get lc col))
+              acc)))
+        (lsp-find-references-in-text text name (+ i 1) n acc)))))
 
 ;; tl/findReferences - All uses of a name
 (define (lsp-handle-tl-find-references
@@ -4817,26 +4817,6 @@
 (define (lsp-frame-session-cache-enable!) : unit
   (compiler-load-session-cache-enable!))
 
-(define (lsp-with-fresh-pools [body : (-> ResultCompilerCheck)]) : ResultCompilerCheck
-  (let
-    [old-ast-floor : i64 (compiler-load-session-ast-floor-value)]
-    [old-ty-floor : i64 (compiler-load-session-ty-floor-value)]
-    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
-    (begin
-      (compiler-load-session-floors-set! 0 0 0)
-      (compiler-check-reset-pools!)
-      (compiler-load-session-reset-interns!)
-      (let
-        [result : ResultCompilerCheck (body)]
-        (begin
-          (compiler-check-reset-pools!)
-          (compiler-load-session-reset-interns!)
-          (compiler-load-session-floors-set!
-            old-ast-floor
-            old-ty-floor
-            old-intern-floor)
-          result)))))
-
 (define (lsp-frame-session-cache-smoke-ok?) : bool
   (begin
     (compiler-load-session-cache-disable-for-test!)
@@ -4988,7 +4968,6 @@
                       [found : bool false]
                       [result : String ""]
                       (begin
-                        (lsp-line-col-cache-reset!)
                         (while (and (< i n) (not found))
                           (let
                             [entry : LspDeclEntry
@@ -5147,7 +5126,6 @@
     [result : String ""]
     [err : String ""]
     (begin
-      (lsp-line-col-cache-reset!)
       (while (and (< i n) (not found))
         (let
           [entry : LspDeclEntry
@@ -5243,7 +5221,6 @@
       [result : String ""]
       [err : String ""]
       (begin
-        (lsp-line-col-cache-reset!)
         (while (and (< i n) (not found))
           (let
             [entry : LspDeclEntry

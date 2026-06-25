@@ -162,21 +162,6 @@
     [line0-ok : bool (string-contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
-(define (lsp-scan-decls-line-col-cache-reset-ok?) : bool
-  (let
-    [short-src : String "(define a : i64 1)"]
-    [first : LspDeclList (lsp-scan-decls short-src)]
-    [src : String
-      "; first comment line\n; second comment line\n; third comment line\n(define b : i64 2)"]
-    [decls : LspDeclList (lsp-scan-decls src)]
-    [entry : LspDeclEntry (lsp-decl-list-get decls 0 (lsp-decl-entry-fallback))]
-    (and
-      (= (lsp-decl-list-len first) 1)
-      (= (lsp-decl-list-len decls) 1)
-      (string-eq (struct-get entry name) "b")
-      (= (struct-get entry name-line) 4)
-      (= (struct-get entry name-col) 9))))
-
 (define (lsp-document-decls-cache-empty-ok?) : bool
   (let
     [uri : String "file:///tmp/cache.tl"]
@@ -218,6 +203,5 @@
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))
-        (unless (lsp-scan-decls-line-col-cache-reset-ok?) (return 12))
-        (unless (lsp-document-decls-cache-empty-ok?) (return 13))
+        (unless (lsp-document-decls-cache-empty-ok?) (return 12))
         42))))

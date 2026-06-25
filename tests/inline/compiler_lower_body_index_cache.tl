@@ -17,7 +17,8 @@
           (begin
             (set! lower-active-global-name-cache prev-name-cache)
             42)]
-        [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))]))))
+        [(ErrCompilerLower diag)
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (test
   compiler-lower-body-index-cache

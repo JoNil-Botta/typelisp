@@ -1071,19 +1071,21 @@
           "")]
       [(ErrCompilerCheck diag)
         (let
-          [diag-uri : String (lsp-diagnostic-uri uri path diag)]
+          [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
           (if (string-eq diag-uri uri)
             (begin
               (lsp-publish-diagnostics
                 uri
-                (lsp-json-list-cons (lsp-compiler-diagnostic diag) lint-diags))
+                (lsp-json-list-cons
+                  (lsp-compiler-diagnostic (box-get diag))
+                  lint-diags))
               uri)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
               (lsp-publish-diagnostics
                 diag-uri
                 (lsp-json-list-cons
-                  (lsp-compiler-diagnostic diag)
+                  (lsp-compiler-diagnostic (box-get diag))
                   json.JsonListNil))
               diag-uri)))])))
 
@@ -3962,7 +3964,8 @@
                     "success"
                     (json.JsonBool false)
                     "error"
-                    (json.JsonString (compiler-diagnostic-message diag))))
+                    (json.JsonString
+                      (compiler-diagnostic-message (box-get diag)))))
                 (LspContinue docs))])]
         [(MissingLspDocument)
           (match (lsp-file-uri-to-path uri)
@@ -3997,7 +4000,8 @@
                             "success"
                             (json.JsonBool false)
                             "error"
-                            (json.JsonString (compiler-diagnostic-message diag))))
+                            (json.JsonString
+                              (compiler-diagnostic-message (box-get diag)))))
                         (LspContinue docs))])))]
             [(ErrLspUriPath message)
               (begin

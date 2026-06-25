@@ -11,9 +11,10 @@
     (if (string-eq target-name "windows-x86_64")
       (compiler-backend-raw-pointer-fixture-emit (BackendTargetWindows))
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "compiler-backend-raw-pointer-fixture: unknown target")))))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "compiler-backend-raw-pointer-fixture: unknown target"))))))
 
 (define (main) : i64
   (if (< (arg-count) 2)
@@ -32,5 +33,5 @@
             0)]
         [(ErrCompilerBackend diag)
           (begin
-            (print-error (compiler-diagnostic-render diag))
+            (print-error (compiler-diagnostic-render (box-get diag)))
             1)]))))

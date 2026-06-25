@@ -106,7 +106,7 @@
                                         (ErrCompilerTypecheck diag)]))]
                                 [(ErrCompilerSymbols message)
                                   (ErrCompilerTypecheck
-                                    (tc-diag-at-start message))])
+                                    (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                                 normalized
                                 normalized-paths
@@ -207,7 +207,7 @@
                                         (ErrCompilerTypecheckChecked diag)]))]
                                 [(ErrCompilerSymbols message)
                                   (ErrCompilerTypecheckChecked
-                                    (tc-diag-at-start message))])
+                                    (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                                 normalized
                                 normalized-paths
@@ -360,7 +360,8 @@
                               [(OkCompilerTypecheck _)
                                 (tc-expr ctx top-env expr)]
                               [(ErrCompilerTypecheck diag)
-                                (ErrTcType (compiler-diagnostic-message diag))])]
+                                (ErrTcType
+                                  (compiler-diagnostic-message (box-get diag)))])]
                           [(ErrTcEnv message) (ErrTcType message)])]
                       [(ErrTcUnit message) (ErrTcType message)])]
                   [(ErrTcUnit message) (ErrTcType message)]))]
@@ -527,7 +528,7 @@
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string-eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerTypecheck _) false]))
 
 (define (compiler-typecheck-error-code-ok?
@@ -536,10 +537,10 @@
   [want-category : String]) : bool
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
-      (match (compiler-diagnostic-code diag)
+      (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
           (if (string-eq code want-code)
-            (match (compiler-diagnostic-category diag)
+            (match (compiler-diagnostic-category (box-get diag))
               [(CompilerDiagnosticSomeString category)
                 (string-eq category want-category)]
               [CompilerDiagnosticNoString false])
@@ -568,14 +569,14 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message diag) want)
-        (= (compiler-diagnostic-line diag) want-line)
-        (= (compiler-diagnostic-col diag) want-col)
+        (string-eq (compiler-diagnostic-message (box-get diag)) want)
+        (= (compiler-diagnostic-line (box-get diag)) want-line)
+        (= (compiler-diagnostic-col (box-get diag)) want-col)
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans diag))
+            (compiler-diagnostic-secondary-spans (box-get diag)))
           want-secondary-count)
-        (compiler-typecheck-help-present? diag))]
+        (compiler-typecheck-help-present? (box-get diag)))]
     [(OkCompilerTypecheck _) false]))
 
 (define (compiler-typecheck-program-error-ok?
@@ -583,7 +584,7 @@
   [want : String]) : bool
   (match (typecheck-compiler-program program)
     [(ErrCompilerTypecheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string-eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerTypecheck _) false]))
 
 ;; #2357: with the growing ty-node pool a compile that starts with the pool at
@@ -1210,14 +1211,15 @@
       (let
         [message-ok : bool
           (string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "typecheck: return type mismatch")]
-        [path-ok : bool (string-eq (compiler-diagnostic-path diag) "")]
-        [line-ok : bool (= (compiler-diagnostic-line diag) 2)]
-        [col-ok : bool (= (compiler-diagnostic-col diag) 33)]
+        [path-ok : bool
+          (string-eq (compiler-diagnostic-path (box-get diag)) "")]
+        [line-ok : bool (= (compiler-diagnostic-line (box-get diag)) 2)]
+        [col-ok : bool (= (compiler-diagnostic-col (box-get diag)) 33)]
         [notes-ok : bool
           (compiler-typecheck-generated-notes-ok?
-            (compiler-diagnostic-notes diag)
+            (compiler-diagnostic-notes (box-get diag))
             (compiler-typecheck-generated-key
               "bad-family"
               "bad-generated"
@@ -4614,10 +4616,10 @@
 (define (compiler-typecheck-located-source-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
-      (if (= (compiler-diagnostic-line diag) 2)
-        (if (> (compiler-diagnostic-col diag) 0)
+      (if (= (compiler-diagnostic-line (box-get diag)) 2)
+        (if (> (compiler-diagnostic-col (box-get diag)) 0)
           (string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "typecheck: unbound name missing")
           false)
         false)]
@@ -4634,10 +4636,10 @@
       [(ErrCompilerTypecheck diag)
         (and
           (string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
-          (= (compiler-diagnostic-line diag) 9)
-          (= (compiler-diagnostic-col diag) 7))]
+          (= (compiler-diagnostic-line (box-get diag)) 9)
+          (= (compiler-diagnostic-col (box-get diag)) 7))]
       [(OkCompilerTypecheck _) false])))
 
 ;; Statement and control-flow type rules (#1042): if/while conditions, the
@@ -7699,7 +7701,8 @@
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
           (panic "typecheck: smoke score mismatch"))]
-      [(ErrCompilerTypecheck diag) (panic (compiler-diagnostic-message diag))])
+      [(ErrCompilerTypecheck diag)
+        (panic (compiler-diagnostic-message (box-get diag)))])
     unit))
 
 ;; --- move checker fixtures (#1048) ------------------------------------------
@@ -9346,7 +9349,7 @@
         (compiler-typecheck-dup-extern-paths))
         [(ErrCompilerTypecheck diag)
           (let
-            [message : String (compiler-diagnostic-message diag)]
+            [message : String (compiler-diagnostic-message (box-get diag))]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
             [assets-path : String "src/assets.tl"]

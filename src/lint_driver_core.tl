@@ -1836,7 +1836,7 @@
               (lint-findings-count findings))))]
       [(ErrAstProgramDiagnostic diag)
         (begin
-          (print-error (compiler-diagnostic-render diag))
+          (print-error (compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-file-with-package-dead
@@ -1873,7 +1873,7 @@
             (selfhost-lint-enforce-exit enforcing total-count)))]
       [(ErrAstProgramDiagnostic diag)
         (begin
-          (print-error (compiler-diagnostic-render diag))
+          (print-error (compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-files-from

@@ -1037,7 +1037,7 @@
               inline-test-status))]
         [(ErrCompilerCheck diag)
           (begin
-            (print-error (compiler-diagnostic-render diag))
+            (print-error (compiler-diagnostic-render (box-get diag)))
             1)])]
     [(CompileCliHelp)
       (begin

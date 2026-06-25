@@ -1737,7 +1737,9 @@
                   (begin
                     (print-error
                       (compiler-diagnostic-render
-                        (tltest-diagnostic-with-source-fallback source diag)))
+                        (tltest-diagnostic-with-source-fallback
+                          source
+                          (box-get diag))))
                     1)])])))]))
 
 (define (tltest-inline-stdlib-source? [source : String] [roots : StringVec]) : bool
@@ -1788,7 +1790,7 @@
             (begin
               (print-error
                 (compiler-diagnostic-render
-                  (tltest-diagnostic-with-source-fallback source diag)))
+                  (tltest-diagnostic-with-source-fallback source (box-get diag))))
               1)])))))
 
 (define (tltest-inline-typecheck-package-source-with-cfg
@@ -1828,7 +1830,7 @@
             (begin
               (print-error
                 (compiler-diagnostic-render
-                  (tltest-diagnostic-with-source-fallback source diag)))
+                  (tltest-diagnostic-with-source-fallback source (box-get diag))))
               1)])))
     0))
 
@@ -2648,7 +2650,7 @@
         0)]
     [(ErrCompilerTypecheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -2854,7 +2856,7 @@
         (begin
           (print-error
             (compiler-diagnostic-render
-              (tltest-diagnostic-with-source-fallback source diag)))
+              (tltest-diagnostic-with-source-fallback source (box-get diag))))
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)])))
 
@@ -2921,7 +2923,7 @@
         0)]
     [(ErrCompilerTypecheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (tltest-no-tests-run
@@ -3260,7 +3262,7 @@
         [(OkCompilerTypecheck _) (OkTestPackageTotals 1 1)]
         [(ErrCompilerTypecheck diag)
           (begin
-            (print-error (compiler-diagnostic-render diag))
+            (print-error (compiler-diagnostic-render (box-get diag)))
             (ErrTestPackageTotals 1))])
       (begin
         (print-error (tltest-package-integration-missing-main source))
@@ -3332,7 +3334,7 @@
       (begin
         (print-error
           (string-append "test: integration test source failed: " source))
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         (ErrTestPackageTotals 1))]))
 
 (define (tltest-package-run-integration-source-isolated-count
@@ -3400,7 +3402,7 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (print-error (string-append "test: package source failed: " source))
-          (print-error (compiler-diagnostic-render diag))
+          (print-error (compiler-diagnostic-render (box-get diag)))
           (ErrTestPackageTotals 1))])
     (OkTestPackageTotals 0 0)))
 
@@ -3718,7 +3720,7 @@
       (tltest-check-file-loaded source decls paths backend-target roots)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         (ErrTestFileCheck 1))]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
@@ -3853,7 +3855,7 @@
                           opt-level)]))])]
             [(ErrCompilerLoadWithPaths diag)
               (begin
-                (print-error (compiler-diagnostic-render diag))
+                (print-error (compiler-diagnostic-render (box-get diag)))
                 1)])])]
     [(TestBatchConfig paths target _ roots _ _)
       (tltest-run-batch-check paths target roots)]

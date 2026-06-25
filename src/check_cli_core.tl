@@ -149,7 +149,7 @@
           inline-test-status))]
     [(ErrCompilerCheck diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
@@ -214,7 +214,7 @@
                 inline-test-status))]
           [(ErrCompilerCheckWithPaths diag)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (print-error (compiler-diagnostic-render (box-get diag)))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.

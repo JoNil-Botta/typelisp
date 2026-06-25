@@ -1135,7 +1135,7 @@
     [(OkCompilerBackendPic _) false]
     [(ErrCompilerBackendPic diag)
       (compiler-backend-string-contains?
-        (compiler-diagnostic-render diag)
+        (compiler-diagnostic-render (box-get diag))
         "backend: --pic supports only internal references")]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
@@ -3542,7 +3542,7 @@
       (compiler-backend-register-group-test-index)]
     (match (compiler-backend-emit-mov assignments 1 src ty index 4)
       [(ErrCompilerBackend diag)
-        (string-eq (compiler-diagnostic-message diag) want)]
+        (string-eq (compiler-diagnostic-message (box-get diag)) want)]
       [(OkCompilerBackend _) false])))
 
 (define (compiler-backend-register-group-call-arg-error-ok?) : bool
@@ -3566,7 +3566,7 @@
       4)
       [(ErrCompilerBackend diag)
         (string-eq
-          (compiler-diagnostic-message diag)
+          (compiler-diagnostic-message (box-get diag))
           "backend: register-group call argument requires var operand (#2386)")]
       [(OkCompilerBackend _) false])))
 
@@ -5386,7 +5386,7 @@
     (BackendTargetWindows))
     [(ErrCompilerBackend diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "backend: syscall is only supported on the linux-x86_64 target")]
     [(OkCompilerBackend _) false]))
 
@@ -5406,7 +5406,7 @@
 (define (compiler-backend-error-ok? [src : String] [want : String]) : bool
   (match (compiler-backend-emit-source src)
     [(ErrCompilerBackend message)
-      (string-eq (compiler-diagnostic-message message) want)]
+      (string-eq (compiler-diagnostic-message (box-get message)) want)]
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
@@ -5457,9 +5457,9 @@
     (match (compiler-backend-emit-program-linux-with-spans program spans)
       [(ErrCompilerBackend diag)
         (and
-          (string-eq (compiler-diagnostic-message diag) want-message)
-          (= (compiler-diagnostic-line diag) want-line)
-          (= (compiler-diagnostic-col diag) want-col))]
+          (string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+          (= (compiler-diagnostic-line (box-get diag)) want-line)
+          (= (compiler-diagnostic-col (box-get diag)) want-col))]
       [(OkCompilerBackend _) false])))
 
 (define (compiler-backend-switch-test-instr) : CompilerIrInstr
@@ -5627,7 +5627,7 @@
     (compiler-backend-switch-bad-shape-program))
     [(ErrCompilerBackend diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         (compiler-backend-switch-shape-message))]
     [(OkCompilerBackend _) false]))
 
@@ -5679,7 +5679,7 @@
     (compiler-backend-switch-phi-program))
     [(ErrCompilerBackend diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         (compiler-backend-switch-phi-target-message))]
     [(OkCompilerBackend _) false]))
 
@@ -5763,7 +5763,7 @@
     (compiler-source-spans-empty))
     [(ErrCompilerBackendObject diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         (compiler-backend-switch-shape-message))]
     [(OkCompilerBackendObject _) false]))
 
@@ -5773,7 +5773,7 @@
     (compiler-source-spans-empty))
     [(ErrCompilerBackendObject diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         (compiler-backend-switch-phi-target-message))]
     [(OkCompilerBackendObject _) false]))
 
@@ -7276,7 +7276,7 @@
     true)
     [(ErrCompilerBackend diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "backend: vector register home unavailable for load dst; unsupported spill, call, or ABI lifetime")]
     [(OkCompilerBackend _) false]))
 
@@ -7420,7 +7420,7 @@
     elem-ty
     (compiler-diagnostic-at-start "" ""))
     [(ErrCompilerBackend diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string-eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-vector-binop-diagnostic?
@@ -7438,7 +7438,7 @@
     elem-ty
     (compiler-diagnostic-at-start "" ""))
     [(ErrCompilerBackend diag)
-      (string-eq (compiler-diagnostic-message diag) want)]
+      (string-eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-vector-bitwise-binop-ok?) : bool
@@ -7657,10 +7657,10 @@
           [(ErrCompilerBackend diag)
             (and
               (string-eq
-                (compiler-diagnostic-message diag)
+                (compiler-diagnostic-message (box-get diag))
                 "backend: f64 values are not supported yet")
-              (= (compiler-diagnostic-line diag) 55)
-              (= (compiler-diagnostic-col diag) 13))]
+              (= (compiler-diagnostic-line (box-get diag)) 55)
+              (= (compiler-diagnostic-col (box-get diag)) 13))]
           [(OkCompilerBackend _) false])])))
 
 (define (compiler-backend-instr-contains?
@@ -11258,7 +11258,7 @@
           index
           (compiler-diagnostic-at-start "" ""))]
       [(ErrBackendRuntimePlan message)
-        (ErrCompilerBackend (compiler-diagnostic-at-start "" message))])))
+        (ErrCompilerBackend (box (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-non-direct-tail-call-i64-emit
   [target : CompilerBackendTarget]) : ResultCompilerBackend
@@ -11666,7 +11666,7 @@
     (compiler-backend-clean-module-symbol-collision-program))
     [(ErrCompilerBackend diag)
       (string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "backend: duplicate emitted function symbol _tl_pkg_a_helper")]
     [(OkCompilerBackend _) false]))
 

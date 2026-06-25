@@ -18,9 +18,10 @@
         (BackendTargetWindows))]
     [else
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "compiler-backend-runtime-fixture: unknown target"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "compiler-backend-runtime-fixture: unknown target")))]))
 
 (define (main) : i64
   (if (< (arg-count) 2)
@@ -44,7 +45,7 @@
               0)]
           [(ErrCompilerBackend diag)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (print-error (compiler-diagnostic-render (box-get diag)))
               1)])
         (match (compiler-backend-runtime-fixture-emit target-name)
           [(OkCompilerBackend asm)
@@ -53,5 +54,5 @@
               0)]
           [(ErrCompilerBackend diag)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (print-error (compiler-diagnostic-render (box-get diag)))
               1)])))))

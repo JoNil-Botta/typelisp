@@ -741,16 +741,18 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (let
-        [message : String (compiler-diagnostic-message diag)]
+        [message : String (compiler-diagnostic-message (box-get diag))]
         (and
           (string-contains (& message) (& want-message-fragment))
-          (compiler-typecheck-help-contains? diag "narrower lexical scope")
+          (compiler-typecheck-help-contains?
+            (box-get diag)
+            "narrower lexical scope")
           (=
             (compiler-typecheck-secondary-count
-              (compiler-diagnostic-secondary-spans diag))
+              (compiler-diagnostic-secondary-spans (box-get diag)))
             1)
           (compiler-typecheck-secondary-label-contains?
-            (compiler-diagnostic-secondary-spans diag)
+            (compiler-diagnostic-secondary-spans (box-get diag))
             "remains live")))]
     [(OkCompilerTypecheck _) false]))
 
@@ -856,14 +858,14 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message diag) want-message)
-        (compiler-typecheck-help-contains? diag "clone the owner")
+        (string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans diag))
+            (compiler-diagnostic-secondary-spans (box-get diag)))
           1)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans diag)
+          (compiler-diagnostic-secondary-spans (box-get diag))
           want-label-fragment))]
     [(OkCompilerTypecheck _) false]))
 
@@ -875,17 +877,17 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message diag) want-message)
-        (compiler-typecheck-help-contains? diag "clone the owner")
+        (string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
-            (compiler-diagnostic-secondary-spans diag))
+            (compiler-diagnostic-secondary-spans (box-get diag)))
           2)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans diag)
+          (compiler-diagnostic-secondary-spans (box-get diag))
           want-move-label-fragment)
         (compiler-typecheck-secondary-label-contains?
-          (compiler-diagnostic-secondary-spans diag)
+          (compiler-diagnostic-secondary-spans (box-get diag))
           want-owner-label-fragment))]
     [(OkCompilerTypecheck _) false]))
 
@@ -1711,9 +1713,9 @@
               cfgs))
             [(ErrCompilerTypecheck diag)
               (and
-                (string-eq (compiler-diagnostic-path diag) dep)
+                (string-eq (compiler-diagnostic-path (box-get diag)) dep)
                 (string-eq
-                  (compiler-diagnostic-message diag)
+                  (compiler-diagnostic-message (box-get diag))
                   "typecheck: value definition type mismatch"))]
             [(OkCompilerTypecheck _) false])]
         [(ErrCompilerLoadWithPaths _) false]))))

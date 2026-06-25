@@ -203,11 +203,11 @@
 
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
-  (ErrCompilerBackend CompilerDiagnostic))
+  (ErrCompilerBackend (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendObject
   (OkCompilerBackendObject CompilerObjectImage)
-  (ErrCompilerBackendObject CompilerDiagnostic))
+  (ErrCompilerBackendObject (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendSwitchValidation
   (CompilerBackendSwitchValidationOk)
@@ -223,7 +223,7 @@
 
 (defenum ResultCompilerBackendAddressBase
   (OkCompilerBackendAddressBase CompilerBackendAddressBase)
-  (ErrCompilerBackendAddressBase CompilerDiagnostic))
+  (ErrCompilerBackendAddressBase (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendSimdIndexedAddress
   (asm String)
@@ -231,7 +231,7 @@
 
 (defenum ResultCompilerBackendSimdIndexedAddress
   (OkCompilerBackendSimdIndexedAddress CompilerBackendSimdIndexedAddress)
-  (ErrCompilerBackendSimdIndexedAddress CompilerDiagnostic))
+  (ErrCompilerBackendSimdIndexedAddress (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendU64DivPow2
   (quot u64)
@@ -244,7 +244,7 @@
 
 (defenum ResultCompilerBackendPic
   (OkCompilerBackendPic CompilerBackendPicOutput)
-  (ErrCompilerBackendPic CompilerDiagnostic))
+  (ErrCompilerBackendPic (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
@@ -260,11 +260,11 @@
 
 (defenum ResultCompilerBackendBuffer
   (OkCompilerBackendBuffer TextBuf)
-  (ErrCompilerBackendBuffer CompilerDiagnostic))
+  (ErrCompilerBackendBuffer (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendSymbolValidation
   (OkCompilerBackendSymbolValidation StringI64Map)
-  (ErrCompilerBackendSymbolValidation CompilerDiagnostic))
+  (ErrCompilerBackendSymbolValidation (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
@@ -882,9 +882,10 @@
 (define (compiler-backend-vector-mask-unimplemented
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (ErrCompilerBackend
-    (compiler-diagnostic-with-message
-      instr-diag
-      "backend: vector/mask IR emission is not implemented")))
+    (box
+      (compiler-diagnostic-with-message
+        instr-diag
+        "backend: vector/mask IR emission is not implemented"))))
 
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
@@ -938,13 +939,14 @@
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
   (ErrCompilerBackend
-    (compiler-diagnostic-with-message
-      instr-diag
-      (str-cat
-        "backend: unsupported AVX2 vector shape "
-        (int->string lanes)
-        " x "
-        (compiler-ir-type-name elem-ty)))))
+    (box
+      (compiler-diagnostic-with-message
+        instr-diag
+        (str-cat
+          "backend: unsupported AVX2 vector shape "
+          (int->string lanes)
+          " x "
+          (compiler-ir-type-name elem-ty))))))
 
 (define (compiler-backend-vector-home-to-ymm [home : String]) : String
   (cond
@@ -1360,10 +1362,13 @@
                     (str-cat dst-reg "\n")))))]
           [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-stack-memory-operand
@@ -1530,10 +1535,13 @@
             (OkCompilerBackend (str-cat load-asm dst-reg "\n"))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx2-i64-vector-mul
@@ -1575,12 +1583,13 @@
                                 "\n")))))))))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
-                (compiler-diagnostic-with-message instr-diag message))])]
+                (box (compiler-diagnostic-with-message instr-diag message)))])]
         [(ErrBackendReg message)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message instr-diag message))])]
+            (box (compiler-diagnostic-with-message instr-diag message)))])]
     [(ErrBackendReg message)
-      (ErrCompilerBackend (compiler-diagnostic-with-message instr-diag message))]))
+      (ErrCompilerBackend
+        (box (compiler-diagnostic-with-message instr-diag message)))]))
 
 (define (compiler-backend-emit-avx2-vector-binop
   [assignments : CompilerRegAssignmentList]
@@ -1604,9 +1613,10 @@
           instr-diag)
         (if (= (string-length mnemonic) 0)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message
-              instr-diag
-              "backend: unsupported AVX2 vector binary op"))
+            (box
+              (compiler-diagnostic-with-message
+                instr-diag
+                "backend: unsupported AVX2 vector binary op")))
           (match (compiler-backend-avx2-vector-value-reg assignments lhs "lhs")
             [(OkBackendReg lhs-reg)
               (match (compiler-backend-avx2-vector-value-reg
@@ -1626,13 +1636,14 @@
                           (str-cat lhs-reg ", " dst-reg "\n")))]
                     [(ErrBackendReg message)
                       (ErrCompilerBackend
-                        (compiler-diagnostic-with-message instr-diag message))])]
+                        (box
+                          (compiler-diagnostic-with-message instr-diag message)))])]
                 [(ErrBackendReg message)
                   (ErrCompilerBackend
-                    (compiler-diagnostic-with-message instr-diag message))])]
+                    (box (compiler-diagnostic-with-message instr-diag message)))])]
             [(ErrBackendReg message)
               (ErrCompilerBackend
-                (compiler-diagnostic-with-message instr-diag message))]))))
+                (box (compiler-diagnostic-with-message instr-diag message)))]))))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx2-vector-binop-memory-source
@@ -1651,9 +1662,10 @@
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
       (if (= (string-length mnemonic) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX2 vector binary op"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX2 vector binary op")))
         (match (compiler-backend-avx2-vector-value-reg
           assignments
           reg-value
@@ -1689,15 +1701,16 @@
                             "\n"))))]
                   [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])]
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx2-vector-store
@@ -1736,10 +1749,13 @@
                     (str-cat addr "\n")))))]
           [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-avx512-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
@@ -1761,13 +1777,14 @@
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
   (ErrCompilerBackend
-    (compiler-diagnostic-with-message
-      instr-diag
-      (str-cat
-        "backend: unsupported AVX-512 vector shape "
-        (int->string lanes)
-        " x "
-        (compiler-ir-type-name elem-ty)))))
+    (box
+      (compiler-diagnostic-with-message
+        instr-diag
+        (str-cat
+          "backend: unsupported AVX-512 vector shape "
+          (int->string lanes)
+          " x "
+          (compiler-ir-type-name elem-ty))))))
 
 (define (compiler-backend-avx512-vector-value-reg
   [assignments : CompilerRegAssignmentList]
@@ -2162,7 +2179,7 @@
             (str-cat "    vmovdqa64 " data-label "(%rip), " dst-reg "\n")))]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
       (match (compiler-backend-vector-var-reg
         assignments
@@ -2176,7 +2193,7 @@
               (str-cat "    vmovdqa " data-label "(%rip), " dst-reg "\n")))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message instr-diag message))])
+            (box (compiler-diagnostic-with-message instr-diag message)))])
       (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
 
 (define (compiler-backend-emit-avx512-vector-load
@@ -2212,10 +2229,13 @@
                     (str-cat dst-reg "\n")))))]
           [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx512-splat
@@ -2233,10 +2253,13 @@
             (OkCompilerBackend (str-cat load-asm dst-reg "\n"))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-vector-splat
@@ -2277,9 +2300,10 @@
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
       (if (= (string-length mnemonic) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX-512 vector binary op"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX-512 vector binary op")))
         (match (compiler-backend-avx512-vector-value-reg assignments lhs "lhs")
           [(OkBackendReg lhs-reg)
             (match (compiler-backend-avx512-vector-value-reg
@@ -2299,13 +2323,14 @@
                         (str-cat lhs-reg ", " dst-reg "\n")))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message instr-diag message))])]
+                      (box
+                        (compiler-diagnostic-with-message instr-diag message)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx512-vector-binop-memory-source
@@ -2324,9 +2349,10 @@
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
       (if (= (string-length mnemonic) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX-512 vector binary op"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX-512 vector binary op")))
         (match (compiler-backend-avx512-vector-value-reg
           assignments
           reg-value
@@ -2362,15 +2388,16 @@
                             "\n"))))]
                   [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])]
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx512-vector-compare
@@ -2392,9 +2419,10 @@
         (= (string-length mnemonic) 0)
         (= (string-length predicate-separator) 0))
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX-512 vector compare"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX-512 vector compare")))
         (match (compiler-backend-avx512-vector-value-reg
           assignments
           lhs
@@ -2420,13 +2448,14 @@
                         "\n"))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message instr-diag message))])]
+                      (box
+                        (compiler-diagnostic-with-message instr-diag message)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx512-vector-store
@@ -2465,10 +2494,13 @@
                     (str-cat addr "\n")))))]
           [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])
+          (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-vector-load
@@ -2810,10 +2842,16 @@
               (OkCompilerBackend (str-cat index-asm end-asm body-asm)))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-avx512-tail-mask
   [function : String]
@@ -2864,7 +2902,7 @@
               instr-diag)])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])))
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-predicated-load
   [assignments : CompilerRegAssignmentList]
@@ -2922,15 +2960,16 @@
                             "}{z}\n"))))]
                   [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])]
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])
+              (box (compiler-diagnostic-with-message instr-diag message)))])
         (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))]))
 
 (define (compiler-backend-emit-avx512-predicated-store
@@ -2988,15 +3027,16 @@
                             "}\n"))))]
                   [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        instr-diag))])]
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])
+              (box (compiler-diagnostic-with-message instr-diag message)))])
         (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))]))
 
 (define (compiler-backend-emit-avx512-mask-load
@@ -3040,13 +3080,16 @@
                         "\n"))))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])]
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])))
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-store
   [assignments : CompilerRegAssignmentList]
@@ -3092,13 +3135,16 @@
                         "}\n"))))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])]
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])))
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-mask-binop-mnemonic
   [op : CompilerIrMaskBinOp]
@@ -3152,13 +3198,13 @@
                       "\n")))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])]
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
       [(ErrBackendReg message)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message instr-diag message))])))
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-not
   [assignments : CompilerRegAssignmentList]
@@ -3212,10 +3258,10 @@
                     "\n")))]
             [(ErrBackendReg message)
               (ErrCompilerBackend
-                (compiler-diagnostic-with-message instr-diag message))])]
+                (box (compiler-diagnostic-with-message instr-diag message)))])]
         [(ErrBackendReg message)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message instr-diag message))]))))
+            (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-mask-reduce
   [assignments : CompilerRegAssignmentList]
@@ -3283,7 +3329,7 @@
             (OkCompilerBackend (str-cat reduce-asm store-asm)))]
         [(ErrBackendReg message)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message instr-diag message))]))))
+            (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-select
   [assignments : CompilerRegAssignmentList]
@@ -3299,9 +3345,10 @@
       [move : String (compiler-backend-avx512-vector-move elem-ty)]
       (if (= (string-length move) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX-512 select type"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX-512 select type")))
         (match (compiler-backend-avx512-vector-value-reg
           assignments
           on-false
@@ -3382,16 +3429,20 @@
                                 "}\n")]))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
-                          (compiler-diagnostic-with-message instr-diag message))])]
+                          (box
+                            (compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message instr-diag message))])]
+                      (box
+                        (compiler-diagnostic-with-message instr-diag message)))])]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])))
+              (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-round-up-16 [n : i64]) : i64
@@ -4607,11 +4658,12 @@
               "\n")))]
       [_
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            (string-append
-              "backend: expected "
-              (string-append (compiler-backend-float-type-name ty) " value"))))])))
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              (string-append
+                "backend: expected "
+                (string-append (compiler-backend-float-type-name ty) " value")))))])))
 
 (define (compiler-backend-emit-load-f64-value-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -4688,9 +4740,10 @@
       (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 0 reg))]
     [(IrValueF64 _)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: f64 values are not supported yet"))]
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: f64 values are not supported yet")))]
     [(IrValueString text)
       (OkCompilerBackend
         (str-cat
@@ -5226,9 +5279,10 @@
         (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]
       (if (= (string-length mnemonic) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX2 vector reduction"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX2 vector reduction")))
         (match src
           [(IrValueVar src-var)
             (match (compiler-backend-vector-var-home
@@ -5241,10 +5295,11 @@
                   [xmm : String (compiler-backend-vector-home-to-xmm src-home)]
                   (if (or (= (string-length ymm) 0) (= (string-length xmm) 0))
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message
-                        instr-diag
-                        (compiler-backend-vector-home-unavailable
-                          "reduce source")))
+                      (box
+                        (compiler-diagnostic-with-message
+                          instr-diag
+                          (compiler-backend-vector-home-unavailable
+                            "reduce source"))))
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
@@ -5258,12 +5313,13 @@
                           elem-ty)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [_
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message
-                instr-diag
-                "backend: unsupported AVX2 vector reduce source"))])))
+              (box
+                (compiler-diagnostic-with-message
+                  instr-diag
+                  "backend: unsupported AVX2 vector reduce source")))])))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-avx512-vector-reduce-horizontal-asm
@@ -5353,9 +5409,10 @@
         (compiler-backend-avx512-vector-reduce-op-mnemonic op elem-ty)]
       (if (= (string-length mnemonic) 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unsupported AVX-512 vector reduction"))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unsupported AVX-512 vector reduction")))
         (match src
           [(IrValueVar src-var)
             (match (compiler-backend-vector-var-home
@@ -5368,10 +5425,11 @@
                   [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
                   (if (or (= (string-length zmm) 0) (= (string-length ymm) 0))
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message
-                        instr-diag
-                        (compiler-backend-vector-home-unavailable
-                          "reduce source")))
+                      (box
+                        (compiler-diagnostic-with-message
+                          instr-diag
+                          (compiler-backend-vector-home-unavailable
+                            "reduce source"))))
                     (OkCompilerBackend
                       (string-append
                         (compiler-backend-avx512-vector-reduce-horizontal-asm
@@ -5385,12 +5443,13 @@
                           elem-ty)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [_
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message
-                instr-diag
-                "backend: unsupported AVX-512 vector reduce source"))])))
+              (box
+                (compiler-diagnostic-with-message
+                  instr-diag
+                  "backend: unsupported AVX-512 vector reduce source")))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
@@ -5629,9 +5688,10 @@
                       instr-diag)]
                   [_
                     (ErrCompilerBackend
-                      (compiler-diagnostic-with-message
-                        instr-diag
-                        "backend: IrInstrPack dst is not a register-group location"))])]
+                      (box
+                        (compiler-diagnostic-with-message
+                          instr-diag
+                          "backend: IrInstrPack dst is not a register-group location")))])]
               [(CompilerRegNoLocation)
                 ;; stack-only: the group var lives in two stack slots.
                 (compiler-backend-emit-pack-words
@@ -5647,14 +5707,16 @@
                   instr-diag)]))]
         [(IrValueNil)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message
-              instr-diag
-              "backend: IrInstrPack requires exactly two words (#2386)"))])]
+            (box
+              (compiler-diagnostic-with-message
+                instr-diag
+                "backend: IrInstrPack requires exactly two words (#2386)")))])]
     [(IrValueNil)
       (ErrCompilerBackend
-        (compiler-diagnostic-with-message
-          instr-diag
-          "backend: IrInstrPack requires exactly two words (#2386)"))]))
+        (box
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: IrInstrPack requires exactly two words (#2386)")))]))
 
 ;; #2386: extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -5698,14 +5760,16 @@
                     ty))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message
-                instr-diag
-                (compiler-diagnostic-message message)))]))]
+              (box
+                (compiler-diagnostic-with-message
+                  instr-diag
+                  (compiler-diagnostic-message (box-get message)))))]))]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-with-message
-          instr-diag
-          "backend: IrInstrWord src must be a register-group var (#2386)"))]))
+        (box
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: IrInstrWord src must be a register-group var (#2386)")))]))
 
 ;; #2386: the assembly operand (register name or memory slot) holding word `index`
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
@@ -5717,9 +5781,10 @@
   [vars : i64]) : ResultCompilerBackend
   (if (not (or (= index 0) (= index 1)))
     (ErrCompilerBackend
-      (compiler-diagnostic-at-start
-        ""
-        "backend: register-group word index must be 0 or 1 (#2386)"))
+      (box
+        (compiler-diagnostic-at-start
+          ""
+          "backend: register-group word index must be 0 or 1 (#2386)")))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegSomeLocation location)
         (match location
@@ -5730,19 +5795,22 @@
                 reg-b))]
           [(CompilerRegSpill _)
             (ErrCompilerBackend
-              (compiler-diagnostic-at-start
-                ""
-                "backend: register-group var assigned spill slot (#2386)"))]
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: register-group var assigned spill slot (#2386)")))]
           [(CompilerRegRegister _)
             (ErrCompilerBackend
-              (compiler-diagnostic-at-start
-                ""
-                "backend: register-group var assigned scalar register home (#2386)"))]
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: register-group var assigned scalar register home (#2386)")))]
           [(CompilerRegRemat _)
             (ErrCompilerBackend
-              (compiler-diagnostic-at-start
-                ""
-                "backend: register-group var rematerialised (#2386)"))])]
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: register-group var rematerialised (#2386)")))])]
       [(CompilerRegNoLocation)
         (OkCompilerBackend
           (compiler-backend-frame-offset
@@ -5780,9 +5848,10 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: register-group load requires var operand (#2386)"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: register-group load requires var operand (#2386)")))]))
 
 ;; #2386: store a group's two words FROM `reg0`/`reg1` into the group var's home
 ;; (for a call result captured in rax:rdx, or an incoming group parameter).
@@ -5903,9 +5972,10 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: register-group stack argument requires var operand (#2386)"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: register-group stack argument requires var operand (#2386)")))]))
 
 ;; #2386: read a stack-passed group parameter's two words from the caller's frame
 ;; (word0 at stack-idx, word1 at stack-idx+1) into the group var's home.
@@ -6008,9 +6078,10 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: register-group call argument requires var operand (#2386)"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: register-group call argument requires var operand (#2386)")))]))
 
 (define (compiler-backend-emit-group-word-call-arg
   [target : CompilerBackendTarget]
@@ -6062,12 +6133,13 @@
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [_
               (ErrCompilerBackend
-                (compiler-diagnostic-with-message
-                  func-diag
-                  "backend: register-group call argument requires var operand (#2386)"))])]
+                (box
+                  (compiler-diagnostic-with-message
+                    func-diag
+                    "backend: register-group call argument requires var operand (#2386)")))])]
         [(ErrBackendReg message)
           (ErrCompilerBackend
-            (compiler-diagnostic-with-message func-diag message))]))))
+            (box (compiler-diagnostic-with-message func-diag message)))]))))
 
 (define (compiler-backend-emit-group-word-store
   [assignments : CompilerRegAssignmentList]
@@ -6148,7 +6220,7 @@
             program-index)]
         [(ErrBackendReg _)
           (ErrCompilerBackend
-            (compiler-diagnostic-at-start "" "backend: too many params"))]))))
+            (box (compiler-diagnostic-at-start "" "backend: too many params")))]))))
 
 (define (compiler-backend-emit-load-typed-value-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -7398,7 +7470,10 @@
               " %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")))]
       [_
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start "" "backend: unsupported f64 binary op"))])))
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              "backend: unsupported f64 binary op")))])))
 
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
   (compiler-backend-float-binop-asm op (AstTyF64)))
@@ -7413,7 +7488,8 @@
           "(%rip), %xmm0\n"))]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op"))]))
+        (box
+          (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op")))]))
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
@@ -8543,7 +8619,10 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported compare branch"))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported compare branch")))
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
         [(OkCompilerBackend lhs-asm)
           (match (compiler-backend-immediate-operand rhs)
@@ -8633,9 +8712,10 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: unsupported load compare branch"))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported load compare branch")))
       (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
         [(OkCompilerBackend ptr-asm)
           (match (compiler-backend-immediate-operand rhs)
@@ -8692,9 +8772,10 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: unsupported gep load compare branch"))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported gep load compare branch")))
       (match (compiler-backend-value-as-i64 offset)
         [(CompilerBackendSomeI64 n)
           (let
@@ -8748,9 +8829,10 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
         [(CompilerBackendNoI64)
           (ErrCompilerBackend
-            (compiler-diagnostic-at-start
-              ""
-              "backend: non-immediate fused gep load compare branch"))]))))
+            (box
+              (compiler-diagnostic-at-start
+                ""
+                "backend: non-immediate fused gep load compare branch")))]))))
 
 (define (compiler-backend-bounds-length-operand
   [assignments : CompilerRegAssignmentList]
@@ -9336,9 +9418,10 @@
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                 [(CompilerBackendNoAsm)
                   (ErrCompilerBackend
-                    (compiler-diagnostic-at-start
-                      ""
-                      "backend: fused gep copy displacement out of range"))])]
+                    (box
+                      (compiler-diagnostic-at-start
+                        ""
+                        "backend: fused gep copy displacement out of range")))])]
             [(CompilerBackendNoI64)
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
@@ -9552,9 +9635,10 @@
                     "%rax")))))))]
     [(CompilerBackendNoI64)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: non-immediate r10-live gep load"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: non-immediate r10-live gep load")))]))
 
 (define (compiler-backend-emit-load-from-gep-pair
   [assignments : CompilerRegAssignmentList]
@@ -10126,7 +10210,10 @@
               from-int
               to-int)))
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start "" "backend: unsupported bitcast width"))]
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              "backend: unsupported bitcast width")))]
       [(and from-float to-int)
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
@@ -10197,7 +10284,10 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [else
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start "" "backend: unsupported bitcast type"))])))
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              "backend: unsupported bitcast type")))])))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
@@ -11062,7 +11152,8 @@
     [(I64I64MapMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
-  (ErrCompilerBackendSymbolValidation (compiler-diagnostic-at-start "" message)))
+  (ErrCompilerBackendSymbolValidation
+    (box (compiler-diagnostic-at-start "" message))))
 
 (define (compiler-backend-emits-extern-symbol?
   [name : String]
@@ -12630,7 +12721,7 @@
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrBackendReg message)
               (ErrCompilerBackend
-                (compiler-diagnostic-with-message func-diag message))])]))))
+                (box (compiler-diagnostic-with-message func-diag message)))])]))))
 
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
@@ -12838,7 +12929,7 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message func-diag message))])))))
+              (box (compiler-diagnostic-with-message func-diag message)))])))))
 
 (define (compiler-backend-emit-direct-tail-call-args
   [target : CompilerBackendTarget]
@@ -13447,7 +13538,7 @@
         program-index
         vars)]
     [(ErrBackendPhiCopies message)
-      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
+      (ErrCompilerBackend (box (compiler-diagnostic-at-start "" message)))]))
 
 (define (compiler-backend-emit-phi-edge-copies
   [assignments : CompilerRegAssignmentList]
@@ -13459,9 +13550,10 @@
   (match blocks
     [(IrBlockNil)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          (string-append "backend: unknown block " target-label)))]
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            (string-append "backend: unknown block " target-label))))]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock block-label instrs)
@@ -13500,9 +13592,10 @@
   (match blocks
     [(IrBlockNil)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          (string-append "backend: unknown block " target-label)))]
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            (string-append "backend: unknown block " target-label))))]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock block-label instrs)
@@ -13525,7 +13618,8 @@
                     vars)
                   (OkCompilerBackend ""))]
               [(ErrBackendPhiCopies message)
-                (ErrCompilerBackend (compiler-diagnostic-at-start "" message))])
+                (ErrCompilerBackend
+                  (box (compiler-diagnostic-at-start "" message)))])
             (compiler-backend-emit-mov-phi-copy-edge
               assignments
               (box-get rest)
@@ -14339,7 +14433,7 @@
                         [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
                     [(ErrBackendPhiReturnMatch message)
                       (ErrCompilerBackend
-                        (compiler-diagnostic-at-start "" message))])]
+                        (box (compiler-diagnostic-at-start "" message)))])]
                 [_ (OkCompilerBackend "")])]
             [(IrNoValue) (OkCompilerBackend "")])]
         [_ (OkCompilerBackend "")]))))
@@ -14438,7 +14532,7 @@
                         [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
                     [(ErrBackendPhiReturnMatch message)
                       (ErrCompilerBackend
-                        (compiler-diagnostic-at-start "" message))])]
+                        (box (compiler-diagnostic-at-start "" message)))])]
                 [_ (OkCompilerBackend "")])]
             [(IrNoValue) (OkCompilerBackend "")])]
         [_ (OkCompilerBackend "")]))))
@@ -14699,12 +14793,13 @@
               (compiler-backend-current-arena-store target reg))]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])]
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
       [else
         (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: unknown tls current arena helper"))])))
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              "backend: unknown tls current arena helper")))])))
 
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [target : CompilerBackendTarget]
@@ -14776,13 +14871,22 @@
                           result-store)))))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-atomic-call-name? [name : String]) : bool
   (or
@@ -14987,10 +15091,16 @@
                       result-store)))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-inline-atomic-call
   [target : CompilerBackendTarget]
@@ -15164,10 +15274,16 @@
                             "")))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))])]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))])))
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))]))])))
 
 (define (compiler-backend-c-abi-return-int-reg [idx : i64]) : String
   (if (= idx 0)
@@ -15382,9 +15498,10 @@
   [args : CompilerIrCallArgs]) : ResultCompilerBackend
   (if (compiler-backend-target-windows? target)
     (ErrCompilerBackend
-      (compiler-diagnostic-at-start
-        ""
-        "backend: syscall is only supported on the linux-x86_64 target"))
+      (box
+        (compiler-diagnostic-at-start
+          ""
+          "backend: syscall is only supported on the linux-x86_64 target")))
     (let
       [count : i64 (compiler-backend-call-args-count args)]
       (match (compiler-backend-emit-syscall-loads assignments args 0 count)
@@ -15596,19 +15713,22 @@
     (cond
       [(= case-count 0)
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            (compiler-backend-switch-shape-message)))]
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              (compiler-backend-switch-shape-message))))]
       [(not (compiler-backend-switch-cases-contiguous-from? cases base))
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            (compiler-backend-switch-shape-message)))]
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi? cases default-label)
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            (compiler-backend-switch-phi-target-message)))]
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              (compiler-backend-switch-phi-target-message))))]
       [else
         (match (compiler-backend-emit-switch-dispatch
           function
@@ -15732,26 +15852,38 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrAlloc _ _) (OkCompilerBackend "")]
       [(IrInstrAddrOf dst src)
         (match (compiler-backend-emit-addr-of assignments dst src)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrGep dst base offset elem-ty)
         (match (compiler-backend-emit-gep assignments dst base offset elem-ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrLoad dst src ty)
         (match (compiler-backend-emit-load-instr assignments dst src ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrStorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
           assignments
@@ -15762,13 +15894,19 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrCopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes assignments dst src size)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrBoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
           target
@@ -15784,7 +15922,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrCast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
           function
@@ -15798,7 +15939,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrBitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
           assignments
@@ -15810,7 +15954,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrBinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop
           types
@@ -15824,13 +15971,19 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrUnOp dst op src ty)
         (match (compiler-backend-emit-unop assignments dst op src ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrLaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
           function
@@ -16116,7 +16269,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrStore name value ty)
         (let
           [addr : String
@@ -16156,7 +16312,10 @@
                           (compiler-backend-group-word-sse? program-index ty 1)))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))]))
             (match (compiler-backend-emit-store-immediate-to-memory
               value
               addr
@@ -16194,9 +16353,10 @@
                                 ""))))]
                       [(ErrCompilerBackend message)
                         (ErrCompilerBackend
-                          (compiler-backend-apply-instr-diagnostic
-                            message
-                            instr-diag))])])])))]
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              instr-diag)))])])])))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function
@@ -16231,11 +16391,17 @@
                           ""))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))])
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))])
               (OkCompilerBackend direct-return))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrBranch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies
           assignments
@@ -16251,7 +16417,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrReturn value)
         (match (compiler-backend-emit-return
           source-function
@@ -16264,7 +16433,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrPhi _ _ _) (OkCompilerBackend "")]
       [(IrInstrPack dst words ty)
         (compiler-backend-emit-pack
@@ -16302,7 +16474,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(IrInstrSwitch index base cases default-label)
         (match (compiler-backend-emit-switch
           function
@@ -16315,7 +16490,10 @@
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])])))
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])])))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -17733,14 +17911,15 @@
         (text-buf-append buf head))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrBinOp dst op lhs rhs ty)
-            func-diag
-            "")))]))
+        (box
+          (compiler-backend-apply-instr-diagnostic
+            (box-get message)
+            (compiler-backend-instr-diagnostic
+              spans
+              source-function
+              (IrInstrBinOp dst op lhs rhs ty)
+              func-diag
+              ""))))]))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
   [target : CompilerBackendTarget]
@@ -17810,14 +17989,15 @@
         (text-buf-append buf head))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrLoad load-dst ptr load-ty)
-            func-diag
-            "")))]))
+        (box
+          (compiler-backend-apply-instr-diagnostic
+            (box-get message)
+            (compiler-backend-instr-diagnostic
+              spans
+              source-function
+              (IrInstrLoad load-dst ptr load-ty)
+              func-diag
+              ""))))]))
 
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
   [target : CompilerBackendTarget]
@@ -17892,14 +18072,15 @@
         (text-buf-append buf head))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrGep gep-dst base offset elem-ty)
-            func-diag
-            "")))]))
+        (box
+          (compiler-backend-apply-instr-diagnostic
+            (box-get message)
+            (compiler-backend-instr-diagnostic
+              spans
+              source-function
+              (IrInstrGep gep-dst base offset elem-ty)
+              func-diag
+              ""))))]))
 
 (define (compiler-backend-emit-fused-gep-load-rest
   [target : CompilerBackendTarget]
@@ -18243,14 +18424,15 @@
         (text-buf-append buf head))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrGep gep-dst base offset elem-ty)
-            func-diag
-            "")))]))
+        (box
+          (compiler-backend-apply-instr-diagnostic
+            (box-get message)
+            (compiler-backend-instr-diagnostic
+              spans
+              source-function
+              (IrInstrGep gep-dst base offset elem-ty)
+              func-diag
+              ""))))]))
 
 (define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
   [target : CompilerBackendTarget]
@@ -18369,24 +18551,26 @@
                           plain-direct-return)))]
                   [(ErrCompilerBackend message)
                     (ErrCompilerBackend
-                      (compiler-backend-apply-instr-diagnostic
-                        message
-                        (compiler-backend-instr-diagnostic
-                          spans
-                          source-function
-                          (IrInstrMov dst src ty)
-                          func-diag
-                          "")))]))]
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          (compiler-backend-instr-diagnostic
+                            spans
+                            source-function
+                            (IrInstrMov dst src ty)
+                            func-diag
+                            ""))))]))]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic
-                  message
-                  (compiler-backend-instr-diagnostic
-                    spans
-                    source-function
-                    (IrInstrMov dst src ty)
-                    func-diag
-                    "")))])
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    (compiler-backend-instr-diagnostic
+                      spans
+                      source-function
+                      (IrInstrMov dst src ty)
+                      func-diag
+                      ""))))])
           (compiler-backend-emit-instrs-normal
             target
             function
@@ -18432,14 +18616,15 @@
           (text-buf-append buf direct-return)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
-        (compiler-backend-apply-instr-diagnostic
-          message
-          (compiler-backend-instr-diagnostic
-            spans
-            source-function
-            (IrInstrMov dst src ty)
-            func-diag
-            "")))]))
+        (box
+          (compiler-backend-apply-instr-diagnostic
+            (box-get message)
+            (compiler-backend-instr-diagnostic
+              spans
+              source-function
+              (IrInstrMov dst src ty)
+              func-diag
+              ""))))]))
 
 (define (compiler-backend-emit-call-return
   [target : CompilerBackendTarget]
@@ -18514,7 +18699,10 @@
                           blocks))))))]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))])
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))])
           (if (compiler-backend-atomic-call-name? call-symbol)
             (OkCompilerBackend
               (string-append
@@ -18555,7 +18743,10 @@
                       "")))))))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-indirect-call-param-types
   [types : CompilerRegVarTypeList]
@@ -18695,18 +18886,25 @@
                                   "")))))]
                       [(ErrCompilerBackend message)
                         (ErrCompilerBackend
-                          (compiler-backend-apply-instr-diagnostic
-                            message
-                            instr-diag))])])]
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              instr-diag)))])])]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])]
           [(ErrBackendReg message)
             (ErrCompilerBackend
-              (compiler-diagnostic-with-message instr-diag message))])]
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-call
   [target : CompilerBackendTarget]
@@ -18826,13 +19024,19 @@
                               "")))))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
+                  (box (compiler-diagnostic-with-message instr-diag message)))])]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-indirect-c-call-direct-home?
   [_target : CompilerBackendTarget]
@@ -18947,7 +19151,10 @@
                         "")))))]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))])
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))])
           (OkCompilerBackend
             (string-append
               (compiler-backend-emit-call-space-sub call-space)
@@ -18969,7 +19176,10 @@
                   "")))))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-c-abi-store-result-call
   [target : CompilerBackendTarget]
@@ -19050,10 +19260,16 @@
                         ""))))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-indirect-c-abi-store-result-call
   [target : CompilerBackendTarget]
@@ -19144,13 +19360,22 @@
                             ""))))))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))])]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (box-get message)
+                  instr-diag)))])]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
-          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
+          (box
+            (compiler-backend-apply-instr-diagnostic
+              (box-get message)
+              instr-diag)))])))
 
 (define (compiler-backend-emit-instrs-step
   [target : CompilerBackendTarget]
@@ -19415,14 +19640,15 @@
                                   (text-buf-render (text-buf-append buf asm)))]
                               [(ErrCompilerBackend message)
                                 (ErrCompilerBackend
-                                  (compiler-backend-apply-instr-diagnostic
-                                    message
-                                    (compiler-backend-instr-diagnostic
-                                      spans
-                                      source-function
-                                      instr
-                                      func-diag
-                                      "")))])
+                                  (box
+                                    (compiler-backend-apply-instr-diagnostic
+                                      (box-get message)
+                                      (compiler-backend-instr-diagnostic
+                                        spans
+                                        source-function
+                                        instr
+                                        func-diag
+                                        ""))))])
                             (compiler-backend-emit-instrs-normal
                               target
                               function
@@ -21457,7 +21683,8 @@
     [done : bool false]
     [ok : bool true]
     [asm-out : String ""]
-    [diag-out : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    [diag-out : (Box CompilerDiagnostic)
+      (box (compiler-diagnostic-at-start "" ""))]
     (begin
       (set! compiler-backend-emit-instrs-loop-active true)
       (while (not done)
@@ -22081,9 +22308,10 @@
                         (ErrCompilerBackend message)])]
                   [(ErrBackendReg _)
                     (ErrCompilerBackend
-                      (compiler-diagnostic-at-start
-                        ""
-                        "backend: too many params"))]))))])]))
+                      (box
+                        (compiler-diagnostic-at-start
+                          ""
+                          "backend: too many params")))]))))])]))
 
 (define (compiler-backend-emit-windows-main-argv-capture
   [target : CompilerBackendTarget]
@@ -23685,9 +23913,10 @@
         (str-cat "    .quad " (compiler-backend-bytes-fat-label text) "\n"))]
     [_
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: unsupported global initializer"))]))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported global initializer")))]))
 
 (define (compiler-backend-runtime-global?
   [ty : AstType]
@@ -27915,13 +28144,15 @@ tl_memchr:
                   compile-profile
                   (compiler-backend-profile-finish "target_check"))
                 (ErrCompilerBackendBuffer
-                  (compiler-diagnostic-at-start
-                    ""
-                    "backend: internal target runtime rejection"))))))]
+                  (box
+                    (compiler-diagnostic-at-start
+                      ""
+                      "backend: internal target runtime rejection")))))))]
       [(ErrBackendRuntimePlanWithIndex message)
         (begin
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
-          (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))
+          (ErrCompilerBackendBuffer
+            (box (compiler-diagnostic-at-start "" message))))])))
 
 (defstruct CompilerBackendObjectParts
   (text CompilerObjectX64InstrList)
@@ -30556,15 +30787,17 @@ tl_memchr:
                             crt-entry))]
                       [(CompilerBackendSwitchValidationErr message)
                         (ErrCompilerBackendObject
-                          (compiler-diagnostic-at-start "" message))])]
+                          (box (compiler-diagnostic-at-start "" message)))])]
                   [(ErrCompilerBackendSymbolValidation message)
                     (ErrCompilerBackendObject message)]))])
           (ErrCompilerBackendObject
-            (compiler-diagnostic-at-start
-              ""
-              "backend: internal target runtime rejection")))]
+            (box
+              (compiler-diagnostic-at-start
+                ""
+                "backend: internal target runtime rejection"))))]
       [(ErrBackendRuntimePlan message)
-        (ErrCompilerBackendObject (compiler-diagnostic-at-start "" message))])))
+        (ErrCompilerBackendObject
+          (box (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode
   [program : CompilerIrProgram]
@@ -31752,9 +31985,10 @@ tl_memchr:
           (if (compiler-backend-pic-symbols-have-extern?
             (struct-get image symbols))
             (ErrCompilerBackendPic
-              (compiler-diagnostic-at-start
-                ""
-                "backend: --pic supports only internal references; extern symbols are not supported"))
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: --pic supports only internal references; extern symbols are not supported")))
             (if (compiler-backend-pic-relocs-valid?
               image
               (struct-get image relocations))
@@ -31765,9 +31999,10 @@ tl_memchr:
                     image)
                   (compiler-backend-pic-fixup-table image)))
               (ErrCompilerBackendPic
-                (compiler-diagnostic-at-start
-                  ""
-                  "backend: --pic could not map every absolute pointer fixup to an 8-byte data slot"))))]
+                (box
+                  (compiler-diagnostic-at-start
+                    ""
+                    "backend: --pic could not map every absolute pointer fixup to an 8-byte data slot")))))]
         [(ErrCompilerBackendObject diag) (ErrCompilerBackendPic diag)])]
     [(ErrCompilerBackendBuffer diag) (ErrCompilerBackendPic diag)]))
 

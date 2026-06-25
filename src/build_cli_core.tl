@@ -982,7 +982,7 @@
       (read-file manifest-path))
       [(OkCompilerPkgManifestDiagnostic manifest) (OkBuildManifest manifest)]
       [(ErrCompilerPkgManifestDiagnostic diag)
-        (ErrBuildManifest (build-invalid-manifest-message diag))])
+        (ErrBuildManifest (build-invalid-manifest-message (box-get diag)))])
     (ErrBuildManifest
       (str-cat "cannot read package manifest '" manifest-path "'"))))
 
@@ -2611,7 +2611,7 @@
       [(OkCompilerDriverObject image)
         (build-package-render-linux-direct-object kind image)]
       [(ErrCompilerDriverObject diag)
-        (ErrSourceToolString (compiler-diagnostic-render diag))])
+        (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])
     (ErrSourceToolString "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
@@ -3011,7 +3011,7 @@
     emit-entry)
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (print-error (compiler-diagnostic-render (box-get diag)))
         1)]
     [(OkCompilerLoadWithPaths _ paths _ _)
       (build-doctest-typecheck-package-paths
@@ -3105,7 +3105,7 @@
             emit-entry)
             [(ErrCompilerLoadWithPaths diag)
               (begin
-                (print-error (compiler-diagnostic-render diag))
+                (print-error (compiler-diagnostic-render (box-get diag)))
                 1)]
             [(OkCompilerLoadWithPaths decls paths _ _)
               (let
@@ -3146,7 +3146,7 @@
                   owned-paths)
                   [(ErrCompilerDriver diag)
                     (begin
-                      (print-error (compiler-diagnostic-render diag))
+                      (print-error (compiler-diagnostic-render (box-get diag)))
                       1)]
                   [(OkCompilerDriver asm)
                     (begin

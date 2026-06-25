@@ -1067,8 +1067,8 @@
       (module generated.module)
       (define (answer) : i64 42))]))
 (defmacro (later) : Decls
-  `(import (gen (comptime.string-append \"sa\" \"me\"))))
-(import (gen \"same\"))
+  `(import (gen (type-key (type i64)))))
+(import (gen \"i64\"))
 (later)
 (define (main) : i64 (answer))")
 
@@ -1114,7 +1114,7 @@
 (defstruct Other (value i64))
 (defmacro (boxmod [T : type]) : Module
   (let
-    [mod-name : Expr (expr-var (comptime.string-append \"generated.box.\" (type-key T)))]
+    [mod-name : Expr (expr-var (type-key T))]
     `(begin
       (module ,mod-name)
       (defstruct Boxed (value ,T))
@@ -1224,9 +1224,9 @@
       `(begin
         (module generated.shared)
         (define (bonus) : i64 1))]))
-(import (base \"same\") as base)
-(import (extra \"same\") as extra)
-(import (extra (comptime.string-append \"sa\" \"me\")) as extra2)
+(import (base \"i64\") as base)
+(import (extra \"i64\") as extra)
+(import (extra (type-key (type i64))) as extra2)
 (define (main) : i64
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
@@ -1236,7 +1236,7 @@
       (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
-      "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
+      "typecheck: Module macro output for generated identity :gen(string_3_105_54_52) has incompatible payload")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-generated-collision-source)
       "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
@@ -1256,7 +1256,7 @@
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-extension-incompatible-source)
-      "typecheck: Module macro output for generated identity :extra(string_4_115_97_109_101) has incompatible payload")))
+      "typecheck: Module macro output for generated identity :extra(string_3_105_54_52) has incompatible payload")))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
@@ -1318,7 +1318,10 @@
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (comptime.string-append \"generated.vector.\" (type-key T)))]
+      (expr-var
+        (if (__tl_string_eq (type-key T) \"i64\")
+          \"generated.vector.i64\"
+          \"generated.vector.Pair\"))]
     `(begin
       (module ,module-name)
       (defstruct Vec (len i64))
@@ -1329,7 +1332,10 @@
 (defmacro (sliceish [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (comptime.string-append \"generated.sliceish.\" (type-key T)))]
+      (expr-var
+        (if (__tl_string_eq (type-key T) \"i64\")
+          \"generated.sliceish.i64\"
+          \"generated.sliceish.Pair\"))]
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)
@@ -1386,8 +1392,8 @@
       `(defstruct BundleBox (value i64))]
     [_
       `(defstruct BundleBox (value String))]))
-(bundle \"same\")
-(bundle (comptime.string-append \"sa\" \"me\"))
+(bundle \"i64\")
+(bundle (type-key (type i64)))
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String

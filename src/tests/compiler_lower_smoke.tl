@@ -399,6 +399,9 @@
       (compiler-lower-module-macro-codegen-ok?)
       (panic "lower: module macro codegen smoke mismatch"))
     (unless
+      (compiler-lower-module-macro-stdlib-vector-import-ok?)
+      (panic "lower: module macro stdlib vector import smoke mismatch"))
+    (unless
       (compiler-lower-function-decl-count-wrapped-ok?)
       (panic "lower: function decl count smoke mismatch"))
     (unless

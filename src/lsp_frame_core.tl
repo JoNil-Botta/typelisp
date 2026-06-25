@@ -2044,7 +2044,7 @@
         (lsp-symbol-base sym))
         [(FoundDefLoc def-uri line _ len)
           (and
-            (not (string.string-eq def-uri "file:///stdlib/tl"))
+            (not (string.string-eq def-uri "file:///stdlib/io.tl"))
             (string.string-contains (& def-uri) (& stdlib-suffix))
             (> line 0)
             (= len 5))]

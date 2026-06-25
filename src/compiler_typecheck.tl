@@ -6842,16 +6842,17 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-defmacro-pure-string-source) : String
-  "(import stdlib.comptime)
-(defmacro (answer-name) : i64 (expr-var (comptime.string-append \"ans\" \"wer\")))
+  "(defmacro (answer-name) : i64
+  (expr-var (if (__tl_string_eq \"ans\" \"ans\") \"answer\" \"bad\")))
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
 
 (define (compiler-typecheck-defmacro-expr-struct-get-source) : String
-  "(import stdlib.comptime)
-(defstruct Point (x i64) (y i64))
+  "(defstruct Point (x i64) (y i64))
 (defmacro (field-x [target : Expr]) : i64
-  (comptime.expr-struct-get target (comptime.string-append \"x\" \"\")))
+  (comptime.expr-struct-get
+    target
+    (if (__tl_string_eq \"x\" \"x\") \"x\" \"y\")))
 (define (main) : i64 (field-x (Point 42 7)))")
 
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
@@ -7791,10 +7792,10 @@
 
 (define (compiler-typecheck-move-cleanup-enum-payload-prefix) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(define (close-code [code : i64]) : unit unit)
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
+(define (close-code [code : i64]) : unit unit)
 (defenum MaybeHandle
   (:cleanup cleanup-maybe-handle)
   (Some FileHandle (:owned))

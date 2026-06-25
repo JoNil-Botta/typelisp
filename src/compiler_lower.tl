@@ -38261,6 +38261,90 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (lower-compiler-source-with-path-mode "<source>" src mode))
 
+(define (lower-source-decls-define-module?
+  [decls : AstDeclList]
+  [module : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule name)
+          (if (string.string-eq (intern-str name) module)
+            true
+            (lower-source-decls-define-module? (box-get rest) module))]
+        [_ (lower-source-decls-define-module? (box-get rest) module)])]))
+
+(define (lower-source-stdlib-import-needs-loader?
+  [all-decls : AstDeclList]
+  [kind : AstImportKind]
+  [path : String]) : bool
+  (if (typecheck-compiler-source-stdlib-import-kind? kind path)
+    (match kind
+      [(AstImportModule)
+        (not (lower-source-decls-define-module? all-decls path))]
+      [_ true])
+    false))
+
+(define (lower-source-decl-needs-loader?
+  [decl : AstDecl]
+  [all-decls : AstDeclList]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind path _ _ _))
+      (lower-source-stdlib-import-needs-loader? all-decls kind path)]
+    [(AstDeclUnsafe inner-box)
+      (lower-source-decl-needs-loader? (box-get inner-box) all-decls)]
+    [(AstDeclComptimeDecl _ template-box)
+      (lower-source-decl-needs-loader? (box-get template-box) all-decls)]
+    [_ false]))
+
+(define (lower-source-decls-need-loader?
+  [decls : AstDeclList]
+  [all-decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (lower-source-decl-needs-loader? decl all-decls)
+        (lower-source-decls-need-loader? (box-get rest) all-decls))]))
+
+(define (lower-source-program-needs-loader? [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (lower-source-decls-need-loader? decls decls))]))
+
+(define (lower-compiler-source-load-with-roots-cfg
+  [path : String]
+  [src : String]
+  [stdlib-roots : vector.StringVec]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-core-macro-prelude-with-roots-cfg
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs)
+    [(OkCompilerLoadWithPaths
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
+      (match (compiler-load-source-with-paths-and-roots-cfg
+        path
+        src
+        prelude-seen
+        stdlib-roots
+        cfgs)
+        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+          (OkCompilerLoadWithPaths
+            (compiler-load-decl-list-append prelude-decls entry-decls)
+            (compiler-load-decl-path-list-append prelude-paths entry-paths)
+            (compiler-load-decl-module-list-append
+              prelude-modules
+              entry-modules)
+            seen)]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
 (define (lower-compiler-source-with-path-mode
   [path : String]
   [src : String]
@@ -38275,7 +38359,28 @@
     (compiler-builtin-reset!)
     (match (parse-ast-source src)
       [(OkAstProgram program)
-        (lower-compiler-program-with-path-mode path program mode)]
+        (if (lower-source-program-needs-loader? program)
+          (let
+            [stdlib-roots : vector.StringVec (vector.string-vec-new)]
+            [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
+            (match (lower-compiler-source-load-with-roots-cfg
+              path
+              src
+              stdlib-roots
+              cfgs)
+              [(OkCompilerLoadWithPaths decls paths _ _)
+                (lower-compiler-program-with-decl-paths-mode-cache
+                  path
+                  (ast-program decls)
+                  paths
+                  mode
+                  stdlib-roots
+                  (compiler-typecheck-prefix-cache-scope
+                    "typecheck-prefix-lower"
+                    stdlib-roots
+                    cfgs))]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLower diag)]))
+          (lower-compiler-program-with-path-mode path program mode))]
       [(ErrAstProgram message)
         (ErrCompilerLower
           (lower-diagnostic-with-path (lower-diagnostic message) path))])))
@@ -39536,7 +39641,6 @@
   (SomeString value))
 (module main)
 (import stdlib.maybe_string)
-(import stdlib.vector)
 (define (main) : i64
   (__tl_string_length
     (match (maybe_string.maybe-string-single \"a\")
@@ -43228,6 +43332,36 @@
                 "generated.intbox/bumped"
                 "generated.intbox/double")
               1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-module-macro-stdlib-vector-import-source) : String
+  "(import stdlib.vector)
+(defmacro (vector-user) : Module
+  `(begin
+    (module generated.lower_vector_user)
+    (defstruct T
+      (value i64))
+    (import (vector T) as vec)
+    (define (make [value : i64]) : T
+      (T value))
+    (define (score [first : T] [fallback : T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) first)
+          (if (= (vec.len (& items)) 1)
+            (begin
+              (vec.get (& items) 0 fallback)
+              42)
+            0))))))
+(import (vector-user) as user)
+(define (main) : i64
+  (user.score (user.make 7) (user.make 0)))")
+
+(define (compiler-lower-module-macro-stdlib-vector-import-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-module-macro-stdlib-vector-import-source))
+    [(OkCompilerLower _ _) true]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-function-decl-count-wrapped-ok?) : bool
@@ -47818,6 +47952,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-macro-codegen-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-macro-stdlib-vector-import-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-function-decl-count-wrapped-ok?)

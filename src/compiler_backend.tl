@@ -10400,21 +10400,45 @@
       (if (compiler-backend-target-windows? target)
         "%r10"
         "%rcx")]
+    [scav : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r8")]
     (string-append
       (string-append
-        (compiler-backend-current-arena-load target "%r8")
+        (compiler-backend-current-arena-load target scav)
         (str-cat
-          "    testq %r8, %r8\n    jz "
+          "    testq "
+          scav
+          ", "
+          scav
+          "\n    jz "
           slow-label
-          "\n    movq 16(%r8), %rax\n    movq %rax, "
+          (str-cat "\n    movq 16(" scav "), %rax\n    movq %rax, ")
           next-reg
           "\n"))
       (string-append
         (str-cat "    addq $" size-text ", " next-reg "\n")
         (string-append
-          (str-cat "    jc " slow-label "\n    cmpq 24(%r8), " next-reg "\n")
+          (str-cat
+            "    jc "
+            slow-label
+            "\n    cmpq 24("
+            scav
+            "), "
+            next-reg
+            "\n")
           (string-append
-            (str-cat "    ja " slow-label "\n    movq " next-reg ", 16(%r8)\n")
+            (str-cat
+              "    ja "
+              slow-label
+              "\n    movq "
+              next-reg
+              ", 16("
+              scav
+              ")\n")
             (string-append
               (compiler-backend-runtime-profile-alloc-account
                 (string-append "$" size-text)

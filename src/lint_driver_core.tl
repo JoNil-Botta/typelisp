@@ -627,10 +627,9 @@
   [stdlib-roots : StringVec]) : LintFindings
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
-;; Package-level dead-code linting records all top-level declarations as graph
-;; nodes. Top-level items are visible by default after legacy `(export ...)`
-;; removal, so declarations are roots and not private dead-code candidates until
-;; the language grows an explicit private marker.
+;; Package-level dead-code linting records top-level declarations as graph nodes.
+;; Library packages expose every top-level declaration as API roots. Binary
+;; packages report declarations unreachable from entry/test/generated roots.
 (defstruct SelfhostLintDeadDecl
   (path String)
   (name String)
@@ -1368,16 +1367,22 @@
   [path : String]
   [name : String]
   [span : AstSourceSpan]
-  [refs : StringVec]) : SelfhostLintDeadScan
-  (selfhost-lint-dead-scan-add-root
-    (selfhost-lint-dead-add-node scan path name span refs false)
-    name))
+  [refs : StringVec]
+  [root : bool]
+  [reportable : bool]) : SelfhostLintDeadScan
+  (let
+    [with-node : SelfhostLintDeadScan
+      (selfhost-lint-dead-add-node scan path name span refs reportable)]
+    (if root
+      (selfhost-lint-dead-scan-add-root with-node name)
+      with-node)))
 
 (define (selfhost-lint-dead-scan-decl
   [scan : SelfhostLintDeadScan]
   [path : String]
   [source : String]
   [decl : AstDecl]
+  [visible-root : bool]
   [allow-report : bool]) : SelfhostLintDeadScan
   (match decl
     [(AstDeclModule _) scan]
@@ -1393,7 +1398,14 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        (selfhost-lint-dead-add-visible-node scan path text span refs))]
+        (selfhost-lint-dead-add-visible-node
+          scan
+          path
+          text
+          span
+          refs
+          visible-root
+          allow-report))]
     [(AstDeclDefFn name params ret body _)
       (let
         [text : String (intern-str name)]
@@ -1408,7 +1420,14 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        (selfhost-lint-dead-add-visible-node scan path text span refs))]
+        (selfhost-lint-dead-add-visible-node
+          scan
+          path
+          text
+          span
+          refs
+          visible-root
+          allow-report))]
     [(AstDeclDefMacro name params ret body)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1419,7 +1438,9 @@
           (ast-node-get body)
           (selfhost-lint-dead-type-refs
             ret
-            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new)))))]
+            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new))))
+        visible-root
+        allow-report)]
     [(AstDeclExtern name _ meta ty)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1428,7 +1449,9 @@
         (lint-no-span)
         (selfhost-lint-dead-type-refs
           ty
-          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new))))]
+          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new)))
+        visible-root
+        allow-report)]
     [(AstDeclDefEnum name cleanup variants)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1437,7 +1460,9 @@
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
+        visible-root
+        allow-report)]
     [(AstDeclDefEnumLifetimes name _ cleanup variants)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1446,7 +1471,9 @@
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
+        visible-root
+        allow-report)]
     [(AstDeclDefStruct name _ cleanup fields)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1455,7 +1482,9 @@
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
+        visible-root
+        allow-report)]
     [(AstDeclDefStructLifetimes name _ _ cleanup fields)
       (selfhost-lint-dead-add-visible-node
         scan
@@ -1464,7 +1493,9 @@
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
+        visible-root
+        allow-report)]
     [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1484,7 +1515,9 @@
         (lint-no-span)
         (selfhost-lint-dead-dispatch-variant-list-refs
           variants
-          (string-vec-new)))]
+          (string-vec-new))
+        visible-root
+        allow-report)]
     [(AstDeclTest _ body _)
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1495,40 +1528,67 @@
         path
         source
         (box-get inner)
+        visible-root
         allow-report)]
     [(AstDeclComptimeDecl meta inner)
       (selfhost-lint-dead-refs-to-roots
-        (selfhost-lint-dead-scan-decl scan path source (box-get inner) false)
+        (selfhost-lint-dead-scan-decl
+          scan
+          path
+          source
+          (box-get inner)
+          visible-root
+          false)
         (selfhost-lint-dead-generated-meta-refs meta (string-vec-new)))]))
 
 (define (selfhost-lint-dead-scan-decls
   [scan : SelfhostLintDeadScan]
   [path : String]
   [source : String]
+  [visible-root : bool]
+  [reportable : bool]
   [decls : AstDeclList]) : SelfhostLintDeadScan
   (match decls
     [(AstDeclNil) scan]
     [(AstDeclCons decl rest)
       (selfhost-lint-dead-scan-decls
-        (selfhost-lint-dead-scan-decl scan path source decl true)
+        (selfhost-lint-dead-scan-decl
+          scan
+          path
+          source
+          decl
+          visible-root
+          reportable)
         path
         source
+        visible-root
+        reportable
         (box-get rest))]))
 
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]
   [path : String]
-  [source : String]) : SelfhostLintDeadScan
+  [source : String]
+  [visible-root : bool]
+  [reportable : bool]) : SelfhostLintDeadScan
   (match (parse-ast-source-diagnostic path source)
     [(OkAstProgramDiagnostic program)
       (match program
         [(AstProgram decls-box)
-          (selfhost-lint-dead-scan-decls scan path source (box-get decls-box))])]
+          (selfhost-lint-dead-scan-decls
+            scan
+            path
+            source
+            visible-root
+            reportable
+            (box-get decls-box))])]
     [(ErrAstProgramDiagnostic _) scan]))
 
 (define (selfhost-lint-package-dead-scan-files
   [sources : StringVec]
   [index : i64]
+  [visible-root : bool]
+  [reportable : bool]
   [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
   (if (>= index (string-vec-len sources))
     scan
@@ -1537,7 +1597,14 @@
       (selfhost-lint-package-dead-scan-files
         sources
         (+ index 1)
-        (selfhost-lint-dead-scan-source scan path (read-file path))))))
+        visible-root
+        reportable
+        (selfhost-lint-dead-scan-source
+          scan
+          path
+          (read-file path)
+          visible-root
+          reportable)))))
 
 (define (selfhost-lint-dead-decls-index-of-from
   [items : SelfhostLintDeadDecls]
@@ -1611,13 +1678,40 @@
       roots
       (+ index 1))))
 
-(define (selfhost-lint-package-dead-code [sources : StringVec]) : SelfhostLintDeadDecls
+(define (selfhost-lint-package-dead-visible-root? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) false]
+    [(CompilerPkgKindLib) true]))
+
+(define (selfhost-lint-package-dead-reportable? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) true]
+    [(CompilerPkgKindLib) false]))
+
+(define (selfhost-lint-package-dead-add-kind-roots
+  [scan : SelfhostLintDeadScan]
+  [kind : CompilerPkgKind]) : SelfhostLintDeadScan
+  (match kind
+    [(CompilerPkgKindBin) (selfhost-lint-dead-scan-add-root scan "main")]
+    [(CompilerPkgKindLib) scan]))
+
+(define (selfhost-lint-package-dead-code
+  [sources : StringVec]
+  [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
+    [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
+    [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
     [scan : SelfhostLintDeadScan
-      (selfhost-lint-package-dead-scan-files
-        sources
-        0
-        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (string-vec-new)))]
+      (selfhost-lint-package-dead-add-kind-roots
+        (selfhost-lint-package-dead-scan-files
+          sources
+          0
+          visible-root
+          reportable
+          (SelfhostLintDeadScan
+            (selfhost-lint-dead-decls-empty)
+            (string-vec-new)))
+        kind)]
     (selfhost-lint-dead-mark-roots-from
       (struct-get scan decls)
       (struct-get scan roots)
@@ -1901,8 +1995,9 @@
     [(OkPackageSourceSet source-set)
       (let
         [sources : StringVec (struct-get source-set sources)]
+        [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [dead-decls : SelfhostLintDeadDecls
-          (selfhost-lint-package-dead-code sources)]
+          (selfhost-lint-package-dead-code sources (struct-get manifest kind))]
         (selfhost-lint-package-files
           sources
           stdlib-roots
@@ -2435,34 +2530,85 @@
         43]
       [else 42])))
 
-(define (selfhost-lint-package-dead-code-self-test) : i64
+(define (selfhost-lint-package-dead-code-fixture-decls
+  [source-a : String]
+  [source-b : String]
+  [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
-    [source-a : String (selfhost-lint-package-dead-source-a)]
-    [source-b : String (selfhost-lint-package-dead-source-b)]
+    [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
+    [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
     [scan-a : SelfhostLintDeadScan
       (selfhost-lint-dead-scan-source
         (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (string-vec-new))
         "pkg/a.tl"
-        source-a)]
+        source-a
+        visible-root
+        reportable)]
     [scan-b : SelfhostLintDeadScan
-      (selfhost-lint-dead-scan-source scan-a "pkg/b.tl" source-b)]
-    [decls : SelfhostLintDeadDecls
-      (selfhost-lint-dead-mark-roots-from
-        (struct-get scan-b decls)
-        (struct-get scan-b roots)
-        0)]
-    [count-a : i64
-      (selfhost-lint-package-dead-count-for-source "pkg/a.tl" source-a decls)]
-    [count-b : i64
-      (selfhost-lint-package-dead-count-for-source "pkg/b.tl" source-b decls)]
+      (selfhost-lint-dead-scan-source
+        scan-a
+        "pkg/b.tl"
+        source-b
+        visible-root
+        reportable)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-package-dead-add-kind-roots scan-b kind)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
+(define (selfhost-lint-package-dead-code-self-test) : i64
+  (let
+    [source-a : String (selfhost-lint-package-dead-source-a)]
+    [source-b : String (selfhost-lint-package-dead-source-b)]
+    [bin-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-fixture-decls
+        source-a
+        source-b
+        CompilerPkgKindBin)]
+    [lib-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-fixture-decls
+        source-a
+        source-b
+        CompilerPkgKindLib)]
+    [bin-count-a : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/a.tl"
+        source-a
+        bin-decls)]
+    [bin-count-b : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/b.tl"
+        source-b
+        bin-decls)]
+    [lib-count-a : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/a.tl"
+        source-a
+        lib-decls)]
+    [lib-count-b : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/b.tl"
+        source-b
+        lib-decls)]
+    [finding : LintFinding (lint-dead-code-finding "unused" (lint-no-span))]
+    [finding-message : String (struct-get finding message)]
+    [dead-suggestion : String (lint-rule-dead-code-suggestion)]
+    [private-needle : String "private"]
+    [export-needle : String "export"]
     (cond
-      [(not (= count-a 0)) 50]
-      [(not (= count-b 0)) 51]
+      [(not (= bin-count-a 1)) 50]
+      [(not (= bin-count-b 0)) 51]
+      [(not (= lib-count-a 0)) 52]
+      [(not (= lib-count-b 0)) 53]
       [(not
           (string-eq
             (lint-rule-message (lint-rule-dead-code-id))
             (lint-rule-dead-code-message)))
-        52]
+        54]
+      [(string-contains (& finding-message) (& private-needle)) 55]
+      [(string-contains (& dead-suggestion) (& export-needle)) 56]
       [else 42])))
 
 (define (selfhost-lint-unused-assignment-self-test) : i64

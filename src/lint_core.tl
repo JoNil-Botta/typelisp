@@ -149,10 +149,10 @@
   "dead-code")
 
 (define (lint-rule-dead-code-message) : String
-  "dead code: private top-level declaration is never referenced")
+  "dead code: top-level declaration is unreachable from package entry/test roots")
 
 (define (lint-rule-dead-code-suggestion) : String
-  "remove the declaration or export/reference it intentionally")
+  "remove the declaration or reference it from package entry/test roots")
 
 (define (lint-rule-unused-assignment-id) : String
   "unused-assignment")
@@ -629,8 +629,8 @@
 (define (lint-dead-code-finding [name : String] [span : AstSourceSpan]) : LintFinding
   (LintFinding
     (string-append
-      "dead code: private top-level declaration "
-      (string-append name " is never referenced"))
+      "dead code: top-level declaration "
+      (string-append name " is unreachable from package entry/test roots"))
     (lint-rule-dead-code-id)
     0
     span))

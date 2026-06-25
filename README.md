@@ -481,6 +481,11 @@ commands. Orphan modules, alternate entries, and other out-of-closure files are
 checked by explicit `typelisp check <file>`, `typelisp doc --test <file>`, or
 package `typelisp test` coverage when they are intended to stand alone.
 
+Package `lint` checks every discovered package source. Dead-code lint treats
+every top-level declaration in `staticlib`/`lib` packages as an external API
+root, while `bin` packages report declarations unreachable from the entry,
+top-level tests, macro-import calls, or generated-declaration metadata.
+
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
 package build invocation, diamond graphs share the common archive build,

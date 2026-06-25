@@ -7141,7 +7141,6 @@
 (define (tc-comptime-helper-qualified-lookup-key
   [env : TcTypeEnv]
   [name : String]
-  [name-id : i64]
   [first-dot : i64]) : TcMaybeString
   (if (tc-comptime-helper-qualified-candidate-from-id? name first-dot)
     (let
@@ -7234,11 +7233,7 @@
               name-id
               first-dot))
             (OkTcString name)
-            (match (tc-comptime-helper-qualified-lookup-key
-              env
-              name
-              name-id
-              first-dot)
+            (match (tc-comptime-helper-qualified-lookup-key env name first-dot)
               [(TcSomeString key) (OkTcString key)]
               [(TcNoString)
                 (match (tc-source-dotted-alias-key ctx name name-id first-dot)

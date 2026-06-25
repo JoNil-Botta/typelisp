@@ -2068,28 +2068,16 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
-  (match (compiler-load-entry-file-with-paths-and-roots-cfg
-    input-path
-    (sym-i64-empty)
-    stdlib-roots
-    (compiler-driver-target-cfgs target cfgs))
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths-mode-cache
-        input-path
-        (ast-program decls)
-        paths
-        (compiler-driver-lower-mode-for-target target mode)
-        stdlib-roots
-        (compiler-load-prelude-cache-key
-          "typecheck-prefix-lower"
-          stdlib-roots
-          (compiler-driver-target-cfgs target cfgs)))
-        [(OkCompilerLower program spans)
-          (compiler-driver-emit-ir-summary-lowered-result-with-level
-            (compiler-driver-lowered-from-active-pools program spans)
-            opt-level)]
-        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+  ;; Emit-IR needs the macro prelude but must remain runtime-free so
+  ;; target parity checks compare user IR rather than OS-specific runtime IR.
+  (compiler-driver-emit-ir-summary-lowered-result-with-level
+    (compiler-driver-load-and-lower-pic-image
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+    opt-level))
 
 (define (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -2099,37 +2087,15 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
-  (let
-    [target-cfgs : SymI64Env (compiler-driver-target-cfgs target cfgs)]
-    [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
-    (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+  (compiler-driver-emit-ir-summary-lowered-result-with-level
+    (compiler-driver-load-and-lower-pic-image-with-state
+      state
       input-path
-      (sym-i64-empty)
+      target
       stdlib-roots
-      target-cfgs
-      pools)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
-              stdlib-roots
-              target-cfgs)
-            pools)
-            [(OkCompilerLower program spans)
-              (begin
-                (ast-node-pool-context-capture-active! pools)
-                (compiler-driver-emit-ir-summary-lowered-result-with-level
-                  (compiler-driver-lowered-from-pools program spans pools)
-                  opt-level))]
-            [(ErrCompilerLower diag) (ErrCompilerDriver diag)]))]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)])))
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+    opt-level))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]

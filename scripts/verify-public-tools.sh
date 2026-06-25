@@ -404,6 +404,23 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 fi
 assert_contains "$WORKDIR/hello.s" "main:"
 
+EMIT_IR_MACRO_SRC="$WORKDIR/emit-ir-core-macro.tl"
+EMIT_IR_MACRO_OUT="$WORKDIR/emit-ir-core-macro.ir"
+cat > "$EMIT_IR_MACRO_SRC" <<'EOF'
+(define (main) : i64
+  (if (and true true)
+    42
+    1))
+EOF
+run_cmd compile-emit-ir-core-macro "$COMPILER" compile "$EMIT_IR_MACRO_SRC" --emit-ir --target "$HOST_TARGET" --opt-level 2 -o "$EMIT_IR_MACRO_OUT" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+assert_success
+assert_stderr_empty
+if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    assert_contains "$out" "Wrote "
+fi
+[ -s "$EMIT_IR_MACRO_OUT" ] || fail "compile --emit-ir did not write IR summary"
+assert_contains "$EMIT_IR_MACRO_OUT" "score"
+
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
 echo "[public-tools] clean source artifacts"
 CLEAN_SRC_DIR="$WORKDIR/clean-source"

@@ -2603,16 +2603,23 @@ Declares a source-owned inline test. The name is an identifier. The body must
 contain one or more expressions; multiple expressions are sequenced like
 `begin`.
 
-Normal production commands (`check`, `compile`, `build`, and `run`) ignore
-`test` items. `typelisp test <file.tl>` loads the import graph, lowers inline
-tests owned by the requested source into private unit-returning functions, skips
-any production `main`, generates a test-owned `main`, and runs the resulting
-executable. Imported files provide runtime declarations but do not contribute
-their own inline tests to that source's harness. The test loader enables the
-`test` cfg predicate, allowing source-local fixture declarations to be written as
-`(cfg test ...)` so normal production commands skip them. `typelisp test --check
-<file.tl>` type-checks the generated harness without assembling or linking. The
-current runner is intended for unit-returning test bodies; assertion helpers in
+Normal production commands (`check`, `compile`, `build`, and `run`) type-check
+inline tests owned by the explicitly named source, or by the package's own
+discovered source files when operating on a package, before ordinary production
+emission. That preflight enables the `test` cfg predicate, allowing source-local
+fixture declarations to be written as `(cfg test ...)`; ordinary production
+loading still leaves those declarations inactive. `test` items and test-only
+helper declarations are dropped before production lowering and codegen, so
+valid inline tests cannot change emitted assembly. Imported stdlib files,
+dependency package files, and other imports provide runtime declarations but do
+not have their inline tests checked merely because they were imported.
+`typelisp test <file.tl>` loads the import graph, lowers inline tests owned by
+the requested source into private unit-returning functions, skips any production
+`main`, generates a test-owned `main`, and runs the resulting executable.
+Imported files provide runtime declarations but do not contribute their own
+inline tests to that source's harness. `typelisp test --check <file.tl>`
+type-checks the generated harness without assembling or linking. The current
+runner is intended for unit-returning test bodies; assertion helpers in
 `stdlib/test.tl` panic on failure.
 
 Example:

@@ -6,6 +6,7 @@
 (import "host_plan.tl")
 (import "build_run_core.tl")
 (import "doc_test.tl")
+(import "test_cli_core.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
 
@@ -469,17 +470,28 @@
   (let
     [doctest-status : i64 (run-cli-typecheck-doctests source stdlib-roots)]
     (if (= doctest-status 0)
-      (begin
-        (compiler-driver-reset-file-state!)
-        (source-tool-run-source
-          source
-          target
-          stdlib-roots
-          cfg-names
-          runtime-args
-          opt-level
-          mode
-          link-inputs))
+      (let
+        [inline-test-status : i64
+          (tltest-inline-typecheck-file-with-cfg
+            source
+            stdlib-roots
+            (compiler-driver-target-cfgs
+              target
+              (source-tool-cfg-names-to-env cfg-names))
+            "typecheck-prefix-inline-run")]
+        (if (= inline-test-status 0)
+          (begin
+            (compiler-driver-reset-file-state!)
+            (source-tool-run-source
+              source
+              target
+              stdlib-roots
+              cfg-names
+              runtime-args
+              opt-level
+              mode
+              link-inputs))
+          inline-test-status))
       doctest-status)))
 
 (define (run-cli-main) : i64

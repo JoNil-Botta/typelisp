@@ -1238,15 +1238,10 @@
   (let
     [home : String (compiler-backend-simd-base-home assignments base)]
     (if (string-eq home "")
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        base
-        "%rax")
-        [(OkCompilerBackend base-asm)
-          (OkCompilerBackend
-            (string-append base-asm "    movq 0(%rax), %rax\n"))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-      (OkCompilerBackend (str-cat "    movq 0(" home "), %rax\n")))))
+      (compiler-backend-emit-load-value-with-plan assignments base "%rax")
+      (if (string-eq home "%rax")
+        (OkCompilerBackend "")
+        (OkCompilerBackend (str-cat "    movq " home ", %rax\n"))))))
 
 (define (compiler-backend-emit-simd-indexed-address
   [assignments : CompilerRegAssignmentList]

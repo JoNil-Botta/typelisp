@@ -28748,18 +28748,43 @@
     [(LowerExpr gep-state len-gep _)
       (lower-emit-load gep-state len-gep (AstTyI64))]))
 
+(define (lower-array-data-pointer-value
+  [state : LowerState]
+  [arr-value : CompilerIrValue]) : LowerExpr
+  ;; Dynamic-array fat header slot 0 is the element data pointer. Emit it as a
+  ;; normal load keyed by the array header value so redundant-load CSE can see
+  ;; repeated SIMD accesses to the same base.
+  (lower-emit-load state arr-value (AstTyU64)))
+
 (define (lower-emit-vector-load
   [state : LowerState]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc s v)
-      (LowerExpr
-        (lower-state-emit s (IrInstrVectorLoad v base index lanes elem-ty))
-        (IrValueVar v)
-        elem-ty)]))
+  (match (lower-array-data-pointer-value state base)
+    [(LowerExpr data-state data-ptr _)
+      (match (lower-state-alloc-var data-state)
+        [(LowerAlloc s v)
+          (LowerExpr
+            (lower-state-emit
+              s
+              (IrInstrVectorLoad v data-ptr index lanes elem-ty))
+            (IrValueVar v)
+            elem-ty)])]))
+
+(define (lower-emit-vector-store
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (match (lower-array-data-pointer-value state base)
+    [(LowerExpr data-state data-ptr _)
+      (lower-state-emit
+        data-state
+        (ir-instr-vector-store data-ptr index value lanes elem-ty))]))
 
 (define (lower-emit-vector-binop
   [state : LowerState]
@@ -29716,14 +29741,16 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc s v)
-      (LowerExpr
-        (lower-state-emit
-          s
-          (ir-instr-predicated-load v base index mask lanes elem-ty))
-        (IrValueVar v)
-        elem-ty)]))
+  (match (lower-array-data-pointer-value state base)
+    [(LowerExpr data-state data-ptr _)
+      (match (lower-state-alloc-var data-state)
+        [(LowerAlloc s v)
+          (LowerExpr
+            (lower-state-emit
+              s
+              (ir-instr-predicated-load v data-ptr index mask lanes elem-ty))
+            (IrValueVar v)
+            elem-ty)])]))
 
 (define (lower-emit-predicated-store
   [state : LowerState]
@@ -29733,9 +29760,11 @@
   [mask : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]) : LowerState
-  (lower-state-emit
-    state
-    (ir-instr-predicated-store base index value mask lanes elem-ty)))
+  (match (lower-array-data-pointer-value state base)
+    [(LowerExpr data-state data-ptr _)
+      (lower-state-emit
+        data-state
+        (ir-instr-predicated-store data-ptr index value mask lanes elem-ty))]))
 
 (define (lower-emit-spmd-broadcast-lane-check
   [state : LowerState]
@@ -30129,14 +30158,13 @@
                 (set! s next-s)
                 (set! result-vec value))])
           (lower-state-emit
-            (lower-state-emit
+            (lower-emit-vector-store
               s
-              (ir-instr-vector-store
-                (IrValueVar dst-array)
-                (IrValueVar index-var)
-                result-vec
-                lanes
-                elem-ty))
+              (IrValueVar dst-array)
+              (IrValueVar index-var)
+              result-vec
+              lanes
+              elem-ty)
             (IrInstrMov index-var next-index (AstTyI64)))))]
     [LowerNoVectorMap state]))
 

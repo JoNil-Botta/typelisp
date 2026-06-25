@@ -7829,6 +7829,12 @@
                 (compiler-backend-value-scalar-register assignments rhs)]
               [lhs-reg : String
                 (compiler-backend-value-scalar-register assignments lhs)]
+              [scav-rhs : String
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-binop-scavenge-exclude-build)
+                  5
+                  "%r8")]
               (if (if (string-eq mnem "addq")
                 (if (string-eq lhs-reg "")
                   false
@@ -7867,7 +7873,7 @@
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     rhs
-                    "%r8")
+                    scav-rhs)
                     [(OkCompilerBackend rhs-asm)
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
@@ -7879,7 +7885,14 @@
                               rhs-asm
                               (string-append
                                 lhs-asm
-                                (str-cat "    " mnem " %r8, " dst-home "\n"))))]
+                                (str-cat
+                                  "    "
+                                  mnem
+                                  " "
+                                  scav-rhs
+                                  ", "
+                                  dst-home
+                                  "\n"))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)])]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])
@@ -8021,6 +8034,12 @@
                             (compiler-backend-value-scalar-register
                               assignments
                               rhs)]
+                          [scav-rhs : String
+                            (compiler-backend-scavenge-reg
+                              dst
+                              (compiler-backend-binop-scavenge-exclude-build)
+                              5
+                              "%r8")]
                           (match (if (if (string-eq rhs-reg "")
                             false
                             (not (string-eq rhs-reg "%rax")))
@@ -8044,7 +8063,7 @@
                               (match (compiler-backend-emit-load-value-with-plan
                                 assignments
                                 rhs
-                                "%r8")
+                                scav-rhs)
                                 [(OkCompilerBackend rhs-asm)
                                   (OkCompilerBackend
                                     (string-append
@@ -8055,7 +8074,7 @@
                                           (compiler-backend-binop-asm
                                             op
                                             operand-ty
-                                            "%r8")
+                                            scav-rhs)
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
@@ -10497,7 +10516,9 @@
           scav
           "\n    jz "
           slow-label
-          (str-cat "\n    movq 16(" scav "), %rax\n    movq %rax, ")
+          "\n    movq 16("
+          scav
+          "), %rax\n    movq %rax, "
           next-reg
           "\n"))
       (string-append

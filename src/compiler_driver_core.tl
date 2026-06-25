@@ -29,8 +29,7 @@
   (OkCompilerDriverLowered
     CompilerIrProgram
     CompilerSourceSpans
-    AstExprNodePoolState
-    AstTypeNodePoolState)
+    AstNodePoolContext)
   (ErrCompilerDriverLowered CompilerDiagnostic))
 
 (defstruct CompilerDriverState
@@ -223,16 +222,16 @@
 (define (compiler-driver-lowered-from-active-pools
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerDriverLowered
-  (OkCompilerDriverLowered
-    program
-    spans
-    (ast-node-pool-state-capture)
-    (ty-node-pool-state-capture)))
+  (OkCompilerDriverLowered program spans (ast-node-pool-context-capture-active)))
 
-(define (compiler-driver-install-lowered-pools!
-  [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]) : unit
-  (ast-node-pools-state-install! expr-pool type-pool))
+(define (compiler-driver-lowered-from-pools
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
+  (OkCompilerDriverLowered program spans (ast-node-pool-context-snapshot pools)))
+
+(define (compiler-driver-install-lowered-pools! [pools : AstNodePoolContext]) : unit
+  (ast-node-pool-context-install! pools))
 
 (define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
   (compiler-load-runtime-prelude-cache-lookup key))
@@ -801,9 +800,9 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
-    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+    [(OkCompilerDriverLowered program spans pools)
       (begin
-        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
           input-path
           program
@@ -825,9 +824,9 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
-    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+    [(OkCompilerDriverLowered program spans pools)
       (begin
-        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
           input-path
           program
@@ -849,9 +848,9 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
-    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+    [(OkCompilerDriverLowered program spans pools)
       (begin
-        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
           input-path
           program
@@ -874,9 +873,9 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
-    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+    [(OkCompilerDriverLowered program spans pools)
       (begin
-        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
           input-path
           program
@@ -1370,7 +1369,9 @@
                   (ErrCompilerDriverLowered
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
-                  (compiler-driver-lowered-from-active-pools program spans)))]
+                  (begin
+                    (ast-node-pool-context-capture-active! pools)
+                    (compiler-driver-lowered-from-pools program spans pools))))]
             [(ErrCompilerLower diag)
               (begin
                 (cfg
@@ -1421,7 +1422,9 @@
                   (ErrCompilerDriverLowered
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path))
-                  (compiler-driver-lowered-from-active-pools program spans)))]
+                  (begin
+                    (ast-node-pool-context-capture-active! pools)
+                    (compiler-driver-lowered-from-pools program spans pools))))]
             [(ErrCompilerLower diag)
               (begin
                 (cfg
@@ -2037,9 +2040,9 @@
   [lowered : ResultCompilerDriverLowered]
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
-    [(OkCompilerDriverLowered program spans expr-pool type-pool)
+    [(OkCompilerDriverLowered program spans pools)
       (begin
-        (compiler-driver-install-lowered-pools! expr-pool type-pool)
+        (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-ir-summary-lowered-with-level
           program
           spans
@@ -2118,9 +2121,11 @@
               target-cfgs)
             pools)
             [(OkCompilerLower program spans)
-              (compiler-driver-emit-ir-summary-lowered-result-with-level
-                (compiler-driver-lowered-from-active-pools program spans)
-                opt-level)]
+              (begin
+                (ast-node-pool-context-capture-active! pools)
+                (compiler-driver-emit-ir-summary-lowered-result-with-level
+                  (compiler-driver-lowered-from-pools program spans pools)
+                  opt-level))]
             [(ErrCompilerLower diag) (ErrCompilerDriver diag)]))]
       [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)])))
 

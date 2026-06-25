@@ -21,9 +21,31 @@
   (LowerNameNil)
   (LowerNameBind String String (Box LowerNameEnv)))
 
+;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
+;; `LowerNameParentNone` is a complete cache (a miss returns the source name
+;; unchanged). `LowerNameParentGlobal` marks a small per-module overlay that, on
+;; a miss, falls through to the process-global decl-lowering name cache
+;; `lower-decls-global-name-cache` (set once per lower-decls run). This makes each
+;; module's name cache a small overlay of just its module-local names over the
+;; shared global cache instead of rebuilding the whole global name set per module
+;; (was O(modules x global-names)). A global marker is used rather than an owned
+;; parent because the one global cache must be shared by every module overlay.
+(defenum LowerNameParent
+  (LowerNameParentNone)
+  (LowerNameParentGlobal))
+
 (defstruct LowerNameCache
   (ids StringI64Map)
-  (values (Array String)))
+  (values (Array String))
+  (parent LowerNameParent))
+
+;; #3759: the shared global decl-lowering name cache (built once per lower-decls
+;; from the whole-program name env). Per-module overlays fall through here.
+(define lower-decls-global-name-cache : LowerNameCache
+  (LowerNameCache
+    (string-i64-map-with-capacity 8)
+    (make-array String 0)
+    (LowerNameParentNone)))
 
 ;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
 ;; is a complete cache (a miss = unbound). `LowerTypeParentGlobal` marks a small
@@ -162,6 +184,13 @@
   (LowerNoMaskedVectorMap)
   (LowerSomeMaskedVectorMap i64))
 
+(defenum LowerMaskedMatchMasks
+  (LowerMaskedMatchMasks LowerState CompilerIrValue CompilerIrValue))
+
+(defenum ResultLowerMaskedMatchMasks
+  (OkLowerMaskedMatchMasks LowerMaskedMatchMasks)
+  (ErrLowerMaskedMatchMasks CompilerDiagnostic))
+
 (defenum LowerMaybeVectorReduce
   (LowerNoVectorReduce)
   (LowerSomeVectorReduce i64 CompilerIrVectorReduceOp AstType i64)
@@ -295,12 +324,13 @@
   (ErrLowerEnv CompilerDiagnostic))
 
 ;; #3759: OkLowerModuleLocalEnv carries, in order, the full module-local type
-;; env (top-env + module-local type decls), the full module-local name env, and
-;; the module-local-ONLY type env (just the module's own type bindings, on an
-;; empty base). The last is used to build a small per-module type-cache overlay
-;; over the shared global type cache instead of re-walking the global env.
+;; env (top-env + module-local type decls), the full module-local name env, the
+;; module-local-ONLY type env, and the module-local-ONLY name env (just the
+;; module's own type/name bindings, on empty bases). The last two build small
+;; per-module type/name cache overlays over the shared global caches instead of
+;; re-walking the global env at every module boundary.
 (defenum ResultLowerModuleLocalEnv
-  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv TcTypeEnv)
+  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv TcTypeEnv LowerNameEnv)
   (ErrLowerModuleLocalEnv String))
 
 (defenum ResultLowerValue
@@ -665,7 +695,10 @@
           [next : i64 (string-i64-map-len ids)]
           (begin
             (array-set! values next logical-name)
-            (LowerNameCache (string-i64-map-put ids source-name next) values)))])))
+            (LowerNameCache
+              (string-i64-map-put ids source-name next)
+              values
+              (struct-get cache parent))))])))
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
@@ -692,14 +725,32 @@
       names
       (LowerNameCache
         (string-i64-map-with-capacity (lower-name-cache-capacity count))
-        (make-array String count)))))
+        (make-array String count)
+        (LowerNameParentNone)))))
+
+;; #3759: build a small overlay name cache from `names` (the module-local names
+;; only). On a miss it falls through to the shared global cache
+;; `lower-decls-global-name-cache` (see lower-name-cache-resolve).
+(define (lower-name-cache-overlay [names : LowerNameEnv]) : LowerNameCache
+  (let
+    [count : i64 (lower-name-env-count names)]
+    (lower-name-cache-from-env-into
+      names
+      (LowerNameCache
+        (string-i64-map-with-capacity (lower-name-cache-capacity count))
+        (make-array String count)
+        (LowerNameParentGlobal)))))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
   [source-name : String]) : String
   (match (string-i64-map-get (struct-get cache ids) source-name)
     [(StringI64MapFound index) (array-ref (struct-get cache values) index)]
-    [(StringI64MapMissing) source-name]))
+    [(StringI64MapMissing)
+      (match (struct-get cache parent)
+        [(LowerNameParentNone) source-name]
+        [(LowerNameParentGlobal)
+          (lower-name-cache-resolve lower-decls-global-name-cache source-name)])]))
 
 (define (lower-name-cache-resolve-dotted
   [cache : LowerNameCache]
@@ -2129,8 +2180,15 @@
     (intern module)
     (intern "")))
 
-(define (lower-name-env-add-local-decl
+;; #3759: `names` is the env to bind onto; `resolve-env` is the env used to
+;; resolve dispatch logical names (the only case that consults an env rather than
+;; the name cache). For the normal full build the two are identical. The
+;; module-local-only overlay build passes a fresh `names` base but the full env
+;; as `resolve-env`, so dispatch names still resolve against all in-scope
+;; bindings while only the module-local additions are accumulated.
+(define (lower-name-env-add-local-decl-resolve
   [names : LowerNameEnv]
+  [resolve-env : LowerNameEnv]
   [name-cache : LowerNameCache]
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
@@ -2154,7 +2212,7 @@
         [name-str : String (intern-str name)]
         (LowerNameBind
           name-str
-          (lower-current-decl-logical-name names module name-str)
+          (lower-current-decl-logical-name resolve-env module name-str)
           (box names)))]
     [(AstDeclExtern name _ _ _)
       (let
@@ -2174,12 +2232,29 @@
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (lower-name-env-add-local-decl names name-cache module template))]
+        (lower-name-env-add-local-decl-resolve
+          names
+          resolve-env
+          name-cache
+          module
+          template))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-name-env-add-local-decl names name-cache module inner))]
+        (lower-name-env-add-local-decl-resolve
+          names
+          resolve-env
+          name-cache
+          module
+          inner))]
     [_ names]))
+
+(define (lower-name-env-add-local-decl
+  [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
+  [module : String]
+  [decl : AstDecl]) : LowerNameEnv
+  (lower-name-env-add-local-decl-resolve names names name-cache module decl))
 
 (define (lower-module-local-type-env-bind-qualified
   [top-env : TcTypeEnv]
@@ -2347,12 +2422,14 @@
   [type-env : TcTypeEnv]
   [local-type-env : TcTypeEnv]
   [names : LowerNameEnv]
+  [local-names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
   [module-id : i64]) : ResultLowerModuleLocalEnv
   (match decls
-    [(AstDeclNil) (OkLowerModuleLocalEnv type-env names local-type-env)]
+    [(AstDeclNil)
+      (OkLowerModuleLocalEnv type-env names local-type-env local-names)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -2364,6 +2441,7 @@
               type-env
               local-type-env
               names
+              local-names
               name-cache
               target-module
               target-module-id
@@ -2398,6 +2476,15 @@
                           name-cache
                           target-module
                           decl)
+                        ;; #3759: accumulate the module-local name bindings on a
+                        ;; fresh base for the name-cache overlay; dispatch logical
+                        ;; names still resolve against the full `names` env.
+                        (lower-name-env-add-local-decl-resolve
+                          local-names
+                          names
+                          name-cache
+                          target-module
+                          decl)
                         name-cache
                         target-module
                         target-module-id
@@ -2410,6 +2497,7 @@
                 type-env
                 local-type-env
                 names
+                local-names
                 name-cache
                 target-module
                 target-module-id
@@ -2422,7 +2510,7 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string-eq module "")
-    (OkLowerModuleLocalEnv top-env names (TcTypeNil))
+    (OkLowerModuleLocalEnv top-env names (TcTypeNil) (LowerNameNil))
     (match (tc-context-program ctx)
       [(AstProgram decls-box)
         (let
@@ -2433,12 +2521,24 @@
               names
               name-cache
               module)]
+          ;; #3759: the module's import aliases resolve against the global
+          ;; name-cache (not the env base), so building them on an empty base
+          ;; yields the module-local-only alias env -- the starting point for the
+          ;; per-module name-cache overlay (local decl names are added on top in
+          ;; lower-module-local-envs-list).
+          [local-alias-names : LowerNameEnv
+            (lower-name-env-with-import-aliases-in-module-cache
+              decls
+              (LowerNameNil)
+              name-cache
+              module)]
           (lower-module-local-envs-list
             top-env
             decls
             top-env
             (TcTypeNil)
             module-names
+            local-alias-names
             name-cache
             module
             (intern module)
@@ -4451,7 +4551,7 @@
                 names
                 name-cache
                 next-module-str)
-                [(OkLowerModuleLocalEnv next-local-env _ _)
+                [(OkLowerModuleLocalEnv next-local-env _ _ _)
                   (lower-clone-roots-decls-in-module
                     ctx
                     top-env
@@ -25962,6 +26062,9 @@
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
+(define (lower-avx2-varying-match-diagnostic) : String
+  "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512")
+
 (define (lower-spmd-bool-lane-diagnostic) : String
   "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512")
 
@@ -26503,6 +26606,83 @@
                   next-locals
                   rest)))]))]))
 
+(define (lower-masked-vector-pattern-locals
+  [pattern : AstPattern]
+  [scrut-lanes : i64]
+  [lane-locals : StringI64Map]) : StringI64Map
+  (if (> scrut-lanes 0)
+    (match pattern
+      [(AstPatVar name _)
+        (string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+      [(AstPatTuple patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (box-get patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [(AstPatBinding name)
+        (string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+      [(AstPatVariant _ patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (box-get patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [_ lane-locals])
+    lane-locals))
+
+(define (lower-masked-vector-pattern-list-locals
+  [patterns : AstPatternList]
+  [scrut-lanes : i64]
+  [lane-locals : StringI64Map]) : StringI64Map
+  (match patterns
+    [(AstPatternNil) lane-locals]
+    [(AstPatternCons pattern rest)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest : AstPatternList (box-get rest)]
+        (lower-masked-vector-pattern-list-locals
+          rest
+          scrut-lanes
+          (lower-masked-vector-pattern-locals pattern scrut-lanes lane-locals)))]))
+
+(define (lower-masked-vector-match-arms-lanes-with-locals
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [scrut-lanes : i64]
+  [arms : AstMatchArmList]) : i64
+  (match arms
+    [(AstMatchArmNil) 0]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              [body-locals : StringI64Map
+                (lower-masked-vector-pattern-locals
+                  pattern
+                  scrut-lanes
+                  lane-locals)]
+              (lower-masked-vector-lanes-merge
+                (lower-masked-vector-expr-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  body-locals
+                  body)
+                (lower-masked-vector-match-arms-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  scrut-lanes
+                  rest)))]))]))
+
 (define (lower-masked-vector-expr-lanes-with-locals
   [mode : CompilerLowerMode]
   [env : SymI64Env]
@@ -26640,6 +26820,29 @@
               index
               lane-locals
               else-branch))))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrut-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrutinee)]
+            (lower-masked-vector-lanes-merge
+              scrut-lanes
+              (lower-masked-vector-match-arms-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrut-lanes
+                arms)))])]
     [(AstExprBegin exprs)
       (lower-masked-vector-expr-list-lanes-with-locals
         mode
@@ -27072,6 +27275,312 @@
     (lower-masked-vector-empty-lane-locals)
     bindings))
 
+(define (lower-masked-vector-body-has-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprUnary _ inner-box)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get left-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get right-box)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              bindings)
+            (lower-masked-vector-body-has-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              (lower-masked-vector-let-bindings-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                bindings)
+              (ast-node-get body-box)))])]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get cond-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get then-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get else-box)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrut-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrutinee)]
+            (or
+              (> scrut-lanes 0)
+              (lower-masked-vector-match-arms-have-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrut-lanes
+                arms)))])]
+    [(AstExprBegin exprs)
+      (lower-masked-vector-expr-list-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs)]
+    [(AstExprArrayRef arr-box idx-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get receiver-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
+    [_ false]))
+
+(define (lower-masked-vector-expr-list-has-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get expr))
+        (lower-masked-vector-expr-list-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (box-get rest)))]))
+
+(define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ init-box)
+          (let
+            [init : AstExpr (ast-node-get init-box)]
+            [init-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)]
+            [next-locals : StringI64Map
+              (if (> init-lanes 0)
+                (string-i64-map-put lane-locals (intern-str name) init-lanes)
+                lane-locals)]
+            (or
+              (lower-masked-vector-body-has-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)
+              (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                next-locals
+                (box-get rest))))])]))
+
+(define (lower-masked-vector-match-arms-have-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [scrut-lanes : i64]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (or
+            (lower-masked-vector-body-has-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              (lower-masked-vector-pattern-locals
+                pattern
+                scrut-lanes
+                lane-locals)
+              (ast-node-get body-box))
+            (lower-masked-vector-match-arms-have-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              scrut-lanes
+              (box-get rest)))])]))
+
+(define (lower-masked-vector-body-has-varying-match?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (lower-masked-vector-body-has-varying-match-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    expr))
+
 (define (lower-masked-vector-bool-array-lane?
   [env : SymI64Env]
   [type-env : TcTypeEnv]
@@ -27257,6 +27766,7 @@
     (lower-mode-avx512? mode)
     (or
       (lower-masked-vector-body-has-varying-if? mode env type-env index body)
+      (lower-masked-vector-body-has-varying-match? mode env type-env index body)
       (lower-masked-vector-body-has-bool-array-lane? env type-env index body)))
     (let
       [lanes : i64
@@ -27317,6 +27827,16 @@
           (lower-array-var-set-merge
             (lower-masked-vector-array-vars env type-env index then-branch)
             (lower-masked-vector-array-vars env type-env index else-branch))))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (lower-array-var-set-merge
+            (lower-masked-vector-array-vars
+              env
+              type-env
+              index
+              (ast-node-get scrutinee-box))
+            (lower-masked-vector-match-arms-array-vars env type-env index arms))])]
     [(AstExprBegin exprs)
       (lower-masked-vector-expr-list-array-vars env type-env index exprs)]
     [(AstExprArrayRef arr-box idx-box)
@@ -27373,6 +27893,28 @@
         (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index expr)
           (lower-masked-vector-expr-list-array-vars env type-env index rest)))]))
+
+(define (lower-masked-vector-match-arms-array-vars
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [arms : AstMatchArmList]) : LowerArrayVarSet
+  (match arms
+    [(AstMatchArmNil) (lower-array-var-set-empty)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (lower-array-var-set-merge
+            (lower-masked-vector-array-vars
+              env
+              type-env
+              index
+              (ast-node-get body-box))
+            (lower-masked-vector-match-arms-array-vars
+              env
+              type-env
+              index
+              (box-get rest)))])]))
 
 (define (lower-masked-vector-let-binding-array-vars
   [env : SymI64Env]
@@ -27445,6 +27987,12 @@
           (lower-vector-body-has-array-read? cond)
           (lower-vector-body-has-array-read? then-branch)
           (lower-vector-body-has-array-read? else-branch)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (or
+            (lower-vector-body-has-array-read? (ast-node-get scrutinee-box))
+            (lower-match-arms-have-array-read? arms))])]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
@@ -27477,6 +28025,16 @@
           (lower-vector-body-has-array-read? receiver)
           (lower-vector-body-has-array-read? value)))]
     [_ false]))
+
+(define (lower-match-arms-have-array-read? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (or
+            (lower-vector-body-has-array-read? (ast-node-get body-box))
+            (lower-match-arms-have-array-read? (box-get rest)))])]))
 
 (define (lower-vector-expr-list-has-array-read? [exprs : AstExprList]) : bool
   (match exprs
@@ -30662,6 +31220,400 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-avx512-masked-match-literal-mask
+  [state : LowerState]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [lanes : i64]
+  [lit : AstLiteral]) : ResultLowerExpr
+  (match (tc-type-without-regions scrut-ty)
+    [(AstTyBool)
+      (match lit
+        [(AstLitBool value)
+          (if value
+            (OkLowerExpr (LowerExpr state scrut-value (AstTyBool)))
+            (OkLowerExpr (lower-emit-mask-not state scrut-value lanes)))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic "lower: unsupported bool literal match pattern"))])]
+    [_
+      (match (lower-emit-splat
+        state
+        (lower-literal-value-with-type lit (tc-type-without-regions scrut-ty))
+        lanes
+        (tc-type-without-regions scrut-ty))
+        [(LowerExpr lit-state lit-value _)
+          (OkLowerExpr
+            (lower-emit-vector-compare
+              lit-state
+              (IrBinEq)
+              scrut-value
+              lit-value
+              lanes
+              (tc-type-without-regions scrut-ty)))])]))
+
+(define (lower-avx512-masked-match-literal-arm-masks
+  [state : LowerState]
+  [active-mask : CompilerIrValue]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [lanes : i64]
+  [lit : AstLiteral]) : ResultLowerMaskedMatchMasks
+  (match (lower-avx512-masked-match-literal-mask
+    state
+    scrut-value
+    scrut-ty
+    lanes
+    lit)
+    [(OkLowerExpr cond-lowered)
+      (match cond-lowered
+        [(LowerExpr cond-state cond-mask _)
+          (match (lower-emit-mask-binop
+            cond-state
+            (IrMaskAnd)
+            active-mask
+            cond-mask
+            lanes)
+            [(LowerExpr arm-mask-state arm-mask _)
+              (match (lower-emit-mask-not arm-mask-state cond-mask lanes)
+                [(LowerExpr not-state not-mask _)
+                  (match (lower-emit-mask-binop
+                    not-state
+                    (IrMaskAnd)
+                    active-mask
+                    not-mask
+                    lanes)
+                    [(LowerExpr rest-mask-state rest-mask _)
+                      (OkLowerMaskedMatchMasks
+                        (LowerMaskedMatchMasks
+                          rest-mask-state
+                          arm-mask
+                          rest-mask))])])])])]
+    [(ErrLowerExpr message) (ErrLowerMaskedMatchMasks message)]))
+
+(define (lower-avx512-masked-match-select
+  [state : LowerState]
+  [arm-mask : CompilerIrValue]
+  [arm-value : CompilerIrValue]
+  [rest-mask : CompilerIrValue]
+  [rest-value : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]
+  [expr : AstExpr]) : ResultLowerExpr
+  (if (lower-type-bool? ty)
+    (OkLowerExpr
+      (lower-emit-mask-select
+        state
+        arm-mask
+        arm-value
+        rest-mask
+        rest-value
+        lanes))
+    (if (lower-avx512-masked-select-result-supported? state lanes ty)
+      (OkLowerExpr
+        (lower-emit-select
+          state
+          arm-mask
+          arm-value
+          rest-value
+          lanes
+          (tc-type-without-regions ty)))
+      (lower-avx512-masked-unsupported
+        expr
+        "this value-producing varying match result type"))))
+
+(define (lower-avx512-masked-match-after-body
+  [ctx : TcContext]
+  [body-state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [arm-mask : CompilerIrValue]
+  [rest-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [body-value : CompilerIrValue]
+  [body-ty : AstType]
+  [rest : AstMatchArmList]) : ResultLowerExpr
+  (match body-ty
+    [(AstTyUnit)
+      (lower-avx512-masked-match-arms
+        ctx
+        body-state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        rest-mask
+        lanes
+        result-ty
+        expr
+        scrut-value
+        scrut-ty
+        rest)]
+    [_
+      (match (lower-avx512-masked-match-arms
+        ctx
+        body-state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        rest-mask
+        lanes
+        result-ty
+        expr
+        scrut-value
+        scrut-ty
+        rest)
+        [(OkLowerExpr rest-lowered)
+          (match rest-lowered
+            [(LowerExpr rest-state rest-value rest-ty)
+              (if (ast-type-eq?
+                (tc-type-without-regions body-ty)
+                (tc-type-without-regions rest-ty))
+                (lower-avx512-masked-match-select
+                  rest-state
+                  arm-mask
+                  body-value
+                  rest-mask
+                  rest-value
+                  lanes
+                  body-ty
+                  expr)
+                (lower-avx512-masked-unsupported
+                  expr
+                  "mixed varying match arm result types"))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
+
+(define (lower-avx512-masked-match-arm
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]
+  [body : AstExpr]
+  [rest : AstMatchArmList]) : ResultLowerExpr
+  (match pattern
+    [(AstPatLiteral lit)
+      (match rest
+        [(AstMatchArmNil)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (match (lower-avx512-masked-match-literal-arm-masks
+            state
+            active-mask
+            scrut-value
+            scrut-ty
+            lanes
+            lit)
+            [(OkLowerMaskedMatchMasks masks)
+              (match masks
+                [(LowerMaskedMatchMasks mask-state arm-mask rest-mask)
+                  (match (lower-avx512-masked-expr-expected
+                    ctx
+                    mask-state
+                    env
+                    type-env
+                    lane-locals
+                    index
+                    index-var
+                    arm-mask
+                    lanes
+                    body
+                    result-ty)
+                    [(OkLowerExpr body-lowered)
+                      (match body-lowered
+                        [(LowerExpr body-state body-value body-ty)
+                          (lower-avx512-masked-match-after-body
+                            ctx
+                            body-state
+                            env
+                            type-env
+                            lane-locals
+                            index
+                            index-var
+                            arm-mask
+                            rest-mask
+                            lanes
+                            result-ty
+                            expr
+                            scrut-value
+                            scrut-ty
+                            body-value
+                            body-ty
+                            rest)])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerMaskedMatchMasks message) (ErrLowerExpr message)])])]
+    [(AstPatWildcard)
+      (lower-avx512-masked-expr-expected
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        body
+        result-ty)]
+    [(AstPatVar name _)
+      (match scrut-value
+        [(IrValueVar scrut-var)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            (sym-i64-bind-id env name scrut-var)
+            (tc-bind-id type-env name scrut-ty)
+            (lower-string-set-insert lane-locals (intern-str name))
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (lower-avx512-masked-unsupported
+            expr
+            "non-variable match binding values in this AVX-512 slice")])]
+    [(AstPatBinding name)
+      (match scrut-value
+        [(IrValueVar scrut-var)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            (sym-i64-bind-id env name scrut-var)
+            (tc-bind-id type-env name scrut-ty)
+            (lower-string-set-insert lane-locals (intern-str name))
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (lower-avx512-masked-unsupported
+            expr
+            "non-variable match binding values in this AVX-512 slice")])]
+    [_
+      (lower-avx512-masked-unsupported
+        expr
+        "this varying match pattern in the AVX-512 slice")]))
+
+(define (lower-avx512-masked-match-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (match arms
+    [(AstMatchArmNil)
+      (lower-avx512-masked-unsupported
+        expr
+        "match with no arms in this AVX-512 slice")]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (lower-avx512-masked-match-arm
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            result-ty
+            expr
+            scrut-value
+            scrut-ty
+            pattern
+            (ast-node-get body-box)
+            (box-get rest))])]))
+
+(define (lower-avx512-masked-match
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (match (lower-avx512-masked-expr
+    ctx
+    state
+    env
+    type-env
+    lane-locals
+    index
+    index-var
+    active-mask
+    lanes
+    scrutinee)
+    [(OkLowerExpr scrut-lowered)
+      (match scrut-lowered
+        [(LowerExpr scrut-state scrut-value scrut-ty)
+          (lower-avx512-masked-match-arms
+            ctx
+            scrut-state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            result-ty
+            expr
+            scrut-value
+            scrut-ty
+            arms)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-avx512-masked-expr
   [ctx : TcContext]
   [state : LowerState]
@@ -30842,6 +31794,32 @@
               else-branch)]
           [(ErrTcType message)
             (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (match (lower-expr-result-type-or-check
+            ctx
+            env
+            type-env
+            (lower-state-type-cache state)
+            expr)
+            [(OkTcType result-ty)
+              (lower-avx512-masked-match
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                result-ty
+                expr
+                (ast-node-get scrutinee-box)
+                arms)]
+            [(ErrTcType message)
+              (ErrLowerExpr (lower-diagnostic-at-expr expr message))])])]
     [(AstExprBegin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -30948,6 +31926,23 @@
           cond
           then-branch
           else-branch))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (lower-avx512-masked-match
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expected-ty
+            expr
+            (ast-node-get scrutinee-box)
+            arms)])]
     [_
       (lower-avx512-masked-expr
         ctx
@@ -31655,6 +32650,18 @@
                       (if (lower-mode-avx2? (lower-state-mode state))
                         (lower-avx2-masked-if-diagnostic)
                         "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))]
+                [(lower-masked-vector-body-has-varying-match?
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    body)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (if (lower-mode-avx2? (lower-state-mode state))
+                        (lower-avx2-varying-match-diagnostic)
+                        "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape")))]
                 [(and
                     (lower-mode-avx2? (lower-state-mode state))
                     (lower-masked-vector-body-has-bool-array-lane?
@@ -35959,7 +36966,6 @@
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (let
-    [decl-name-cache : LowerNameCache (lower-name-cache-from-env names)]
     [dispatch-name-cache : LowerNameCache (lower-name-cache-from-env names)]
     [dispatch-variants : StringI64Map
       (lower-dispatch-variant-set-from-decls
@@ -35968,10 +36974,11 @@
         "<source>"
         dispatch-name-cache)]
     (begin
-      ;; #3759: build the shared global type cache once; per-module caches are
-      ;; small overlays that fall through to it. The initial cur-type-cache is an
-      ;; empty overlay (everything resolves via the global cache) for decls in
+      ;; #3759: build the shared global name/type caches once; per-module caches
+      ;; are small overlays that fall through to them. The initial cur caches are
+      ;; empty overlays (everything resolves via the global caches) for decls in
       ;; the leading "" module before the first (module ...) marker.
+      (set! lower-decls-global-name-cache (lower-name-cache-from-env names))
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
       (lower-decls-in-module
         ctx
@@ -35983,7 +36990,7 @@
         externs
         spans
         names
-        decl-name-cache
+        (lower-name-cache-overlay (LowerNameNil))
         (lower-type-cache-overlay (TcTypeNil))
         dispatch-variants
         mode
@@ -36282,13 +37289,18 @@
                       next-module-str)
                       [(OkLowerModuleLocalEnv
                           next-local-top-env
-                          local-names
-                          local-type-env)
+                          _
+                          local-type-env
+                          local-name-only)
                         (begin
                           (set! cur-local-top-env next-local-top-env)
+                          ;; #3759: overlay just this module's local names;
+                          ;; misses fall through to the shared global name cache
+                          ;; (set once) instead of rebuilding the whole global
+                          ;; name set per module.
                           (set!
                             cur-name-cache
-                            (lower-name-cache-from-env local-names))
+                            (lower-name-cache-overlay local-name-only))
                           ;; #3759: overlay just this module's local type
                           ;; bindings; misses fall through to the shared global
                           ;; type cache (set once from top-env) instead of

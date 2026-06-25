@@ -228,6 +228,10 @@
   (OkTcSpmdExprInfo TcSpmdExprInfo)
   (ErrTcSpmdExprInfo String))
 
+(defenum ResultTcSpmdEnv
+  (OkTcSpmdEnv TcSpmdEnv)
+  (ErrTcSpmdEnv String))
+
 (defenum TcSpmdLetState
   (TcSpmdLetState TcTypeEnv TcSpmdEnv TcSpmdEnvMark))
 
@@ -17693,8 +17697,15 @@
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(AstExprWhile _ _)
       (tc-spmd-masked-if-unsupported "varying while inside masked branches")]
-    [(AstExprMatch _)
-      (tc-spmd-masked-if-unsupported "varying match inside masked branches")]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (tc-spmd-masked-if-match
+            ctx
+            env
+            spmd-env
+            (ast-node-get scrutinee-box)
+            arms)])]
     [(AstExprForeach _)
       (tc-spmd-masked-if-unsupported "nested foreach inside masked branches")]
     [(AstExprSpmdReduce _)
@@ -17857,11 +17868,106 @@
                     (tc-spmd-begin-list ctx env next-spmd-env rest)])]
               [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))]))
 
+(define (tc-spmd-match-pattern-binding-supported?
+  [class : TcSpmdClass]
+  [ty : AstType]) : bool
+  (if (tc-spmd-varying? class)
+    (tc-spmd-lane-type-supported? ty)
+    true))
+
+(define (tc-spmd-match-pattern-binding-diagnostic [ty : AstType]) : String
+  (string-append
+    "typecheck: foreach varying match pattern binding type is not supported: "
+    (tc-type-render (tc-type-strip-region ty))))
+
+(define (tc-spmd-match-bind-pattern-names
+  [arm-env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [names : TcStringList]
+  [class : TcSpmdClass]) : ResultTcSpmdEnv
+  (match names
+    [(TcStringNil) (OkTcSpmdEnv spmd-env)]
+    [(TcStringCons name rest)
+      (match (tc-lookup arm-env name)
+        [(OkTcType ty)
+          (if (tc-spmd-match-pattern-binding-supported? class ty)
+            (tc-spmd-match-bind-pattern-names
+              arm-env
+              (tc-spmd-env-bind spmd-env name ty class TcSpmdLocal)
+              (box-get rest)
+              class)
+            (ErrTcSpmdEnv (tc-spmd-match-pattern-binding-diagnostic ty)))]
+        [(ErrTcType message) (ErrTcSpmdEnv message)])]))
+
+(define (tc-spmd-masked-if-match-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrut-ty : AstType]
+  [scrut-class : TcSpmdClass]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (match arms
+    [(AstMatchArmNil) OkTcUnit]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-spmd-match-bind-pattern-names
+                    arm-env
+                    spmd-env
+                    (tc-pattern-add-bound-names pattern TcStringNil)
+                    scrut-class)
+                    [(OkTcSpmdEnv arm-spmd-env)
+                      (match (tc-spmd-masked-if-expr
+                        ctx
+                        arm-env
+                        arm-spmd-env
+                        body)
+                        [(OkTcUnit)
+                          (tc-spmd-masked-if-match-arms
+                            ctx
+                            env
+                            spmd-env
+                            scrut-ty
+                            scrut-class
+                            rest)]
+                        [(ErrTcUnit message) (ErrTcUnit message)])]
+                    [(ErrTcSpmdEnv message) (ErrTcUnit message)])]
+                [(ErrTcEnv message) (ErrTcUnit message)]))]))]))
+
+(define (tc-spmd-masked-if-match
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (match (tc-spmd-masked-if-expr ctx env spmd-env scrutinee)
+    [(OkTcUnit)
+      (match (tc-spmd-expr ctx env spmd-env scrutinee)
+        [(OkTcSpmdExprInfo scrut-info)
+          (match scrut-info
+            [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+              (tc-spmd-masked-if-match-arms
+                ctx
+                env
+                scrut-env
+                scrut-ty
+                scrut-class
+                arms)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
 (define (tc-spmd-match-arms
   [ctx : TcContext]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [scrut-ty : AstType]
+  [scrut-class : TcSpmdClass]
   [arms : AstMatchArmList]
   [class : TcSpmdClass]) : ResultTcSpmdExprListInfo
   (match arms
@@ -17874,32 +17980,41 @@
           [(AstMatchArm pattern body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
+              [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
               (match (tc-bind-match-pattern ctx env scrut-ty pattern)
                 [(OkTcEnv arm-env)
-                  (match (tc-spmd-expr ctx arm-env spmd-env body)
-                    [(OkTcSpmdExprInfo body-info)
-                      (match body-info
-                        [(TcSpmdExprInfo _ body-class body-env)
-                          (match (tc-spmd-match-arms
-                            ctx
-                            env
-                            spmd-env
-                            scrut-ty
-                            rest
-                            (tc-spmd-merge-class class body-class))
-                            [(OkTcSpmdExprListInfo rest-info)
-                              (match rest-info
-                                [(TcSpmdExprListInfo rest-class rest-env)
-                                  (OkTcSpmdExprListInfo
-                                    (TcSpmdExprListInfo
-                                      rest-class
-                                      (tc-spmd-env-merge-classes
-                                        body-env
-                                        rest-env)))])]
-                            [(ErrTcSpmdExprListInfo message)
-                              (ErrTcSpmdExprListInfo message)])])]
-                    [(ErrTcSpmdExprInfo message)
-                      (ErrTcSpmdExprListInfo message)])]
+                  (match (tc-spmd-match-bind-pattern-names
+                    arm-env
+                    spmd-env
+                    (tc-pattern-add-bound-names pattern TcStringNil)
+                    scrut-class)
+                    [(OkTcSpmdEnv arm-spmd-env)
+                      (match (tc-spmd-expr ctx arm-env arm-spmd-env body)
+                        [(OkTcSpmdExprInfo body-info)
+                          (match body-info
+                            [(TcSpmdExprInfo _ body-class body-env)
+                              (match (tc-spmd-match-arms
+                                ctx
+                                env
+                                spmd-env
+                                scrut-ty
+                                scrut-class
+                                rest
+                                (tc-spmd-merge-class class body-class))
+                                [(OkTcSpmdExprListInfo rest-info)
+                                  (match rest-info
+                                    [(TcSpmdExprListInfo rest-class rest-env)
+                                      (OkTcSpmdExprListInfo
+                                        (TcSpmdExprListInfo
+                                          rest-class
+                                          (tc-spmd-env-merge-classes
+                                            (tc-spmd-env-restore body-env mark)
+                                            rest-env)))])]
+                                [(ErrTcSpmdExprListInfo message)
+                                  (ErrTcSpmdExprListInfo message)])])]
+                        [(ErrTcSpmdExprInfo message)
+                          (ErrTcSpmdExprListInfo message)])]
+                    [(ErrTcSpmdEnv message) (ErrTcSpmdExprListInfo message)])]
                 [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)]))]))]))
 
 (define (tc-spmd-check-foreach-body-with-env
@@ -18985,24 +19100,25 @@
               [(OkTcSpmdExprInfo scrut-info)
                 (match scrut-info
                   [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
-                    (match (tc-spmd-require-uniform
-                      scrut-class
-                      "typecheck: foreach match scrutinee must be uniform")
-                      [(OkTcUnit)
-                        (match (tc-spmd-match-arms
-                          ctx
-                          env
-                          scrut-env
-                          scrut-ty
-                          arms
-                          TcSpmdUniform)
-                          [(OkTcSpmdExprListInfo arms-info)
-                            (match arms-info
-                              [(TcSpmdExprListInfo arms-class arms-env)
-                                (tc-spmd-finish expr-ty arms-class arms-env)])]
-                          [(ErrTcSpmdExprListInfo message)
-                            (ErrTcSpmdExprInfo message)])]
-                      [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                    (let
+                      [initial-class : TcSpmdClass
+                        (match (tc-type-strip-region expr-ty)
+                          [(AstTyUnit) TcSpmdUniform]
+                          [_ scrut-class])]
+                      (match (tc-spmd-match-arms
+                        ctx
+                        env
+                        scrut-env
+                        scrut-ty
+                        scrut-class
+                        arms
+                        initial-class)
+                        [(OkTcSpmdExprListInfo arms-info)
+                          (match arms-info
+                            [(TcSpmdExprListInfo arms-class arms-env)
+                              (tc-spmd-finish expr-ty arms-class arms-env)])]
+                        [(ErrTcSpmdExprListInfo message)
+                          (ErrTcSpmdExprInfo message)]))])]
               [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)

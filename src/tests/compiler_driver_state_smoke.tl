@@ -934,25 +934,37 @@
 
 (define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
   (let
-    [state-a : CompilerDriverState (compiler-driver-state-new)]
-    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
     (begin
+      (compiler-load-session-cache-disable-for-test!)
       (compiler-driver-state-reset-file-state! state-a)
-      (match (lower-compiler-source (compiler-lower-make-array-source))
-        [(OkCompilerLower program spans)
-          (let
-            [lowered : ResultCompilerDriverLowered
-              (compiler-driver-lowered-from-active-pools program spans)]
-            (begin
-              (compiler-driver-state-capture-session-floors! state-a)
-              (compiler-driver-state-reset-file-state! state-b)
-              (ty-node-push (AstTyBool))
-              (ty-node-push (AstTyChar))
-              (compiler-driver-state-capture-session-floors! state-b)
-              (let
-                [emitted-ok : bool
+      (let
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-escaping-with-state
+            state-a
+            "tests/integration/calc.tl"
+            (BackendTargetLinux)
+            roots
+            (BackendModeScalar)
+            (compiler-driver-target-cfgs
+              (BackendTargetLinux)
+              (compiler-cfg-empty)))]
+        (match lowered
+          [(OkCompilerDriverLowered _ _ pools-a)
+            (let
+              [pools-b : AstNodePoolContext
+                (compiler-driver-state-pool-context state-b)]
+              (begin
+                (compiler-driver-state-reset-file-state! state-b)
+                (ast-node-pool-context-type-push pools-b (AstTyBool))
+                (ast-node-pool-context-type-push pools-b (AstTyChar))
+                (ast-node-pool-context-install! pools-b)
+                (and
+                  (> (ast-node-pool-context-type-len pools-a) 0)
                   (match (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-                    "<state-smoke>"
+                    "tests/integration/calc.tl"
                     lowered
                     (BackendTargetLinux)
                     true
@@ -962,13 +974,10 @@
                     false)
                     [(OkCompilerDriver asm)
                       (and
-                        (compiler-backend-string-contains? asm "tl_alloc")
+                        (compiler-backend-string-contains? asm "calc")
                         (compiler-backend-string-contains? asm "main"))]
-                    [(ErrCompilerDriver _) false])]
-                (begin
-                  (compiler-driver-state-reset-file-state! state-a)
-                  emitted-ok))))]
-        [(ErrCompilerLower _) false]))))
+                    [(ErrCompilerDriver _) false]))))]
+          [(ErrCompilerDriverLowered _) false])))))
 
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
@@ -990,7 +999,7 @@
             (compiler-driver-target-cfgs
               (BackendTargetLinux)
               (compiler-cfg-empty)))
-            [(OkCompilerDriverLowered _ _ _ _) true]
+            [(OkCompilerDriverLowered _ _ _) true]
             [(ErrCompilerDriverLowered _) false])]
         (begin
           (compiler-driver-state-capture-session-floors! state)

@@ -328,9 +328,11 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   #3290 provides an allocation-free TLS access design.
 - **Core ABI / entry / primitive helpers:** `tl_memcpy` is the backend block-copy
   primitive itself and remains core until source code can express an equal or
-  better overlap-safe copy primitive. Windows `__chkstk` is required by the
-  MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start` are
-  the freestanding entry bootstrap: they build the initial argv block from
+  better overlap-safe copy primitive. `tl_memchr` is the allocation-free byte
+  search primitive used by borrowed string/byte scans until source code can
+  express equally efficient raw byte search. Windows `__chkstk` is required by
+  the MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start`
+  are the freestanding entry bootstrap: they build the initial argv block from
   `GetCommandLineA`, clear the TEB current-arena slot, call `main`, and exit via
   `ExitProcess`.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
@@ -420,7 +422,7 @@ owned stdlib imports keep the compatibility wrappers.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
-| `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
+| `is-char-whitespace`, `char-eq`, `string-index-of-byte`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-append`, `string-concat`, `string-copy`, `substring`, `string-slice`, `string-concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string-concat-all` is the packed-array target for long `str-cat` expansions and still consumes an owned `(Array String)` pack. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |

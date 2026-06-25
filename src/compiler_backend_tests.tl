@@ -7841,6 +7841,7 @@
       plan
       "tl_thread_entry_ptr")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memcpy")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_memchr")
     (compiler-backend-runtime-helper-owner-core-ok? "__chkstk")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_setup_argv")
     (compiler-backend-runtime-helper-owner-core-ok? "_tl_start")))
@@ -8177,6 +8178,26 @@
       (compiler-backend-runtime-atomic-functions (BackendTargetWindows))
       "")))
 
+(define (compiler-backend-runtime-memchr-functions-ok?) : bool
+  (let
+    [linux : String
+      (compiler-backend-runtime-memchr-functions (BackendTargetLinux))]
+    [windows : String
+      (compiler-backend-runtime-memchr-functions (BackendTargetWindows))]
+    (and
+      (backend-and4
+        (compiler-backend-string-contains? linux "    .globl tl_memchr\n")
+        (compiler-backend-string-contains? linux "tl_memchr:\n")
+        (compiler-backend-string-contains? linux "    cmpb %dl, (%rdi,%rax)\n")
+        (compiler-backend-string-contains? linux "    movq $-1, %rax\n"))
+      (backend-and4
+        (compiler-backend-string-contains? windows "    .globl tl_memchr\n")
+        (compiler-backend-string-contains? windows "tl_memchr:\n")
+        (compiler-backend-string-contains?
+          windows
+          "    cmpb %r8b, (%rcx,%rax)\n")
+        (compiler-backend-string-contains? windows "    movq $-1, %rax\n")))))
+
 (define (compiler-backend-runtime-global-symbol-ok?
   [asm : String]
   [name : String]) : bool
@@ -8186,14 +8207,15 @@
   (and
     (backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_memcpy")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_memchr")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_current")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_set")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_poison_enable")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total"))
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy"))
     (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_live")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_peak")
       (compiler-backend-runtime-global-symbol-ok?
@@ -8202,12 +8224,11 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_alloc")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset")
-      true
       true)))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 15)
+    (= (compiler-backend-string-count asm "    .globl ") 16)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -8216,7 +8237,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 18)
+    (= (compiler-backend-string-count asm "    .globl ") 19)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -12166,6 +12187,7 @@
         (compiler-backend-unused-str-view-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-atomic-functions-removed-ok?)
+        (compiler-backend-runtime-memchr-functions-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)
         (compiler-backend-runtime-tls-wrapper-asm-ok?)
         (compiler-backend-runtime-global-inventory-ok?)

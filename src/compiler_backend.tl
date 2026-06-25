@@ -15,6 +15,14 @@
 (import "../stdlib/str_cat.tl")
 
 (cfg
+  feature-tl-memchr
+  (unsafe
+    (extern (compiler-backend-runtime-index-of-byte
+      [ptr : (Ptr u8)]
+      [len : i64]
+      [byte : u8]) : i64 (:symbol "tl_memchr"))))
+
+(cfg
   compile-profile
   (define compiler-backend-profile-start-ms : i64
     0))
@@ -4242,11 +4250,11 @@
     (let
       [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
       (and (>= name-id 0) (compiler-builtin-backend-fixed-fault-id? name-id)))
-    ;; #2386: tl_memcpy is emitted unconditionally (see
-    ;; compiler-backend-runtime-memcpy-functions); calls to it use the raw symbol,
-    ;; not the user-mangled _tl_ name. Main's intern-id fault set (#2529) does not
-    ;; include it (it is a copy helper, not a fault), so keep an explicit check.
-    (string-eq name "tl_memcpy")))
+    ;; #2386/#3396: primitive copy/search helpers are emitted unconditionally;
+    ;; calls to them use raw symbols, not user-mangled _tl_ names. Main's
+    ;; intern-id fault set (#2529) does not include them, so keep explicit checks.
+    (string-eq name "tl_memcpy")
+    (string-eq name "tl_memchr")))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -24219,6 +24227,7 @@
 (define (compiler-backend-runtime-helper-static-owner [name : String]) : CompilerBackendRuntimeHelperOwner
   (cond
     [(string-eq name "tl_memcpy") (BackendRuntimeOwnerCore)]
+    [(string-eq name "tl_memchr") (BackendRuntimeOwnerCore)]
     [(string-eq name "__chkstk") (BackendRuntimeOwnerCore)]
     [(string-eq name "tl_setup_argv") (BackendRuntimeOwnerCore)]
     [(string-eq name "_tl_start") (BackendRuntimeOwnerCore)]
@@ -26932,6 +26941,48 @@ tl_memcpy:
     ret
 "))
 
+;; #3396: byte-search helper used by borrowed string/bytes scanners. Always
+;; emitted alongside tl_memcpy. Linux SysV args rdi=ptr, rsi=len, dl=byte.
+;; Windows x64 args rcx=ptr, rdx=len, r8b=byte. Return the zero-based offset in
+;; rax or -1 when absent. All clobbered registers are caller-saved on both ABIs.
+(define (compiler-backend-runtime-memchr-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_memchr
+tl_memchr:
+    testq %rdx, %rdx
+    jle .Ltl_memchr_not_found
+    movzbl %r8b, %r8d
+    xorq %rax, %rax
+.Ltl_memchr_loop:
+    cmpb %r8b, (%rcx,%rax)
+    je .Ltl_memchr_found
+    incq %rax
+    cmpq %rdx, %rax
+    jl .Ltl_memchr_loop
+.Ltl_memchr_not_found:
+    movq $-1, %rax
+.Ltl_memchr_found:
+    ret
+"
+    "    .globl tl_memchr
+tl_memchr:
+    testq %rsi, %rsi
+    jle .Ltl_memchr_not_found
+    movzbl %dl, %edx
+    xorq %rax, %rax
+.Ltl_memchr_loop:
+    cmpb %dl, (%rdi,%rax)
+    je .Ltl_memchr_found
+    incq %rax
+    cmpq %rsi, %rax
+    jl .Ltl_memchr_loop
+.Ltl_memchr_not_found:
+    movq $-1, %rax
+.Ltl_memchr_found:
+    ret
+"))
+
 (define (compiler-backend-runtime-atomic-functions
   [_target : CompilerBackendTarget]) : String
   "")
@@ -27061,22 +27112,25 @@ tl_memcpy:
         [profile-asm : String
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
+        [memchr-asm : String (compiler-backend-runtime-memchr-functions target)]
         [atomic-asm : String (compiler-backend-runtime-atomic-functions target)]
         [runtime-front-asm : String
           (string-append
             memcpy-asm
             (string-append
-              atomic-asm
+              memchr-asm
               (string-append
-                arena-asm
+                atomic-asm
                 (string-append
-                  profile-asm
-                  (str-cat
-                    alloc-asm
-                    region-mark-asm
-                    region-reset-asm
-                    oob-asm
-                    div-abort-asm)))))]
+                  arena-asm
+                  (string-append
+                    profile-asm
+                    (str-cat
+                      alloc-asm
+                      region-mark-asm
+                      region-reset-asm
+                      oob-asm
+                      div-abort-asm))))))]
         [runtime-string-asm : String
           (string-append
             (str-cat shift-abort-asm substring-asm str-view-asm concat-asm "")
@@ -29762,6 +29816,7 @@ tl_memcpy:
   (let
     [symbols : BackendStringList BackendStringNil]
     (begin
+      (set! symbols (compiler-backend-string-cons "tl_memchr" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
       (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
@@ -29781,7 +29836,8 @@ tl_memcpy:
   (or
     (compiler-backend-plan-provides? plan name)
     (string-eq name "tl_alloc")
-    (string-eq name "tl_memcpy")))
+    (string-eq name "tl_memcpy")
+    (string-eq name "tl_memchr")))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -30551,19 +30607,40 @@ tl_memcpy:
       (ptr-read (ptr-offset data index)))
     : i64))
 
-(define (compiler-backend-peephole-line-end
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [n : i64]) : i64
-  (let
-    [i : i64 start]
-    [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (= (compiler-backend-peephole-byte-at asm-data i) 10)
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-peephole-line-end
+    [asm-data : (Ptr u8)]
+    [start : i64]
+    [n : i64]) : i64
+    (let
+      [offset : i64
+        (if (< start n)
+          (unsafe
+            (compiler-backend-runtime-index-of-byte
+              (ptr-offset asm-data start)
+              (- n start)
+              (cast 10 : u8)))
+          -1)]
+      (if (< offset 0)
+        n
+        (+ start offset)))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-peephole-line-end
+    [asm-data : (Ptr u8)]
+    [start : i64]
+    [n : i64]) : i64
+    (let
+      [i : i64 start]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< i n))
+          (if (= (compiler-backend-peephole-byte-at asm-data i) 10)
+            (set! done true)
+            (set! i (+ i 1))))
+        i))))
 
 (define (compiler-backend-peephole-append-line
   [buf : TextBuf]
@@ -31340,20 +31417,22 @@ tl_memcpy:
     [needle-len : i64 (string-length needle)]
     (if (= needle-len 0)
       start
-      (let
-        [i : i64 start]
-        [found : i64 -1]
-        [done : bool false]
-        (begin
-          (while (not done)
-            (if (<= (+ i needle-len) text-len)
-              (if (compiler-backend-string-prefix-at? text needle i)
-                (begin
-                  (set! found i)
-                  (set! done true))
-                (set! i (+ i 1)))
-              (set! done true)))
-          found)))))
+      (if (= needle-len 1)
+        (string-index-of-byte (& text) start (cast (string-ref needle 0) : u8))
+        (let
+          [i : i64 start]
+          [found : i64 -1]
+          [done : bool false]
+          (begin
+            (while (not done)
+              (if (<= (+ i needle-len) text-len)
+                (if (compiler-backend-string-prefix-at? text needle i)
+                  (begin
+                    (set! found i)
+                    (set! done true))
+                  (set! i (+ i 1)))
+                (set! done true)))
+            found))))))
 
 (define (compiler-backend-string-replace-all
   [text : String]

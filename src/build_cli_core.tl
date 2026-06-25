@@ -1261,11 +1261,11 @@
   [needle : char]
   [i : i64]
   [n : i64]) : i64
-  (if (>= i n)
-    -1
-    (if (= (string-ref s i) needle)
-      i
-      (build-string-index-from s needle (+ i 1) n))))
+  (let
+    [pos : i64 (string-index-of-byte s i (cast needle : u8))]
+    (if (and (>= pos 0) (< pos n))
+      pos
+      -1)))
 
 (define (build-github-dep-relative-root [alias : String]) : String
   (str-cat "target/typelisp/git-deps/" alias))

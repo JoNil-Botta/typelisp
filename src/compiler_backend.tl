@@ -9072,7 +9072,13 @@
   (if (= scale 1)
     (str-cat "    addq " index-reg ", %rax\n")
     (if (or (= scale 2) (= scale 4) (= scale 8))
-      (str-cat "    leaq (%rax," index-reg "," (int->string scale) "), %rax\n" "")
+      (str-cat
+        "    leaq (%rax,"
+        index-reg
+        ","
+        (int->string scale)
+        "), %rax\n"
+        "")
       (string-append
         (str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
         (str-cat "    addq " index-reg ", %rax\n")))))
@@ -9081,17 +9087,28 @@
   (if (= scale 1)
     (str-cat "    addq " index-reg ", %r10\n")
     (if (or (= scale 2) (= scale 4) (= scale 8))
-      (str-cat "    leaq (%r10," index-reg "," (int->string scale) "), %r10\n" "")
+      (str-cat
+        "    leaq (%r10,"
+        index-reg
+        ","
+        (int->string scale)
+        "), %r10\n"
+        "")
       (string-append
         (str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
         (str-cat "    addq " index-reg ", %r10\n")))))
 
-(define (compiler-backend-gep-index-address-r10 [scale : i64] [index-reg : String]) : String
+(define (compiler-backend-gep-index-address-r10
+  [scale : i64]
+  [index-reg : String]) : String
   (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
     (str-cat "(%r10," index-reg "," (int->string scale) ")" "")
     ""))
 
-(define (compiler-backend-gep-index-address [base-reg : String] [scale : i64] [index-reg : String]) : String
+(define (compiler-backend-gep-index-address
+  [base-reg : String]
+  [scale : i64]
+  [index-reg : String]) : String
   (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
     (str-cat "(" base-reg "," index-reg "," (int->string scale) ")")
     ""))
@@ -9159,6 +9176,12 @@
     [(OkCompilerBackend base-asm)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
+        [scav-idx : String
+          (compiler-backend-scavenge-reg
+            dst
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")]
         (match (compiler-backend-value-as-i64 offset)
           [(CompilerBackendSomeI64 n)
             (match (compiler-backend-gep-immediate-asm (* n scale))
@@ -9176,7 +9199,7 @@
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   offset
-                  "%r8")
+                  scav-idx)
                   [(OkCompilerBackend offset-asm)
                     (OkCompilerBackend
                       (string-append
@@ -9184,7 +9207,7 @@
                         (string-append
                           offset-asm
                           (string-append
-                            (compiler-backend-gep-index-asm scale "%r8")
+                            (compiler-backend-gep-index-asm scale scav-idx)
                             (compiler-backend-emit-store-var-with-plan
                               assignments
                               dst
@@ -9194,7 +9217,7 @@
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
-              "%r8")
+              scav-idx)
               [(OkCompilerBackend offset-asm)
                 (OkCompilerBackend
                   (string-append
@@ -9202,7 +9225,7 @@
                     (string-append
                       offset-asm
                       (string-append
-                        (compiler-backend-gep-index-asm scale "%r8")
+                        (compiler-backend-gep-index-asm scale scav-idx)
                         (compiler-backend-emit-store-var-with-plan
                           assignments
                           dst
@@ -9390,6 +9413,11 @@
       [(OkCompilerBackend base-asm)
         (let
           [scale : i64 (compiler-backend-type-size elem-ty)]
+          [scav-idx : String
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-binop-scavenge-exclude-build)
+              5
+              "%r8")]
           (match (compiler-backend-value-as-i64 offset)
             [(CompilerBackendSomeI64 n)
               (match (compiler-backend-gep-immediate-r10-asm (* n scale))
@@ -9421,7 +9449,7 @@
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 offset
-                "%r8")
+                scav-idx)
                 [(OkCompilerBackend offset-asm)
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
@@ -9434,7 +9462,9 @@
                           (string-append
                             offset-asm
                             (string-append
-                              (compiler-backend-gep-index-r10-asm scale "%r8")
+                              (compiler-backend-gep-index-r10-asm
+                                scale
+                                scav-idx)
                               (string-append
                                 src-asm
                                 (compiler-backend-emit-copy-bytes-chunks
@@ -9525,10 +9555,16 @@
     [(CompilerBackendNoI64)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
-        [addr : String (compiler-backend-gep-index-address-r10 scale "%r8")]
+        [scav-idx : String
+          (compiler-backend-scavenge-reg
+            dst
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")]
+        [addr : String (compiler-backend-gep-index-address-r10 scale scav-idx)]
         [addr-asm : String
           (if (string-eq addr "")
-            (compiler-backend-gep-index-r10-asm scale "%r8")
+            (compiler-backend-gep-index-r10-asm scale scav-idx)
             "")]
         [load-addr : String
           (if (string-eq addr "")
@@ -9542,7 +9578,7 @@
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
-              "%r8")
+              scav-idx)
               [(OkCompilerBackend offset-asm)
                 (OkCompilerBackend
                   (if (compiler-backend-float-type? load-ty)
@@ -9789,28 +9825,33 @@
     [(CompilerBackendNoI64)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
+        [scav-idx : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")]
         (match (compiler-backend-emit-address-base-with-avoid
           assignments
           base
           "%r10"
-          "%r8")
+          scav-idx)
           [(OkCompilerBackendAddressBase base-plan)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
-              "%r8")
+              scav-idx)
               [(OkCompilerBackend offset-asm)
                 (let
                   [base-reg : String (struct-get base-plan reg)]
                   [addr : String
-                    (compiler-backend-gep-index-address base-reg scale "%r8")]
+                    (compiler-backend-gep-index-address base-reg scale scav-idx)]
                   [addr-asm : String
                     (if (string-eq addr "")
                       (str-cat
                         (if (string-eq base-reg "%r10")
                           ""
                           (str-cat "    movq " base-reg ", " "%r10" "\n"))
-                        (compiler-backend-gep-index-r10-asm scale "%r8"))
+                        (compiler-backend-gep-index-r10-asm scale scav-idx))
                       "")]
                   [store-addr : String
                     (if (string-eq addr "")

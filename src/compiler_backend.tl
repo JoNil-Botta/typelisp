@@ -6513,18 +6513,18 @@
       [(= size 4) (- 0 2147483648)]
       [else (- (- 0 9223372036854775807) 1)])))
 
-(define (compiler-backend-div-zero-guard-asm [ty : AstType]) : String
+(define (compiler-backend-div-zero-guard-asm [ty : AstType] [divisor-reg : String]) : String
   (let
-    [rhs : String (compiler-backend-sized-reg "%r8" ty)]
+    [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
     (string-append
       (compiler-backend-binop-reg-asm "test" ty rhs rhs)
       "    jne 1f\n    call tl_div_abort\n1:\n")))
 
-(define (compiler-backend-div-overflow-guard-asm [ty : AstType]) : String
+(define (compiler-backend-div-overflow-guard-asm [ty : AstType] [divisor-reg : String]) : String
   (if (compiler-backend-type-signed? ty)
     (let
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
-      [rhs : String (compiler-backend-sized-reg "%r8" ty)]
+      [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
       [min-reg : String (compiler-backend-sized-reg "%r10" ty)]
       [neg-one-reg : String (compiler-backend-sized-reg "%r11" ty)]
       (string-append
@@ -6542,57 +6542,60 @@
                 "    jne 1f\n    call tl_div_abort\n1:\n"))))))
     ""))
 
-(define (compiler-backend-divmod-guard-asm [ty : AstType]) : String
+(define (compiler-backend-divmod-guard-asm [ty : AstType] [divisor-reg : String]) : String
   (str-cat
-    (compiler-backend-div-zero-guard-asm ty)
-    (compiler-backend-div-overflow-guard-asm ty)))
+    (compiler-backend-div-zero-guard-asm ty divisor-reg)
+    (compiler-backend-div-overflow-guard-asm ty divisor-reg)))
 
 (define (compiler-backend-binop-divmod-core-asm
   [ty : AstType]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [divisor-reg : String]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
+    [divisor : String (compiler-backend-sized-reg divisor-reg ty)]
     (cond
       [(= size 1)
         (str-cat
           (if signed
-            "    cbw\n    idivb %r8b\n"
-            "    andw $0x00ff, %ax\n    divb %r8b\n")
+            (str-cat "    cbw\n    idivb " divisor "\n")
+            (str-cat "    andw $0x00ff, %ax\n    divb " divisor "\n"))
           (if want-remainder
             "    movb %ah, %al\n"
             ""))]
       [(= size 2)
         (str-cat
           (if signed
-            "    cwd\n    idivw %r8w\n"
-            "    xorw %dx, %dx\n    divw %r8w\n")
+            (str-cat "    cwd\n    idivw " divisor "\n")
+            (str-cat "    xorw %dx, %dx\n    divw " divisor "\n"))
           (if want-remainder
             "    movw %dx, %ax\n"
             ""))]
       [(= size 4)
         (str-cat
           (if signed
-            "    cdq\n    idivl %r8d\n"
-            "    xorl %edx, %edx\n    divl %r8d\n")
+            (str-cat "    cdq\n    idivl " divisor "\n")
+            (str-cat "    xorl %edx, %edx\n    divl " divisor "\n"))
           (if want-remainder
             "    movl %edx, %eax\n"
             ""))]
       [else
         (str-cat
           (if signed
-            "    cqto\n    idivq %r8\n"
-            "    xorq %rdx, %rdx\n    divq %r8\n")
+            (str-cat "    cqto\n    idivq " divisor "\n")
+            (str-cat "    xorq %rdx, %rdx\n    divq " divisor "\n"))
           (if want-remainder
             "    movq %rdx, %rax\n"
             ""))])))
 
 (define (compiler-backend-binop-divmod-asm
   [ty : AstType]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [divisor-reg : String]) : String
   (str-cat
-    (compiler-backend-divmod-guard-asm ty)
-    (compiler-backend-binop-divmod-core-asm ty want-remainder)))
+    (compiler-backend-divmod-guard-asm ty divisor-reg)
+    (compiler-backend-binop-divmod-core-asm ty want-remainder divisor-reg)))
 
 (define (compiler-backend-emit-load-u64-absolute [n : u64] [reg : String]) : String
   (compiler-backend-emit-load-i64-absolute (cast n : i64) reg))
@@ -7004,7 +7007,7 @@
         (compiler-backend-normalized-signed-immediate n ty)
         (cast (compiler-backend-normalized-unsigned-immediate n ty) : i64))
       "%r8")
-    (compiler-backend-binop-divmod-core-asm ty want-remainder)))
+    (compiler-backend-binop-divmod-core-asm ty want-remainder "%r8")))
 
 (define (compiler-backend-constant-divmod-asm
   [n : i64]
@@ -7136,10 +7139,10 @@
         (if (= (compiler-backend-type-size ty) 1)
           "    imulq %r8, %rax\n"
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
-      [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false)]
-      [(IrBinMod) (compiler-backend-binop-divmod-asm ty true)]
-      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false)]
-      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true)]
+      [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false "%r8")]
+      [(IrBinMod) (compiler-backend-binop-divmod-asm ty true "%r8")]
+      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false "%r8")]
+      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true "%r8")]
       [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
       [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
       [(IrBinLt)

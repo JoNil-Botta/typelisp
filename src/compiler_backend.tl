@@ -1,5 +1,6 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
 (cfg compile-profile (import stdlib.io))
+(cfg compile-profile (import stdlib.profile))
 (import "compiler_lower.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
@@ -48,20 +49,20 @@
   compile-profile
   (define (compiler-backend-profile-start) : unit
     (begin
-      (set! compiler-backend-profile-start-ms (profile-now-ms))
-      (set! compiler-backend-profile-start-total (profile-alloc-total))
-      (set! compiler-backend-profile-start-live (profile-alloc-live))
-      (profile-alloc-reset-peak))))
+      (set! compiler-backend-profile-start-ms (profile.profile-now-ms))
+      (set! compiler-backend-profile-start-total (profile.profile-alloc-total))
+      (set! compiler-backend-profile-start-live (profile.profile-alloc-live))
+      (profile.profile-alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-backend-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile-now-ms)]
-      [end-total : i64 (profile-alloc-total)]
-      [end-live : i64 (profile-alloc-live)]
+      [end-ms : i64 (profile.profile-now-ms)]
+      [end-total : i64 (profile.profile-alloc-total)]
+      [end-live : i64 (profile.profile-alloc-live)]
       [peak-delta : i64
-        (- (profile-alloc-peak) compiler-backend-profile-start-live)]
+        (- (profile.profile-alloc-peak) compiler-backend-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|backend."
@@ -83,7 +84,7 @@
 (cfg
   compile-profile
   (define (compiler-backend-profile-detail-start) : unit
-    (set! compiler-backend-profile-detail-start-ms (profile-now-ms))))
+    (set! compiler-backend-profile-detail-start-ms (profile.profile-now-ms))))
 
 (cfg
   compile-profile
@@ -92,7 +93,7 @@
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile-now-ms) compiler-backend-profile-detail-start-ms)]
+        (- (profile.profile-now-ms) compiler-backend-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append

@@ -21,7 +21,7 @@
 (cfg
   compile-profile
   (define (compiler-check-profile-start) : unit
-    (set! compiler-check-profile-start-ms (profile-now-ms))))
+    (set! compiler-check-profile-start-ms (profile.profile-now-ms))))
 
 (cfg
   compile-profile
@@ -35,7 +35,7 @@
             "|"
             (string.string-append
               (string.int->string
-                (- (profile-now-ms) compiler-check-profile-start-ms))
+                (- (profile.profile-now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : SymI64Env

@@ -20,6 +20,7 @@
 ;;
 ;; Out of scope: broad aggregate/String/array IR optimization.
 (cfg compile-profile (import stdlib.io))
+(cfg compile-profile (import stdlib.profile))
 (import "compiler_ir_types.tl")
 (import "compiler_float.tl")
 (import stdlib.hash)
@@ -130,20 +131,20 @@
   compile-profile
   (define (compiler-opt-profile-start) : unit
     (begin
-      (set! compiler-opt-profile-start-ms (profile-now-ms))
-      (set! compiler-opt-profile-start-total (profile-alloc-total))
-      (set! compiler-opt-profile-start-live (profile-alloc-live))
-      (profile-alloc-reset-peak))))
+      (set! compiler-opt-profile-start-ms (profile.profile-now-ms))
+      (set! compiler-opt-profile-start-total (profile.profile-alloc-total))
+      (set! compiler-opt-profile-start-live (profile.profile-alloc-live))
+      (profile.profile-alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-opt-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile-now-ms)]
-      [end-total : i64 (profile-alloc-total)]
-      [end-live : i64 (profile-alloc-live)]
+      [end-ms : i64 (profile.profile-now-ms)]
+      [end-total : i64 (profile.profile-alloc-total)]
+      [end-live : i64 (profile.profile-alloc-live)]
       [peak-delta : i64
-        (- (profile-alloc-peak) compiler-opt-profile-start-live)]
+        (- (profile.profile-alloc-peak) compiler-opt-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|optimize."
@@ -165,13 +166,14 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-detail-start) : unit
-    (set! compiler-opt-profile-detail-start-ms (profile-now-ms))))
+    (set! compiler-opt-profile-detail-start-ms (profile.profile-now-ms))))
 
 (cfg
   compile-profile
   (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
     (let
-      [elapsed : i64 (- (profile-now-ms) compiler-opt-profile-detail-start-ms)]
+      [elapsed : i64
+        (- (profile.profile-now-ms) compiler-opt-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -192,7 +194,7 @@
     [name : String]
     [start-ms : i64]) : unit
     (let
-      [elapsed : i64 (- (profile-now-ms) start-ms)]
+      [elapsed : i64 (- (profile.profile-now-ms) start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -19463,7 +19465,7 @@
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (let
-    [_t-tailrec : i64 (cfg compile-profile (profile-now-ms) 0)]
+    [_t-tailrec : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
     [tailrec : CompilerIrFunction (opt-tailrec-function func)]
     (match tailrec
       [(IrFunction name params ret-ty frame blocks)
@@ -19475,7 +19477,7 @@
               compile-profile
               (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
-          [_t-fold : i64 (cfg compile-profile (profile-now-ms) 0)]
+          [_t-fold : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
           [folded : CompilerIrBlockList (optimize-block-list blocks)]
           [_p-fold : unit
             (cfg
@@ -19486,7 +19488,7 @@
             (if (struct-get summaries enabled)
               (opt-loop-bce-blocks summaries params folded)
               folded)]
-          [_t-promote : i64 (cfg compile-profile (profile-now-ms) 0)]
+          [_t-promote : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
           [promoted : CompilerIrFunction
             (opt-aggregate-stack-promote-function
               (IrFunction name params ret-ty frame loop-bce))]
@@ -19501,7 +19503,7 @@
               ;; blocks/frame (it leaves the frame unchanged), so the slots stay
               ;; consistent with the later #1530 global-GVN pass below.
               (let
-                [_t-sroa : i64 (cfg compile-profile (profile-now-ms) 0)]
+                [_t-sroa : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
                 [sroa : CompilerIrFunction
                   (opt-aggregate-sroa-function
                     (IrFunction
@@ -19531,7 +19533,7 @@
                           (compiler-ir-block-list-count sroa-blocks)
                           (opt-heavy-pass-block-limit))]
                       [_t-rotation : i64
-                        (cfg compile-profile (profile-now-ms) 0)]
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [rotated : CompilerIrFunction
                         (if run-heavy?
                           (opt-loop-rotation-function
@@ -19558,7 +19560,8 @@
                       ;; Scalar SSA construction feeds the verifier-gated
                       ;; dominator passes below. Unsupported cases fall back to the
                       ;; original function, so the optimization path remains safe.
-                      [_t-ssa : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-ssa : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-ssa-construct-function-with-context-result
@@ -19578,7 +19581,8 @@
                       [ssa-frame : i64 (opt-function-frame ssa)]
                       [ssa-blocks : CompilerIrBlockList
                         (opt-function-blocks ssa)]
-                      [_t-gvn : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-gvn : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [gvn : CompilerIrBlockList
                         (if run-heavy?
                           (opt-gvn-blocks-with-context
@@ -19591,7 +19595,8 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
                           unit)]
-                      [_t-sccp : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-sccp : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (if run-heavy?
                           (opt-sccp-blocks-with-context-result
@@ -19616,7 +19621,8 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "sccp" name _t-sccp)
                           unit)]
-                      [_t-cfg2 : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-cfg2 : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
                         (if run-heavy?
                           (opt-cfg-simplify-blocks-with-context-result
@@ -19639,7 +19645,8 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
                           unit)]
-                      [_t-switch : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-switch : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [switch-input : CompilerIrFunction
                         (IrFunction name params ret-ty ssa-frame cfg)]
                       [switch-result : OptFunctionPassResult
@@ -19669,7 +19676,7 @@
                             _t-switch)
                           unit)]
                       [_t-preheaders : i64
-                        (cfg compile-profile (profile-now-ms) 0)]
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
                       ;; the preheaders -> scratch_reset -> licm -> induction -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
@@ -19714,7 +19721,7 @@
                             _t-preheaders)
                           unit)]
                       [_t-scratch-reset : i64
-                        (cfg compile-profile (profile-now-ms) 0)]
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-scratch-reset-function-with-context-result
@@ -19735,7 +19742,8 @@
                             name
                             _t-scratch-reset)
                           unit)]
-                      [_t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-licm : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-licm-function-with-context-result
@@ -19754,7 +19762,7 @@
                           (compiler-opt-profile-pass-finish "licm" name _t-licm)
                           unit)]
                       [_t-induction : i64
-                        (cfg compile-profile (profile-now-ms) 0)]
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-induction-function-with-context-result
@@ -19784,7 +19792,8 @@
                       ;; consistent with the promoted blocks. It reuses the
                       ;; context induction handed back (#2874): induction's output
                       ;; blocks are global_gvn's input blocks unchanged.
-                      [_t-global : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-global : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [global : CompilerIrFunction
                         (if run-heavy?
                           (opt-global-value-number-function-with-context
@@ -19823,7 +19832,7 @@
                           summaries
                           global-blocks)]
                       [_t-divrem-safety : i64
-                        (cfg compile-profile (profile-now-ms) 0)]
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
                         (if run-heavy?
                           (opt-divrem-safety-blocks-with-context
@@ -19839,7 +19848,8 @@
                             name
                             _t-divrem-safety)
                           unit)]
-                      [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
+                      [_t-dce : i64
+                        (cfg compile-profile (profile.profile-now-ms) 0)]
                       [used : (Array i64)
                         (opt-collect-blocks-uses-array
                           induction-frame
@@ -19865,7 +19875,7 @@
   (match func
     [(IrFunction name params ret-ty frame blocks)
       (let
-        [_t-fold : i64 (cfg compile-profile (profile-now-ms) 0)]
+        [_t-fold : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         [_p-fold : unit
           (cfg
@@ -19876,7 +19886,7 @@
           (if (struct-get summaries enabled)
             (opt-loop-bce-blocks summaries params folded)
             folded)]
-        [_t-promote : i64 (cfg compile-profile (profile-now-ms) 0)]
+        [_t-promote : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
         [promoted : CompilerIrFunction
           (opt-aggregate-stack-promote-function
             (IrFunction name params ret-ty frame loop-bce))]
@@ -19888,7 +19898,7 @@
         (match promoted
           [(IrFunction _ _ _ promoted-frame promoted-blocks)
             (let
-              [_t-cfg : i64 (cfg compile-profile (profile-now-ms) 0)]
+              [_t-cfg : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
               [_p-cfg : unit
@@ -19896,7 +19906,7 @@
                   compile-profile
                   (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
-              [_t-dce : i64 (cfg compile-profile (profile-now-ms) 0)]
+              [_t-dce : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
               [used : (Array i64)
                 (opt-collect-blocks-uses-array promoted-frame cfg)]
               [dced : CompilerIrBlockList (opt-dce-block-list-array used cfg)]

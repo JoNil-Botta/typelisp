@@ -14,6 +14,7 @@
 (import "read.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(cfg compile-profile (import stdlib.profile))
 
 ;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -833,19 +834,20 @@
   compile-profile
   (define (compiler-tc-profile-start) : unit
     (begin
-      (set! compiler-tc-profile-start-ms (profile-now-ms))
-      (set! compiler-tc-profile-start-total (profile-alloc-total))
-      (set! compiler-tc-profile-start-live (profile-alloc-live))
-      (profile-alloc-reset-peak))))
+      (set! compiler-tc-profile-start-ms (profile.profile-now-ms))
+      (set! compiler-tc-profile-start-total (profile.profile-alloc-total))
+      (set! compiler-tc-profile-start-live (profile.profile-alloc-live))
+      (profile.profile-alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-tc-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile-now-ms)]
-      [end-total : i64 (profile-alloc-total)]
-      [end-live : i64 (profile-alloc-live)]
-      [peak-delta : i64 (- (profile-alloc-peak) compiler-tc-profile-start-live)]
+      [end-ms : i64 (profile.profile-now-ms)]
+      [end-total : i64 (profile.profile-alloc-total)]
+      [end-live : i64 (profile.profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile.profile-alloc-peak) compiler-tc-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|typecheck."
@@ -883,7 +885,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-start) : unit
-    (set! compiler-tc-macro-profile-start-ms (profile-now-ms))))
+    (set! compiler-tc-macro-profile-start-ms (profile.profile-now-ms))))
 
 (cfg
   compile-profile
@@ -950,7 +952,7 @@
     (compiler-tc-macro-profile-record
       macro-name
       (compiler-tc-macro-profile-arg-count args)
-      (- (profile-now-ms) compiler-tc-macro-profile-start-ms))))
+      (- (profile.profile-now-ms) compiler-tc-macro-profile-start-ms))))
 
 (cfg
   compile-profile
@@ -1247,9 +1249,13 @@
   compile-profile
   (define (compiler-tc-decl-profile-start-section) : unit
     (begin
-      (set! compiler-tc-decl-profile-start-ms (profile-now-ms))
-      (set! compiler-tc-decl-profile-section-start-alloc (profile-alloc-total))
-      (set! compiler-tc-decl-profile-section-start-live (profile-alloc-live)))))
+      (set! compiler-tc-decl-profile-start-ms (profile.profile-now-ms))
+      (set!
+        compiler-tc-decl-profile-section-start-alloc
+        (profile.profile-alloc-total))
+      (set!
+        compiler-tc-decl-profile-section-start-live
+        (profile.profile-alloc-live)))))
 
 (cfg
   compile-profile
@@ -1259,17 +1265,21 @@
         compiler-tc-decl-profile-local-env-ms
         (+
           compiler-tc-decl-profile-local-env-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-local-env-alloc
         (+
           compiler-tc-decl-profile-local-env-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-local-env-live
         (+
           compiler-tc-decl-profile-local-env-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1279,17 +1289,21 @@
         compiler-tc-decl-profile-arena-ms
         (+
           compiler-tc-decl-profile-arena-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-arena-alloc
         (+
           compiler-tc-decl-profile-arena-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-arena-live
         (+
           compiler-tc-decl-profile-arena-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1299,17 +1313,21 @@
         compiler-tc-decl-profile-def-expr-ms
         (+
           compiler-tc-decl-profile-def-expr-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-def-expr-alloc
         (+
           compiler-tc-decl-profile-def-expr-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-def-expr-live
         (+
           compiler-tc-decl-profile-def-expr-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1319,27 +1337,36 @@
         compiler-tc-decl-profile-fn-expr-ms
         (+
           compiler-tc-decl-profile-fn-expr-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-fn-expr-alloc
         (+
           compiler-tc-decl-profile-fn-expr-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-fn-expr-live
         (+
           compiler-tc-decl-profile-fn-expr-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-fn-expr-named [name : String]) : unit
     (let
-      [elapsed : i64 (- (profile-now-ms) compiler-tc-decl-profile-start-ms)]
+      [elapsed : i64
+        (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)]
       [alloc-delta : i64
-        (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)]
+        (-
+          (profile.profile-alloc-total)
+          compiler-tc-decl-profile-section-start-alloc)]
       [live-delta : i64
-        (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live)]
+        (-
+          (profile.profile-alloc-live)
+          compiler-tc-decl-profile-section-start-live)]
       (begin
         (set!
           compiler-tc-decl-profile-fn-expr-ms
@@ -1375,17 +1402,21 @@
         compiler-tc-decl-profile-fn-move-ms
         (+
           compiler-tc-decl-profile-fn-move-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-fn-move-alloc
         (+
           compiler-tc-decl-profile-fn-move-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-fn-move-live
         (+
           compiler-tc-decl-profile-fn-move-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1395,17 +1426,21 @@
         compiler-tc-decl-profile-macro-ms
         (+
           compiler-tc-decl-profile-macro-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-macro-alloc
         (+
           compiler-tc-decl-profile-macro-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-macro-live
         (+
           compiler-tc-decl-profile-macro-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1415,17 +1450,21 @@
         compiler-tc-decl-profile-extern-ms
         (+
           compiler-tc-decl-profile-extern-ms
-          (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-extern-alloc
         (+
           compiler-tc-decl-profile-extern-alloc
-          (- (profile-alloc-total) compiler-tc-decl-profile-section-start-alloc)))
+          (-
+            (profile.profile-alloc-total)
+            compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-extern-live
         (+
           compiler-tc-decl-profile-extern-live
-          (- (profile-alloc-live) compiler-tc-decl-profile-section-start-live))))))
+          (-
+            (profile.profile-alloc-live)
+            compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile

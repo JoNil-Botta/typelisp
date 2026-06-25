@@ -349,6 +349,7 @@
           false)))))
 
 ;: Append one non-dot entry name plus a newline to `out`.
+;: Private compatibility builder; `fs-read-dir` returns `String`, not bytes.
 (define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
   (if (stdlib.fs.fs-read-dir-dot-entry? name)
     unit

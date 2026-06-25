@@ -1397,6 +1397,8 @@
       line)))
 
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.
+;: Private Windows environment block builder; `CreateProcessA` consumes only the
+;: final raw byte block, and no growable byte array escapes this module.
 (cfg
   windows
   (define (process-windows-push-cstr [block : (Array u8)] [addr : i64]) : unit

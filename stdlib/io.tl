@@ -1845,6 +1845,7 @@
             (string-from-bytes (io-array-const-ptr buf) offset)))))))
 
 ;: Read one stdin line without the trailing newline.
+;: Private compatibility builder; the API returns `String`, not bytes.
 (define (read-stdin-line) : String
   (let
     [bytes : (Array u8) (make-array u8 0)]

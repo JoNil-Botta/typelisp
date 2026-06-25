@@ -28249,6 +28249,7 @@ tl_memcpy:
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
+;; Private hot object-code fragments keep compatibility byte-array storage.
 (define (compiler-backend-object-push-u8! [out : (Array u8)] [value : i64]) : unit
   (array-push! out (compiler-backend-object-byte value)))
 

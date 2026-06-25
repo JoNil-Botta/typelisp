@@ -7101,24 +7101,25 @@
 (define (compiler-backend-shift-count-valid? [count : i64] [ty : AstType]) : bool
   (and (>= count 0) (< count (compiler-backend-shift-count-width ty))))
 
-(define (compiler-backend-shift-guard-asm [ty : AstType]) : String
+(define (compiler-backend-shift-guard-asm [ty : AstType] [count-reg : String]) : String
   (string-append
-    "    testq %r8, %r8\n    jge 1f\n    call tl_shift_abort\n1:\n"
+    (str-cat "    testq " count-reg ", " count-reg "\n    jge 1f\n    call tl_shift_abort\n1:\n")
     (str-cat
       "    cmpq $"
       (int->string (compiler-backend-shift-count-width ty))
-      ", %r8\n    jb 1f\n    call tl_shift_abort\n1:\n"
+      ", " count-reg "\n    jb 1f\n    call tl_shift_abort\n1:\n"
       ""
       "")))
 
 (define (compiler-backend-binop-shift-asm
   [mnemonic : String]
   [ty : AstType]
-  [lhs : String]) : String
+  [lhs : String]
+  [count-reg : String]) : String
   (string-append
-    (compiler-backend-shift-guard-asm ty)
+    (compiler-backend-shift-guard-asm ty count-reg)
     (string-append
-      "    movq %r8, %rcx\n"
+      (str-cat "    movq " count-reg ", %rcx\n")
       (str-cat
         "    "
         mnemonic
@@ -7127,22 +7128,22 @@
         lhs
         "\n"))))
 
-(define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType]) : String
+(define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType] [rhs-reg : String]) : String
   (let
     [lhs : String (compiler-backend-sized-reg "%rax" ty)]
-    [rhs : String (compiler-backend-sized-reg "%r8" ty)]
+    [rhs : String (compiler-backend-sized-reg rhs-reg ty)]
     [_suffix : String (compiler-backend-int-instruction-suffix ty)]
     (match op
       [(IrBinAdd) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
       [(IrBinSub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
       [(IrBinMul)
         (if (= (compiler-backend-type-size ty) 1)
-          "    imulq %r8, %rax\n"
+          (str-cat "    imulq " rhs-reg ", %rax\n")
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
-      [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false "%r8")]
-      [(IrBinMod) (compiler-backend-binop-divmod-asm ty true "%r8")]
-      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false "%r8")]
-      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true "%r8")]
+      [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false rhs-reg)]
+      [(IrBinMod) (compiler-backend-binop-divmod-asm ty true rhs-reg)]
+      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false rhs-reg)]
+      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true rhs-reg)]
       [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
       [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
       [(IrBinLt)
@@ -7182,14 +7183,15 @@
       [(IrBinBitAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
       [(IrBinBitOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
       [(IrBinBitXor) (compiler-backend-binop-reg-asm "xor" ty rhs lhs)]
-      [(IrBinShl) (compiler-backend-binop-shift-asm "shl" ty lhs)]
+      [(IrBinShl) (compiler-backend-binop-shift-asm "shl" ty lhs rhs-reg)]
       [(IrBinShr)
         (compiler-backend-binop-shift-asm
           (if (compiler-backend-type-signed? ty)
             "sar"
             "shr")
           ty
-          lhs)])))
+          lhs
+          rhs-reg)])))
 
 (define (compiler-backend-binop-test-zero-asm [ty : AstType] [setcc : String]) : String
   (let
@@ -7847,7 +7849,7 @@
                                 (string-append
                                   rhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm op operand-ty)
+                                    (compiler-backend-binop-asm op operand-ty "%r8")
                                     (compiler-backend-emit-store-typed-var-with-plan
                                       assignments
                                       dst
@@ -7889,7 +7891,8 @@
                                       (string-append
                                         (compiler-backend-binop-asm
                                           op
-                                          operand-ty)
+                                          operand-ty
+                                          "%r8")
                                         (compiler-backend-emit-store-typed-var-with-plan
                                           assignments
                                           dst
@@ -7945,7 +7948,8 @@
                                         (string-append
                                           (compiler-backend-binop-asm
                                             op
-                                            operand-ty)
+                                            operand-ty
+                                            "%r8")
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
@@ -8028,7 +8032,7 @@
                       (string-append
                         rhs-asm
                         (string-append
-                          (compiler-backend-binop-asm op operand-ty)
+                          (compiler-backend-binop-asm op operand-ty "%r8")
                           store)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
           [(CompilerBackendNoImmediate)
@@ -8041,7 +8045,7 @@
                   (string-append
                     rhs-asm
                     (string-append
-                      (compiler-backend-binop-asm op operand-ty)
+                      (compiler-backend-binop-asm op operand-ty "%r8")
                       store)))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])))
 
@@ -8228,7 +8232,7 @@
                                 (string-append
                                   rhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm op operand-ty)
+                                    (compiler-backend-binop-asm op operand-ty "%r8")
                                     return-tail))))]
                           [(ErrCompilerBackend message)
                             (ErrCompilerBackend message)])])]
@@ -8244,7 +8248,7 @@
                             (string-append
                               rhs-asm
                               (string-append
-                                (compiler-backend-binop-asm op operand-ty)
+                                (compiler-backend-binop-asm op operand-ty "%r8")
                                 return-tail))))]
                       [(ErrCompilerBackend message)
                         (ErrCompilerBackend message)])])])]

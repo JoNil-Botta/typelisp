@@ -3452,14 +3452,34 @@
 (define (compiler-reg-instr-def-var [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrMov dst _ _) dst]
+    [(IrInstrAlloc dst _) dst]
     [(IrInstrAddrOf dst _) dst]
+    [(IrInstrGep dst _ _ _) dst]
     [(IrInstrLoad dst _ _) dst]
     [(IrInstrCast dst _ _ _) dst]
     [(IrInstrBitcast dst _ _ _) dst]
     [(IrInstrBinOp dst _ _ _ _) dst]
     [(IrInstrUnOp dst _ _ _) dst]
+    [(IrInstrLaneId dst _ _) dst]
+    [(IrInstrSplat dst _ _ _) dst]
+    [(IrInstrVectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) dst])]
     [(IrInstrVectorReduce dst _ _ _ _) dst]
+    [(IrInstrVectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) dst])]
+    [(IrInstrMaskBinOp dst _ _ _ _) dst]
+    [(IrInstrMaskNot dst _ _) dst]
     [(IrInstrMaskReduce dst _ _ _) dst]
+    [(IrInstrSelect payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) dst])]
+    [(IrInstrVectorLoad dst _ _ _ _) dst]
+    [(IrInstrPredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) dst])]
+    [(IrInstrTailMask dst _ _ _) dst]
     [(IrInstrEntryArgc dst) dst]
     [(IrInstrEntryArgv dst) dst]
     [(IrInstrEntryEnvp dst) dst]
@@ -3467,6 +3487,8 @@
     [(IrInstrXgetbv dst _) dst]
     [(IrInstrSyscall dst _) dst]
     [(IrInstrCall dst _ _ _) dst]
+    [(IrInstrCallIndirect dst _ _ _) dst]
+    [(IrInstrCallIndirectC dst _ _ _) dst]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrPack dst _ _) dst]
     [(IrInstrWord dst _ _ _) dst]
@@ -8485,13 +8507,12 @@
       (compiler-reg-function-moves func false)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
-    ;; #2 same-value coalescing: built only on the scalar-opt2 path (the SIMD/AVX
-    ;; path passes an empty array, so compiler-reg-same-value-class? is always
-    ;; false there and that plan stays byte-identical).
-    [sv-parents : (Array i64)
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-same-value-parents func)
-        (make-array i64 0))]
+    ;; #2 same-value overlap coalescing is intentionally disabled in the
+    ;; production scalar path for now: allowing overlapping copy classes made a
+    ;; stage2-built opt2 compiler exhaust its allocator while compiling src/main.tl.
+    ;; Keep the helper/test infrastructure, but pass an empty map so ordinary
+    ;; interference rules decide coalescing.
+    [sv-parents : (Array i64) (make-array i64 0)]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -12212,6 +12233,26 @@
                 IrInstrNil)))))
       IrBlockNil)))
 
+(define (compiler-reg-same-value-multi-def-census-function) : CompilerIrFunction
+  (IrFunction
+    "same_value_multi_def_census"
+    IrParamNil
+    (AstTyI64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 0 (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
 (define (compiler-reg-phi-join-function) : CompilerIrFunction
   (IrFunction
     "phi_join"
@@ -15446,6 +15487,13 @@
       [(CompilerRegNoLocation) true]
       [(CompilerRegSomeLocation _) false])))
 
+(define (compiler-reg-same-value-multi-def-census-ok?) : bool
+  (let
+    [parents : (Array i64)
+      (compiler-reg-function-same-value-parents
+        (compiler-reg-same-value-multi-def-census-function))]
+    (not (compiler-reg-same-value-class? parents 0 1))))
+
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
     [(CompilerRegPlan chain-assignments _ _ _ _)
@@ -15473,7 +15521,8 @@
                         (compiler-reg-coalesce-fixpoint-map-ok?)
                         (compiler-reg-coalesce-interference-reject-ok?)
                         (compiler-reg-coalesce-segmented-map-ok?)
-                        (compiler-reg-coalesce-strict-segmented-reject-ok?))])])])])]))
+                        (compiler-reg-coalesce-strict-segmented-reject-ok?)
+                        (compiler-reg-same-value-multi-def-census-ok?))])])])])]))
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))

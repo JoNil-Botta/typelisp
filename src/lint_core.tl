@@ -670,19 +670,13 @@
 (define (lint-terminal-callee-name? [text : String]) : bool
   (or
     (string.string-eq text "panic")
-    (or
-      (string.string-eq text "error")
-      (or
-        (string.string-eq text "io.panic")
-        (or
-          (string.string-eq text "io.error")
-          (or
-            (string.string-eq text "stdlib.io.panic")
-            (or
-              (string.string-eq text "stdlib.io.error")
-              (or
-                (string.string-eq text "stdlib/io.panic")
-                (string.string-eq text "stdlib/io.error")))))))))
+    (string.string-eq text "error")
+    (string.string-eq text "io.panic")
+    (string.string-eq text "io.error")
+    (string.string-eq text "stdlib.io.panic")
+    (string.string-eq text "stdlib.io.error")
+    (string.string-eq text "stdlib/io.panic")
+    (string.string-eq text "stdlib/io.error")))
 
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr

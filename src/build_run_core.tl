@@ -938,8 +938,8 @@
   [image : CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable? image)
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj) (OkSourceToolString obj)]
-      [(ErrCompilerObjectCoff message) (ErrSourceToolString message)])
+      [(ResultCompilerObjectCoff.Ok obj) (OkSourceToolString obj)]
+      [(ResultCompilerObjectCoff.Err message) (ErrSourceToolString message)])
     (ErrSourceToolString
       (source-tool-windows-direct-object-unavailable-message))))
 

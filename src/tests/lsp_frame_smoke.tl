@@ -9,12 +9,11 @@
     [found : bool false]
     (begin
       (while (< idx (string-vec-len items))
-        (begin
-          (if (string.string-eq (string-vec-get items idx "") needle)
-            (begin
-              (set! found true)
-              (set! idx (string-vec-len items)))
-            (set! idx (+ idx 1)))))
+        (if (string.string-eq (string-vec-get items idx "") needle)
+          (begin
+            (set! found true)
+            (set! idx (string-vec-len items)))
+          (set! idx (+ idx 1))))
       found)))
 
 (define (lsp-completion-smoke-ok?) : bool
@@ -122,9 +121,9 @@
         (let
           [size : i64 (tc-inlay-hints-size)]
           [i : i64 0]
-          [found-idx : i64 -1]
+          [found-ok : bool false]
           (begin
-            (while (and (< i size) (= found-idx -1))
+            (while (and (< i size) (not found-ok))
               (let
                 [hint-line : i64 (tc-inlay-hint-line-at i)]
                 [hint-col : i64 (tc-inlay-hint-col-at i)]
@@ -132,13 +131,11 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set! found-idx i)
+                    (set! found-ok (string-eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (tc-inlay-hints-disable!)
-            (if (= found-idx -1)
-              false
-              (string-eq (tc-inlay-hint-type-at found-idx) "i32"))))))))
+            found-ok))))))
 
 (define (lsp-find-references-smoke-ok?) : bool
   (let

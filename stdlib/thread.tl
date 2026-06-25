@@ -10,10 +10,11 @@
 ;# does not transfer ownership; callers that smuggle addresses through those
 ;# integers remain responsible for synchronization in unsafe code.
 ;#
-;# The `thread-spawn-*` wrappers are the safe task-threading surface. They accept
-;# direct nullary closures whose captures are checked by the structural
-;# thread-safety classifier, consume typed handles on join, and copy current
-;# concrete aggregate results into atomic arenas that span the worker and joiner.
+;# `(thread-handle T)` emits the safe scalar task-threading surface. Generated
+;# modules accept direct nullary closures whose captures are checked by the
+;# structural thread-safety classifier and consume typed handles on join. The
+;# concrete aggregate `thread-spawn-*` wrappers copy current aggregate results
+;# into atomic arenas that span the worker and joiner.
 ;#
 ;# Usage: `(import stdlib.thread)`
 ;#
@@ -44,17 +45,107 @@
   (ThreadJoinOk i64)
   (ThreadJoinErr String))
 
-;: Typed handle returned by `thread-spawn-i64`.
-(defstruct ThreadI64
-  (raw Thread))
-
-;: Typed handle returned by `thread-spawn-bool`.
-(defstruct ThreadBool
-  (raw Thread))
-
-;: Typed handle returned by `thread-spawn-unit`.
-(defstruct ThreadUnit
-  (raw Thread))
+;: Emit a generated typed handle module for scalar task result type `T`.
+;:
+;: Supported result types are `i64`, `bool`, and `unit`. Import each
+;: instantiation with an alias and use module-relative names:
+;: `(import (thread.thread-handle i64) as thread_i64)`.
+(defmacro (thread-handle [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.thread.generated." (type-key T)))]
+    (match (type-key T)
+      ["i64"
+        `(begin
+          (module ,module-name)
+          (import stdlib.thread)
+          (defstruct Handle
+            (raw thread.Thread))
+          (defenum SpawnResult
+            (I64SpawnOk Handle)
+            (I64SpawnErr String))
+          (defenum JoinResult
+            (I64JoinOk i64)
+            (I64JoinErr String))
+          (define (spawn [task : (-> i64)]) : SpawnResult
+            (let
+              [raw-result : thread.ThreadSpawnResult
+                (thread.thread-handle-spawn-i64 task)]
+              (match raw-result
+                [(thread.ThreadSpawnOk _)
+                  (I64SpawnOk
+                    (Handle
+                      (thread.thread-spawn-result-thread-or
+                        raw-result
+                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnErr message) (I64SpawnErr message)])))
+          (define (join [worker : Handle]) : JoinResult
+            (match (thread.thread-join (struct-get worker raw))
+              [(thread.ThreadJoinOk value) (I64JoinOk value)]
+              [(thread.ThreadJoinErr message) (I64JoinErr message)]))
+          (define (join-value-or [result : JoinResult] [fallback : i64]) : i64
+            (match result
+              [(I64JoinOk value) value]
+              [(I64JoinErr _) fallback])))]
+      ["bool"
+        `(begin
+          (module ,module-name)
+          (import stdlib.thread)
+          (defstruct Handle
+            (raw thread.Thread))
+          (defenum SpawnResult
+            (BoolSpawnOk Handle)
+            (BoolSpawnErr String))
+          (defenum JoinResult
+            (BoolJoinOk bool)
+            (BoolJoinErr String))
+          (define (spawn [task : (-> bool)]) : SpawnResult
+            (let
+              [raw-result : thread.ThreadSpawnResult
+                (thread.thread-handle-spawn-bool task)]
+              (match raw-result
+                [(thread.ThreadSpawnOk _)
+                  (BoolSpawnOk
+                    (Handle
+                      (thread.thread-spawn-result-thread-or
+                        raw-result
+                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnErr message) (BoolSpawnErr message)])))
+          (define (join [worker : Handle]) : JoinResult
+            (match (thread.thread-join (struct-get worker raw))
+              [(thread.ThreadJoinOk value) (BoolJoinOk (not (= value 0)))]
+              [(thread.ThreadJoinErr message) (BoolJoinErr message)])))]
+      ["unit"
+        `(begin
+          (module ,module-name)
+          (import stdlib.thread)
+          (defstruct Handle
+            (raw thread.Thread))
+          (defenum SpawnResult
+            (UnitSpawnOk Handle)
+            (UnitSpawnErr String))
+          (defenum JoinResult
+            (UnitJoinOk)
+            (UnitJoinErr String))
+          (define (spawn [task : (-> unit)]) : SpawnResult
+            (let
+              [raw-result : thread.ThreadSpawnResult
+                (thread.thread-handle-spawn-unit task)]
+              (match raw-result
+                [(thread.ThreadSpawnOk _)
+                  (UnitSpawnOk
+                    (Handle
+                      (thread.thread-spawn-result-thread-or
+                        raw-result
+                        (thread.Thread 0 0 0))))]
+                [(thread.ThreadSpawnErr message) (UnitSpawnErr message)])))
+          (define (join [worker : Handle]) : JoinResult
+            (match (thread.thread-join (struct-get worker raw))
+              [(thread.ThreadJoinOk _) (UnitJoinOk)]
+              [(thread.ThreadJoinErr message) (UnitJoinErr message)])))]
+      [_
+        `(begin
+          (module ,module-name))])))
 
 ;: Typed handle returned by `thread-spawn-string`.
 (defstruct ThreadString
@@ -72,21 +163,6 @@
   (result-addr i64)
   (owner arena.Arena))
 
-;: Result returned by `thread-spawn-i64`.
-(defenum ThreadI64SpawnResult
-  (ThreadI64SpawnOk ThreadI64)
-  (ThreadI64SpawnErr String))
-
-;: Result returned by `thread-spawn-bool`.
-(defenum ThreadBoolSpawnResult
-  (ThreadBoolSpawnOk ThreadBool)
-  (ThreadBoolSpawnErr String))
-
-;: Result returned by `thread-spawn-unit`.
-(defenum ThreadUnitSpawnResult
-  (ThreadUnitSpawnOk ThreadUnit)
-  (ThreadUnitSpawnErr String))
-
 ;: Result returned by `thread-spawn-string`.
 (defenum ThreadStringSpawnResult
   (ThreadStringSpawnOk ThreadString)
@@ -101,21 +177,6 @@
 (defenum ThreadBoxI64SpawnResult
   (ThreadBoxI64SpawnOk ThreadBoxI64)
   (ThreadBoxI64SpawnErr String))
-
-;: Result returned by `thread-join-i64`.
-(defenum ThreadI64JoinResult
-  (ThreadI64JoinOk i64)
-  (ThreadI64JoinErr String))
-
-;: Result returned by `thread-join-bool`.
-(defenum ThreadBoolJoinResult
-  (ThreadBoolJoinOk bool)
-  (ThreadBoolJoinErr String))
-
-;: Result returned by `thread-join-unit`.
-(defenum ThreadUnitJoinResult
-  (ThreadUnitJoinOk)
-  (ThreadUnitJoinErr String))
 
 ;: Result returned by `thread-join-string`.
 (defenum ThreadStringJoinResult
@@ -171,6 +232,14 @@
     [(ThreadSpawnOk thread) (struct-get thread result-addr)]
     [(ThreadSpawnErr _) fallback]))
 
+;: Return the raw spawned thread, or `fallback` when spawn failed.
+(define (thread-spawn-result-thread-or
+  [result : ThreadSpawnResult]
+  [fallback : Thread]) : Thread
+  (match result
+    [(ThreadSpawnOk thread) thread]
+    [(ThreadSpawnErr _) fallback]))
+
 ;: Return the raw join code, or `fallback` when join failed.
 (define (thread-join-result-value-or
   [result : ThreadJoinResult]
@@ -178,14 +247,6 @@
   (match result
     [(ThreadJoinOk value) value]
     [(ThreadJoinErr _) fallback]))
-
-;: Return the joined i64 value, or `fallback` when join failed.
-(define (thread-i64-join-result-value-or
-  [result : ThreadI64JoinResult]
-  [fallback : i64]) : i64
-  (match result
-    [(ThreadI64JoinOk value) value]
-    [(ThreadI64JoinErr _) fallback]))
 
 ;: Windows raw entry pointer cell emitted by the backend runtime.
 (cfg
@@ -474,42 +535,30 @@
 (define (thread-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (cfg windows (thread-windows-spawn entry arg) (thread-linux-spawn entry arg)))
 
-;: Spawn a compiler-checked direct nullary closure returning `i64`.
-;:
-;: Safe calls must pass a direct lambda. The typechecker rejects captures that
-;: are not structurally transferable and rejects calls from scoped arenas.
-(define (thread-spawn-i64 [task : (-> i64)]) : ThreadI64SpawnResult
-  (match (thread-spawn
+;: Private bridge used by generated `(thread-handle i64)` modules.
+(define (thread-handle-spawn-i64 [task : (-> i64)]) : ThreadSpawnResult
+  (thread-spawn
     (lambda ([_ignored : i64]) : i64
       (task))
-    0)
-    [(ThreadSpawnOk raw) (ThreadI64SpawnOk (ThreadI64 raw))]
-    [(ThreadSpawnErr message) (ThreadI64SpawnErr message)]))
+    0))
 
-;: Spawn a compiler-checked direct nullary closure returning `bool`.
-;:
-;: The worker result is encoded through the raw `i64` substrate and decoded by
-;: `thread-join-bool`.
-(define (thread-spawn-bool [task : (-> bool)]) : ThreadBoolSpawnResult
-  (match (thread-spawn
+;: Private bridge used by generated `(thread-handle bool)` modules.
+(define (thread-handle-spawn-bool [task : (-> bool)]) : ThreadSpawnResult
+  (thread-spawn
     (lambda ([_ignored : i64]) : i64
       (if (task)
         1
         0))
-    0)
-    [(ThreadSpawnOk raw) (ThreadBoolSpawnOk (ThreadBool raw))]
-    [(ThreadSpawnErr message) (ThreadBoolSpawnErr message)]))
+    0))
 
-;: Spawn a compiler-checked direct nullary closure returning `unit`.
-(define (thread-spawn-unit [task : (-> unit)]) : ThreadUnitSpawnResult
-  (match (thread-spawn
+;: Private bridge used by generated `(thread-handle (type unit))` modules.
+(define (thread-handle-spawn-unit [task : (-> unit)]) : ThreadSpawnResult
+  (thread-spawn
     (lambda ([_ignored : i64]) : i64
       (begin
         (task)
         0))
-    0)
-    [(ThreadSpawnOk raw) (ThreadUnitSpawnOk (ThreadUnit raw))]
-    [(ThreadSpawnErr message) (ThreadUnitSpawnErr message)]))
+    0))
 
 ;: Spawn a compiler-checked direct nullary closure returning `String`.
 ;:
@@ -606,24 +655,6 @@
 ;: Join a thread and return the entry function's i64 result.
 (define (thread-join [thread : Thread]) : ThreadJoinResult
   (cfg windows (thread-windows-join thread) (thread-linux-join thread)))
-
-;: Join a typed `i64` thread and return its closure result.
-(define (thread-join-i64 [thread : ThreadI64]) : ThreadI64JoinResult
-  (match (thread-join (struct-get thread raw))
-    [(ThreadJoinOk value) (ThreadI64JoinOk value)]
-    [(ThreadJoinErr message) (ThreadI64JoinErr message)]))
-
-;: Join a typed `bool` thread and return its closure result.
-(define (thread-join-bool [thread : ThreadBool]) : ThreadBoolJoinResult
-  (match (thread-join (struct-get thread raw))
-    [(ThreadJoinOk value) (ThreadBoolJoinOk (not (= value 0)))]
-    [(ThreadJoinErr message) (ThreadBoolJoinErr message)]))
-
-;: Join a typed `unit` thread and report completion.
-(define (thread-join-unit [thread : ThreadUnit]) : ThreadUnitJoinResult
-  (match (thread-join (struct-get thread raw))
-    [(ThreadJoinOk _) (ThreadUnitJoinOk)]
-    [(ThreadJoinErr message) (ThreadUnitJoinErr message)]))
 
 ;: Join a typed `String` thread and return its closure result.
 (define (thread-join-string [thread : ThreadString]) : ThreadStringJoinResult
@@ -847,138 +878,3 @@
       (thread-test-assert-i64-eq (thread-count-affinity-bytes mask) 11)
       (thread-test-assert-semaphore-err -1)
       (thread-test-assert-semaphore-err 2147483648))))
-
-(export
-  (value thread-default-stack-size)
-  (value thread-semaphore-max-count)
-  (value thread-array-u8-addr)
-  (value thread-array-u64-addr)
-  (value thread-array-i64-addr)
-  (value thread-array-i32-addr)
-  (value thread-array-string-addr)
-  (value thread-array-array-i64-addr)
-  (value thread-addr->mut-i32)
-  (value thread-addr->mut-i64)
-  (value thread-addr->mut-string)
-  (value thread-addr->mut-array-i64)
-  (value thread-read-i32)
-  (value thread-write-i32!)
-  (value thread-read-i64)
-  (value thread-write-i64!)
-  (value thread-read-string)
-  (value thread-write-string!)
-  (value thread-read-array-i64)
-  (value thread-write-array-i64!)
-  (value thread-array-i64-copy)
-  (value thread-linux-clone-flags)
-  (value thread-linux-futex-wait)
-  (value thread-linux-futex-wake)
-  (value thread-linux-exit-current)
-  (value thread-linux-child-main)
-  (value thread-linux-wait-i32-change)
-  (value thread-linux-spawn)
-  (value thread-spawn)
-  (value thread-spawn-i64)
-  (value thread-spawn-bool)
-  (value thread-spawn-unit)
-  (value thread-spawn-string)
-  (value thread-spawn-array-i64)
-  (value thread-spawn-box-i64)
-  (value thread-linux-join)
-  (value thread-join)
-  (value thread-join-i64)
-  (value thread-join-bool)
-  (value thread-join-unit)
-  (value thread-join-string)
-  (value thread-join-array-i64)
-  (value thread-join-box-i64)
-  (value thread-spawn-result-ok?)
-  (value thread-spawn-result-handle-or)
-  (value thread-spawn-result-clear-tid-addr-or)
-  (value thread-spawn-result-result-addr-or)
-  (value thread-join-result-value-or)
-  (value thread-i64-join-result-value-or)
-  (value thread-count-byte-bits)
-  (value thread-count-affinity-bytes)
-  (value thread-linux-default-worker-count)
-  (value thread-default-worker-count)
-  (value thread-semaphore-create-handle-or)
-  (value thread-semaphore-create)
-  (value thread-semaphore-wait)
-  (value thread-semaphore-post)
-  (value thread-semaphore-close)
-  (type Thread)
-  (type ThreadSpawnResult)
-  (type ThreadJoinResult)
-  (type ThreadI64)
-  (type ThreadBool)
-  (type ThreadUnit)
-  (type ThreadString)
-  (type ThreadArrayI64)
-  (type ThreadBoxI64)
-  (type ThreadI64SpawnResult)
-  (type ThreadBoolSpawnResult)
-  (type ThreadUnitSpawnResult)
-  (type ThreadStringSpawnResult)
-  (type ThreadArrayI64SpawnResult)
-  (type ThreadBoxI64SpawnResult)
-  (type ThreadI64JoinResult)
-  (type ThreadBoolJoinResult)
-  (type ThreadUnitJoinResult)
-  (type ThreadStringJoinResult)
-  (type ThreadArrayI64JoinResult)
-  (type ThreadBoxI64JoinResult)
-  (type ThreadSemaphore)
-  (type ThreadSemaphoreResult)
-  (constructor Thread)
-  (constructor ThreadI64)
-  (constructor ThreadBool)
-  (constructor ThreadUnit)
-  (constructor ThreadString)
-  (constructor ThreadArrayI64)
-  (constructor ThreadBoxI64)
-  (constructor ThreadSemaphore)
-  (field Thread handle)
-  (field Thread clear-tid-addr)
-  (field Thread result-addr)
-  (field ThreadI64 raw)
-  (field ThreadBool raw)
-  (field ThreadUnit raw)
-  (field ThreadString raw)
-  (field ThreadString result-addr)
-  (field ThreadArrayI64 raw)
-  (field ThreadArrayI64 result-addr)
-  (field ThreadBoxI64 raw)
-  (field ThreadBoxI64 result-addr)
-  (field ThreadBoxI64 owner)
-  (field ThreadSemaphore handle)
-  (variant ThreadSpawnOk)
-  (variant ThreadSpawnErr)
-  (variant ThreadJoinOk)
-  (variant ThreadJoinErr)
-  (variant ThreadI64SpawnOk)
-  (variant ThreadI64SpawnErr)
-  (variant ThreadBoolSpawnOk)
-  (variant ThreadBoolSpawnErr)
-  (variant ThreadUnitSpawnOk)
-  (variant ThreadUnitSpawnErr)
-  (variant ThreadStringSpawnOk)
-  (variant ThreadStringSpawnErr)
-  (variant ThreadArrayI64SpawnOk)
-  (variant ThreadArrayI64SpawnErr)
-  (variant ThreadBoxI64SpawnOk)
-  (variant ThreadBoxI64SpawnErr)
-  (variant ThreadI64JoinOk)
-  (variant ThreadI64JoinErr)
-  (variant ThreadBoolJoinOk)
-  (variant ThreadBoolJoinErr)
-  (variant ThreadUnitJoinOk)
-  (variant ThreadUnitJoinErr)
-  (variant ThreadStringJoinOk)
-  (variant ThreadStringJoinErr)
-  (variant ThreadArrayI64JoinOk)
-  (variant ThreadArrayI64JoinErr)
-  (variant ThreadBoxI64JoinOk)
-  (variant ThreadBoxI64JoinErr)
-  (variant ThreadSemaphoreOk)
-  (variant ThreadSemaphoreErr))

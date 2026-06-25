@@ -286,18 +286,3 @@
         false)
         unit
         (fail)))))
-
-(export
-  (value hash-modulus)
-  (value hash-multiplier)
-  (value hash-normalize)
-  (value hash-combine)
-  (value hash-combine-normalized)
-  (value hash-i64)
-  (value hash-key-i64-eq?)
-  (value hash-bool)
-  (value hash-key-bool-eq?)
-  (value hash-char)
-  (value hash-key-char-eq?)
-  (value hash-string)
-  (value hash-key-string-eq?))

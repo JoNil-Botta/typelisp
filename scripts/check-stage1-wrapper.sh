@@ -373,13 +373,6 @@ EOF
   (Stage1B i64))
 (defmacro (add-one-macro [value : i64]) : i64
   `(add-one ,value))
-(export
-  (variant Stage1A)
-  (field Stage1Point x)
-  (constructor Stage1Point)
-  (macro add-one-macro)
-  (type Stage1Point)
-  (value stage1-exported-value))
 EOF
     cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -464,13 +457,6 @@ EOF
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "tlci image"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "package-name: stage1_pkg"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
-    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "exports:"
-    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  value stage1.macros/stage1-exported-value signature=i64"
-    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  type stage1.macros/Stage1Point layout=size=16 align=8"
-    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "  macro stage1.macros/add-one-macro signature=(macro (i64) -> i64)"
-    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "Stage1A"
-    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "constructor"
-    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "field"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
     run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
@@ -587,6 +573,25 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     sed 's/^/  /' "$WORKDIR/run.stderr" >&2 || true
     exit 1
 fi
+
+RUN_CFG_SRC="$WORKDIR/run-cfg.tl"
+cat > "$RUN_CFG_SRC" <<'EOF'
+(define (main) : i64 (cfg feature 11 3))
+EOF
+set +e
+"$COMPILER" run "$RUN_CFG_SRC" --cfg feature > "$WORKDIR/run-cfg.stdout" 2> "$WORKDIR/run-cfg.stderr"
+run_cfg_status=$?
+set -e
+if [ "$run_cfg_status" -ne 11 ]; then
+    echo "run --cfg expected exit 11, got $run_cfg_status" >&2
+    echo "stdout:" >&2
+    sed 's/^/  /' "$WORKDIR/run-cfg.stdout" >&2 || true
+    echo "stderr:" >&2
+    sed 's/^/  /' "$WORKDIR/run-cfg.stderr" >&2 || true
+    exit 1
+fi
+assert_empty "$WORKDIR/run-cfg.stdout"
+assert_empty "$WORKDIR/run-cfg.stderr"
 
 echo "[host-action-cli] repl"
 : > "$WORKDIR/repl-empty.in"

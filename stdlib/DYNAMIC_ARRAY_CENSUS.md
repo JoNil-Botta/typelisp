@@ -10,10 +10,12 @@ These are the uses that should move to generated vectors or vector/slice-style
 borrowed APIs.
 
 - `stdlib/vector_family.tl`: named generated vector families. This file now
-  emits read helpers that take `&` and mutators that take `&mut`; its backing
-  `slots` field remains an implementation detail.
+  emits read helpers that take `&` and mutators that take `&mut`; with
+  compiler-private dynamic-buffer support enabled, its backing `slots` field
+  uses the private dynamic-buffer spelling and remains an implementation detail.
 - `stdlib/vector.tl`: legacy `I64Vec` and `StringVec` helpers are still
-  threaded owned-value compatibility APIs. New code should prefer
+  threaded owned-value compatibility APIs, with private dynamic-buffer backing
+  selected by compiler cfg where available. New code should prefer
   `(import stdlib.vector)` plus generated modules such as
   `(import (vector.vector i64) as ivec)`, whose reads take `&` and mutators take
   `&mut`.
@@ -37,7 +39,7 @@ surfaces replace them.
 
 - Collection internals in `stdlib/vector.tl`, `stdlib/vector_family.tl`,
   `stdlib/vector_slice.tl`, `stdlib/queue.tl`, `stdlib/hashmap.tl`,
-  `stdlib/set.tl`, `stdlib/text_buf*.tl`, and `stdlib/list.tl`.
+  `stdlib/set.tl`, and `stdlib/text_buf*.tl`.
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/ffi.tl`,
   `stdlib/io.tl`, `stdlib/fs.tl`, `stdlib/process_runtime.tl`,
   `src/tlci_core.tl`, `src/compiler_object_elf.tl`,

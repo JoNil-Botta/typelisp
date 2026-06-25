@@ -257,11 +257,7 @@
   [stop-tag : i64]) : FormatParsedCstList
   (match (fmt-parse-seq-result stream idx stop-tag)
     [(OkFormatParsedCstList parsed) parsed]
-    [(ErrFormatParsedCstList err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtParsedCstList FmtCstNil idx))]))
+    [(ErrFormatParsedCstList err) (panic (format-source-error-message err))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
@@ -309,11 +305,7 @@
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
   (match (fmt-parse-one-result stream idx)
     [(OkFormatParsedCst parsed) parsed]
-    [(ErrFormatParsedCst err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtParsedCst (FmtCstAtom (format-token-at stream idx)) idx))]))
+    [(ErrFormatParsedCst err) (panic (format-source-error-message err))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
@@ -325,11 +317,7 @@
 (define (parse-format-tokens [stream : FormatTokenStream]) : FormatCst
   (match (parse-format-tokens-result stream)
     [(OkFormatCst tree) tree]
-    [(ErrFormatCst err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtCstForms (box FmtCstNil)))]))
+    [(ErrFormatCst err) (panic (format-source-error-message err))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
   (match (format-lex-result src)
@@ -339,11 +327,7 @@
 (define (parse-format-source [src : String]) : FormatCst
   (match (parse-format-source-result src)
     [(OkFormatCst tree) tree]
-    [(ErrFormatCst err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (FmtCstForms (box FmtCstNil)))]))
+    [(ErrFormatCst err) (panic (format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import \"std.tl\")

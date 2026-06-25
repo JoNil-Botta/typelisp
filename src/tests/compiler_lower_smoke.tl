@@ -1,7 +1,7 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
 (import "../compiler_driver_core.tl")
 
-(define (compiler-lower-smoke-imported-local-enum-vector-source) : String
+(define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
 (defstruct StringVec (len i64) (first String))
 (define (string-vec-new) : StringVec
@@ -12,83 +12,43 @@
   (if (< index (struct-get v len))
     (struct-get v first)
     fallback))
-(export
-  (type StringVec)
-  (value string-vec-new)
-  (value string-vec-push)
-  (value string-vec-get))
-(module stdlib.list)
-(import stdlib.vector)
-(defenum StringList (StringNil) (StringCons String (Box StringList)))
-(define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))
-(define (string-list-count [items : StringList]) : i64
-  (match items
-    [(StringNil) 0]
-    [(StringCons _ rest) (+ 1 (string-list-count (box-get rest)))]))
-(define (string-list-to-vec-into
-  [items : StringList]
-  [out : vector.StringVec]) : vector.StringVec
-  (match items
-    [(StringNil) out]
-    [(StringCons head rest)
-      (string-list-to-vec-into
-        (box-get rest)
-        (vector.string-vec-push out head))]))
-(define (string-list-to-vec [items : StringList]) : vector.StringVec
-  (string-list-to-vec-into items (vector.string-vec-new)))
-(define (string-list-from-vec-single [v : vector.StringVec]) : StringList
-  (StringCons (vector.string-vec-get v 0 \"\") (box StringNil)))
-(define (string-list-roundtrip-count [items : StringList]) : i64
-  (string-list-count (string-list-from-vec-single (string-list-to-vec items))))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-single)
-  (value string-list-count)
-  (value string-list-roundtrip-count))
 (module main)
-(import stdlib.list)
+(import stdlib.vector)
 (define (main) : i64
-  (list.string-list-roundtrip-count (list.string-list-single \"a\")))")
+  (__tl_string_length
+    (vector.string-vec-get
+      (vector.string-vec-push (vector.string-vec-new) \"a\")
+      0
+      \"\")))")
 
-(define (compiler-lower-smoke-imported-local-enum-vector-ok?) : bool
+(define (compiler-lower-smoke-imported-local-vector-ok?) : bool
   (match (lower-compiler-source
-    (compiler-lower-smoke-imported-local-enum-vector-source))
+    (compiler-lower-smoke-imported-local-vector-source))
     [(OkCompilerLower _ _) true]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-smoke-imported-nullary-file-ok?) : bool
   (let
     [root : String "target/lower_nullary_stdlib"]
-    [dep : String "target/lower_nullary_stdlib/list.tl"]
+    [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
     [roots : StringVec (string-vec-push (string-vec-new) root)]
     (begin
       (compiler-load-test-mkdir root)
       (write-file
         dep
-        "(module stdlib.list)
-(defenum StringList (StringNil) (StringCons String (Box StringList)))
-(define (string-list-cons [value : String] [rest : StringList]) : StringList
-  (StringCons value (box rest)))
-(define (string-list-single [value : String]) : StringList
-  (StringCons value (box StringNil)))
-(export
-  (type StringList)
-  (variant StringNil)
-  (variant StringCons)
-  (value string-list-cons)
-  (value string-list-single))")
+        "(module stdlib.maybe_string)
+(defenum MaybeString (NoString) (SomeString String))
+(define (maybe-string-single [value : String]) : MaybeString
+  (SomeString value))")
       (write-file
         entry
-        "(import stdlib.list)
+        "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
-    (match (list.string-list-single \"a\")
-      [(list.StringNil) \"\"]
-      [(list.StringCons head _) head])))")
+    (match (maybe_string.maybe-string-single \"a\")
+      [(maybe_string.NoString) \"\"]
+      [(maybe_string.SomeString head) head])))")
       (match (compiler-load-file-with-paths-and-roots
         entry
         (sym-i64-empty)
@@ -118,8 +78,8 @@
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
     (unless
-      (compiler-lower-smoke-imported-local-enum-vector-ok?)
-      (panic "lower: issue3494 imported local enum vector failed"))
+      (compiler-lower-smoke-imported-local-vector-ok?)
+      (panic "lower: issue3494 imported local vector failed"))
     (unless
       (compiler-lower-smoke-imported-nullary-file-ok?)
       (panic "lower: issue3494 imported nullary file failed"))
@@ -315,6 +275,12 @@
         (compiler-lower-fixed-array-access-source))
       (panic "lower: fixed array access smoke mismatch"))
     (unless
+      (compiler-lower-fixed-array-literal-stack-shape-ok?)
+      (panic "lower: fixed array stack literal smoke mismatch"))
+    (unless
+      (compiler-lower-fixed-array-aggregate-layout-shape-ok?)
+      (panic "lower: fixed array aggregate layout smoke mismatch"))
+    (unless
       (compiler-lower-array-access-shape-ok?
         (compiler-lower-mut-ref-array-access-source))
       (panic "lower: mutable ref array access smoke mismatch"))
@@ -443,10 +409,8 @@
       (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
       (panic "lower: windows enum aggregate C ABI smoke mismatch"))
     (unless
-      (compiler-lower-linux-error-ok?
-        (compiler-lower-c-abi-payload-enum-source)
-        "lower: unsupported linux-x86_64 C aggregate ABI for SmallChoice; this slice supports System V register-class structs up to 16 bytes, plus tag-only enums")
-      (panic "lower: linux unsupported C ABI diagnostic smoke mismatch"))
+      (compiler-lower-c-abi-linux-payload-enum-shape-ok?)
+      (panic "lower: linux payload enum C ABI smoke mismatch"))
     (unless
       (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
       (panic "lower: windows byref aggregate C ABI smoke mismatch"))

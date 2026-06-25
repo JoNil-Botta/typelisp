@@ -6,7 +6,6 @@
 ;; path to exit non-zero when findings remain. The deprecated string-concat rule
 ;; is opt-in until the remaining in-tree str-cat migrations land.
 (import "../stdlib/io.tl")
-(import "../stdlib/list.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
@@ -238,6 +237,175 @@
         start
         source-len))))
 
+(define (selfhost-lint-span-start-index
+  [source : String]
+  [span : AstSourceSpan]) : i64
+  (+
+    (selfhost-lint-line-start-index source (struct-get span start-line))
+    (- (struct-get span start-col) 1)))
+
+(define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    (begin
+      (while (and (< j n) (not (= (string-ref source j) '\n')))
+        (set! j (+ j 1)))
+      (if (< j n)
+        (+ j 1)
+        j))))
+
+(define (selfhost-lint-skip-string [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 (+ idx 1)]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (if (= c '\\')
+            (set! j (+ j 2))
+            (if (= c '"')
+              (begin
+                (set! done true)
+                (set! j (+ j 1)))
+              (set! j (+ j 1))))))
+      j)))
+
+(define (selfhost-lint-apostrophe-char-escape? [c : char]) : bool
+  (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
+
+(define (selfhost-lint-skip-apostrophe-char-literal
+  [source : String]
+  [idx : i64]
+  [n : i64]) : i64
+  (if (< (+ idx 1) n)
+    (let
+      [payload : char (string-ref source (+ idx 1))]
+      (cond
+        [(= payload '\\')
+          (if (and
+            (< (+ idx 3) n)
+            (selfhost-lint-apostrophe-char-escape?
+              (string-ref source (+ idx 2)))
+            (= (string-ref source (+ idx 3)) '\''))
+            (+ idx 4)
+            (+ idx 1))]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ idx 1)]
+        [else
+          (if (and (< (+ idx 2) n) (= (string-ref source (+ idx 2)) '\''))
+            (+ idx 3)
+            (+ idx 1))]))
+    (+ idx 1)))
+
+(define (selfhost-lint-skip-ws-comments [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (cond
+            [(selfhost-lint-space? c) (set! j (+ j 1))]
+            [(= c ';') (set! j (selfhost-lint-skip-line source j n))]
+            [else (set! done true)])))
+      j)))
+
+(define (selfhost-lint-source-form-delim? [c : char]) : bool
+  (or
+    (selfhost-lint-space? c)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c ';')))
+
+(define (selfhost-lint-skip-atom [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 idx]
+    (begin
+      (while (and
+        (< j n)
+        (not (selfhost-lint-source-form-delim? (string-ref source j))))
+        (set! j (+ j 1)))
+      j)))
+
+(define (selfhost-lint-skip-source-group
+  [source : String]
+  [idx : i64]
+  [n : i64]) : i64
+  (let
+    [j : i64 (+ idx 1)]
+    [depth : i64 1]
+    [done : bool false]
+    (begin
+      (while (and (< j n) (not done))
+        (let
+          [c : char (string-ref source j)]
+          (cond
+            [(= c ';') (set! j (selfhost-lint-skip-line source j n))]
+            [(= c '"') (set! j (selfhost-lint-skip-string source j n))]
+            [(= c '\'')
+              (set! j (selfhost-lint-skip-apostrophe-char-literal source j n))]
+            [(or (= c '(') (= c '['))
+              (begin
+                (set! depth (+ depth 1))
+                (set! j (+ j 1)))]
+            [(or (= c ')') (= c ']'))
+              (begin
+                (set! depth (- depth 1))
+                (set! j (+ j 1))
+                (if (<= depth 0)
+                  (set! done true)
+                  unit))]
+            [else (set! j (+ j 1))])))
+      j)))
+
+(define (selfhost-lint-skip-source-form [source : String] [idx : i64] [n : i64]) : i64
+  (let
+    [j : i64 (selfhost-lint-skip-ws-comments source idx n)]
+    (if (>= j n)
+      j
+      (let
+        [c : char (string-ref source j)]
+        (cond
+          [(or (= c '(') (= c '['))
+            (selfhost-lint-skip-source-group source j n)]
+          [(= c '"') (selfhost-lint-skip-string source j n)]
+          [(= c '\'') (selfhost-lint-skip-apostrophe-char-literal source j n)]
+          [else (selfhost-lint-skip-atom source j n)])))))
+
+(define (selfhost-lint-begin-source-form-count
+  [source : String]
+  [span : AstSourceSpan]) : i64
+  (let
+    [start : i64 (selfhost-lint-span-start-index source span)]
+    [n : i64 (string-length source)]
+    [needle : String "(begin"]
+    [needle-len : i64 (string-length needle)]
+    (if (and
+      (selfhost-lint-prefix-at? source start needle)
+      (selfhost-lint-form-delim? source (+ start needle-len)))
+      (let
+        [idx : i64 (+ start needle-len)]
+        [count : i64 0]
+        [done : bool false]
+        (begin
+          (while (and (< idx n) (not done))
+            (begin
+              (set! idx (selfhost-lint-skip-ws-comments source idx n))
+              (if (>= idx n)
+                (set! done true)
+                (let
+                  [c : char (string-ref source idx)]
+                  (if (or (= c ')') (= c ']'))
+                    (set! done true)
+                    (begin
+                      (set! count (+ count 1))
+                      (set! idx (selfhost-lint-skip-source-form source idx n))))))))
+          count))
+      1)))
+
 ;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
 ;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
 ;; stops at its newline; `and`/`or` are not short-circuiting, so the `string-ref`
@@ -301,6 +469,15 @@
     (selfhost-lint-form-origin? source span "when")
     (selfhost-lint-form-origin? source span "unless")))
 
+(define (selfhost-lint-source-multiform-single-begin?
+  [source : String]
+  [finding : LintFinding]) : bool
+  (and
+    (string-eq (struct-get finding rule-id) (lint-rule-single-begin-id))
+    (>
+      (selfhost-lint-begin-source-form-count source (struct-get finding span))
+      1)))
+
 (define (selfhost-lint-filter-derived-origins-from
   [source : String]
   [items : LintFindings]
@@ -313,6 +490,7 @@
       [next : LintFindings
         (if (or
           (selfhost-lint-derived-form-origin? source (struct-get finding span))
+          (selfhost-lint-source-multiform-single-begin? source finding)
           (selfhost-lint-suppressed? source finding))
           out
           (lint-findings-add finding out))]
@@ -450,8 +628,9 @@
   (selfhost-lint-source-with-roots-and-options path source stdlib-roots false))
 
 ;; Package-level dead-code linting records all top-level declarations as graph
-;; nodes, but only reports private `define` values/functions. Non-reportable
-;; nodes still carry references so exported types/macros can keep helpers alive.
+;; nodes. Top-level items are visible by default after legacy `(export ...)`
+;; removal, so declarations are roots and not private dead-code candidates until
+;; the language grows an explicit private marker.
 (defstruct SelfhostLintDeadDecl
   (path String)
   (name String)
@@ -1050,28 +1229,6 @@
           0)
         body-span))))
 
-(define (selfhost-lint-dead-export-refs
-  [items : AstExportItemList]
-  [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (match items
-    [(AstExportItemNil) scan]
-    [(AstExportItemCons item rest)
-      (let
-        [next : SelfhostLintDeadScan
-          (match item
-            [(AstExportValue name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportType name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportMacro name) (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportConstructor name)
-              (selfhost-lint-dead-scan-add-root scan name)]
-            [(AstExportField type-name field-name)
-              (selfhost-lint-dead-scan-add-root
-                (selfhost-lint-dead-scan-add-root scan type-name)
-                field-name)]
-            [(AstExportVariant name)
-              (selfhost-lint-dead-scan-add-root scan name)])]
-        (selfhost-lint-dead-export-refs (box-get rest) next))]))
-
 (define (selfhost-lint-dead-refs-to-roots-from
   [scan : SelfhostLintDeadScan]
   [refs : StringVec]
@@ -1206,6 +1363,16 @@
     scan
     (SelfhostLintDeadDecl path name span refs false reportable)))
 
+(define (selfhost-lint-dead-add-visible-node
+  [scan : SelfhostLintDeadScan]
+  [path : String]
+  [name : String]
+  [span : AstSourceSpan]
+  [refs : StringVec]) : SelfhostLintDeadScan
+  (selfhost-lint-dead-scan-add-root
+    (selfhost-lint-dead-add-node scan path name span refs false)
+    name))
+
 (define (selfhost-lint-dead-scan-decl
   [scan : SelfhostLintDeadScan]
   [path : String]
@@ -1226,18 +1393,8 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        [with-node : SelfhostLintDeadScan
-          (selfhost-lint-dead-add-node
-            scan
-            path
-            text
-            span
-            refs
-            (and allow-report (not (string-eq text "main"))))]
-        (if (string-eq text "main")
-          (selfhost-lint-dead-scan-add-root with-node text)
-          with-node))]
-    [(AstDeclDefFn name params ret body export)
+        (selfhost-lint-dead-add-visible-node scan path text span refs))]
+    [(AstDeclDefFn name params ret body _)
       (let
         [text : String (intern-str name)]
         [refs : StringVec
@@ -1251,28 +1408,9 @@
             source
             text
             (selfhost-lint-dead-expr-span body))]
-        [is-exported : bool
-          (match export
-            [(AstFnNoExport) false]
-            [(AstFnExport _) true])]
-        [is-main : bool (string-eq text "main")]
-        [with-node : SelfhostLintDeadScan
-          (selfhost-lint-dead-add-node
-            scan
-            path
-            text
-            span
-            refs
-            (if allow-report
-              (if is-exported
-                false
-                (not is-main))
-              false))]
-        (if (or is-exported is-main)
-          (selfhost-lint-dead-scan-add-root with-node text)
-          with-node))]
+        (selfhost-lint-dead-add-visible-node scan path text span refs))]
     [(AstDeclDefMacro name params ret body)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
@@ -1281,58 +1419,52 @@
           (ast-node-get body)
           (selfhost-lint-dead-type-refs
             ret
-            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new))))
-        false)]
+            (selfhost-lint-dead-macro-param-list-refs params (string-vec-new)))))]
     [(AstDeclExtern name _ meta ty)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-type-refs
           ty
-          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-extern-metadata-refs meta (string-vec-new))))]
     [(AstDeclDefEnum name cleanup variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefEnumLifetimes name _ cleanup variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
           variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-enum-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefStruct name _ cleanup fields)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclDefStructLifetimes name _ _ cleanup fields)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
           fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new)))
-        false)]
+          (selfhost-lint-dead-struct-cleanup-refs cleanup (string-vec-new))))]
     [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1344,17 +1476,15 @@
     [(AstDeclImport _) scan]
     [(AstDeclIncludeStr _ _) scan]
     [(AstDeclIncludeBin _ _) scan]
-    [(AstDeclExport items) (selfhost-lint-dead-export-refs items scan)]
     [(AstDeclDefDispatch name variants)
-      (selfhost-lint-dead-add-node
+      (selfhost-lint-dead-add-visible-node
         scan
         path
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-dispatch-variant-list-refs
           variants
-          (string-vec-new))
-        false)]
+          (string-vec-new)))]
     [(AstDeclTest _ body _)
       (selfhost-lint-dead-refs-to-roots
         scan
@@ -1914,6 +2044,42 @@
     (unless b (return 2))
     42))")
 
+(define (selfhost-lint-redundant-divergence-padding-source) : String
+  "(define (main [flag : bool]) : i64
+  (begin
+    (begin
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      0)
+    (unsafe
+      (error \"stop\")
+      ;; lint-allow: unreachable-code
+      1)
+    (with-arena scratch
+      (panic \"stop\")
+      ;; lint-allow: unreachable-code
+      2)
+    (if flag
+      (begin
+        (panic \"stop\")
+        ;; lint-allow: unreachable-code
+        3)
+      4)))")
+
+(define (selfhost-lint-clean-divergence-source) : String
+  "(define (main [flag : bool]) : i64
+  (if flag
+    (panic \"stop\")
+    4))")
+
+(define (selfhost-lint-suppressed-divergence-padding-source) : String
+  "(define (main) : i64
+  (begin
+    ;; lint-allow: redundant-divergence-padding
+    (panic \"stop\")
+    ;; lint-allow: unreachable-code
+    0))")
+
 ;; A clean source with no nested-`if` ladder - zero findings.
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
@@ -1957,10 +2123,6 @@
     [(data.Maybe.Some y) y]
     [_ 0]))")
 
-(define (selfhost-lint-used-import-export-source) : String
-  "(import pkg.data)
-(export (value data.value))")
-
 (define (selfhost-lint-used-import-macro-call-source) : String
   "(import pkg.macros)
 (pkg.macros.emit i64)")
@@ -1975,12 +2137,12 @@
 (define (main) : i64 42)")
 
 (define (selfhost-lint-package-dead-source-a) : String
-  "(export (value public-api))
+  "(define (main) : i64 (public-api 1))
 (define (public-api [x : i64]) : i64 (helper x))
 (define (helper [x : i64]) : i64 (cross-file-helper x))
-(define (unused-private) : i64 1)
+(define (default-visible-helper) : i64 1)
 ;; lint-allow: dead-code
-(define (suppressed-unused) : i64 2)")
+(define (suppressed-visible-helper) : i64 2)")
 
 (define (selfhost-lint-package-dead-source-b) : String
   (string-append
@@ -2074,6 +2236,27 @@
     (let
       [b : i64 (+ a 1)]
       (+ a b))))")
+
+(define (selfhost-lint-single-begin-source) : String
+  "(define (main) : i64
+  (begin 42))")
+
+(define (selfhost-lint-clean-begin-source) : String
+  "(define (main) : i64
+  (begin
+    unit
+    42))")
+
+(define (selfhost-lint-cfg-begin-source) : String
+  "(define (main) : i64
+  (begin
+    (cfg compile-profile (panic \"profile\"))
+    42))")
+
+(define (selfhost-lint-suppressed-single-begin-source) : String
+  "(define (main) : i64
+  ;; lint-allow: single-begin
+  (begin 42))")
 
 (define (selfhost-lint-cascading-and-source) : String
   "(define (check [a : bool] [b : bool] [c : bool]) : bool
@@ -2235,12 +2418,6 @@
       [(not
           (=
             (selfhost-lint-source-finding-count
-              (selfhost-lint-used-import-export-source))
-            0))
-        39]
-      [(not
-          (=
-            (selfhost-lint-source-finding-count
               (selfhost-lint-used-import-macro-call-source))
             0))
         40]
@@ -2279,7 +2456,7 @@
     [count-b : i64
       (selfhost-lint-package-dead-count-for-source "pkg/b.tl" source-b decls)]
     (cond
-      [(not (= count-a 1)) 50]
+      [(not (= count-a 0)) 50]
       [(not (= count-b 0)) 51]
       [(not
           (string-eq
@@ -2530,6 +2707,32 @@
         15]
       [(not
           (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-redundant-divergence-padding-source)
+              (lint-rule-redundant-divergence-padding-id))
+            4))
+        29]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-redundant-divergence-padding-source))
+            4))
+        30]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-clean-divergence-source))
+            0))
+        31]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-suppressed-divergence-padding-source)
+              (lint-rule-redundant-divergence-padding-id))
+            0))
+        32]
+      [(not
+          (=
             (selfhost-lint-source-finding-count
               (selfhost-lint-suppressed-ladder-source))
             0))
@@ -2570,6 +2773,33 @@
               (selfhost-lint-suppressed-nested-let-source))
             0))
         12]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-begin-source)
+              (lint-rule-single-begin-id))
+            1))
+        33]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-clean-begin-source))
+            0))
+        34]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-cfg-begin-source)
+              (lint-rule-single-begin-id))
+            0))
+        36]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-suppressed-single-begin-source)
+              (lint-rule-single-begin-id))
+            0))
+        35]
       [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
       [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]
       [(not (= (selfhost-lint-enforce-exit false 1) 0)) 8]

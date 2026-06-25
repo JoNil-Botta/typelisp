@@ -2,12 +2,13 @@
 ;;
 ;; `format_core.tl` stays syntax-neutral. This module adds deterministic
 ;; gofmt-like rules for common TypeLisp special forms. The normal source
-;; formatting path renders those rules directly from the CST; the retained Doc
-;; wrappers are compatibility coverage for the reusable layout algebra.
+;; formatting path renders those rules directly from the CST; doc-algebra
+;; compatibility coverage lives in format_rules_doc_compat.tl so production CLI
+;; builds do not import the full document algebra.
 (import "../stdlib/io.tl")
 (import "format_tokens.tl")
 (import "format_cst.tl")
-(import "format_doc.tl")
+(import "format_render_buf.tl")
 (import "../stdlib/string.tl")
 
 (defenum ResultFormatString
@@ -96,181 +97,6 @@
       (> (string-length previous-family) 0)
       (string-eq previous-family node-family))))
 
-(define (format-rules-gap) : Doc
-  (doc-append (doc-hard-line) (doc-hard-line)))
-
-(define (format-rules-forms-separator [previous : FormatCst] [node : FormatCst]) : Doc
-  (if (format-rules-node-comment? previous)
-    (doc-hard-line)
-    (if (format-rules-adjacent-top-forms? previous node)
-      (doc-hard-line)
-      (format-rules-gap))))
-
-(define (format-rules-space [doc : Doc]) : Doc
-  (doc-append (doc-text " ") doc))
-
-(define (format-rules-colon-pair-doc [colon : FormatCst] [next : FormatCst]) : Doc
-  (doc-append
-    (format-rules-cst-doc colon)
-    (format-rules-space (format-rules-cst-doc next))))
-
-(define (format-rules-return-type-tail-doc
-  [colon : FormatCst]
-  [typ : FormatCst]) : Doc
-  (format-rules-space (format-rules-colon-pair-doc colon typ)))
-
-(define (format-rules-return-type-breakable-tail-doc
-  [colon : FormatCst]
-  [typ : FormatCst]) : Doc
-  (doc-group
-    (doc-append (doc-soft-line) (format-rules-colon-pair-doc colon typ))))
-
-(define (format-rules-inline-tail-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
-      (doc-append
-        (format-rules-space (format-rules-cst-doc node))
-        (format-rules-inline-tail-doc rest))]))
-
-(define (format-rules-hard-tail-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
-      (if (format-rules-node-colon? node)
-        (match (fmt-cst-list-step tail)
-          [(FmtCstListStepItem next after-next)
-            (if (format-rules-node-comment? next)
-              (doc-append
-                (doc-hard-line)
-                (doc-append
-                  (format-rules-cst-doc node)
-                  (format-rules-hard-tail-doc tail)))
-              (doc-append
-                (doc-hard-line)
-                (doc-append
-                  (format-rules-colon-pair-doc node next)
-                  (if (fmt-cst-list-empty? after-next)
-                    (doc-empty)
-                    (format-rules-hard-tail-doc after-next)))))]
-          [_ (doc-append (doc-hard-line) (format-rules-cst-doc node))])
-        (doc-append
-          (doc-hard-line)
-          (doc-append
-            (format-rules-cst-doc node)
-            (if (fmt-cst-list-empty? tail)
-              (if (format-rules-node-comment? node)
-                (doc-hard-line)
-                (doc-empty))
-              (format-rules-hard-tail-doc tail)))))]))
-
-(define (format-rules-tail-separator
-  [previous-comment : bool]
-  [node : FormatCst]) : Doc
-  (if (or previous-comment (format-rules-node-comment? node))
-    (doc-hard-line)
-    (doc-soft-line)))
-
-(define (format-rules-list-tail-doc
-  [previous-comment : bool]
-  [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
-      (if (format-rules-node-colon? node)
-        (match (fmt-cst-list-step tail)
-          [(FmtCstListStepItem next after-next)
-            (if (format-rules-node-comment? next)
-              (doc-append
-                (format-rules-tail-separator previous-comment node)
-                (doc-append
-                  (format-rules-cst-doc node)
-                  (format-rules-list-tail-doc false tail)))
-              (doc-append
-                (format-rules-tail-separator previous-comment node)
-                (doc-append
-                  (format-rules-colon-pair-doc node next)
-                  (if (fmt-cst-list-empty? after-next)
-                    (doc-empty)
-                    (format-rules-list-tail-doc
-                      (format-rules-node-comment? next)
-                      after-next)))))]
-          [_
-            (doc-append
-              (format-rules-tail-separator previous-comment node)
-              (format-rules-cst-doc node))])
-        (doc-append
-          (format-rules-tail-separator previous-comment node)
-          (doc-append
-            (format-rules-cst-doc node)
-            (if (fmt-cst-list-empty? tail)
-              (if (format-rules-node-comment? node)
-                (doc-hard-line)
-                (doc-empty))
-              (format-rules-list-tail-doc
-                (format-rules-node-comment? node)
-                tail)))))]))
-
-(define (format-rules-list-items-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
-      (doc-append
-        (format-rules-cst-doc node)
-        (if (fmt-cst-list-empty? tail)
-          (if (format-rules-node-comment? node)
-            (doc-hard-line)
-            (doc-empty))
-          (format-rules-list-tail-doc (format-rules-node-comment? node) tail)))]))
-
-(define (format-rules-delimited-doc
-  [open : String]
-  [items : FormatCstList]
-  [close : String]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text open)
-      (doc-append
-        (doc-nest 2 (format-rules-list-items-doc items))
-        (doc-text close)))))
-
-(define (format-rules-inline-form-doc [head : String] [rest : FormatCstList]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "(")
-      (doc-append
-        (doc-text head)
-        (doc-append (format-rules-inline-tail-doc rest) (doc-text ")"))))))
-
-(define (format-rules-line-form-doc [head : String] [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append (doc-nest 2 (format-rules-hard-tail-doc rest)) (doc-text ")")))))
-
-(define (format-rules-first-line-form-doc
-  [head : String]
-  [first : FormatCst]
-  [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append
-        (format-rules-space (format-rules-cst-doc first))
-        (doc-append
-          (doc-nest 2 (format-rules-hard-tail-doc rest))
-          (doc-text ")"))))))
-
-(define (format-rules-first-or-line-form-doc
-  [head : String]
-  [rest : FormatCstList]) : Doc
-  (match (fmt-cst-list-step rest)
-    [(FmtCstListStepEmpty) (format-rules-inline-form-doc head FmtCstNil)]
-    [(FmtCstListStepItem first tail)
-      (format-rules-first-line-form-doc head first tail)]))
-
 (define (format-rules-list-append
   [left : FormatCstList]
   [right : FormatCstList]) : FormatCstList
@@ -303,315 +129,6 @@
             rest)]
         [_ rest])]
     [_ rest]))
-
-(define (format-rules-let-binding-annotated-doc
-  [name : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [init : FormatCst]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "[")
-      (doc-append
-        (format-rules-cst-doc name)
-        (doc-append
-          (format-rules-space (format-rules-cst-doc colon))
-          (doc-append
-            (format-rules-space (format-rules-cst-doc typ))
-            (doc-append
-              (doc-nest
-                2
-                (doc-append (doc-soft-line) (format-rules-cst-doc init)))
-              (doc-text "]"))))))))
-
-(define (format-rules-let-binding-unannotated-doc
-  [name : FormatCst]
-  [init : FormatCst]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "[")
-      (doc-append
-        (format-rules-cst-doc name)
-        (doc-append
-          (doc-nest 2 (doc-append (doc-soft-line) (format-rules-cst-doc init)))
-          (doc-text "]"))))))
-
-(define (format-rules-let-item-list-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepItem name after-name)
-      (match (fmt-cst-list-step after-name)
-        [(FmtCstListStepItem second after-second)
-          (match (fmt-cst-list-step after-second)
-            [(FmtCstListStepEmpty)
-              (format-rules-let-binding-unannotated-doc name second)]
-            [(FmtCstListStepItem typ after-typ)
-              (match (fmt-cst-list-step after-typ)
-                [(FmtCstListStepItem init after-init)
-                  (if (fmt-cst-list-empty? after-init)
-                    (if (format-rules-node-colon? second)
-                      (format-rules-let-binding-annotated-doc
-                        name
-                        second
-                        typ
-                        init)
-                      (format-rules-delimited-doc "[" items "]"))
-                    (format-rules-delimited-doc "[" items "]"))]
-                [_ (format-rules-delimited-doc "[" items "]")])]
-            [_ (format-rules-delimited-doc "[" items "]")])]
-        [_ (format-rules-delimited-doc "[" items "]")])]
-    [_ (format-rules-delimited-doc "[" items "]")]))
-
-(define (format-rules-let-item-doc [node : FormatCst]) : Doc
-  (match node
-    [(FmtCstBracketList items) (format-rules-let-item-list-doc (box-get items))]
-    [_ (format-rules-cst-doc node)]))
-
-(define (format-rules-let-tail-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
-      (doc-append
-        (doc-hard-line)
-        (doc-append
-          (format-rules-let-item-doc node)
-          (if (fmt-cst-list-empty? tail)
-            (if (format-rules-node-comment? node)
-              (doc-hard-line)
-              (doc-empty))
-            (format-rules-let-tail-doc tail))))]))
-
-(define (format-rules-let-doc [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "let")
-      (doc-append
-        (doc-nest 2 (format-rules-let-tail-doc (format-rules-let-rest rest)))
-        (doc-text ")")))))
-
-(define (format-rules-signature-annotated-doc
-  [head : String]
-  [target : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append
-        (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest 2 (format-rules-return-type-tail-doc colon typ))
-          (doc-append
-            (doc-nest 2 (format-rules-hard-tail-doc body-items))
-            (doc-text ")")))))))
-
-(define (format-rules-define-metadata-annotated-doc
-  [target : FormatCst]
-  [metadata : FormatCst]
-  [colon : FormatCst]
-  [typ : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "define")
-      (doc-append
-        (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest
-            2
-            (doc-append
-              (doc-hard-line)
-              (doc-append
-                (format-rules-cst-doc metadata)
-                (format-rules-return-type-breakable-tail-doc colon typ))))
-          (doc-append
-            (doc-nest 2 (format-rules-hard-tail-doc body-items))
-            (doc-text ")")))))))
-
-(define (format-rules-define-body-doc
-  [target : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "define")
-      (doc-append
-        (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest 2 (format-rules-hard-tail-doc body-items))
-          (doc-text ")"))))))
-
-(define (format-rules-define-doc [rest : FormatCstList]) : Doc
-  (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem second after-second)
-          (if (format-rules-node-colon? second)
-            (match (fmt-cst-list-step after-second)
-              [(FmtCstListStepItem typ body)
-                (if (fmt-cst-list-empty? body)
-                  (format-rules-first-or-line-form-doc "define" rest)
-                  (format-rules-signature-annotated-doc
-                    "define"
-                    target
-                    second
-                    typ
-                    body))]
-              [_ (format-rules-first-or-line-form-doc "define" rest)])
-            (if (format-rules-node-colon-list? second)
-              (match (fmt-cst-list-step after-second)
-                [(FmtCstListStepItem colon after-colon)
-                  (if (format-rules-node-colon? colon)
-                    (match (fmt-cst-list-step after-colon)
-                      [(FmtCstListStepItem typ body)
-                        (if (fmt-cst-list-empty? body)
-                          (format-rules-first-or-line-form-doc "define" rest)
-                          (format-rules-define-metadata-annotated-doc
-                            target
-                            second
-                            colon
-                            typ
-                            body))]
-                      [_ (format-rules-first-or-line-form-doc "define" rest)])
-                    (format-rules-first-or-line-form-doc "define" rest))]
-                [_ (format-rules-first-or-line-form-doc "define" rest)])
-              (format-rules-define-body-doc target after-target)))]
-        [_ (format-rules-first-or-line-form-doc "define" rest)])]
-    [_ (format-rules-first-or-line-form-doc "define" rest)]))
-
-(define (format-rules-defmacro-doc [rest : FormatCstList]) : Doc
-  (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem colon after-colon)
-          (if (format-rules-node-colon? colon)
-            (match (fmt-cst-list-step after-colon)
-              [(FmtCstListStepItem typ body)
-                (if (fmt-cst-list-empty? body)
-                  (format-rules-first-or-line-form-doc "defmacro" rest)
-                  (format-rules-signature-annotated-doc
-                    "defmacro"
-                    target
-                    colon
-                    typ
-                    body))]
-              [_ (format-rules-first-or-line-form-doc "defmacro" rest)])
-            (format-rules-first-or-line-form-doc "defmacro" rest))]
-        [_ (format-rules-first-or-line-form-doc "defmacro" rest)])]
-    [_ (format-rules-first-or-line-form-doc "defmacro" rest)]))
-
-(define (format-rules-lambda-doc [rest : FormatCstList]) : Doc
-  (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
-      (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem colon after-colon)
-          (if (format-rules-node-colon? colon)
-            (match (fmt-cst-list-step after-colon)
-              [(FmtCstListStepItem typ body)
-                (if (fmt-cst-list-empty? body)
-                  (format-rules-first-or-line-form-doc "lambda" rest)
-                  (format-rules-signature-annotated-doc
-                    "lambda"
-                    target
-                    colon
-                    typ
-                    body))]
-              [_ (format-rules-first-or-line-form-doc "lambda" rest)])
-            (format-rules-first-or-line-form-doc "lambda" rest))]
-        [_ (format-rules-first-or-line-form-doc "lambda" rest)])]
-    [_ (format-rules-first-or-line-form-doc "lambda" rest)]))
-
-(define (format-rules-special-list-doc
-  [head : FormatCst]
-  [rest : FormatCstList]) : Doc
-  (let
-    [head-name : String (format-rules-node-symbol-name head)]
-    (cond
-      [(string-eq head-name "import")
-        (format-rules-inline-form-doc "import" rest)]
-      [(string-eq head-name "include-str")
-        (format-rules-inline-form-doc "include-str" rest)]
-      [(string-eq head-name "extern")
-        (format-rules-inline-form-doc "extern" rest)]
-      [(string-eq head-name "define") (format-rules-define-doc rest)]
-      [(string-eq head-name "defmacro") (format-rules-defmacro-doc rest)]
-      [(string-eq head-name "defenum")
-        (format-rules-first-or-line-form-doc "defenum" rest)]
-      [(string-eq head-name "defstruct")
-        (format-rules-first-or-line-form-doc "defstruct" rest)]
-      [(string-eq head-name "lambda") (format-rules-lambda-doc rest)]
-      [(string-eq head-name "let") (format-rules-let-doc rest)]
-      [(string-eq head-name "if")
-        (format-rules-first-or-line-form-doc "if" rest)]
-      [(string-eq head-name "while")
-        (format-rules-first-or-line-form-doc "while" rest)]
-      [(string-eq head-name "begin") (format-rules-line-form-doc "begin" rest)]
-      [(string-eq head-name "unsafe")
-        (format-rules-line-form-doc "unsafe" rest)]
-      [(string-eq head-name "match")
-        (format-rules-first-or-line-form-doc "match" rest)]
-      [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")])))
-
-(define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
-  (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem key tail)
-      (let
-        [name : String (format-rules-node-symbol-name key)]
-        (if (> (string-length name) 0)
-          (format-rules-inline-form-doc (string-append ":" name) tail)
-          (format-rules-delimited-doc
-            "("
-            (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
-            ")")))]
-    [_
-      (format-rules-delimited-doc
-        "("
-        (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
-        ")")]))
-
-(define (format-rules-list-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (format-rules-delimited-doc "(" FmtCstNil ")")]
-    [(FmtCstListStepItem head rest)
-      (if (format-rules-node-colon? head)
-        (format-rules-colon-list-doc rest)
-        (format-rules-special-list-doc head rest))]))
-
-(define (format-rules-forms-tail-doc
-  [previous : FormatCst]
-  [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
-      (doc-append
-        (format-rules-forms-separator previous node)
-        (doc-append
-          (format-rules-cst-doc node)
-          (format-rules-forms-tail-doc node rest)))]))
-
-(define (format-rules-forms-doc [items : FormatCstList]) : Doc
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
-      (doc-append
-        (format-rules-cst-doc node)
-        (format-rules-forms-tail-doc node rest))]))
-
-(define (format-rules-cst-doc [node : FormatCst]) : Doc
-  (match node
-    [(FmtCstAtom tok) (doc-text (format-token-text tok))]
-    [(FmtCstComment text) (doc-text text)]
-    [(FmtCstPrefix tok child)
-      (doc-append
-        (doc-text (format-token-text tok))
-        (format-rules-cst-doc (box-get child)))]
-    [(FmtCstList items) (format-rules-list-doc (box-get items))]
-    [(FmtCstBracketList items)
-      (format-rules-delimited-doc "[" (box-get items) "]")]
-    [(FmtCstForms items) (format-rules-forms-doc (box-get items))]))
 
 ;; Direct CST layout interpreter for the normal `fmt`/LSP path. `emit=false`
 ;; computes the same capped flat width as `flat-width-capped`; `emit=true`
@@ -872,6 +389,38 @@
       limit
       buf)))
 
+(define (format-rules-layout-inline-tail-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (let
+    [index : i64 start]
+    [end : i64 (+ start count)]
+    [out : i64 col]
+    (begin
+      (while (< index end)
+        (begin
+          (set!
+            out
+            (format-rules-layout-space-cst
+              (array-ref slots index)
+              emit
+              width
+              indent
+              out
+              flat
+              limit
+              buf))
+          (set! index (+ index 1))))
+      out)))
+
 (define (format-rules-layout-inline-tail
   [items : FormatCstList]
   [emit : bool]
@@ -881,26 +430,115 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node rest)
-      (format-rules-layout-inline-tail
-        rest
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-inline-tail-dense
+        slots
+        start
+        count
         emit
         width
         indent
-        (format-rules-layout-space-cst
-          node
-          emit
-          width
-          indent
-          col
-          flat
-          limit
-          buf)
+        col
         flat
         limit
-        buf)]))
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node rest)
+          (format-rules-layout-inline-tail
+            rest
+            emit
+            width
+            indent
+            (format-rules-layout-space-cst
+              node
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)
+            flat
+            limit
+            buf)])]))
+
+(define (format-rules-layout-hard-tail-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (let
+    [index : i64 start]
+    [end : i64 (+ start count)]
+    [out : i64 col]
+    [last-comment : bool false]
+    (begin
+      (while (< index end)
+        (let
+          [node : FormatCst (array-ref slots index)]
+          [after-line : i64
+            (format-rules-layout-hard-line emit width indent out flat limit buf)]
+          (if (if (format-rules-node-colon? node)
+            (< (+ index 1) end)
+            false)
+            (let
+              [next : FormatCst (array-ref slots (+ index 1))]
+              (if (format-rules-node-comment? next)
+                (begin
+                  (set!
+                    out
+                    (format-rules-layout-cst
+                      node
+                      emit
+                      width
+                      indent
+                      after-line
+                      flat
+                      limit
+                      buf))
+                  (set! last-comment false)
+                  (set! index (+ index 1)))
+                (begin
+                  (set!
+                    out
+                    (format-rules-layout-colon-pair
+                      node
+                      next
+                      emit
+                      width
+                      indent
+                      after-line
+                      flat
+                      limit
+                      buf))
+                  (set! last-comment (format-rules-node-comment? next))
+                  (set! index (+ index 2)))))
+            (begin
+              (set!
+                out
+                (format-rules-layout-cst
+                  node
+                  emit
+                  width
+                  indent
+                  after-line
+                  flat
+                  limit
+                  buf))
+              (set! last-comment (format-rules-node-comment? node))
+              (set! index (+ index 1))))))
+      (if last-comment
+        (format-rules-layout-hard-line emit width indent out flat limit buf)
+        out))))
 
 (define (format-rules-layout-hard-tail
   [items : FormatCstList]
@@ -911,15 +549,94 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node tail)
-      (if (format-rules-node-colon? node)
-        (match (fmt-cst-list-step tail)
-          [(FmtCstListStepItem next after-next)
-            (if (format-rules-node-comment? next)
-              (let
-                [after-line : i64
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-hard-tail-dense
+        slots
+        start
+        count
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node tail)
+          (if (format-rules-node-colon? node)
+            (match (fmt-cst-list-step tail)
+              [(FmtCstListStepItem next after-next)
+                (if (format-rules-node-comment? next)
+                  (let
+                    [after-line : i64
+                      (format-rules-layout-hard-line
+                        emit
+                        width
+                        indent
+                        col
+                        flat
+                        limit
+                        buf)]
+                    [after-node : i64
+                      (format-rules-layout-cst
+                        node
+                        emit
+                        width
+                        indent
+                        after-line
+                        flat
+                        limit
+                        buf)]
+                    (format-rules-layout-hard-tail
+                      tail
+                      emit
+                      width
+                      indent
+                      after-node
+                      flat
+                      limit
+                      buf))
+                  (let
+                    [after-line : i64
+                      (format-rules-layout-hard-line
+                        emit
+                        width
+                        indent
+                        col
+                        flat
+                        limit
+                        buf)]
+                    [after-pair : i64
+                      (format-rules-layout-colon-pair
+                        node
+                        next
+                        emit
+                        width
+                        indent
+                        after-line
+                        flat
+                        limit
+                        buf)]
+                    (if (fmt-cst-list-empty? after-next)
+                      after-pair
+                      (format-rules-layout-hard-tail
+                        after-next
+                        emit
+                        width
+                        indent
+                        after-pair
+                        flat
+                        limit
+                        buf))))]
+              [_
+                (format-rules-layout-cst
+                  node
+                  emit
+                  width
+                  indent
                   (format-rules-layout-hard-line
                     emit
                     width
@@ -927,17 +644,39 @@
                     col
                     flat
                     limit
-                    buf)]
-                [after-node : i64
-                  (format-rules-layout-cst
-                    node
+                    buf)
+                  flat
+                  limit
+                  buf)])
+            (let
+              [after-node : i64
+                (format-rules-layout-cst
+                  node
+                  emit
+                  width
+                  indent
+                  (format-rules-layout-hard-line
                     emit
                     width
                     indent
-                    after-line
+                    col
                     flat
                     limit
-                    buf)]
+                    buf)
+                  flat
+                  limit
+                  buf)]
+              (if (fmt-cst-list-empty? tail)
+                (if (format-rules-node-comment? node)
+                  (format-rules-layout-hard-line
+                    emit
+                    width
+                    indent
+                    after-node
+                    flat
+                    limit
+                    buf)
+                  after-node)
                 (format-rules-layout-hard-tail
                   tail
                   emit
@@ -946,94 +685,7 @@
                   after-node
                   flat
                   limit
-                  buf))
-              (let
-                [after-line : i64
-                  (format-rules-layout-hard-line
-                    emit
-                    width
-                    indent
-                    col
-                    flat
-                    limit
-                    buf)]
-                [after-pair : i64
-                  (format-rules-layout-colon-pair
-                    node
-                    next
-                    emit
-                    width
-                    indent
-                    after-line
-                    flat
-                    limit
-                    buf)]
-                (if (fmt-cst-list-empty? after-next)
-                  after-pair
-                  (format-rules-layout-hard-tail
-                    after-next
-                    emit
-                    width
-                    indent
-                    after-pair
-                    flat
-                    limit
-                    buf))))]
-          [_
-            (format-rules-layout-cst
-              node
-              emit
-              width
-              indent
-              (format-rules-layout-hard-line
-                emit
-                width
-                indent
-                col
-                flat
-                limit
-                buf)
-              flat
-              limit
-              buf)])
-        (let
-          [after-node : i64
-            (format-rules-layout-cst
-              node
-              emit
-              width
-              indent
-              (format-rules-layout-hard-line
-                emit
-                width
-                indent
-                col
-                flat
-                limit
-                buf)
-              flat
-              limit
-              buf)]
-          (if (fmt-cst-list-empty? tail)
-            (if (format-rules-node-comment? node)
-              (format-rules-layout-hard-line
-                emit
-                width
-                indent
-                after-node
-                flat
-                limit
-                buf)
-              after-node)
-            (format-rules-layout-hard-tail
-              tail
-              emit
-              width
-              indent
-              after-node
-              flat
-              limit
-              buf))))]))
+                  buf))))])]))
 
 (define (format-rules-layout-tail-separator
   [previous-comment : bool]
@@ -1049,6 +701,95 @@
     (format-rules-layout-hard-line emit width indent col flat limit buf)
     (format-rules-layout-soft-line emit width indent col flat limit buf)))
 
+(define (format-rules-layout-list-tail-dense
+  [previous-comment : bool]
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (let
+    [index : i64 start]
+    [end : i64 (+ start count)]
+    [out : i64 col]
+    [prev-comment : bool previous-comment]
+    [last-comment : bool false]
+    (begin
+      (while (< index end)
+        (let
+          [node : FormatCst (array-ref slots index)]
+          [after-separator : i64
+            (format-rules-layout-tail-separator
+              prev-comment
+              node
+              emit
+              width
+              indent
+              out
+              flat
+              limit
+              buf)]
+          (if (if (format-rules-node-colon? node)
+            (< (+ index 1) end)
+            false)
+            (let
+              [next : FormatCst (array-ref slots (+ index 1))]
+              (if (format-rules-node-comment? next)
+                (begin
+                  (set!
+                    out
+                    (format-rules-layout-cst
+                      node
+                      emit
+                      width
+                      indent
+                      after-separator
+                      flat
+                      limit
+                      buf))
+                  (set! prev-comment false)
+                  (set! last-comment false)
+                  (set! index (+ index 1)))
+                (begin
+                  (set!
+                    out
+                    (format-rules-layout-colon-pair
+                      node
+                      next
+                      emit
+                      width
+                      indent
+                      after-separator
+                      flat
+                      limit
+                      buf))
+                  (set! prev-comment (format-rules-node-comment? next))
+                  (set! last-comment (format-rules-node-comment? next))
+                  (set! index (+ index 2)))))
+            (begin
+              (set!
+                out
+                (format-rules-layout-cst
+                  node
+                  emit
+                  width
+                  indent
+                  after-separator
+                  flat
+                  limit
+                  buf))
+              (set! prev-comment (format-rules-node-comment? node))
+              (set! last-comment prev-comment)
+              (set! index (+ index 1))))))
+      (if last-comment
+        (format-rules-layout-hard-line emit width indent out flat limit buf)
+        out))))
+
 (define (format-rules-layout-list-tail
   [previous-comment : bool]
   [items : FormatCstList]
@@ -1059,10 +800,24 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node tail)
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-list-tail-dense
+        previous-comment
+        slots
+        start
+        count
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [(FmtCstNil) col]
+    [(FmtCstCons node tail-box)
       (let
+        [tail : FormatCstList (box-get tail-box)]
         [after-separator : i64
           (format-rules-layout-tail-separator
             previous-comment
@@ -1163,6 +918,47 @@
                 limit
                 buf)))))]))
 
+(define (format-rules-layout-list-items-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (<= count 0)
+    col
+    (let
+      [first : FormatCst (array-ref slots start)]
+      [after-first : i64
+        (format-rules-layout-cst first emit width indent col flat limit buf)]
+      (if (<= count 1)
+        (if (format-rules-node-comment? first)
+          (format-rules-layout-hard-line
+            emit
+            width
+            indent
+            after-first
+            flat
+            limit
+            buf)
+          after-first)
+        (format-rules-layout-list-tail-dense
+          (format-rules-node-comment? first)
+          slots
+          (+ start 1)
+          (- count 1)
+          emit
+          width
+          indent
+          after-first
+          flat
+          limit
+          buf)))))
+
 (define (format-rules-layout-list-items
   [items : FormatCstList]
   [emit : bool]
@@ -1172,33 +968,55 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node tail)
-      (let
-        [after-node : i64
-          (format-rules-layout-cst node emit width indent col flat limit buf)]
-        (if (fmt-cst-list-empty? tail)
-          (if (format-rules-node-comment? node)
-            (format-rules-layout-hard-line
-              emit
-              width
-              indent
-              after-node
-              flat
-              limit
-              buf)
-            after-node)
-          (format-rules-layout-list-tail
-            (format-rules-node-comment? node)
-            tail
-            emit
-            width
-            indent
-            after-node
-            flat
-            limit
-            buf)))]))
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-list-items-dense
+        slots
+        start
+        count
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node tail)
+          (let
+            [after-node : i64
+              (format-rules-layout-cst
+                node
+                emit
+                width
+                indent
+                col
+                flat
+                limit
+                buf)]
+            (if (fmt-cst-list-empty? tail)
+              (if (format-rules-node-comment? node)
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  after-node
+                  flat
+                  limit
+                  buf)
+                after-node)
+              (format-rules-layout-list-tail
+                (format-rules-node-comment? node)
+                tail
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)))])]))
 
 (define (format-rules-layout-delimited-inner
   [open : String]
@@ -1820,6 +1638,51 @@
         buf)]
     [_ (format-rules-layout-cst node emit width indent col flat limit buf)]))
 
+(define (format-rules-layout-let-tail-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (let
+    [index : i64 start]
+    [end : i64 (+ start count)]
+    [out : i64 col]
+    [last-comment : bool false]
+    (begin
+      (while (< index end)
+        (let
+          [node : FormatCst (array-ref slots index)]
+          (begin
+            (set!
+              out
+              (format-rules-layout-let-item
+                node
+                emit
+                width
+                indent
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  out
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf))
+            (set! last-comment (format-rules-node-comment? node))
+            (set! index (+ index 1)))))
+      (if last-comment
+        (format-rules-layout-hard-line emit width indent out flat limit buf)
+        out))))
+
 (define (format-rules-layout-let-tail
   [items : FormatCstList]
   [emit : bool]
@@ -1829,40 +1692,61 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node tail)
-      (let
-        [after-node : i64
-          (format-rules-layout-let-item
-            node
-            emit
-            width
-            indent
-            (format-rules-layout-hard-line emit width indent col flat limit buf)
-            flat
-            limit
-            buf)]
-        (if (fmt-cst-list-empty? tail)
-          (if (format-rules-node-comment? node)
-            (format-rules-layout-hard-line
-              emit
-              width
-              indent
-              after-node
-              flat
-              limit
-              buf)
-            after-node)
-          (format-rules-layout-let-tail
-            tail
-            emit
-            width
-            indent
-            after-node
-            flat
-            limit
-            buf)))]))
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-let-tail-dense
+        slots
+        start
+        count
+        emit
+        width
+        indent
+        col
+        flat
+        limit
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node tail)
+          (let
+            [after-node : i64
+              (format-rules-layout-let-item
+                node
+                emit
+                width
+                indent
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)
+                flat
+                limit
+                buf)]
+            (if (fmt-cst-list-empty? tail)
+              (if (format-rules-node-comment? node)
+                (format-rules-layout-hard-line
+                  emit
+                  width
+                  indent
+                  after-node
+                  flat
+                  limit
+                  buf)
+                after-node)
+              (format-rules-layout-let-tail
+                tail
+                emit
+                width
+                indent
+                after-node
+                flat
+                limit
+                buf)))])]))
 
 (define (format-rules-layout-let
   [rest : FormatCstList]
@@ -2685,6 +2569,86 @@
         limit
         buf)]))
 
+(define (format-rules-layout-forms-separator-state
+  [previous-comment : bool]
+  [previous-family : String]
+  [node : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if previous-comment
+    (format-rules-layout-hard-line emit width indent col flat limit buf)
+    (let
+      [node-family : String (format-rules-top-form-family node)]
+      (if (and
+        (> (string-length previous-family) 0)
+        (string-eq previous-family node-family))
+        (format-rules-layout-hard-line emit width indent col flat limit buf)
+        (format-rules-layout-hard-line
+          emit
+          width
+          indent
+          (format-rules-layout-hard-line emit width indent col flat limit buf)
+          flat
+          limit
+          buf)))))
+
+(define (format-rules-layout-forms-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (<= count 0)
+    col
+    (let
+      [first : FormatCst (array-ref slots start)]
+      [index : i64 (+ start 1)]
+      [end : i64 (+ start count)]
+      [out : i64
+        (format-rules-layout-cst first emit width indent col flat limit buf)]
+      [previous-comment : bool (format-rules-node-comment? first)]
+      [previous-family : String (format-rules-top-form-family first)]
+      (begin
+        (while (< index end)
+          (let
+            [node : FormatCst (array-ref slots index)]
+            (begin
+              (set!
+                out
+                (format-rules-layout-cst
+                  node
+                  emit
+                  width
+                  indent
+                  (format-rules-layout-forms-separator-state
+                    previous-comment
+                    previous-family
+                    node
+                    emit
+                    width
+                    indent
+                    out
+                    flat
+                    limit
+                    buf)
+                  flat
+                  limit
+                  buf))
+              (set! previous-comment (format-rules-node-comment? node))
+              (set! previous-family (format-rules-top-form-family node))
+              (set! index (+ index 1)))))
+        out))))
+
 (define (format-rules-layout-forms
   [items : FormatCstList]
   [emit : bool]
@@ -2694,19 +2658,33 @@
   [flat : bool]
   [limit : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node rest)
-      (format-rules-layout-forms-tail
-        node
-        rest
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-layout-forms-dense
+        slots
+        start
+        count
         emit
         width
         indent
-        (format-rules-layout-cst node emit width indent col flat limit buf)
+        col
         flat
         limit
-        buf)]))
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node rest)
+          (format-rules-layout-forms-tail
+            node
+            rest
+            emit
+            width
+            indent
+            (format-rules-layout-cst node emit width indent col flat limit buf)
+            flat
+            limit
+            buf)])]))
 
 (define (format-rules-render-hard-line-into [indent : i64] [buf : FmtRenderBuf]) : i64
   (begin
@@ -2728,6 +2706,22 @@
     (if (format-rules-adjacent-top-forms? previous node)
       (format-rules-render-hard-line-into indent buf)
       (format-rules-render-gap-into indent buf))))
+
+(define (format-rules-render-forms-separator-state-into
+  [previous-comment : bool]
+  [previous-family : String]
+  [node : FormatCst]
+  [indent : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if previous-comment
+    (format-rules-render-hard-line-into indent buf)
+    (let
+      [node-family : String (format-rules-top-form-family node)]
+      (if (and
+        (> (string-length previous-family) 0)
+        (string-eq previous-family node-family))
+        (format-rules-render-hard-line-into indent buf)
+        (format-rules-render-gap-into indent buf)))))
 
 (define (format-rules-render-node-fragment-into
   [node : FormatCst]
@@ -2765,22 +2759,76 @@
           after-node
           buf))]))
 
+(define (format-rules-render-forms-into-dense
+  [slots : (Array FormatCst)]
+  [start : i64]
+  [count : i64]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (<= count 0)
+    col
+    (let
+      [first : FormatCst (array-ref slots start)]
+      [index : i64 (+ start 1)]
+      [end : i64 (+ start count)]
+      [out : i64
+        (format-rules-render-node-fragment-into first width indent col buf)]
+      [previous-comment : bool (format-rules-node-comment? first)]
+      [previous-family : String (format-rules-top-form-family first)]
+      (begin
+        (while (< index end)
+          (let
+            [node : FormatCst (array-ref slots index)]
+            [after-separator : i64
+              (format-rules-render-forms-separator-state-into
+                previous-comment
+                previous-family
+                node
+                indent
+                buf)]
+            (begin
+              (set!
+                out
+                (format-rules-render-node-fragment-into
+                  node
+                  width
+                  indent
+                  after-separator
+                  buf))
+              (set! previous-comment (format-rules-node-comment? node))
+              (set! previous-family (format-rules-top-form-family node))
+              (set! index (+ index 1)))))
+        out))))
+
 (define (format-rules-render-forms-into
   [items : FormatCstList]
   [width : i64]
   [indent : i64]
   [col : i64]
   [buf : FmtRenderBuf]) : i64
-  (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) col]
-    [(FmtCstListStepItem node rest)
-      (format-rules-render-forms-tail-into
-        node
-        rest
+  (match items
+    [(FmtCstDense slots start count)
+      (format-rules-render-forms-into-dense
+        slots
+        start
+        count
         width
         indent
-        (format-rules-render-node-fragment-into node width indent col buf)
-        buf)]))
+        col
+        buf)]
+    [_
+      (match (fmt-cst-list-step items)
+        [(FmtCstListStepEmpty) col]
+        [(FmtCstListStepItem node rest)
+          (format-rules-render-forms-tail-into
+            node
+            rest
+            width
+            indent
+            (format-rules-render-node-fragment-into node width indent col buf)
+            buf)])]))
 
 (define (format-rules-render-cst-width [node : FormatCst] [width : i64]) : String
   (let
@@ -2791,9 +2839,6 @@
           (format-rules-render-forms-into (box-get items) width 0 0 buf)]
         [_ (format-rules-render-node-fragment-into node width 0 0 buf)])
       (fmt-render-buf-string buf))))
-
-(define (format-rules-source-doc [src : String]) : Doc
-  (format-rules-cst-doc (parse-format-source src)))
 
 (define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
   (match (parse-format-source-result src)
@@ -2813,11 +2858,7 @@
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (format-rules-render-source-width-result src width)
     [(OkFormatString formatted) formatted]
-    [(ErrFormatString err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        "")]))
+    [(ErrFormatString err) (panic (format-source-error-message err))]))
 
 (define (format-rules-decls-source) : String
   "(import \"std.tl\") (import \"ffi.tl\") (extern (print-string [arg0 : String]) : unit (:abi c) (:symbol \"tl_print_string\")) (extern (print-int [arg0 : i64]) : unit) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64)) (define KEY_A : i64 1) (define KEY_B : i64 2)")
@@ -2904,30 +2945,34 @@
   "(defmacro (all [first : bool] [rest : bool ...]) : bool
   first)")
 
-(define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
+(define (format-rules-overlay-dense-tail-preserved?) : bool
   (let
-    [tree : FormatCst (parse-format-source src)]
-    (string-eq
-      (format-rules-render-cst-width tree width)
-      (render-doc-width (format-rules-cst-doc tree) width))))
-
-(define (format-rules-streaming-doc-fixtures-ok?) : bool
-  (and
-    (format-rules-streaming-matches-doc? (format-rules-decls-source) 80)
-    (format-rules-streaming-matches-doc? (format-rules-flow-source) 80)
-    (format-rules-streaming-matches-doc? (format-rules-comments-source) 80)
-    (format-rules-streaming-matches-doc? (format-rules-quote-source) 80)
-    (format-rules-streaming-matches-doc? (format-rules-unsafe-source) 80)
-    (format-rules-streaming-matches-doc?
-      (format-rules-define-metadata-source)
-      80)
-    (format-rules-streaming-matches-doc?
-      (format-rules-define-metadata-long-source)
-      48)
-    (format-rules-streaming-matches-doc?
-      (format-rules-variadic-macro-source)
-      80)
-    (format-rules-streaming-matches-doc? "(: 1 2) (foo a b c d e f g h)" 12)))
+    [head : FormatCst (FmtCstAtom (FmtSymbol "x"))]
+    [colon : FormatCst (FmtCstAtom (FmtColon))]
+    [typ : FormatCst (FmtCstAtom (FmtSymbol "i64"))]
+    [dense-slots : (Array FormatCst) (make-array FormatCst 3)]
+    [tail-slots : (Array FormatCst) (make-array FormatCst 1)]
+    (begin
+      (array-set! dense-slots 0 head)
+      (array-set! dense-slots 1 colon)
+      (array-set! dense-slots 2 typ)
+      (array-set! tail-slots 0 typ)
+      (let
+        [dense-render : String
+          (format-rules-render-width
+            (FmtCstList (box (FmtCstDense dense-slots 0 3)))
+            80)]
+        [overlay-render : String
+          (format-rules-render-width
+            (FmtCstList
+              (box
+                (FmtCstCons
+                  head
+                  (box (FmtCstCons colon (box (FmtCstDense tail-slots 0 1)))))))
+            80)]
+        (and
+          (string-eq dense-render "(x : i64)")
+          (string-eq overlay-render dense-render))))))
 
 (define (format-rules-self-test) : i64
   (let
@@ -2966,5 +3011,5 @@
       (unless
         (string-eq variadic (format-rules-variadic-macro-expected))
         (return 8))
-      (unless (format-rules-streaming-doc-fixtures-ok?) (return 9))
+      (unless (format-rules-overlay-dense-tail-preserved?) (return 9))
       42)))

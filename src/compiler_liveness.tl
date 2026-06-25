@@ -1592,7 +1592,4 @@
     (compiler-live-phi-ok?)
     (compiler-live-switch-ok?))
     42
-    (begin
-      (panic "liveness: smoke mismatch")
-      ;; lint-allow: unreachable-code
-      0)))
+    (panic "liveness: smoke mismatch")))

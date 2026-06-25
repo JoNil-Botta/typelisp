@@ -462,11 +462,13 @@
     (compiler-cfg-enable
       (compiler-cfg-enable
         (compiler-cfg-enable
-          (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-          "feature-str-view")
-        "feature-private-string-intrinsics")
-      "feature-compiler-private-string-intrinsics")
-    "array-helper-intrinsics"))
+          (compiler-cfg-enable
+            (compiler-cfg-enable cfgs "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
+      "array-helper-intrinsics")
+    "feature-plain-comptime-well-known"))
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
@@ -1347,9 +1349,8 @@
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
-          (compiler-driver-state-install-pools! state)
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache
+          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
             input-path
             (ast-program decls)
             paths
@@ -1358,7 +1359,8 @@
             (compiler-load-prelude-cache-key
               "typecheck-prefix-lower"
               stdlib-roots
-              cfgs))
+              cfgs)
+            pools)
             [(OkCompilerLower program spans)
               (begin
                 (cfg
@@ -1398,9 +1400,8 @@
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
-          (compiler-driver-state-install-pools! state)
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache
+          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
             input-path
             (ast-program decls)
             paths
@@ -1409,7 +1410,8 @@
             (compiler-load-prelude-cache-key
               "typecheck-prefix-lower"
               stdlib-roots
-              cfgs))
+              cfgs)
+            pools)
             [(OkCompilerLower program spans)
               (begin
                 (cfg
@@ -2103,9 +2105,8 @@
       pools)
       [(OkCompilerLoadWithPaths decls paths _ _)
         (begin
-          (compiler-driver-state-install-pools! state)
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache
+          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
             input-path
             (ast-program decls)
             paths
@@ -2114,7 +2115,8 @@
             (compiler-load-prelude-cache-key
               "typecheck-prefix-lower"
               stdlib-roots
-              target-cfgs))
+              target-cfgs)
+            pools)
             [(OkCompilerLower program spans)
               (compiler-driver-emit-ir-summary-lowered-result-with-level
                 (compiler-driver-lowered-from-active-pools program spans)

@@ -1,16 +1,17 @@
 (import "stdlib/thread.tl")
+(import (thread-handle bool) as thread_bool)
 
 (define (main) : i64
-  (match (thread-spawn-bool
+  (match (thread_bool.spawn
     (lambda () : bool
       true))
-    [(ThreadBoolSpawnErr _) 1]
-    [(ThreadBoolSpawnOk worker)
+    [(thread_bool.BoolSpawnErr _) 1]
+    [(thread_bool.BoolSpawnOk worker)
       (begin
-        (thread-join-bool worker)
-        (match (thread-join-bool worker)
-          [(ThreadBoolJoinOk value)
+        (thread_bool.join worker)
+        (match (thread_bool.join worker)
+          [(thread_bool.BoolJoinOk value)
             (if value
               42
               3)]
-          [(ThreadBoolJoinErr _) 2]))]))
+          [(thread_bool.BoolJoinErr _) 2]))]))

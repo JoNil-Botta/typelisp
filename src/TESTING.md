@@ -169,10 +169,10 @@ sret, stack probing, entry symbols, and runtime shims to the backend smoke and
 native integration layers. The normalizer has a narrow target-ABI model for the
 former opt2 scalar-parameter-home mismatches: selected incoming scalar argument
 registers, plus stack homes forced by target scratch registers, normalize to
-`%ABI<n>` pseudo operands for the affected corpus helpers only. The parity
-script has no expected-mismatch entries; any normalized helper-body difference is
-treated as a regression unless the script is deliberately updated with a tightly
-scoped, stale-entry-checked exception.
+`%ABI<n>` pseudo operands for the affected corpus helpers only. Any normalized
+helper-body difference is treated as a regression unless the script is
+deliberately updated with a tightly scoped, stale-entry-checked expected
+mismatch.
 
 ### Assembly size reports
 

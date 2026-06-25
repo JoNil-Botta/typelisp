@@ -31,8 +31,8 @@
 (module stdlib.args)
 
 (import stdlib.io)
-(import stdlib.list)
 (import stdlib.string)
+(import stdlib.vector)
 
 ;: Option arity: a boolean flag consumes no value, while a value flag consumes
 ;: the following argv string.
@@ -69,7 +69,7 @@
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
   (options ArgsOptionList)
-  (positionals list.StringList))
+  (positionals vector.StringVec))
 
 ;: Structured parse errors.
 (defenum ArgsError
@@ -86,11 +86,11 @@
   (ArgsNoOptionSpec)
   (ArgsSomeOptionSpec ArgsOptionSpec))
 
-;: Internal parse accumulator. Lists are stored reversed until the final result
-;: is produced.
+;: Internal parse accumulator. Options are stored reversed until the final
+;: result is produced; positionals are appended into a vector in input order.
 (defstruct ArgsParseState
   (options ArgsOptionList)
-  (positionals list.StringList)
+  (positionals vector.StringVec)
   (stop-options bool))
 
 ;: Internal successful step result: next state plus next argv index.
@@ -230,7 +230,7 @@
   (struct-get parsed options))
 
 ;: Return the positional arguments in input order.
-(define (args-parsed-positionals [parsed : ArgsParsed]) : list.StringList
+(define (args-parsed-positionals [parsed : ArgsParsed]) : vector.StringVec
   (struct-get parsed positionals))
 
 ;: Count option occurrences in a parsed result.
@@ -329,7 +329,7 @@
 
 ;: Return a fresh empty parse state.
 (define (args-parse-state-empty) : ArgsParseState
-  (ArgsParseState (ArgsOptionNil) (list.StringNil) false))
+  (ArgsParseState (ArgsOptionNil) (vector.string-vec-new) false))
 
 ;: Add a positional token to a parse state.
 (define (args-parse-state-add-positional
@@ -337,7 +337,7 @@
   [value : String]) : ArgsParseState
   (ArgsParseState
     (struct-get state options)
-    (list.StringCons value (box (struct-get state positionals)))
+    (vector.string-vec-push (struct-get state positionals) value)
     (struct-get state stop-options)))
 
 ;: Add a parsed option occurrence to a parse state.
@@ -364,15 +364,13 @@
 (define (args-parse-state-finish [state : ArgsParseState]) : ArgsParsed
   (ArgsParsed
     (args-option-list-reverse (struct-get state options))
-    (list.string-list-reverse (struct-get state positionals))))
+    (struct-get state positionals)))
 
 ;: Finish parser field accumulators into the public ordered result.
 (define (args-parse-finish-fields
   [options : ArgsOptionList]
-  [positionals : list.StringList]) : ArgsParsed
-  (ArgsParsed
-    (args-option-list-reverse options)
-    (list.string-list-reverse positionals)))
+  [positionals : vector.StringVec]) : ArgsParsed
+  (ArgsParsed (args-option-list-reverse options) positionals))
 
 ;: Advance past one positional token.
 (define (args-advance-positional
@@ -468,7 +466,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : list.StringList]
+  [positionals : vector.StringVec]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
@@ -487,7 +485,7 @@
             (+ index 1)
             end
             options
-            (list.StringCons current (box positionals))
+            (vector.string-vec-push positionals current)
             stop-options)]
         [(stdlib.args.args-end-of-options-token? current)
           (args-parse-array-loop-fields
@@ -539,7 +537,7 @@
             (+ index 1)
             end
             options
-            (list.StringCons current (box positionals))
+            (vector.string-vec-push positionals current)
             stop-options)]))))
 
 ;: Bridge an `ArgsParseState` into the field-based array parser loop.
@@ -570,7 +568,7 @@
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
-    [positionals : list.StringList (list.StringNil)]
+    [positionals : vector.StringVec (vector.string-vec-new)]
     [stop-options : bool false]
     [failed : bool false]
     [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
@@ -586,7 +584,7 @@
           (cond
             [stop-options
               (begin
-                (set! positionals (list.StringCons current (box positionals)))
+                (set! positionals (vector.string-vec-push positionals current))
                 (set! i (+ i 1)))]
             [(stdlib.args.args-end-of-options-token? current)
               (begin
@@ -627,7 +625,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (set! positionals (list.StringCons current (box positionals)))
+                (set! positionals (vector.string-vec-push positionals current))
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -644,7 +642,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : list.StringList]
+  [positionals : vector.StringVec]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
@@ -662,7 +660,7 @@
             (+ index 1)
             end
             options
-            (list.StringCons current (box positionals))
+            (vector.string-vec-push positionals current)
             stop-options)]
         [(stdlib.args.args-end-of-options-token? current)
           (args-parse-argv-loop-fields
@@ -710,7 +708,7 @@
             (+ index 1)
             end
             options
-            (list.StringCons current (box positionals))
+            (vector.string-vec-push positionals current)
             stop-options)]))))
 
 ;: Bridge an `ArgsParseState` into the field-based process argv parser loop.
@@ -738,7 +736,7 @@
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
-    [positionals : list.StringList (list.StringNil)]
+    [positionals : vector.StringVec (vector.string-vec-new)]
     [stop-options : bool false]
     [failed : bool false]
     [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
@@ -754,7 +752,7 @@
           (cond
             [stop-options
               (begin
-                (set! positionals (list.StringCons current (box positionals)))
+                (set! positionals (vector.string-vec-push positionals current))
                 (set! i (+ i 1)))]
             [(stdlib.args.args-end-of-options-token? current)
               (begin
@@ -795,7 +793,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (set! positionals (list.StringCons current (box positionals)))
+                (set! positionals (vector.string-vec-push positionals current))
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -907,20 +905,20 @@
     [(OkArgsParsed _) (io.panic message)]
     [(ErrArgsParsed error) error]))
 
-;: Assert that a string list is empty.
-(define (args-test-assert-string-list-empty
-  [items : list.StringList]
+;: Assert that a string vector is empty.
+(define (args-test-assert-string-vec-empty
+  [items : vector.StringVec]
   [message : String]) : unit
-  (args-test-assert-i64-eq (list.string-list-count items) 0 message))
+  (args-test-assert-i64-eq (vector.string-vec-len items) 0 message))
 
-;: Assert that a string list contains exactly two strings.
-(define (args-test-assert-string-list2
-  [items : list.StringList]
+;: Assert that a string vector contains exactly two strings.
+(define (args-test-assert-string-vec2
+  [items : vector.StringVec]
   [first : String]
   [second : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (list.string-list-to-array items)]
+    [values : (Array String) (vector.string-vec-to-array items)]
     (begin
       (args-test-assert-i64-eq
         (array-length values)
@@ -935,15 +933,15 @@
         second
         (string.string-append message " second")))))
 
-;: Assert that a string list contains exactly three strings.
-(define (args-test-assert-string-list3
-  [items : list.StringList]
+;: Assert that a string vector contains exactly three strings.
+(define (args-test-assert-string-vec3
+  [items : vector.StringVec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (list.string-list-to-array items)]
+    [values : (Array String) (vector.string-vec-to-array items)]
     (begin
       (args-test-assert-i64-eq
         (array-length values)
@@ -970,7 +968,7 @@
         (args-parse-array (args-test-specs) (args-test-array0))
         "empty argv should parse")]
     (begin
-      (args-test-assert-string-list-empty
+      (args-test-assert-string-vec-empty
         (args-parsed-positionals parsed)
         "empty argv has no positionals")
       (args-test-assert-i64-eq
@@ -991,10 +989,10 @@
             "args-test-array3 length")
           (args-parse-array (args-test-specs) argv))
         "positional-only argv should parse")]
-    (args-test-assert-string-list3
+    (args-test-assert-string-vec3
       (begin
         (args-test-assert-i64-eq
-          (list.string-list-count (args-parsed-positionals parsed))
+          (vector.string-vec-len (args-parsed-positionals parsed))
           3
           "positionals parsed count")
         (args-parsed-positionals parsed))
@@ -1024,7 +1022,7 @@
         (args-option-value-or parsed "output" "missing")
         "out.s"
         "short value flag consumes next argv")
-      (args-test-assert-string-list2
+      (args-test-assert-string-vec2
         (args-parsed-positionals parsed)
         "input.tl"
         "rest"
@@ -1044,7 +1042,7 @@
         (args-option-count parsed "verbose")
         0
         "options after -- are positionals")
-      (args-test-assert-string-list2
+      (args-test-assert-string-vec2
         (args-parsed-positionals parsed)
         "--verbose"
         "-o"
@@ -1120,106 +1118,3 @@
         (args-error-option error)
         "--output=file"
         "equals spelling carries original token"))))
-
-(export
-  (value args-option-spec-empty)
-  (value args-option-spec-cons)
-  (value args-flag-option)
-  (value args-value-option)
-  (value args-option-spec-name)
-  (value args-option-spec-long)
-  (value args-option-spec-short)
-  (value args-option-spec-arity)
-  (value args-option-arity-value?)
-  (value args-option-spec-matches-long?)
-  (value args-option-spec-matches-short?)
-  (value args-option-list-empty)
-  (value args-option-list-cons)
-  (value args-option-name)
-  (value args-option-value)
-  (value args-option-has-value?)
-  (value args-option-list-reverse-onto)
-  (value args-option-list-reverse)
-  (value args-option-list-count)
-  (value args-option-list-present?)
-  (value args-option-list-value-or)
-  (value args-parsed-options)
-  (value args-parsed-positionals)
-  (value args-option-count)
-  (value args-option-present?)
-  (value args-option-value-or)
-  (value args-error-message)
-  (value args-error-unknown-option?)
-  (value args-error-missing-value?)
-  (value args-error-option)
-  (value args-end-of-options-token?)
-  (value args-option-looking-token?)
-  (value args-long-token?)
-  (value args-short-token?)
-  (value args-token-long-name)
-  (value args-token-short-name)
-  (value args-find-spec-long)
-  (value args-find-spec-short)
-  (value args-find-spec-token)
-  (value args-parse-state-empty)
-  (value args-parse-state-add-positional)
-  (value args-parse-state-add-option)
-  (value args-parse-state-stop-options)
-  (value args-parse-state-finish)
-  (value args-advance-positional)
-  (value args-advance-end-of-options)
-  (value args-advance-known-option)
-  (value args-parse-step)
-  (value args-clamp-start)
-  (value args-clamp-end)
-  (value args-parse-array-loop)
-  (value args-parse-array-range)
-  (value args-parse-array)
-  (value args-parse-argv-loop)
-  (value args-parse-argv-range)
-  (value args-parse-argv)
-  (type ArgsOptionArity)
-  (type ArgsOptionSpec)
-  (type ArgsOptionSpecList)
-  (type ArgsOption)
-  (type ArgsOptionList)
-  (type ArgsParsed)
-  (type ArgsError)
-  (type ResultArgsParsed)
-  (type ArgsMaybeOptionSpec)
-  (type ArgsParseState)
-  (type ArgsParseAdvance)
-  (type ResultArgsParseAdvance)
-  (constructor ArgsOptionSpec)
-  (constructor ArgsOption)
-  (constructor ArgsParsed)
-  (constructor ArgsParseState)
-  (constructor ArgsParseAdvance)
-  (field ArgsOptionSpec name)
-  (field ArgsOptionSpec long)
-  (field ArgsOptionSpec short)
-  (field ArgsOptionSpec arity)
-  (field ArgsOption name)
-  (field ArgsOption value)
-  (field ArgsOption has-value)
-  (field ArgsParsed options)
-  (field ArgsParsed positionals)
-  (field ArgsParseState options)
-  (field ArgsParseState positionals)
-  (field ArgsParseState stop-options)
-  (field ArgsParseAdvance state)
-  (field ArgsParseAdvance next-index)
-  (variant ArgsFlag)
-  (variant ArgsValue)
-  (variant ArgsOptionSpecNil)
-  (variant ArgsOptionSpecCons)
-  (variant ArgsOptionNil)
-  (variant ArgsOptionCons)
-  (variant ArgsUnknownOption)
-  (variant ArgsMissingValue)
-  (variant OkArgsParsed)
-  (variant ErrArgsParsed)
-  (variant ArgsNoOptionSpec)
-  (variant ArgsSomeOptionSpec)
-  (variant OkArgsParseAdvance)
-  (variant ErrArgsParseAdvance))

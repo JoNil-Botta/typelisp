@@ -424,11 +424,7 @@
   [n : i64]) : i64
   (match (fmt-scan-prefixed-number-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
 
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -469,11 +465,7 @@
   [n : i64]) : i64
   (match (fmt-scan-number-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -529,13 +521,12 @@
                   (set! j (+ j 1))
                   (set! keep false))]
               [else (set! j (+ j 1))]))
-          (begin
-            (return
-              (ErrFmtI64
-                (fmt-source-error-at
-                  src
-                  (- start 1)
-                  "format lexer: unterminated string literal"))))))
+          (return
+            (ErrFmtI64
+              (fmt-source-error-at
+                src
+                (- start 1)
+                "format lexer: unterminated string literal")))))
       (OkFmtI64 j))))
 
 (define (fmt-scan-string-end
@@ -545,11 +536,7 @@
   [n : i64]) : i64
   (match (fmt-scan-string-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        start)]))
+    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -831,8 +818,4 @@
 (define (format-lex [src : String]) : FormatTokenStream
   (match (format-lex-result src)
     [(OkFormatTokenStream stream) stream]
-    [(ErrFormatTokenStream err)
-      (begin
-        (panic (format-source-error-message err))
-        ;; lint-allow: unreachable-code
-        (format-empty-token-stream))]))
+    [(ErrFormatTokenStream err) (panic (format-source-error-message err))]))

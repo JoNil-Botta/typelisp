@@ -4,14 +4,21 @@
 ;# types described by SPEC 3.7.2.2. The current compiler still stores macro
 ;# syntax internally as `AstTyExpr` / `CtfeExpr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation while
-;# the CTFE value migration lands. The helper functions below are stdlib-owned
-;# signatures for the same compile-time-only bridge; macro CTFE intercepts calls
-;# to them before their placeholder bodies are evaluated.
+;# the CTFE value migration lands.
+;#
+;# CTFE still intercepts constructor, sequence, and reflection helper calls
+;# because it cannot yet interpret arbitrary stdlib function calls and several
+;# constructors attach compiler provenance. Simple `Expr`/`ExprClause`
+;# inspectors below are ordinary source bodies so macro code can migrate toward
+;# public pattern matching without growing the bridge surface.
 (module stdlib.comptime)
 
+;# `feature-plain-comptime-well-known` is the end-state source surface. The
+;# inverse cfg branch is a temporary bridge for published stage0 compilers whose
+;# verifier still requires legacy generated metadata.
 ;: Syntax value passed to and returned from expression macros.
-(comptime-decl
-  (:generated stdlib/comptime-well-known Expr "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defenum Expr
     (ExprBool bool)
     (ExprInt i64)
@@ -25,108 +32,238 @@
     (ExprUnquote (Box Expr))
     (ExprUnquoteSplicing (Box Expr))))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known Expr "v0")
+    (defenum Expr
+      (ExprBool bool)
+      (ExprInt i64)
+      (ExprVar String)
+      (ExprSplice (Box Expr))
+      (ExprIf (Box Expr) (Box Expr) (Box Expr))
+      (ExprCall (Box Expr) ExprList)
+      (ExprBegin ExprList)
+      (ExprQuote (Box Expr))
+      (ExprQuasiquote (Box Expr))
+      (ExprUnquote (Box Expr))
+      (ExprUnquoteSplicing (Box Expr)))))
+
 ;: Dense ordered sequence of syntax expressions.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprList
     (items (Array Expr))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprList "v0")
+    (defstruct ExprList
+      (items (Array Expr))
+      (len i64))))
+
 ;: Pair of expressions used by clause-oriented macro forms.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprClause "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprClause
     (first Expr)
     (second Expr)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprClause "v0")
+    (defstruct ExprClause
+      (first Expr)
+      (second Expr))))
+
 ;: Dense ordered sequence of expression clauses.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprClauseList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprClauseList
     (items (Array ExprClause))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprClauseList "v0")
+    (defstruct ExprClauseList
+      (items (Array ExprClause))
+      (len i64))))
+
 ;: Let-like binding clause used by binding-introducing macro forms.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprBindingClause "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprBindingClause
     (name String)
     (has-type bool)
     (ty Expr)
     (init Expr)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprBindingClause "v0")
+    (defstruct ExprBindingClause
+      (name String)
+      (has-type bool)
+      (ty Expr)
+      (init Expr))))
+
 ;: Dense ordered sequence of binding clauses.
-(comptime-decl
-  (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct ExprBindingClauseList
     (items (Array ExprBindingClause))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known ExprBindingClauseList "v0")
+    (defstruct ExprBindingClauseList
+      (items (Array ExprBindingClause))
+      (len i64))))
+
 ;: Dense ordered sequence of reflected type descriptors.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeInfoList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeInfoList
     (items (Array TypeInfo))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeInfoList "v0")
+    (defstruct TypeInfoList
+      (items (Array TypeInfo))
+      (len i64))))
+
 ;: Reflected struct field name and type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeField "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeField
     (name String)
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeField "v0")
+    (defstruct TypeField
+      (name String)
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected struct fields.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeFieldList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeFieldList
     (items (Array TypeField))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeFieldList "v0")
+    (defstruct TypeFieldList
+      (items (Array TypeField))
+      (len i64))))
+
 ;: Reflected enum variant payload type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantPayload "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantPayload
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantPayload "v0")
+    (defstruct TypeVariantPayload
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected enum variant payloads.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantPayloadList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantPayloadList
     (items (Array TypeVariantPayload))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantPayloadList "v0")
+    (defstruct TypeVariantPayloadList
+      (items (Array TypeVariantPayload))
+      (len i64))))
+
 ;: Reflected enum variant name and payload list.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariant "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariant
     (name String)
     (payloads TypeVariantPayloadList)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariant "v0")
+    (defstruct TypeVariant
+      (name String)
+      (payloads TypeVariantPayloadList))))
+
 ;: Dense ordered sequence of reflected enum variants.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeVariantList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeVariantList
     (items (Array TypeVariant))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeVariantList "v0")
+    (defstruct TypeVariantList
+      (items (Array TypeVariant))
+      (len i64))))
+
 ;: Reflected nominal type parameter name and resolved type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeParam "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeParam
     (name String)
     (ty TypeInfo)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeParam "v0")
+    (defstruct TypeParam
+      (name String)
+      (ty TypeInfo))))
+
 ;: Dense ordered sequence of reflected nominal type parameters.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeParamList "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defstruct TypeParamList
     (items (Array TypeParam))
     (len i64)))
 
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeParamList "v0")
+    (defstruct TypeParamList
+      (items (Array TypeParam))
+      (len i64))))
+
 ;: Compile-time reflection descriptor for a TypeLisp type.
-(comptime-decl
-  (:generated stdlib/comptime-well-known TypeInfo "v0")
+(cfg
+  feature-plain-comptime-well-known
   (defenum TypeInfo
     (TypeInfoBuiltin String)
     (TypeInfoArray (Box TypeInfo) i64)
@@ -136,6 +273,20 @@
     (TypeInfoStruct String TypeFieldList)
     (TypeInfoEnum String TypeVariantList)
     (TypeInfoOpaque String)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known TypeInfo "v0")
+    (defenum TypeInfo
+      (TypeInfoBuiltin String)
+      (TypeInfoArray (Box TypeInfo) i64)
+      (TypeInfoDynArray (Box TypeInfo))
+      (TypeInfoFunction TypeInfoList (Box TypeInfo))
+      (TypeInfoTuple TypeInfoList)
+      (TypeInfoStruct String TypeFieldList)
+      (TypeInfoEnum String TypeVariantList)
+      (TypeInfoOpaque String))))
 
 ;: Build a bool literal expression during macro CTFE.
 (define (expr-bool [value : bool]) : Expr
@@ -148,6 +299,10 @@
 ;: Build a variable-reference expression during macro CTFE.
 (define (expr-var [name : String]) : Expr
   (expr-var name))
+
+;: Build a struct field access expression during macro CTFE.
+(define (expr-struct-get [target : Expr] [field : String]) : Expr
+  (expr-struct-get target field))
 
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String
@@ -173,53 +328,41 @@
 (define (expr-type [value : Expr]) : Expr
   value)
 
-;: Return true when a module exports a value with the given name.
-(define (module-export-value? [module : String] [name : String]) : bool
-  (module-export-value? module name))
-
-;: Return true when a module exports a type with the given name.
-(define (module-export-type? [module : String] [name : String]) : bool
-  (module-export-type? module name))
-
-;: Return true when a module exports a macro with the given name.
-(define (module-export-macro? [module : String] [name : String]) : bool
-  (module-export-macro? module name))
-
-;: Return the exported value's type, or diagnose a missing export.
-(define (module-export-value-type [module : String] [name : String]) : Expr
-  (module-export-value-type module name))
-
-;: Return the exported nominal type, or diagnose a missing export.
-(define (module-export-type [module : String] [name : String]) : Expr
-  (module-export-type module name))
-
-;: Return the exported macro signature type, or diagnose a missing export.
-(define (module-export-macro-type [module : String] [name : String]) : Expr
-  (module-export-macro-type module name))
-
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
-  (expr-bool? value))
+  (match value
+    [(ExprBool _) true]
+    [_ false]))
 
 ;: Extract the bool literal payload from an expression.
 (define (expr-bool-value [value : Expr]) : bool
-  (expr-bool-value value))
+  (match value
+    [(ExprBool found) found]
+    [_ false]))
 
 ;: Return true when an expression is an if expression.
 (define (expr-if? [value : Expr]) : bool
-  (expr-if? value))
+  (match value
+    [(ExprIf _ _ _) true]
+    [_ false]))
 
 ;: Extract an if expression's condition.
 (define (expr-if-cond [value : Expr]) : Expr
-  (expr-if-cond value))
+  (match value
+    [(ExprIf cond _ _) cond]
+    [_ value]))
 
 ;: Extract an if expression's then branch.
 (define (expr-if-then [value : Expr]) : Expr
-  (expr-if-then value))
+  (match value
+    [(ExprIf _ then-expr _) then-expr]
+    [_ value]))
 
 ;: Extract an if expression's else branch.
 (define (expr-if-else [value : Expr]) : Expr
-  (expr-if-else value))
+  (match value
+    [(ExprIf _ _ else-expr) else-expr]
+    [_ value]))
 
 ;: Return true when an expression list has no items.
 (define (expr-list-empty? [items : ExprList]) : bool
@@ -243,11 +386,13 @@
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
-  (expr-clause-first clause))
+  (match clause
+    [(ExprClause first _) first]))
 
 ;: Return the second expression from a clause.
 (define (expr-clause-second [clause : ExprClause]) : Expr
-  (expr-clause-second clause))
+  (match clause
+    [(ExprClause _ second) second]))
 
 ;: Return true when a clause list has no items.
 (define (expr-clause-list-empty? [items : ExprClauseList]) : bool
@@ -314,127 +459,3 @@
 ;: Convert binding clauses back into bracket-clause operand syntax.
 (define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList
   (expr-binding-clause-list->expr-list items))
-
-(export
-  (type Expr)
-  (variant ExprBool)
-  (variant ExprInt)
-  (variant ExprVar)
-  (variant ExprSplice)
-  (variant ExprIf)
-  (variant ExprCall)
-  (variant ExprBegin)
-  (variant ExprQuote)
-  (variant ExprQuasiquote)
-  (variant ExprUnquote)
-  (variant ExprUnquoteSplicing)
-  (type ExprList)
-  (constructor ExprList)
-  (field ExprList items)
-  (field ExprList len)
-  (type ExprClause)
-  (constructor ExprClause)
-  (field ExprClause first)
-  (field ExprClause second)
-  (type ExprClauseList)
-  (constructor ExprClauseList)
-  (field ExprClauseList items)
-  (field ExprClauseList len)
-  (type ExprBindingClause)
-  (constructor ExprBindingClause)
-  (field ExprBindingClause name)
-  (field ExprBindingClause has-type)
-  (field ExprBindingClause ty)
-  (field ExprBindingClause init)
-  (type ExprBindingClauseList)
-  (constructor ExprBindingClauseList)
-  (field ExprBindingClauseList items)
-  (field ExprBindingClauseList len)
-  (type TypeInfoList)
-  (constructor TypeInfoList)
-  (field TypeInfoList items)
-  (field TypeInfoList len)
-  (type TypeField)
-  (constructor TypeField)
-  (field TypeField name)
-  (field TypeField ty)
-  (type TypeFieldList)
-  (constructor TypeFieldList)
-  (field TypeFieldList items)
-  (field TypeFieldList len)
-  (type TypeVariantPayload)
-  (constructor TypeVariantPayload)
-  (field TypeVariantPayload ty)
-  (type TypeVariantPayloadList)
-  (constructor TypeVariantPayloadList)
-  (field TypeVariantPayloadList items)
-  (field TypeVariantPayloadList len)
-  (type TypeVariant)
-  (constructor TypeVariant)
-  (field TypeVariant name)
-  (field TypeVariant payloads)
-  (type TypeVariantList)
-  (constructor TypeVariantList)
-  (field TypeVariantList items)
-  (field TypeVariantList len)
-  (type TypeParam)
-  (constructor TypeParam)
-  (field TypeParam name)
-  (field TypeParam ty)
-  (type TypeParamList)
-  (constructor TypeParamList)
-  (field TypeParamList items)
-  (field TypeParamList len)
-  (type TypeInfo)
-  (variant TypeInfoBuiltin)
-  (variant TypeInfoArray)
-  (variant TypeInfoDynArray)
-  (variant TypeInfoFunction)
-  (variant TypeInfoTuple)
-  (variant TypeInfoStruct)
-  (variant TypeInfoEnum)
-  (variant TypeInfoOpaque)
-  (value expr-bool)
-  (value expr-int)
-  (value expr-var)
-  (value string-concat)
-  (value string-append)
-  (value int->string)
-  (value expr-splice)
-  (value expr-if)
-  (value expr-type)
-  (value module-export-value?)
-  (value module-export-type?)
-  (value module-export-macro?)
-  (value module-export-value-type)
-  (value module-export-type)
-  (value module-export-macro-type)
-  (value expr-bool?)
-  (value expr-bool-value)
-  (value expr-if?)
-  (value expr-if-cond)
-  (value expr-if-then)
-  (value expr-if-else)
-  (value expr-list-empty?)
-  (value expr-list-length)
-  (value expr-list-head)
-  (value expr-list-tail)
-  (value expr-list-nth)
-  (value expr-clause-first)
-  (value expr-clause-second)
-  (value expr-clause-list-empty?)
-  (value expr-clause-list-length)
-  (value expr-clause-list-head)
-  (value expr-clause-list-tail)
-  (value expr-clause-list-nth)
-  (value expr-clause-list->expr-list)
-  (value expr-binding-clause-name)
-  (value expr-binding-clause-has-type?)
-  (value expr-binding-clause-type)
-  (value expr-binding-clause-init)
-  (value expr-binding-clause-list-empty?)
-  (value expr-binding-clause-list-length)
-  (value expr-binding-clause-list-head)
-  (value expr-binding-clause-list-tail)
-  (value expr-binding-clause-list-nth)
-  (value expr-binding-clause-list->expr-list))

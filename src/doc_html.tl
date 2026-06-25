@@ -308,7 +308,7 @@
 
 (define (doc-html-syntax-keyword? [token : String]) : bool
   (doc-html-syntax-list-member?
-    "|comptime-decls|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-shuffle|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if|"
+    "|comptime-decl|comptime|defdispatch|defstruct|defmacro|defenum|define|include-str|include-bin|spmd-shuffle|spmd-broadcast|spmd-reduce|with-arena|with-escape|with|unquote-splicing|unquote|quasiquote|quote|foreach|unsafe|return|export|extern|import|module|lambda|begin|while|match|unless|when|cond|cast|test|try|set!|type|init|ann|let|and|or|if|"
     token))
 
 (define (doc-html-syntax-builtin? [token : String]) : bool
@@ -669,7 +669,4 @@
   [message : String]) : bool
   (if (doc-string-contains? rendered needle)
     true
-    (begin
-      (panic message)
-      ;; lint-allow: unreachable-code
-      false)))
+    (panic message)))

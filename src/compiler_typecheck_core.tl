@@ -51,7 +51,6 @@
     AstProgram
     CompilerSymbols
     CompilerRegistries
-    CompilerExports
     String
     AstNodePoolContext))
 
@@ -204,15 +203,19 @@
   (TcSpmdValue)
   (TcSpmdForeachIndex))
 
-(defenum TcSpmdEnv
-  (TcSpmdEnvNil)
-  (TcSpmdEnvBind
-    String
-    AstType
-    TcSpmdClass
-    TcSpmdScope
-    TcSpmdRole
-    (Box TcSpmdEnv)))
+(defstruct TcSpmdBinding
+  (name String)
+  (ty AstType)
+  (class TcSpmdClass)
+  (scope TcSpmdScope)
+  (role TcSpmdRole))
+
+(defstruct TcSpmdEnv
+  (bindings (Array TcSpmdBinding))
+  (len i64))
+
+(defstruct TcSpmdEnvMark
+  (len i64))
 
 (defenum TcSpmdLookup
   (TcSpmdMissing)
@@ -226,7 +229,7 @@
   (ErrTcSpmdExprInfo String))
 
 (defenum TcSpmdLetState
-  (TcSpmdLetState TcTypeEnv TcSpmdEnv i64))
+  (TcSpmdLetState TcTypeEnv TcSpmdEnv TcSpmdEnvMark))
 
 (defenum ResultTcSpmdLetState
   (OkTcSpmdLetState TcSpmdLetState)
@@ -522,16 +525,16 @@
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
-    [(TcContext program symbols registries exports _ pools)
-      (TcContext program symbols registries exports module pools)]))
+    [(TcContext program symbols registries _ pools)
+      (TcContext program symbols registries module pools)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ _ module _) module]))
+    [(TcContext _ _ _ module _) module]))
 
 (define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
   (match ctx
-    [(TcContext _ _ _ _ _ pools) pools]))
+    [(TcContext _ _ _ _ pools) pools]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (ast-node-pool-context-capture-active! (tc-context-pools ctx)))
@@ -1096,6 +1099,10 @@
   compile-profile
   (define compiler-tc-env-profile-module-local-misses : i64
     0))
+(cfg
+  compile-profile
+  (define tc-lp-counts : (Array i64)
+    (make-array i64 15)))
 
 (cfg
   compile-profile
@@ -1137,6 +1144,20 @@
 
 (cfg
   compile-profile
+  (define (tc-lp-reset [index : i64]) : unit
+    (if (< index 15)
+      (begin
+        (array-set! tc-lp-counts index 0)
+        (tc-lp-reset (+ index 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (tc-lp-note [index : i64]) : unit
+    (array-set! tc-lp-counts index (+ (array-ref tc-lp-counts index) 1))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-decl-profile-reset) : unit
     (begin
       (set! compiler-tc-decl-profile-start-ms 0)
@@ -1174,7 +1195,8 @@
       (set! compiler-tc-env-profile-cache-builds 0)
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
-      (set! compiler-tc-env-profile-module-local-misses 0))))
+      (set! compiler-tc-env-profile-module-local-misses 0)
+      (tc-lp-reset 0))))
 
 (cfg
   compile-profile
@@ -1462,6 +1484,18 @@
 
 (cfg
   compile-profile
+  (define (tc-lp-line [phase : String] [index : i64]) : unit
+    (print-error
+      (string-append
+        "compile-profile|typecheck.layout."
+        (string-append
+          phase
+          (string-append
+            (compiler-tc-profile-field (array-ref tc-lp-counts index))
+            "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-decl-profile-line-mem
     [phase : String]
     [value : i64]
@@ -1548,7 +1582,22 @@
         compiler-tc-env-profile-module-local-hits)
       (compiler-tc-env-profile-line
         "module_local_misses"
-        compiler-tc-env-profile-module-local-misses))))
+        compiler-tc-env-profile-module-local-misses)
+      (tc-lp-line "repr_c_field_builds" 0)
+      (tc-lp-line "repr_c_field_visits" 1)
+      (tc-lp-line "inline_field_builds" 2)
+      (tc-lp-line "inline_field_visits" 3)
+      (tc-lp-line "inline_payload_builds" 4)
+      (tc-lp-line "inline_payload_visits" 5)
+      (tc-lp-line "inline_variant_builds" 6)
+      (tc-lp-line "inline_variant_visits" 7)
+      (tc-lp-line "stdlib_field_spec_builds" 8)
+      (tc-lp-line "stdlib_field_spec_visits" 9)
+      (tc-lp-line "stdlib_variant_spec_builds" 10)
+      (tc-lp-line "stdlib_variant_spec_visits" 11)
+      (tc-lp-line "cache_hits" 12)
+      (tc-lp-line "cache_misses" 13)
+      (tc-lp-line "cache_bypasses" 14))))
 
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (if (tc-rich-error? message)
@@ -2401,6 +2450,156 @@
       (tc-name-id (compiler-symbol-module-key module (intern-str name)))
       ty)))
 
+(define tc-unqualified-import-owner-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-ambiguous-first-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-ambiguous-second-modules : SymI64Env
+  (sym-i64-empty))
+(define tc-unqualified-import-has-ambiguity : bool
+  false)
+
+(define (tc-unqualified-import-ambiguity-reset!) : unit
+  (begin
+    (set! tc-unqualified-import-owner-modules (sym-i64-empty))
+    (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
+    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
+    (set! tc-unqualified-import-has-ambiguity false)))
+
+(define (tc-unqualified-import-key-id
+  [importer-module : String]
+  [name-id : i64]) : i64
+  (if (string-eq importer-module "")
+    name-id
+    (compiler-symbol-module-key-id-by-name-id importer-module name-id)))
+
+(define (tc-unqualified-import-note-value!
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]) : unit
+  (if import-unqualified
+    (let
+      [key-id : i64 (tc-unqualified-import-key-id importer-module name-id)]
+      [source-id : i64 (intern source-module)]
+      [binding-id : i64 (tc-module-name-id alias name-id)]
+      (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
+        [(SomeI64 owner-id)
+          (if (= owner-id source-id)
+            unit
+            (match (sym-i64-lookup-id
+              tc-unqualified-import-ambiguous-first-modules
+              key-id)
+              [(SomeI64 _) unit]
+              [NoneI64
+                (begin
+                  (set! tc-unqualified-import-has-ambiguity true)
+                  (set!
+                    tc-unqualified-import-ambiguous-first-modules
+                    (sym-i64-bind-id
+                      tc-unqualified-import-ambiguous-first-modules
+                      key-id
+                      owner-id))
+                  (set!
+                    tc-unqualified-import-ambiguous-second-modules
+                    (sym-i64-bind-id
+                      tc-unqualified-import-ambiguous-second-modules
+                      key-id
+                      source-id)))]))]
+        [NoneI64
+          (if (tc-name-bound-id? env binding-id)
+            unit
+            (set!
+              tc-unqualified-import-owner-modules
+              (sym-i64-bind-id
+                tc-unqualified-import-owner-modules
+                key-id
+                source-id)))]))
+    unit))
+
+(define (tc-bind-import-alias-value-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-id env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-unsafe-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-unsafe-id env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-c-abi-fnptr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-id-c-abi-fnptr env alias name-id ty)))
+
+(define (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (begin
+    (tc-unqualified-import-note-value!
+      ctx
+      env
+      alias
+      importer-module
+      source-module
+      import-unqualified
+      name-id)
+    (tc-bind-module-name-unsafe-id-c-abi-fnptr env alias name-id ty)))
+
 (define (tc-struct-cleanup-function-type [struct-ty : AstType]) : AstType
   (tc-fn1 struct-ty (AstTyUnit)))
 
@@ -2528,6 +2727,50 @@
       (tc-bind
         env
         (compiler-symbol-module-key alias (intern-str cleanup-name))
+        (tc-enum-cleanup-function-type enum-ty))]))
+
+(define (tc-bind-struct-cleanup-import-alias
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [cleanup : AstStructCleanup]
+  [struct-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstStructNoCleanup) env]
+    [(AstStructCleanupFn cleanup-name)
+      (tc-bind-import-alias-value-id
+        ctx
+        env
+        alias
+        importer-module
+        source-module
+        import-unqualified
+        cleanup-name
+        (tc-struct-cleanup-function-type struct-ty))]))
+
+(define (tc-bind-enum-cleanup-import-alias
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]) : TcTypeEnv
+  (match cleanup
+    [(AstEnumNoCleanup) env]
+    [(AstEnumCleanupFn cleanup-name)
+      (tc-bind-import-alias-value-id
+        ctx
+        env
+        alias
+        importer-module
+        source-module
+        import-unqualified
+        cleanup-name
         (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-name) : String
@@ -3083,23 +3326,19 @@
   [pools : AstNodePoolContext]
   [a : AstType]
   [b : AstType]) : AstTypeList
-  (ast-type-cons-with-pools
-    pools
-    a
-    (ast-type-cons-with-pools pools b AstTypeNil)))
+  (let
+    [rest : AstTypeList (ast-type-cons-with-pools pools b AstTypeNil)]
+    (ast-type-cons-with-pools pools a rest)))
 
 (define (tc-type-list3-with-pools
   [pools : AstNodePoolContext]
   [a : AstType]
   [b : AstType]
   [c : AstType]) : AstTypeList
-  (ast-type-cons-with-pools
-    pools
-    a
-    (ast-type-cons-with-pools
-      pools
-      b
-      (ast-type-cons-with-pools pools c AstTypeNil))))
+  (let
+    [tail : AstTypeList (ast-type-cons-with-pools pools c AstTypeNil)]
+    [rest : AstTypeList (ast-type-cons-with-pools pools b tail)]
+    (ast-type-cons-with-pools pools a rest)))
 
 (define (tc-fn0 [ret : AstType]) : AstType
   (ast-ty-func AstTypeNil ret))
@@ -3297,44 +3536,68 @@
       (AstSomeType (tc-macro-expr-binding-clause-list-type))]
     [else (AstNoType)]))
 
+(defenum TcStdlibTypeSpec
+  (TcStdlibTyI64)
+  (TcStdlibTyBool)
+  (TcStdlibTyString)
+  (TcStdlibTyName String)
+  (TcStdlibTyBoxName String)
+  (TcStdlibTyArrayName String))
+
+(defenum TcStdlibTypeSpecList
+  (TcStdlibTypeSpecNil)
+  (TcStdlibTypeSpecCons TcStdlibTypeSpec (Box TcStdlibTypeSpecList)))
+
 (defenum TcStdlibFieldSpecList
   (TcStdlibFieldSpecNil)
-  (TcStdlibFieldSpecCons String AstType (Box TcStdlibFieldSpecList)))
+  (TcStdlibFieldSpecCons String TcStdlibTypeSpec (Box TcStdlibFieldSpecList)))
 
 (defenum TcStdlibVariantSpecList
   (TcStdlibVariantSpecNil)
-  (TcStdlibVariantSpecCons String AstTypeList (Box TcStdlibVariantSpecList)))
+  (TcStdlibVariantSpecCons
+    String
+    TcStdlibTypeSpecList
+    (Box TcStdlibVariantSpecList)))
+
+(define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons a (box (TcStdlibTypeSpecNil))))
+
+(define (tc-stdlib-type-spec-list2
+  [a : TcStdlibTypeSpec]
+  [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons
+    a
+    (box (TcStdlibTypeSpecCons b (box (TcStdlibTypeSpecNil))))))
+
+(define (tc-stdlib-type-spec-list3
+  [a : TcStdlibTypeSpec]
+  [b : TcStdlibTypeSpec]
+  [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
+  (TcStdlibTypeSpecCons
+    a
+    (box
+      (TcStdlibTypeSpecCons
+        b
+        (box (TcStdlibTypeSpecCons c (box (TcStdlibTypeSpecNil))))))))
 
 (define (tc-stdlib-field-spec-cons
   [name : String]
-  [ty : AstType]
+  [ty : TcStdlibTypeSpec]
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
-  (TcStdlibFieldSpecCons name ty (box rest)))
+  (begin
+    (cfg compile-profile (tc-lp-note 8))
+    (TcStdlibFieldSpecCons name ty (box rest))))
 
 (define (tc-stdlib-variant-spec-cons
   [name : String]
-  [payloads : AstTypeList]
+  [payloads : TcStdlibTypeSpecList]
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
-  (TcStdlibVariantSpecCons name payloads (box rest)))
+  (begin
+    (cfg compile-profile (tc-lp-note 10))
+    (TcStdlibVariantSpecCons name payloads (box rest))))
 
 (define (tc-stdlib-name-type [name : String]) : AstType
   (AstTyVar (intern name)))
-
-(define (tc-stdlib-box-name-type [name : String]) : AstType
-  (ast-ty-box (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-array-name-type [name : String]) : AstType
-  (ast-ty-dyn-array (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-box-name-type-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]) : AstType
-  (ast-ty-box-with-pools pools (tc-stdlib-name-type name)))
-
-(define (tc-stdlib-array-name-type-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]) : AstType
-  (ast-ty-dyn-array-with-pools pools (tc-stdlib-name-type name)))
 
 (define (tc-stdlib-well-known-mismatch [type-name : String] [detail : String]) : ResultTcUnit
   (ErrTcUnit
@@ -3344,30 +3607,8 @@
       ": "
       detail)))
 
-(define (tc-stdlib-comptime-generated-metadata-message) : String
-  "expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
-
-(define (tc-stdlib-comptime-version-arg? [args : AstExprList]) : bool
-  (match args
-    [(AstExprCons head rest)
-      (match (box-get rest)
-        [(AstExprNil)
-          (match (ast-expr-unspan (ast-node-get head))
-            [(AstExprLiteral (AstLitString version)) (string-eq version "v0")]
-            [_ false])]
-        [_ false])]
-    [_ false]))
-
-(define (tc-stdlib-comptime-generated-meta-ok?
-  [type-name : String]
-  [meta : AstGeneratedDeclMeta]) : bool
-  (match meta
-    [(AstSomeGeneratedDeclMeta generator item args _)
-      (and
-        (string-eq generator "stdlib/comptime-well-known")
-        (string-eq item type-name)
-        (tc-stdlib-comptime-version-arg? args))]
-    [(AstNoGeneratedDeclMeta) false]))
+(define (tc-stdlib-comptime-plain-declaration-message) : String
+  "expected plain stdlib.comptime well-known declaration")
 
 (define (tc-stdlib-comptime-well-known-type? [type-name : String]) : bool
   (or
@@ -3400,15 +3641,14 @@
     [(AstDeclDefStructLifetimes name _ _ _ _) (TcSomeString (intern-str name))]
     [_ (TcNoString)]))
 
-(define (tc-stdlib-comptime-raw-meta-ok? [type-name : String] [decl : AstDecl]) : bool
+(define (tc-stdlib-comptime-raw-comptime-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta _)
-      (tc-stdlib-comptime-generated-meta-ok? type-name meta)]
+    [(AstDeclComptimeDecl _ _) true]
     [(AstDeclUnsafe inner-box)
-      (tc-stdlib-comptime-raw-meta-ok? type-name (box-get inner-box))]
+      (tc-stdlib-comptime-raw-comptime-decl? (box-get inner-box))]
     [_ false]))
 
-(define (tc-stdlib-check-comptime-metadata-decl
+(define (tc-stdlib-check-comptime-declaration-surface-decl
   [module : String]
   [decl : AstDecl]) : ResultTcUnit
   (if (not (string-eq module (tc-stdlib-comptime-module-name)))
@@ -3418,13 +3658,13 @@
       [(TcSomeString type-name)
         (if (not (tc-stdlib-comptime-well-known-type? type-name))
           OkTcUnit
-          (if (tc-stdlib-comptime-raw-meta-ok? type-name decl)
-            OkTcUnit
+          (if (tc-stdlib-comptime-raw-comptime-decl? decl)
             (tc-stdlib-well-known-mismatch
               type-name
-              (tc-stdlib-comptime-generated-metadata-message))))])))
+              (tc-stdlib-comptime-plain-declaration-message))
+            OkTcUnit))])))
 
-(define (tc-stdlib-check-comptime-metadata-list
+(define (tc-stdlib-check-comptime-declaration-surface-list
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
   (match decls
@@ -3434,32 +3674,26 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclModule module-id)
-            (tc-stdlib-check-comptime-metadata-list rest (intern-str module-id))]
+            (tc-stdlib-check-comptime-declaration-surface-list
+              rest
+              (intern-str module-id))]
           [_
-            (match (tc-stdlib-check-comptime-metadata-decl module decl)
-              [(OkTcUnit) (tc-stdlib-check-comptime-metadata-list rest module)]
+            (match (tc-stdlib-check-comptime-declaration-surface-decl
+              module
+              decl)
+              [(OkTcUnit)
+                (tc-stdlib-check-comptime-declaration-surface-list rest module)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
-(define (tc-stdlib-check-comptime-metadata [ctx : TcContext]) : ResultTcUnit
+(define (tc-stdlib-check-comptime-declaration-surface [ctx : TcContext]) : ResultTcUnit
   (match (tc-context-program ctx)
     [(AstProgram decls-box)
-      (tc-stdlib-check-comptime-metadata-list (box-get decls-box) "")]))
+      (tc-stdlib-check-comptime-declaration-surface-list (box-get decls-box) "")]))
 
-(define (tc-stdlib-type-list-ref
-  [ctx : TcContext]
-  [types : AstTypeList]
-  [index : i64]) : ResultTcType
-  (if (< index 0)
-    (ErrTcType "typecheck: tuple index out of bounds")
-    (match types
-      [(AstTypeNil) (ErrTcType "typecheck: tuple index out of bounds")]
-      [(AstTypeCons ty rest)
-        (let
-          [ty : AstType (tc-context-type-get ctx ty)]
-          [rest : AstTypeList (box-get rest)]
-          (if (= index 0)
-            (OkTcType ty)
-            (tc-stdlib-type-list-ref ctx rest (- index 1))))])))
+(define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : AstType]) : AstType
+  (match ty
+    [(AstTyVar name) (tc-resolve-type-name ctx (intern-str name))]
+    [_ ty]))
 
 (define (tc-stdlib-type-match-normalized?
   [ctx : TcContext]
@@ -3496,7 +3730,7 @@
           (tc-stdlib-type-match?
             ctx
             (tc-context-type-get ctx actual-inner)
-            (tc-context-type-get ctx expected-inner))]
+            (ty-node-get expected-inner))]
         [_ false])]
     [(AstTyDynArray actual-inner)
       (match expected
@@ -3504,7 +3738,7 @@
           (tc-stdlib-type-match?
             ctx
             (tc-context-type-get ctx actual-inner)
-            (tc-context-type-get ctx expected-inner))]
+            (ty-node-get expected-inner))]
         [_ false])]
     [(AstTyStruct actual-name)
       (match expected
@@ -3524,7 +3758,54 @@
   [ctx : TcContext]
   [actual : AstType]
   [expected : AstType]) : bool
-  (tc-stdlib-type-match-normalized? ctx actual expected))
+  (tc-stdlib-type-match-normalized?
+    ctx
+    (tc-stdlib-type-normalize-name ctx actual)
+    (tc-stdlib-type-normalize-name ctx expected)))
+
+(define (tc-stdlib-type-name-match?
+  [ctx : TcContext]
+  [actual : AstType]
+  [name : String]) : bool
+  (tc-stdlib-type-match? ctx actual (tc-stdlib-name-type name)))
+
+(define (tc-stdlib-type-spec-match?
+  [ctx : TcContext]
+  [actual : AstType]
+  [expected : TcStdlibTypeSpec]) : bool
+  (match expected
+    [(TcStdlibTyI64)
+      (match actual
+        [(AstTyI64) true]
+        [_ false])]
+    [(TcStdlibTyBool)
+      (match actual
+        [(AstTyBool) true]
+        [_ false])]
+    [(TcStdlibTyString)
+      (match actual
+        [(AstTyString) true]
+        [_ false])]
+    [(TcStdlibTyName name) (tc-stdlib-type-name-match? ctx actual name)]
+    [(TcStdlibTyBoxName name)
+      (match actual
+        [(AstTyBox inner)
+          (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
+        [_ false])]
+    [(TcStdlibTyArrayName name)
+      (match actual
+        [(AstTyDynArray inner)
+          (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
+        [_ false])]))
+
+(define (tc-stdlib-type-spec-render [expected : TcStdlibTypeSpec]) : String
+  (match expected
+    [(TcStdlibTyI64) "i64"]
+    [(TcStdlibTyBool) "bool"]
+    [(TcStdlibTyString) "String"]
+    [(TcStdlibTyName name) name]
+    [(TcStdlibTyBoxName name) (str-cat "(Box " name ")")]
+    [(TcStdlibTyArrayName name) (str-cat "(Array " name ")")]))
 
 (define (tc-stdlib-check-field-specs
   [ctx : TcContext]
@@ -3538,75 +3819,83 @@
         [(AstFieldDefNil) OkTcUnit]
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra field")])]
     [(TcStdlibFieldSpecCons expected-name expected-ty rest-specs)
-      (match fields
-        [(AstFieldDefNil)
-          (tc-stdlib-well-known-mismatch
-            type-name
-            (str-cat "missing field " expected-name))]
-        [(AstFieldDefCons field rest-fields)
-          (let
-            [rest-fields : AstFieldDefList (box-get rest-fields)]
-            [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
-            (match field
-              [(AstFieldDef actual-name actual-ty _)
-                (if (not (string-eq (intern-str actual-name) expected-name))
-                  (tc-stdlib-well-known-mismatch
-                    type-name
-                    (str-cat
-                      "expected field "
-                      expected-name
-                      " at index "
-                      (int->string index)))
-                  (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
-                    (tc-stdlib-check-field-specs
-                      ctx
-                      type-name
-                      rest-fields
-                      rest-specs
-                      (+ index 1))
+      (begin
+        (cfg compile-profile (tc-lp-note 9))
+        (match fields
+          [(AstFieldDefNil)
+            (tc-stdlib-well-known-mismatch
+              type-name
+              (str-cat "missing field " expected-name))]
+          [(AstFieldDefCons field rest-fields)
+            (let
+              [rest-fields : AstFieldDefList (box-get rest-fields)]
+              [rest-specs : TcStdlibFieldSpecList (box-get rest-specs)]
+              (match field
+                [(AstFieldDef actual-name actual-ty _)
+                  (if (not (string-eq (intern-str actual-name) expected-name))
                     (tc-stdlib-well-known-mismatch
                       type-name
                       (str-cat
                         "expected field "
                         expected-name
-                        " type "
-                        (tc-type-render (tc-resolve-type ctx expected-ty))))))]))])]))
+                        " at index "
+                        (int->string index)))
+                    (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
+                      (tc-stdlib-check-field-specs
+                        ctx
+                        type-name
+                        rest-fields
+                        rest-specs
+                        (+ index 1))
+                      (tc-stdlib-well-known-mismatch
+                        type-name
+                        (str-cat
+                          "expected field "
+                          expected-name
+                          " type "
+                          (tc-stdlib-type-spec-render expected-ty)))))]))]))]))
 
 (define (tc-stdlib-check-payload-specs
   [ctx : TcContext]
   [type-name : String]
   [variant-name : String]
   [actual : AstTypeList]
-  [expected : AstTypeList]
+  [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
-  (if (!= (tc-type-list-len actual) (tc-type-list-len expected))
-    (tc-stdlib-well-known-mismatch
-      type-name
-      (str-cat "payload arity mismatch for variant " variant-name))
-    (if (= index (tc-type-list-len expected))
-      OkTcUnit
-      (match (tc-stdlib-type-list-ref ctx actual index)
-        [(OkTcType actual-ty)
-          (match (tc-stdlib-type-list-ref ctx expected index)
-            [(OkTcType expected-ty)
-              (if (tc-stdlib-type-match? ctx actual-ty expected-ty)
-                (tc-stdlib-check-payload-specs
-                  ctx
-                  type-name
+  (match expected
+    [(TcStdlibTypeSpecNil)
+      (match actual
+        [(AstTypeNil) OkTcUnit]
+        [_
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "payload arity mismatch for variant " variant-name))])]
+    [(TcStdlibTypeSpecCons expected-ty rest-expected)
+      (match actual
+        [(AstTypeNil)
+          (tc-stdlib-well-known-mismatch
+            type-name
+            (str-cat "payload arity mismatch for variant " variant-name))]
+        [(AstTypeCons actual-id rest-actual)
+          (let
+            [actual-ty : AstType (tc-context-type-get ctx actual-id)]
+            [rest-actual : AstTypeList (box-get rest-actual)]
+            [rest-expected : TcStdlibTypeSpecList (box-get rest-expected)]
+            (if (tc-stdlib-type-spec-match? ctx actual-ty expected-ty)
+              (tc-stdlib-check-payload-specs
+                ctx
+                type-name
+                variant-name
+                rest-actual
+                rest-expected
+                (+ index 1))
+              (tc-stdlib-well-known-mismatch
+                type-name
+                (str-cat
+                  "payload type mismatch for variant "
                   variant-name
-                  actual
-                  expected
-                  (+ index 1))
-                (tc-stdlib-well-known-mismatch
-                  type-name
-                  (str-cat
-                    "payload type mismatch for variant "
-                    variant-name
-                    " at index "
-                    (int->string index))))]
-            [(ErrTcType message)
-              (tc-stdlib-well-known-mismatch type-name message)])]
-        [(ErrTcType message) (tc-stdlib-well-known-mismatch type-name message)]))))
+                  " at index "
+                  (int->string index)))))])]))
 
 (define (tc-stdlib-check-variant-specs
   [ctx : TcContext]
@@ -3620,40 +3909,42 @@
         [(AstVariantDefNil) OkTcUnit]
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra variant")])]
     [(TcStdlibVariantSpecCons expected-name expected-payloads rest-specs)
-      (match variants
-        [(AstVariantDefNil)
-          (tc-stdlib-well-known-mismatch
-            type-name
-            (str-cat "missing variant " expected-name))]
-        [(AstVariantDefCons variant rest-variants)
-          (let
-            [rest-variants : AstVariantDefList (box-get rest-variants)]
-            [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
-            (match variant
-              [(AstVariantDef actual-name actual-payloads _)
-                (if (not (string-eq (intern-str actual-name) expected-name))
-                  (tc-stdlib-well-known-mismatch
-                    type-name
-                    (str-cat
-                      "expected variant "
+      (begin
+        (cfg compile-profile (tc-lp-note 11))
+        (match variants
+          [(AstVariantDefNil)
+            (tc-stdlib-well-known-mismatch
+              type-name
+              (str-cat "missing variant " expected-name))]
+          [(AstVariantDefCons variant rest-variants)
+            (let
+              [rest-variants : AstVariantDefList (box-get rest-variants)]
+              [rest-specs : TcStdlibVariantSpecList (box-get rest-specs)]
+              (match variant
+                [(AstVariantDef actual-name actual-payloads _)
+                  (if (not (string-eq (intern-str actual-name) expected-name))
+                    (tc-stdlib-well-known-mismatch
+                      type-name
+                      (str-cat
+                        "expected variant "
+                        expected-name
+                        " at index "
+                        (int->string index)))
+                    (match (tc-stdlib-check-payload-specs
+                      ctx
+                      type-name
                       expected-name
-                      " at index "
-                      (int->string index)))
-                  (match (tc-stdlib-check-payload-specs
-                    ctx
-                    type-name
-                    expected-name
-                    actual-payloads
-                    expected-payloads
-                    0)
-                    [(OkTcUnit)
-                      (tc-stdlib-check-variant-specs
-                        ctx
-                        type-name
-                        rest-variants
-                        rest-specs
-                        (+ index 1))]
-                    [(ErrTcUnit message) (ErrTcUnit message)]))]))])]))
+                      actual-payloads
+                      expected-payloads
+                      0)
+                      [(OkTcUnit)
+                        (tc-stdlib-check-variant-specs
+                          ctx
+                          type-name
+                          rest-variants
+                          rest-specs
+                          (+ index 1))]
+                      [(ErrTcUnit message) (ErrTcUnit message)]))]))]))]))
 
 (define (tc-stdlib-check-struct
   [ctx : TcContext]
@@ -3720,115 +4011,85 @@
       [(SomeI64 _) true]
       [(NoneI64) false])))
 
-(define (tc-stdlib-expr-specs [ctx : TcContext]) : TcStdlibVariantSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
+(define (tc-stdlib-expr-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "ExprBool"
+    (tc-stdlib-type-spec-list1 (TcStdlibTyBool))
     (tc-stdlib-variant-spec-cons
-      "ExprBool"
-      (tc-type-list1-with-pools pools (AstTyBool))
+      "ExprInt"
+      (tc-stdlib-type-spec-list1 (TcStdlibTyI64))
       (tc-stdlib-variant-spec-cons
-        "ExprInt"
-        (tc-type-list1-with-pools pools (AstTyI64))
+        "ExprVar"
+        (tc-stdlib-type-spec-list1 (TcStdlibTyString))
         (tc-stdlib-variant-spec-cons
-          "ExprVar"
-          (tc-type-list1-with-pools pools (AstTyString))
+          "ExprSplice"
+          (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
           (tc-stdlib-variant-spec-cons
-            "ExprSplice"
-            (tc-type-list1-with-pools
-              pools
-              (tc-stdlib-box-name-type-with-pools pools "Expr"))
+            "ExprIf"
+            (tc-stdlib-type-spec-list3
+              (TcStdlibTyBoxName "Expr")
+              (TcStdlibTyBoxName "Expr")
+              (TcStdlibTyBoxName "Expr"))
             (tc-stdlib-variant-spec-cons
-              "ExprIf"
-              (tc-type-list3-with-pools
-                pools
-                (tc-stdlib-box-name-type-with-pools pools "Expr")
-                (tc-stdlib-box-name-type-with-pools pools "Expr")
-                (tc-stdlib-box-name-type-with-pools pools "Expr"))
+              "ExprCall"
+              (tc-stdlib-type-spec-list2
+                (TcStdlibTyBoxName "Expr")
+                (TcStdlibTyName "ExprList"))
               (tc-stdlib-variant-spec-cons
-                "ExprCall"
-                (tc-type-list2-with-pools
-                  pools
-                  (tc-stdlib-box-name-type-with-pools pools "Expr")
-                  (tc-stdlib-name-type "ExprList"))
+                "ExprBegin"
+                (tc-stdlib-type-spec-list1 (TcStdlibTyName "ExprList"))
                 (tc-stdlib-variant-spec-cons
-                  "ExprBegin"
-                  (tc-type-list1-with-pools
-                    pools
-                    (tc-stdlib-name-type "ExprList"))
+                  "ExprQuote"
+                  (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                   (tc-stdlib-variant-spec-cons
-                    "ExprQuote"
-                    (tc-type-list1-with-pools
-                      pools
-                      (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                    "ExprQuasiquote"
+                    (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                     (tc-stdlib-variant-spec-cons
-                      "ExprQuasiquote"
-                      (tc-type-list1-with-pools
-                        pools
-                        (tc-stdlib-box-name-type-with-pools pools "Expr"))
+                      "ExprUnquote"
+                      (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
                       (tc-stdlib-variant-spec-cons
-                        "ExprUnquote"
-                        (tc-type-list1-with-pools
-                          pools
-                          (tc-stdlib-box-name-type-with-pools pools "Expr"))
-                        (tc-stdlib-variant-spec-cons
-                          "ExprUnquoteSplicing"
-                          (tc-type-list1-with-pools
-                            pools
-                            (tc-stdlib-box-name-type-with-pools pools "Expr"))
-                          (TcStdlibVariantSpecNil))))))))))))))
+                        "ExprUnquoteSplicing"
+                        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+                        (TcStdlibVariantSpecNil)))))))))))))
 
-(define (tc-stdlib-sequence-fields [ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
-    (tc-stdlib-field-spec-cons
-      "items"
-      (tc-stdlib-array-name-type-with-pools pools elem-name)
-      (tc-stdlib-field-spec-cons "len" (AstTyI64) (TcStdlibFieldSpecNil)))))
+(define (tc-stdlib-sequence-fields [_ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
+  (tc-stdlib-field-spec-cons
+    "items"
+    (TcStdlibTyArrayName elem-name)
+    (tc-stdlib-field-spec-cons "len" (TcStdlibTyI64) (TcStdlibFieldSpecNil))))
 
-(define (tc-stdlib-type-info-specs [ctx : TcContext]) : TcStdlibVariantSpecList
-  (let
-    [pools : AstNodePoolContext (tc-context-pools ctx)]
+(define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "TypeInfoBuiltin"
+    (tc-stdlib-type-spec-list1 (TcStdlibTyString))
     (tc-stdlib-variant-spec-cons
-      "TypeInfoBuiltin"
-      (tc-type-list1-with-pools pools (AstTyString))
+      "TypeInfoArray"
+      (tc-stdlib-type-spec-list2 (TcStdlibTyBoxName "TypeInfo") (TcStdlibTyI64))
       (tc-stdlib-variant-spec-cons
-        "TypeInfoArray"
-        (tc-type-list2-with-pools
-          pools
-          (tc-stdlib-box-name-type-with-pools pools "TypeInfo")
-          (AstTyI64))
+        "TypeInfoDynArray"
+        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "TypeInfo"))
         (tc-stdlib-variant-spec-cons
-          "TypeInfoDynArray"
-          (tc-type-list1-with-pools
-            pools
-            (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
+          "TypeInfoFunction"
+          (tc-stdlib-type-spec-list2
+            (TcStdlibTyName "TypeInfoList")
+            (TcStdlibTyBoxName "TypeInfo"))
           (tc-stdlib-variant-spec-cons
-            "TypeInfoFunction"
-            (tc-type-list2-with-pools
-              pools
-              (tc-stdlib-name-type "TypeInfoList")
-              (tc-stdlib-box-name-type-with-pools pools "TypeInfo"))
+            "TypeInfoTuple"
+            (tc-stdlib-type-spec-list1 (TcStdlibTyName "TypeInfoList"))
             (tc-stdlib-variant-spec-cons
-              "TypeInfoTuple"
-              (tc-type-list1-with-pools
-                pools
-                (tc-stdlib-name-type "TypeInfoList"))
+              "TypeInfoStruct"
+              (tc-stdlib-type-spec-list2
+                (TcStdlibTyString)
+                (TcStdlibTyName "TypeFieldList"))
               (tc-stdlib-variant-spec-cons
-                "TypeInfoStruct"
-                (tc-type-list2-with-pools
-                  pools
-                  (AstTyString)
-                  (tc-stdlib-name-type "TypeFieldList"))
+                "TypeInfoEnum"
+                (tc-stdlib-type-spec-list2
+                  (TcStdlibTyString)
+                  (TcStdlibTyName "TypeVariantList"))
                 (tc-stdlib-variant-spec-cons
-                  "TypeInfoEnum"
-                  (tc-type-list2-with-pools
-                    pools
-                    (AstTyString)
-                    (tc-stdlib-name-type "TypeVariantList"))
-                  (tc-stdlib-variant-spec-cons
-                    "TypeInfoOpaque"
-                    (tc-type-list1-with-pools pools (AstTyString))
-                    (TcStdlibVariantSpecNil)))))))))))
+                  "TypeInfoOpaque"
+                  (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+                  (TcStdlibVariantSpecNil))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -3840,65 +4101,65 @@
 (define (tc-stdlib-expr-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "first"
-    (tc-stdlib-name-type "Expr")
+    (TcStdlibTyName "Expr")
     (tc-stdlib-field-spec-cons
       "second"
-      (tc-stdlib-name-type "Expr")
+      (TcStdlibTyName "Expr")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-expr-binding-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "has-type"
-      (AstTyBool)
+      (TcStdlibTyBool)
       (tc-stdlib-field-spec-cons
         "ty"
-        (tc-stdlib-name-type "Expr")
+        (TcStdlibTyName "Expr")
         (tc-stdlib-field-spec-cons
           "init"
-          (tc-stdlib-name-type "Expr")
+          (TcStdlibTyName "Expr")
           (TcStdlibFieldSpecNil))))))
 
 (define (tc-stdlib-type-field-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "ty"
-      (tc-stdlib-name-type "TypeInfo")
+      (TcStdlibTyName "TypeInfo")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-type-variant-payload-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "ty"
-    (tc-stdlib-name-type "TypeInfo")
+    (TcStdlibTyName "TypeInfo")
     (TcStdlibFieldSpecNil)))
 
 (define (tc-stdlib-type-variant-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "payloads"
-      (tc-stdlib-name-type "TypeVariantPayloadList")
+      (TcStdlibTyName "TypeVariantPayloadList")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-type-param-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (AstTyString)
+    (TcStdlibTyString)
     (tc-stdlib-field-spec-cons
       "ty"
-      (tc-stdlib-name-type "TypeInfo")
+      (TcStdlibTyName "TypeInfo")
       (TcStdlibFieldSpecNil))))
 
 (define (tc-stdlib-comptime-surface-ok-impl [ctx : TcContext]) : ResultTcUnit
   (if (not (tc-stdlib-comptime-present? ctx))
     OkTcUnit
     (let
-      [result : ResultTcUnit (tc-stdlib-check-comptime-metadata ctx)]
+      [result : ResultTcUnit (tc-stdlib-check-comptime-declaration-surface ctx)]
       (begin
         (set!
           result
@@ -4031,6 +4292,16 @@
   (let
     [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [_install : unit (ast-node-pool-context-install! (tc-context-pools ctx))]
+    ;; #3677: the well-known spec builder pushes fresh type nodes (e.g. the
+    ;; `(Box Expr)` payload of ExprSplice) into this context's type-node pool.
+    ;; In a long-lived `test --check --batch` process the captured pool snapshot
+    ;; inherits a dedup index whose entries can point at slot ids that a later
+    ;; batch entry's nodes now occupy, so a deduped spec push would resolve to a
+    ;; slot holding an unrelated node and the well-known compare spuriously
+    ;; mismatches. Drop the dedup index here (no live nodes are truncated) so
+    ;; spec pushes rebuild it against the current entry's nodes only.
+    [_dedup : unit
+      (ast-node-pool-context-type-dedup-clear! (tc-context-pools ctx))]
     [result : ResultTcUnit (tc-stdlib-comptime-surface-ok-impl ctx)]
     (begin
       (ast-node-pool-context-install! prev)
@@ -4082,45 +4353,12 @@
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-value?"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-type?"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-macro?"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-value-type"
-          (tc-fn2 (AstTyString) (AstTyString) expr)))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-type"
-          (tc-fn2 (AstTyString) (AstTyString) expr)))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-macro-type"
-          (tc-fn2 (AstTyString) (AstTyString) expr)))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
@@ -4353,6 +4591,75 @@
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
   (tc-lookup-unsafe-id env (tc-name-id name)))
 
+(define (tc-name-bound-before-hygiene-global-boundary-id?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-name-bound-before-hygiene-global-boundary-id?
+          (box-get rest)
+          name-id)
+        false)]
+    [(TcTypeBind key _ rest)
+      (if (= key (tc-hygiene-global-boundary-id))
+        false
+        (if (= key name-id)
+          true
+          (tc-name-bound-before-hygiene-global-boundary-id?
+            (box-get rest)
+            name-id)))]))
+
+(define (tc-unqualified-import-ambiguity-message-for-key
+  [_ctx : TcContext]
+  [env : TcTypeEnv]
+  [_module : String]
+  [name : String]
+  [name-id : i64]
+  [key-id : i64]) : TcMaybeString
+  (match (sym-i64-lookup-id
+    tc-unqualified-import-ambiguous-first-modules
+    key-id)
+    [NoneI64 (TcNoString)]
+    [(SomeI64 first-module)
+      (if (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
+        (TcNoString)
+        (match (sym-i64-lookup-id
+          tc-unqualified-import-ambiguous-second-modules
+          key-id)
+          [NoneI64 (TcNoString)]
+          [(SomeI64 second-module)
+            (TcSomeString
+              (str-cat
+                "typecheck: ambiguous unqualified import for value "
+                name
+                " between modules "
+                (intern-str first-module)
+                " and "
+                (intern-str second-module)
+                "; use an explicit alias or qualified access"))]))]))
+
+(define (tc-unqualified-import-ambiguity-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : TcMaybeString
+  (if tc-unqualified-import-has-ambiguity
+    (let
+      [name : String (intern-str name-id)]
+      (if (tc-name-qualified? name)
+        (TcNoString)
+        (let
+          [module : String (tc-context-module ctx)]
+          (tc-unqualified-import-ambiguity-message-for-key
+            ctx
+            env
+            module
+            name
+            name-id
+            (tc-unqualified-import-key-id module name-id)))))
+    (TcNoString)))
+
 (define (tc-lookup-visible-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -4376,9 +4683,9 @@
               (ErrTcType message)))])]
     (match found
       [(OkTcType ty)
-        (match (tc-qualified-value-visible-ok ctx name)
-          [(OkTcUnit) (OkTcType ty)]
-          [(ErrTcUnit message) (ErrTcType message)])]
+        (match (tc-unqualified-import-ambiguity-message ctx env name-id)
+          [(TcNoString) (OkTcType ty)]
+          [(TcSomeString message) (ErrTcType message)])]
       [(ErrTcType message) (ErrTcType message)])))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
@@ -4404,17 +4711,12 @@
   (tc-lookup-hygiene-global-id env (tc-name-id name)))
 
 (define (tc-lookup-hygiene-global-visible-id
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (let
-    [name : String (intern-str name-id)]
-    (match (tc-lookup-hygiene-global-id env name-id)
-      [(OkTcType ty)
-        (match (tc-qualified-value-visible-ok ctx name)
-          [(OkTcUnit) (OkTcType ty)]
-          [(ErrTcUnit message) (ErrTcType message)])]
-      [(ErrTcType message) (ErrTcType message)])))
+  (match (tc-lookup-hygiene-global-id env name-id)
+    [(OkTcType ty) (OkTcType ty)]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-lookup-hygiene-global-visible
   [ctx : TcContext]
@@ -4436,14 +4738,9 @@
               (match (tc-require-unsafe
                 env
                 (tc-source-lookup-display-name ctx name lookup-name))
-                [(OkTcUnit)
-                  (match (tc-source-value-visible-ok ctx name lookup-name)
-                    [(OkTcUnit) (OkTcType ty)]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcUnit message) (ErrTcType message)])
-              (match (tc-source-value-visible-ok ctx name lookup-name)
                 [(OkTcUnit) (OkTcType ty)]
-                [(ErrTcUnit message) (ErrTcType message)]))]
+                [(ErrTcUnit message) (ErrTcType message)])
+              (OkTcType ty))]
           [(ErrTcTypeUnsafe message)
             (tc-variant-constructor-type-for-lookup-or
               ctx
@@ -4498,14 +4795,9 @@
             [(OkTcTypeUnsafe ty unsafe)
               (if unsafe
                 (match (tc-require-unsafe env name)
-                  [(OkTcUnit)
-                    (match (tc-qualified-value-visible-ok def-ctx name)
-                      [(OkTcUnit) (OkTcType ty)]
-                      [(ErrTcUnit message) (ErrTcType message)])]
-                  [(ErrTcUnit message) (ErrTcType message)])
-                (match (tc-qualified-value-visible-ok def-ctx name)
                   [(OkTcUnit) (OkTcType ty)]
-                  [(ErrTcUnit message) (ErrTcType message)]))]
+                  [(ErrTcUnit message) (ErrTcType message)])
+                (OkTcType ty))]
             [(ErrTcTypeUnsafe message) (ErrTcType message)])]
         [(ErrTcEnv message) (ErrTcType message)]))))
 
@@ -6087,7 +6379,7 @@
 
 (define (tc-imported-module-identity? [ctx : TcContext] [module-name : String]) : bool
   (match ctx
-    [(TcContext program _ _ _ current-module _)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (begin
@@ -6347,7 +6639,7 @@
   [ctx : TcContext]
   [base : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-value symbols base)
         [(SomeI64 handle)
           (let
@@ -6432,7 +6724,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ _ current-module _)
+          [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (match (macro-import-alias-target-cached
@@ -6455,7 +6747,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ _ current-module _)
+          [(TcContext program _ _ current-module _)
             (match program
               [(AstProgram decls-box)
                 (let
@@ -6528,6 +6820,7 @@
     (string-eq name "expr-bool")
     (string-eq name "expr-int")
     (string-eq name "expr-var")
+    (string-eq name "expr-struct-get")
     (string-eq name "expr-splice")
     (string-eq name "expr-if")
     (string-eq name "expr-type")
@@ -6584,7 +6877,7 @@
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
     (match ctx
-      [(TcContext _ _ registries _ module _)
+      [(TcContext _ _ registries module _)
         (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
           (let
             [module-key : String (compiler-symbol-module-key module name)]
@@ -6661,179 +6954,12 @@
   [ctx : TcContext]
   [qualifier : String]) : String
   (match ctx
-    [(TcContext program _ _ _ current-module _)
+    [(TcContext program _ _ current-module _)
       (match program
         [(AstProgram decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             (macro-resolve-qualified-module decls current-module qualifier))])]))
-
-;; Everything is exported by default: cross-module qualified references no longer
-;; consult an export table, so visibility checks unconditionally succeed. The
-;; legacy `(export ...)` form is still parsed (accepted as a no-op) during the
-;; phased removal, but it no longer gates which items another module may use.
-;; Missing members and namespace mismatches are still reported by the ordinary
-;; name-resolution paths; only the private/exported distinction is gone.
-(define (tc-qualified-export-visible-ok
-  [_ctx : TcContext]
-  [_kind-name : String]
-  [_display-name : String]
-  [_target-module : String]
-  [_export-name : String]) : ResultTcUnit
-  OkTcUnit)
-
-(define (tc-qualified-export-visible-ok-with-source
-  [_ctx : TcContext]
-  [_kind-name : String]
-  [_source-name : String]
-  [_lookup-name : String]
-  [_target-module : String]
-  [_export-name : String]) : ResultTcUnit
-  OkTcUnit)
-
-(define (tc-qualified-name-export-visible-ok-with-display
-  [ctx : TcContext]
-  [kind-name : String]
-  [name : String]
-  [display-name : String]) : ResultTcUnit
-  (if (tc-name-qualified? name)
-    (let
-      [qualifier : String (tc-qualified-name-module name)]
-      [base : String (tc-qualified-name-base name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      (tc-qualified-export-visible-ok
-        ctx
-        kind-name
-        display-name
-        target-module
-        base))
-    OkTcUnit))
-
-(define (tc-qualified-name-export-visible-ok
-  [ctx : TcContext]
-  [kind-name : String]
-  [name : String]) : ResultTcUnit
-  (tc-qualified-name-export-visible-ok-with-display ctx kind-name name name))
-
-(define (tc-qualified-type-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
-  (tc-qualified-name-export-visible-ok ctx (compiler-export-kind-type) name))
-
-(define (tc-value-export-kind-for-handle [handle : i64]) : String
-  (let
-    [kind : i64 (compiler-symbol-handle-kind handle)]
-    (if (= kind (compiler-symbol-kind-defstruct))
-      (compiler-export-kind-constructor)
-      (if (= kind (compiler-symbol-kind-enum-variant))
-        (compiler-export-kind-variant)
-        (compiler-export-kind-value)))))
-
-(define (tc-qualified-value-export-kind
-  [ctx : TcContext]
-  [target-module : String]
-  [base : String]) : String
-  (match (compiler-symbols-lookup-value-in-module-id
-    (tc-context-symbols ctx)
-    (intern target-module)
-    (intern base))
-    [(SomeI64 handle) (tc-value-export-kind-for-handle handle)]
-    [(NoneI64) (compiler-export-kind-value)]))
-
-(define (tc-qualified-value-visible-ok-with-display
-  [ctx : TcContext]
-  [name : String]
-  [display-name : String]) : ResultTcUnit
-  (if (tc-name-qualified? name)
-    (let
-      [qualifier : String (tc-qualified-name-module name)]
-      [base : String (tc-qualified-name-base name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      [kind-name : String
-        (tc-qualified-value-export-kind ctx target-module base)]
-      (tc-qualified-export-visible-ok
-        ctx
-        kind-name
-        display-name
-        target-module
-        base))
-    OkTcUnit))
-
-(define (tc-qualified-value-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
-  (tc-qualified-value-visible-ok-with-display ctx name name))
-
-(define (tc-source-value-visible-ok
-  [ctx : TcContext]
-  [source-name : String]
-  [lookup-name : String]) : ResultTcUnit
-  (if (tc-name-qualified? lookup-name)
-    (let
-      [qualifier : String (tc-qualified-name-module lookup-name)]
-      [base : String (tc-qualified-name-base lookup-name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      [kind-name : String
-        (tc-qualified-value-export-kind ctx target-module base)]
-      (tc-qualified-export-visible-ok-with-source
-        ctx
-        kind-name
-        source-name
-        lookup-name
-        target-module
-        base))
-    OkTcUnit))
-
-(define (tc-qualified-field-visible-ok
-  [ctx : TcContext]
-  [struct-name : String]
-  [field : String]) : ResultTcUnit
-  (if (tc-name-qualified? struct-name)
-    (let
-      [qualifier : String (tc-qualified-name-module struct-name)]
-      [type-base : String (tc-qualified-name-base struct-name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      [export-name : String (compiler-export-field-name type-base field)]
-      [display-name : String (compiler-export-field-name struct-name field)]
-      (tc-qualified-export-visible-ok
-        ctx
-        (compiler-export-kind-field)
-        display-name
-        target-module
-        export-name))
-    OkTcUnit))
-
-(define (tc-qualified-variant-visible-ok
-  [ctx : TcContext]
-  [variant-name : String]) : ResultTcUnit
-  (tc-qualified-name-export-visible-ok
-    ctx
-    (compiler-export-kind-variant)
-    variant-name))
-
-(define (tc-qualified-variant-visible-ok-with-display
-  [ctx : TcContext]
-  [variant-name : String]
-  [display-name : String]) : ResultTcUnit
-  (tc-qualified-name-export-visible-ok-with-display
-    ctx
-    (compiler-export-kind-variant)
-    variant-name
-    display-name))
-
-(define (tc-source-variant-visible-ok
-  [ctx : TcContext]
-  [source-name : String]
-  [lookup-name : String]) : ResultTcUnit
-  (if (tc-name-qualified? lookup-name)
-    (let
-      [qualifier : String (tc-qualified-name-module lookup-name)]
-      [base : String (tc-qualified-name-base lookup-name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      (tc-qualified-export-visible-ok-with-source
-        ctx
-        (compiler-export-kind-variant)
-        source-name
-        lookup-name
-        target-module
-        base))
-    OkTcUnit))
 
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
@@ -7134,8 +7260,6 @@
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclIncludeBin _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclExport _)
-            (tc-nominal-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
             (tc-nominal-owner-name-list
               rest
@@ -7207,7 +7331,7 @@
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx
-        [(TcContext program symbols _ _ _ _)
+        [(TcContext program symbols _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -7223,7 +7347,7 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
-    [(TcContext _ symbols _ _ module _)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -7307,7 +7431,7 @@
   [name : String]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ _ module _)
+    [(TcContext _ symbols _ module _)
       (let
         [source-name : String
           (match (tc-dotted-type-name-lookup-key ctx name)
@@ -7391,7 +7515,7 @@
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols name)
         [(SomeI64 handle)
           (match (compiler-symbols-decl-at-index
@@ -7479,31 +7603,19 @@
             [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
             [(AstTyBytes) (ErrTcUnit (tc-source-bytes-value-policy-message))]
             [(AstTyEnum name)
-              (match (tc-qualified-type-visible-ok ctx (intern-str name))
-                [(OkTcUnit)
-                  (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
+              (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
             [(AstTyStruct name)
-              (match (tc-qualified-type-visible-ok ctx (intern-str name))
-                [(OkTcUnit)
-                  (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
+              (tc-bare-nominal-lifetime-policy-ok ctx (intern-str name))]
             [(AstTyEnumArgs name lifetimes)
-              (match (tc-qualified-type-visible-ok ctx (intern-str name))
-                [(OkTcUnit)
-                  (tc-nominal-lifetime-use-policy-ok
-                    ctx
-                    (intern-str name)
-                    (box-get lifetimes))]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
+              (tc-nominal-lifetime-use-policy-ok
+                ctx
+                (intern-str name)
+                (box-get lifetimes))]
             [(AstTyStructArgs name lifetimes)
-              (match (tc-qualified-type-visible-ok ctx (intern-str name))
-                [(OkTcUnit)
-                  (tc-nominal-lifetime-use-policy-ok
-                    ctx
-                    (intern-str name)
-                    (box-get lifetimes))]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
+              (tc-nominal-lifetime-use-policy-ok
+                ctx
+                (intern-str name)
+                (box-get lifetimes))]
             [(AstTyVarArgs name _)
               (ErrTcUnit (tc-source-type-policy-message (intern-str name)))]
             [(AstTyVar name)
@@ -8679,7 +8791,6 @@
     [(AstDeclIncludeBin _ _)
       (ErrTcUnit "typecheck: include-bin must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
-    [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body-box _)
       (let
@@ -9634,19 +9745,84 @@
             [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
 
-(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+(define (tc-spmd-env-empty) : TcSpmdEnv
+  (TcSpmdEnv (make-array TcSpmdBinding 0) 0))
+
+(define (tc-spmd-binding
+  [name : String]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [scope : TcSpmdScope]
+  [role : TcSpmdRole]) : TcSpmdBinding
+  (TcSpmdBinding name ty class scope role))
+
+(define (tc-spmd-env-binding-count [env : TcTypeEnv]) : i64
   (match env
-    [(TcTypeNil) TcSpmdEnvNil]
+    [(TcTypeNil) 0]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
-      (tc-spmd-env-from-type-env (box-get rest))]
+      (tc-spmd-env-binding-count (box-get rest))]
+    [(TcTypeBind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]))
+
+(define (tc-spmd-env-fill-from-type-env
+  [env : TcTypeEnv]
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]) : unit
+  (match env
+    [(TcTypeNil) unit]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-spmd-env-fill-from-type-env (box-get rest) bindings index)]
     [(TcTypeBind name-id ty rest)
-      (TcSpmdEnvBind
-        (intern-str name-id)
-        ty
-        TcSpmdUniform
-        TcSpmdOuter
-        TcSpmdValue
-        (box (tc-spmd-env-from-type-env (box-get rest))))]))
+      (begin
+        (array-set!
+          bindings
+          index
+          (tc-spmd-binding
+            (intern-str name-id)
+            ty
+            TcSpmdUniform
+            TcSpmdOuter
+            TcSpmdValue))
+        (tc-spmd-env-fill-from-type-env (box-get rest) bindings (- index 1)))]))
+
+(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+  (let
+    [count : i64 (tc-spmd-env-binding-count env)]
+    [bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding count)]
+    (begin
+      (tc-spmd-env-fill-from-type-env env bindings (- count 1))
+      (TcSpmdEnv bindings count))))
+
+(define (tc-spmd-env-bindings [env : TcSpmdEnv]) : (Array TcSpmdBinding)
+  (struct-get env bindings))
+
+(define (tc-spmd-env-len [env : TcSpmdEnv]) : i64
+  (struct-get env len))
+
+(define (tc-spmd-env-mark [env : TcSpmdEnv]) : TcSpmdEnvMark
+  (TcSpmdEnvMark (tc-spmd-env-len env)))
+
+(define (tc-spmd-env-restore [env : TcSpmdEnv] [mark : TcSpmdEnvMark]) : TcSpmdEnv
+  (let
+    [mark-len : i64 (struct-get mark len)]
+    [current-len : i64 (tc-spmd-env-len env)]
+    [restored-len : i64
+      (if (< mark-len 0)
+        0
+        (if (> mark-len current-len)
+          current-len
+          mark-len))]
+    (TcSpmdEnv (tc-spmd-env-bindings env) restored-len)))
+
+(define (tc-spmd-env-copy-bindings
+  [dst : (Array TcSpmdBinding)]
+  [src : (Array TcSpmdBinding)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
 (define (tc-spmd-env-bind
   [env : TcSpmdEnv]
@@ -9654,7 +9830,7 @@
   [ty : AstType]
   [class : TcSpmdClass]
   [scope : TcSpmdScope]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope TcSpmdValue (box env)))
+  (tc-spmd-env-bind-role env name ty class scope TcSpmdValue))
 
 (define (tc-spmd-env-bind-role
   [env : TcSpmdEnv]
@@ -9663,99 +9839,222 @@
   [class : TcSpmdClass]
   [scope : TcSpmdScope]
   [role : TcSpmdRole]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope role (box env)))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [new-len : i64 (+ old-len 1)]
+    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding new-len)]
+    (begin
+      (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
+      (array-set!
+        new-bindings
+        old-len
+        (tc-spmd-binding name ty class scope role))
+      (TcSpmdEnv new-bindings new-len))))
+
+(define (tc-spmd-env-lookup-from
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : TcSpmdLookup
+  (if (< index 0)
+    TcSpmdMissing
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (TcSpmdFound
+          (struct-get binding ty)
+          (struct-get binding class)
+          (struct-get binding scope)
+          (struct-get binding role))
+        (tc-spmd-env-lookup-from bindings (- index 1) name)))))
 
 (define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
-  (match env
-    [(TcSpmdEnvNil) TcSpmdMissing]
-    [(TcSpmdEnvBind key ty class scope role rest)
-      (if (string-eq key name)
-        (TcSpmdFound ty class scope role)
-        (tc-spmd-env-lookup (box-get rest) name))]))
+  (tc-spmd-env-lookup-from
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-has-local-from?
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdLocal) true]
+          [(TcSpmdOuter)
+            (tc-spmd-env-has-local-from? bindings (- index 1) name)])
+        (tc-spmd-env-has-local-from? bindings (- index 1) name)))))
 
 (define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
-  (match env
-    [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope _ rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdLocal) true]
-          [(TcSpmdOuter) (tc-spmd-env-has-local? (box-get rest) name)])
-        (tc-spmd-env-has-local? (box-get rest) name))]))
+  (tc-spmd-env-has-local-from?
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-has-outer-from?
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdOuter) true]
+          [(TcSpmdLocal)
+            (tc-spmd-env-has-outer-from? bindings (- index 1) name)])
+        (tc-spmd-env-has-outer-from? bindings (- index 1) name)))))
 
 (define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
-  (match env
-    [(TcSpmdEnvNil) false]
-    [(TcSpmdEnvBind key _ _ scope _ rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdOuter) true]
-          [(TcSpmdLocal) (tc-spmd-env-has-outer? (box-get rest) name)])
-        (tc-spmd-env-has-outer? (box-get rest) name))]))
+  (tc-spmd-env-has-outer-from?
+    (tc-spmd-env-bindings env)
+    (- (tc-spmd-env-len env) 1)
+    name))
+
+(define (tc-spmd-env-local-index
+  [bindings : (Array TcSpmdBinding)]
+  [index : i64]
+  [name : String]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [binding : TcSpmdBinding (array-ref bindings index)]
+      (if (string-eq (struct-get binding name) name)
+        (match (struct-get binding scope)
+          [(TcSpmdLocal) index]
+          [(TcSpmdOuter) (tc-spmd-env-local-index bindings (- index 1) name)])
+        (tc-spmd-env-local-index bindings (- index 1) name)))))
 
 (define (tc-spmd-env-set-local-class
   [env : TcSpmdEnv]
   [name : String]
   [class : TcSpmdClass]) : TcSpmdEnv
-  (match env
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind key ty old-class scope role rest)
-      (if (string-eq key name)
-        (match scope
-          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope role rest)]
-          [(TcSpmdOuter)
-            (TcSpmdEnvBind
-              key
-              ty
-              old-class
-              scope
-              role
-              (box (tc-spmd-env-set-local-class (box-get rest) name class)))])
-        (TcSpmdEnvBind
-          key
-          ty
-          old-class
-          scope
-          role
-          (box (tc-spmd-env-set-local-class (box-get rest) name class))))]))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [local-index : i64
+      (tc-spmd-env-local-index old-bindings (- old-len 1) name)]
+    (if (< local-index 0)
+      env
+      (let
+        [new-bindings : (Array TcSpmdBinding)
+          (make-array TcSpmdBinding old-len)]
+        [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
+        (begin
+          (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
+          (array-set!
+            new-bindings
+            local-index
+            (tc-spmd-binding
+              (struct-get old-binding name)
+              (struct-get old-binding ty)
+              class
+              (struct-get old-binding scope)
+              (struct-get old-binding role)))
+          (TcSpmdEnv new-bindings old-len))))))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
   (if (<= count 0)
     env
-    (match env
-      [(TcSpmdEnvNil) TcSpmdEnvNil]
-      [(TcSpmdEnvBind _ _ _ _ _ rest)
-        (tc-spmd-env-pop (box-get rest) (- count 1))])))
+    (tc-spmd-env-restore env (TcSpmdEnvMark (- (tc-spmd-env-len env) count)))))
+
+(define (tc-spmd-env-mark-outer-into
+  [dst : (Array TcSpmdBinding)]
+  [src : (Array TcSpmdBinding)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (let
+      [binding : TcSpmdBinding (array-ref src index)]
+      (begin
+        (array-set!
+          dst
+          index
+          (tc-spmd-binding
+            (struct-get binding name)
+            (struct-get binding ty)
+            (struct-get binding class)
+            TcSpmdOuter
+            (struct-get binding role)))
+        (tc-spmd-env-mark-outer-into dst src (+ index 1) count)))))
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
-  (match env
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class _ role rest)
-      (TcSpmdEnvBind
-        name
-        ty
-        class
-        TcSpmdOuter
-        role
-        (box (tc-spmd-env-mark-outer (box-get rest))))]))
+  (let
+    [old-len : i64 (tc-spmd-env-len env)]
+    [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
+    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding old-len)]
+    (begin
+      (tc-spmd-env-mark-outer-into new-bindings old-bindings 0 old-len)
+      (TcSpmdEnv new-bindings old-len))))
+
+(define (tc-spmd-env-merge-binding-class
+  [left : TcSpmdBinding]
+  [right-bindings : (Array TcSpmdBinding)]
+  [right-len : i64]
+  [index : i64]) : TcSpmdClass
+  (if (>= index right-len)
+    (struct-get left class)
+    (let
+      [right : TcSpmdBinding (array-ref right-bindings index)]
+      (tc-spmd-merge-class (struct-get left class) (struct-get right class)))))
+
+(define (tc-spmd-env-merge-classes-into
+  [dst : (Array TcSpmdBinding)]
+  [left-bindings : (Array TcSpmdBinding)]
+  [right-bindings : (Array TcSpmdBinding)]
+  [left-len : i64]
+  [right-len : i64]
+  [index : i64]) : unit
+  (if (>= index left-len)
+    unit
+    (let
+      [left : TcSpmdBinding (array-ref left-bindings index)]
+      (begin
+        (array-set!
+          dst
+          index
+          (tc-spmd-binding
+            (struct-get left name)
+            (struct-get left ty)
+            (tc-spmd-env-merge-binding-class
+              left
+              right-bindings
+              right-len
+              index)
+            (struct-get left scope)
+            (struct-get left role)))
+        (tc-spmd-env-merge-classes-into
+          dst
+          left-bindings
+          right-bindings
+          left-len
+          right-len
+          (+ index 1))))))
 
 (define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
-  (match left
-    [(TcSpmdEnvNil) TcSpmdEnvNil]
-    [(TcSpmdEnvBind name ty class scope role left-rest)
-      (match right
-        [(TcSpmdEnvNil) left]
-        [(TcSpmdEnvBind _ _ right-class _ _ right-rest)
-          (TcSpmdEnvBind
-            name
-            ty
-            (tc-spmd-merge-class class right-class)
-            scope
-            role
-            (box
-              (tc-spmd-env-merge-classes
-                (box-get left-rest)
-                (box-get right-rest))))])]))
+  (let
+    [left-len : i64 (tc-spmd-env-len left)]
+    [right-len : i64 (tc-spmd-env-len right)]
+    [left-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings left)]
+    [right-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings right)]
+    [merged : (Array TcSpmdBinding) (make-array TcSpmdBinding left-len)]
+    (begin
+      ;; Branch merge is index-aligned: both branches start from the same
+      ;; snapshot and local lets restore to that mark before the merge.
+      (tc-spmd-env-merge-classes-into
+        merged
+        left-bindings
+        right-bindings
+        left-len
+        right-len
+        0)
+      (TcSpmdEnv merged left-len))))
 
 (define (tc-type-env-box-smoke?) : bool
   (let
@@ -10014,6 +10313,9 @@
   (let
     [env : TcTypeEnv
       (tc-bind (tc-bind (tc-empty-env) "x" (AstTyI64)) "flag" (AstTyBool))]
+    [shadow-env : TcTypeEnv
+      (tc-bind (tc-bind (tc-empty-env) "x" (AstTyI64)) "x" (AstTyBool))]
+    [shadow-spmd : TcSpmdEnv (tc-spmd-env-from-type-env shadow-env)]
     [outer : TcSpmdEnv (tc-spmd-env-from-type-env env)]
     [local : TcSpmdEnv
       (tc-spmd-env-bind outer "lane" (AstTyI64) TcSpmdVarying TcSpmdLocal)]
@@ -10031,6 +10333,8 @@
     [branch-right : TcSpmdEnv
       (tc-spmd-env-set-local-class indexed "lane" TcSpmdVarying)]
     [merged : TcSpmdEnv (tc-spmd-env-merge-classes indexed branch-right)]
+    [restore-mark : TcSpmdEnvMark (tc-spmd-env-mark outer)]
+    [restored : TcSpmdEnv (tc-spmd-env-restore updated restore-mark)]
     (and
       (match (tc-spmd-env-lookup updated "lane")
         [(TcSpmdFound (AstTyI64) (TcSpmdUniform) (TcSpmdLocal) (TcSpmdValue))
@@ -10038,6 +10342,10 @@
         [_ false])
       (tc-spmd-env-has-local? updated "lane")
       (tc-spmd-env-has-outer? updated "x")
+      (match (tc-spmd-env-lookup shadow-spmd "x")
+        [(TcSpmdFound (AstTyBool) (TcSpmdUniform) (TcSpmdOuter) (TcSpmdValue))
+          true]
+        [_ false])
       (match (tc-spmd-env-lookup marked-outer "idx")
         [(TcSpmdFound
             (AstTyI64)
@@ -10061,6 +10369,9 @@
           true]
         [_ false])
       (match (tc-spmd-env-lookup (tc-spmd-env-pop updated 1) "lane")
+        [(TcSpmdMissing) true]
+        [_ false])
+      (match (tc-spmd-env-lookup restored "lane")
         [(TcSpmdMissing) true]
         [_ false]))))
 
@@ -10714,7 +11025,6 @@
     [(AstDeclImport _) (OkTcEnv env)]
     [(AstDeclIncludeStr _ _) (OkTcEnv env)]
     [(AstDeclIncludeBin _ _) (OkTcEnv env)]
-    [(AstDeclExport _) (OkTcEnv env)]
     [(AstDeclTest _ _ _) (OkTcEnv env)]))
 
 (define (tc-build-top-env-list-in-module
@@ -10762,6 +11072,9 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [alias : String]
+  [importer-module : String]
+  [source-module : String]
+  [import-unqualified : bool]
   [enum-name : String]
   [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
@@ -10781,19 +11094,42 @@
                   fields)]
               (tc-bind-enum-variant-aliases
                 ctx
-                (tc-bind-alias-id-if-free
-                  env
-                  (tc-module-name-id alias name)
-                  constructor-ty)
+                (let
+                  [_note : unit
+                    (tc-unqualified-import-note-value!
+                      ctx
+                      env
+                      alias
+                      importer-module
+                      source-module
+                      import-unqualified
+                      name)]
+                  (tc-bind-alias-id-if-free
+                    env
+                    (tc-module-name-id alias name)
+                    constructor-ty))
                 alias
+                importer-module
+                source-module
+                import-unqualified
                 enum-name
                 lifetimes
                 rest))]))]))
+
+;; Alias construction runs after the canonical top env is built, so reuse the
+;; existing `module/name` type instead of recomputing each imported decl type.
+(define (tc-import-alias-source-value-type
+  [env : TcTypeEnv]
+  [module : String]
+  [name-id : i64]) : ResultTcType
+  (tc-lookup-id env (tc-module-name-id module name-id)))
 
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
   [env : TcTypeEnv]
   [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
@@ -10802,73 +11138,112 @@
         [inner : AstDecl (box-get inner-box)]
         (match inner
           [(AstDeclDefFn name _ _ _ _)
-            (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+            (match (tc-import-alias-source-value-type env module name)
               [(OkTcType ty)
                 (OkTcEnv
-                  (tc-bind-unsafe
+                  (tc-bind-import-alias-value-unsafe-id
+                    ctx
                     env
-                    (compiler-symbol-module-key alias (intern-str name))
+                    alias
+                    importer-module
+                    module
+                    import-unqualified
+                    name
                     ty))]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclExtern name kind _ _)
             (let
               [extern-ctx : TcContext (tc-context-with-module ctx module)]
-              (match (tc-top-decl-type extern-ctx inner)
+              (match (tc-import-alias-source-value-type env module name)
                 [(OkTcType ty)
                   (OkTcEnv
                     (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                      (tc-bind-unsafe-c-abi-fnptr-id
+                      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
+                        ctx
                         env
-                        (tc-name-id
-                          (compiler-symbol-module-key alias (intern-str name)))
+                        alias
+                        importer-module
+                        module
+                        import-unqualified
+                        name
                         ty)
-                      (tc-bind-unsafe
+                      (tc-bind-import-alias-value-unsafe-id
+                        ctx
                         env
-                        (compiler-symbol-module-key alias (intern-str name))
+                        alias
+                        importer-module
+                        module
+                        import-unqualified
+                        name
                         ty)))]
                 [(ErrTcType message) (ErrTcEnv message)]))]
           [_ (OkTcEnv env)]))]
     [(AstDeclDef name _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _ _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefDispatch name _)
-      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+      (match (tc-import-alias-source-value-type env module name)
         [(OkTcType ty)
           (OkTcEnv
-            (tc-bind
+            (tc-bind-import-alias-value-id
+              ctx
               env
-              (compiler-symbol-module-key alias (intern-str name))
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
               ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclExtern name kind _ _)
       (let
         [extern-ctx : TcContext (tc-context-with-module ctx module)]
-        (match (tc-top-decl-type extern-ctx decl)
+        (match (tc-import-alias-source-value-type env module name)
           [(OkTcType ty)
             (OkTcEnv
               (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                (tc-bind-c-abi-fnptr
+                (tc-bind-import-alias-value-c-abi-fnptr-id
+                  ctx
                   env
-                  (compiler-symbol-module-key alias (intern-str name))
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
                   ty)
-                (tc-bind
+                (tc-bind-import-alias-value-id
+                  ctx
                   env
-                  (compiler-symbol-module-key alias (intern-str name))
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
                   ty)))]
           [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefEnum name cleanup variants)
@@ -10877,15 +11252,22 @@
         [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (AstTyEnum (intern scoped-name))]
         (OkTcEnv
-          (tc-bind-enum-cleanup-alias
+          (tc-bind-enum-cleanup-import-alias
+            ctx
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
+              importer-module
+              module
+              import-unqualified
               scoped-name
               AstLifetimeNil
               variants)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             enum-ty)))]
     [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
@@ -10894,15 +11276,22 @@
         [scoped-name : String (compiler-symbol-module-key module name-str)]
         [enum-ty : AstType (ast-ty-enum-args (intern scoped-name) lifetimes)]
         (OkTcEnv
-          (tc-bind-enum-cleanup-alias
+          (tc-bind-enum-cleanup-import-alias
+            ctx
             (tc-bind-enum-variant-aliases
               (tc-context-with-module ctx module)
               env
               alias
+              importer-module
+              module
+              import-unqualified
               scoped-name
               lifetimes
               variants)
             alias
+            importer-module
+            module
+            import-unqualified
             cleanup
             enum-ty)))]
     [(AstDeclDefStruct name _ cleanup fields)
@@ -10910,19 +11299,27 @@
         [name-str : String (intern-str name)]
         [struct-ty : AstType
           (AstTyStruct (intern (compiler-symbol-module-key module name-str)))]
-        [constructor-ty : AstType
-          (ast-ty-func
-            (tc-field-type-list (tc-context-with-module ctx module) fields)
-            struct-ty)]
-        (OkTcEnv
-          (tc-bind-struct-cleanup-alias
-            (tc-bind
-              env
-              (compiler-symbol-module-key alias name-str)
-              constructor-ty)
-            alias
-            cleanup
-            struct-ty)))]
+        (match (tc-import-alias-source-value-type env module name)
+          [(OkTcType constructor-ty)
+            (OkTcEnv
+              (tc-bind-struct-cleanup-import-alias
+                ctx
+                (tc-bind-import-alias-value-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  constructor-ty)
+                alias
+                importer-module
+                module
+                import-unqualified
+                cleanup
+                struct-ty))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
@@ -10930,23 +11327,38 @@
           (ast-ty-struct-args
             (intern (compiler-symbol-module-key module name-str))
             lifetimes)]
-        [constructor-ty : AstType
-          (ast-ty-func
-            (tc-field-type-list (tc-context-with-module ctx module) fields)
-            struct-ty)]
-        (OkTcEnv
-          (tc-bind-struct-cleanup-alias
-            (tc-bind
-              env
-              (compiler-symbol-module-key alias name-str)
-              constructor-ty)
-            alias
-            cleanup
-            struct-ty)))]
+        (match (tc-import-alias-source-value-type env module name)
+          [(OkTcType constructor-ty)
+            (OkTcEnv
+              (tc-bind-struct-cleanup-import-alias
+                ctx
+                (tc-bind-import-alias-value-id
+                  ctx
+                  env
+                  alias
+                  importer-module
+                  module
+                  import-unqualified
+                  name
+                  constructor-ty)
+                alias
+                importer-module
+                module
+                import-unqualified
+                cleanup
+                struct-ty))]
+          [(ErrTcType message) (ErrTcEnv message)]))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (tc-bind-import-alias-decl-in-module ctx env alias module template))]
+        (tc-bind-import-alias-decl-in-module
+          ctx
+          env
+          alias
+          importer-module
+          import-unqualified
+          module
+          template))]
     [_ (OkTcEnv env)]))
 
 (define (tc-bind-import-alias-module-list
@@ -10955,93 +11367,72 @@
   [env : TcTypeEnv]
   [target-module : String]
   [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              (intern-str next-module))]
-          [(AstDeclImport _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              module)]
-          [(AstDeclExport _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              module)]
-          [(AstDeclTest _ _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              module)]
-          [_
-            (if (string-eq module target-module)
-              (match (tc-bind-import-alias-decl-in-module
-                ctx
-                env
-                alias
-                module
-                decl)
-                [(OkTcEnv next-env)
-                  (tc-bind-import-alias-module-list
-                    ctx
-                    rest
-                    next-env
-                    target-module
-                    alias
-                    module)]
-                [(ErrTcEnv message) (ErrTcEnv message)])
-              (tc-bind-import-alias-module-list
-                ctx
-                rest
-                env
-                target-module
-                alias
-                module))]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [target-module-id : i64 (intern target-module)]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport _) (set! cur rest)]
+                [(AstDeclIncludeStr _ _) (set! cur rest)]
+                [(AstDeclIncludeBin _ _) (set! cur rest)]
+                [(AstDeclTest _ _ _) (set! cur rest)]
+                [_
+                  (if (= cur-module-id target-module-id)
+                    (match (tc-bind-import-alias-decl-in-module
+                      ctx
+                      cur-env
+                      alias
+                      importer-module
+                      import-unqualified
+                      (intern-str cur-module-id)
+                      decl)
+                      [(OkTcEnv next-env)
+                        (begin
+                          (set! cur-env next-env)
+                          (set! cur rest))]
+                      [(ErrTcEnv step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])
+                    (set! cur rest))]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-bind-import-alias-module
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [target-module : String]
-  [alias : String]) : ResultTcEnv
-  (tc-bind-import-alias-module-list ctx decls env target-module alias ""))
+  [alias : String]
+  [importer-module : String]
+  [import-unqualified : bool]) : ResultTcEnv
+  (tc-bind-import-alias-module-list
+    ctx
+    decls
+    env
+    target-module
+    alias
+    importer-module
+    import-unqualified
+    ""))
 
 (define (tc-build-top-env-aliases-list
   [ctx : TcContext]
@@ -11049,54 +11440,76 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-build-top-env-aliases-list
-              ctx
-              all-decls
-              rest
-              env
-              (intern-str next-module))]
-          [(AstDeclImport
-              (AstImportSpec
-                _
-                _
-                (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)
-                _))
-            (match (tc-bind-import-alias-module
-              ctx
-              all-decls
-              env
-              target-module
-              (compiler-symbols-import-alias-key module alias))
-              [(OkTcEnv next-env)
-                (tc-build-top-env-aliases-list
-                  ctx
-                  all-decls
-                  rest
-                  next-env
-                  module)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]
-          [_ (tc-build-top-env-aliases-list ctx all-decls rest env module)]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport
+                    (AstImportSpec
+                      _
+                      _
+                      (AstSomeModuleName target-module)
+                      (AstSomeImportAlias alias)
+                      _))
+                  (match (tc-bind-import-alias-module
+                    ctx
+                    all-decls
+                    cur-env
+                    target-module
+                    (compiler-symbols-import-alias-key
+                      (intern-str cur-module-id)
+                      alias)
+                    (intern-str cur-module-id)
+                    (string-eq alias ""))
+                    [(OkTcEnv next-env)
+                      (begin
+                        (set! cur-env next-env)
+                        (set! cur rest))]
+                    [(ErrTcEnv step-message)
+                      (begin
+                        (set! message step-message)
+                        (set! ok false))])]
+                [_ (set! cur rest)]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
     (tc-nominal-owner-cache-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
     (match program
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
           (match (tc-build-top-env-list ctx decls (tc-default-env))
             [(OkTcEnv env)
-              (match (tc-build-top-env-aliases-list ctx decls decls env "")
-                [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
-                [(ErrTcEnv message) (ErrTcEnv message)])]
+              (let
+                [cached-env : TcTypeEnv (tc-env-with-cache env)]
+                ;; Alias fanout copies canonical entries by lookup; cache the
+                ;; source env before adding aliases so that copy is O(1).
+                (match (tc-build-top-env-aliases-list
+                  ctx
+                  decls
+                  decls
+                  cached-env
+                  "")
+                  [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
+                  [(ErrTcEnv message) (ErrTcEnv message)]))]
             [(ErrTcEnv message) (ErrTcEnv message)]))])))
 
 (define (tc-bind-enum-variants-local
@@ -11238,16 +11651,18 @@
           (AstSomeModuleName target-module)
           (AstSomeImportAlias alias)
           _))
-      (if (string-eq alias "")
-        (match (tc-context-program ctx)
-          [(AstProgram decls-box)
-            (tc-bind-import-alias-module
-              ctx
-              (box-get decls-box)
-              env
-              target-module
-              "")])
-        (OkTcEnv env))]
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (tc-bind-import-alias-module
+            ctx
+            (box-get decls-box)
+            env
+            target-module
+            (if (string-eq alias "")
+              ""
+              (compiler-symbols-import-alias-key module alias))
+            module
+            (string-eq alias ""))])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -12178,7 +12593,7 @@
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols registries _ module _)
+    [(TcContext _ symbols registries module _)
       (let
         [lookup-name : String
           (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
@@ -12312,23 +12727,19 @@
           (tc-context-registries ctx)
           lookup-name)
           [(SomeI64 handle)
-            (match (tc-qualified-variant-visible-ok ctx lookup-name)
-              [(OkTcUnit)
-                (match (tc-variant-owner-name ctx handle)
-                  [(OkTcString owner)
-                    (if (string-eq owner enum-name)
-                      (match (compiler-registries-variant-fields-indexed
-                        (tc-context-symbols ctx)
-                        handle)
-                        [(OkAstTypeList fields)
-                          (match fields
-                            [(AstTypeNil)
-                              (OkTcType (tc-tag-active-region env ret))]
-                            [_ (ErrTcType "typecheck: arity mismatch")])]
-                        [(ErrAstTypeList message) (ErrTcType message)])
-                      (ErrTcType "typecheck: call target is not a function"))]
-                  [(ErrTcString message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
+            (match (tc-variant-owner-name ctx handle)
+              [(OkTcString owner)
+                (if (string-eq owner enum-name)
+                  (match (compiler-registries-variant-fields-indexed
+                    (tc-context-symbols ctx)
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match fields
+                        [(AstTypeNil) (OkTcType (tc-tag-active-region env ret))]
+                        [_ (ErrTcType "typecheck: arity mismatch")])]
+                    [(ErrAstTypeList message) (ErrTcType message)])
+                  (ErrTcType "typecheck: call target is not a function"))]
+              [(ErrTcString message) (ErrTcType message)])]
           [(NoneI64)
             (if (tc-name-qualified? lookup-name)
               (OkTcType (tc-tag-active-region env ret))
@@ -13249,22 +13660,81 @@
         ret
         (tc-expr-c-abi-fnptr? ctx env func))]))
 
+(define (tc-thread-name-last-dot [name : String]) : i64
+  (let
+    [first : i64 (tc-name-first-dot name)]
+    (if (< first 0)
+      -1
+      (let
+        [i : i64 (+ first 1)]
+        [n : i64 (string-length name)]
+        [last : i64 first]
+        (begin
+          (while (< i n)
+            (begin
+              (if (char-eq (string-ref name i) '.')
+                (set! last i)
+                unit)
+              (set! i (+ i 1))))
+          last)))))
+
 (define (tc-thread-name-base [name : String]) : String
   (if (tc-name-qualified? name)
     (tc-qualified-name-base name)
     name))
 
+(define (tc-thread-source-name-base [name : String]) : String
+  (if (tc-name-qualified? name)
+    (tc-qualified-name-base name)
+    (let
+      [dot : i64 (tc-thread-name-last-dot name)]
+      (if (and (>= dot 0) (< dot (- (string-length name) 1)))
+        (substring name (+ dot 1) (- (string-length name) (+ dot 1)))
+        name))))
+
 (define (tc-thread-name-base-eq? [name : String] [base : String]) : bool
   (tc-name-base-eq? name base))
 
-(define (tc-thread-spawn-i64-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-i64"))
+(define (tc-thread-generated-module-prefix) : String
+  "stdlib.thread.generated.")
 
-(define (tc-thread-spawn-bool-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-bool"))
+(define (tc-thread-generated-module? [module : String]) : bool
+  (tc-string-prefix? module (tc-thread-generated-module-prefix)))
 
-(define (tc-thread-spawn-unit-name? [name : String]) : bool
-  (string-eq (tc-thread-name-base name) "thread-spawn-unit"))
+(define (tc-thread-generated-module-type-key [module : String]) : String
+  (let
+    [prefix-len : i64 (string-length (tc-thread-generated-module-prefix))]
+    [module-len : i64 (string-length module)]
+    (if (tc-thread-generated-module? module)
+      (substring module prefix-len (- module-len prefix-len))
+      "")))
+
+(define (tc-thread-generated-name-module [name : String] [base : String]) : TcMaybeString
+  (if (tc-name-qualified? name)
+    (let
+      [module : String (tc-qualified-name-module name)]
+      (if (and
+        (tc-thread-generated-module? module)
+        (string-eq (tc-qualified-name-base name) base))
+        (TcSomeString module)
+        (TcNoString)))
+    (TcNoString)))
+
+(define (tc-thread-generated-name? [name : String] [base : String]) : bool
+  (match (tc-thread-generated-name-module name base)
+    [(TcSomeString _) true]
+    [(TcNoString) false]))
+
+(define (tc-thread-type-name-base? [name : String] [base : String]) : bool
+  (string-eq (tc-thread-name-base name) base))
+
+(define (tc-thread-generated-handle-type-name? [name : String]) : bool
+  (or
+    (tc-thread-generated-name? name "Handle")
+    (and
+      (not (tc-name-qualified? name))
+      (>= (tc-thread-name-last-dot name) 0)
+      (string-eq (tc-thread-source-name-base name) "Handle"))))
 
 (define (tc-thread-spawn-string-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-string"))
@@ -13275,33 +13745,71 @@
 (define (tc-thread-spawn-box-i64-name? [name : String]) : bool
   (string-eq (tc-thread-name-base name) "thread-spawn-box-i64"))
 
-(define (tc-thread-safe-spawn-name? [name : String]) : bool
-  (let
-    [base : String (tc-thread-name-base name)]
-    (or
-      (string-eq base "thread-spawn-i64")
-      (string-eq base "thread-spawn-bool")
-      (string-eq base "thread-spawn-unit")
-      (string-eq base "thread-spawn-string")
-      (string-eq base "thread-spawn-array-i64")
-      (string-eq base "thread-spawn-box-i64"))))
+(define (tc-thread-legacy-safe-spawn-base? [base : String]) : bool
+  (or
+    (string-eq base "thread-spawn-string")
+    (string-eq base "thread-spawn-array-i64")
+    (string-eq base "thread-spawn-box-i64")))
+
+(define (tc-thread-legacy-safe-spawn-name? [name : String]) : bool
+  (tc-thread-legacy-safe-spawn-base? (tc-thread-name-base name)))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
   (let
     [base : String (tc-thread-name-base name)]
     (or
-      (string-eq base "ThreadI64")
-      (string-eq base "ThreadBool")
-      (string-eq base "ThreadUnit")
+      (tc-thread-generated-handle-type-name? name)
       (string-eq base "ThreadString")
       (string-eq base "ThreadArrayI64")
       (string-eq base "ThreadBoxI64"))))
 
-(define (tc-thread-safe-spawn-call-name [func : AstExpr]) : TcMaybeString
+(define (tc-thread-spawn-lookup-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-name : String]) : String
+  (match (tc-source-name-lookup-key ctx env source-name)
+    [(OkTcString lookup-name) lookup-name]
+    [(ErrTcString _) source-name]))
+
+(define (tc-thread-potential-safe-spawn-name?
+  [source-name : String]
+  [lookup-name : String]) : bool
+  (or
+    (tc-thread-legacy-safe-spawn-name? source-name)
+    (tc-thread-legacy-safe-spawn-name? lookup-name)
+    (tc-thread-generated-name? lookup-name "spawn")
+    (string-eq (tc-thread-source-name-base source-name) "spawn")
+    (string-eq (tc-thread-name-base lookup-name) "spawn")))
+
+(define (tc-thread-potential-safe-spawn-dotted-source-name?
+  [source-name : String]) : bool
+  (tc-string-has-suffix? source-name ".spawn"))
+
+(define (tc-thread-potential-safe-spawn-source-name? [source-name : String]) : bool
+  (cond
+    [(or
+        (string-eq source-name "spawn")
+        (tc-thread-legacy-safe-spawn-base? source-name))
+      true]
+    [(tc-name-qualified? source-name)
+      (let
+        [base : String (tc-qualified-name-base source-name)]
+        (or (string-eq base "spawn") (tc-thread-legacy-safe-spawn-base? base)))]
+    [(tc-thread-potential-safe-spawn-dotted-source-name? source-name) true]
+    [else false]))
+
+(define (tc-thread-safe-spawn-call-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name func)
     [(TcSomeString name)
-      (if (tc-thread-safe-spawn-name? name)
-        (TcSomeString name)
+      (if (tc-thread-potential-safe-spawn-source-name? name)
+        (if (tc-thread-potential-safe-spawn-name?
+          name
+          (tc-thread-spawn-lookup-name ctx env name))
+          (TcSomeString name)
+          (TcNoString))
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
 
@@ -13368,16 +13876,57 @@
       (ErrTcExpr
         "typecheck: channel send expects channel and message arguments")]))
 
-(define (tc-thread-safe-spawn-result-type-name?
+(define (tc-thread-generated-spawn-result-module
+  [ctx : TcContext]
+  [ty : AstType]) : TcMaybeString
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name)
+      (tc-thread-generated-name-module (intern-str name) "SpawnResult")]
+    [(AstTyEnumArgs name _)
+      (tc-thread-generated-name-module (intern-str name) "SpawnResult")]
+    [_ (TcNoString)]))
+
+(define (tc-thread-spawn-result-type-base? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name)
+      (tc-thread-type-name-base? (intern-str name) "SpawnResult")]
+    [(AstTyEnumArgs name _)
+      (tc-thread-type-name-base? (intern-str name) "SpawnResult")]
+    [_ false]))
+
+(define (tc-thread-generated-spawn-module
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]
+  [ret : AstType]) : TcMaybeString
+  (match (tc-thread-generated-name-module lookup-name "spawn")
+    [(TcSomeString module) (TcSomeString module)]
+    [(TcNoString)
+      (if (or
+        (string-eq (tc-thread-source-name-base source-name) "spawn")
+        (string-eq (tc-thread-name-base lookup-name) "spawn"))
+        (match (tc-thread-generated-spawn-result-module ctx ret)
+          [(TcSomeString module) (TcSomeString module)]
+          [(TcNoString)
+            (if (tc-thread-spawn-result-type-base? ctx ret)
+              (TcSomeString "")
+              (TcNoString))])
+        (TcNoString))]))
+
+(define (tc-thread-generated-spawn-result-type?
+  [ctx : TcContext]
+  [module : String]
+  [ty : AstType]) : bool
+  (if (string-eq module "")
+    (tc-thread-spawn-result-type-base? ctx ty)
+    (match (tc-thread-generated-spawn-result-module ctx ty)
+      [(TcSomeString result-module) (string-eq result-module module)]
+      [(TcNoString) false])))
+
+(define (tc-thread-legacy-safe-spawn-result-type-name?
   [spawn-name : String]
   [result-name : String]) : bool
   (cond
-    [(tc-thread-spawn-i64-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadI64SpawnResult")]
-    [(tc-thread-spawn-bool-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadBoolSpawnResult")]
-    [(tc-thread-spawn-unit-name? spawn-name)
-      (tc-thread-name-base-eq? result-name "ThreadUnitSpawnResult")]
     [(tc-thread-spawn-string-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
     [(tc-thread-spawn-array-i64-name? spawn-name)
@@ -13388,59 +13937,107 @@
 
 (define (tc-thread-safe-spawn-result-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
   [ty : AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyEnum name)
-      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
-    [(AstTyEnumArgs name _)
-      (tc-thread-safe-spawn-result-type-name? spawn-name (intern-str name))]
-    [_ false]))
+  (match generated-module
+    [(TcSomeString module)
+      (tc-thread-generated-spawn-result-type? ctx module ty)]
+    [(TcNoString)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstTyEnum name)
+          (or
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              source-name
+              (intern-str name))
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              lookup-name
+              (intern-str name)))]
+        [(AstTyEnumArgs name _)
+          (or
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              source-name
+              (intern-str name))
+            (tc-thread-legacy-safe-spawn-result-type-name?
+              lookup-name
+              (intern-str name)))]
+        [_ false])]))
 
-(define (tc-thread-safe-spawn-task-ret-type?
+(define (tc-thread-generated-spawn-task-ret-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [module : String]
   [ty : AstType]) : bool
   (let
+    [type-key : String (tc-thread-generated-module-type-key module)]
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (cond
-      [(tc-thread-spawn-i64-name? spawn-name)
+      [(string-eq module "")
+        (match resolved
+          [(AstTyI64) true]
+          [(AstTyBool) true]
+          [(AstTyUnit) true]
+          [_ false])]
+      [(string-eq type-key "i64")
         (match resolved
           [(AstTyI64) true]
           [_ false])]
-      [(tc-thread-spawn-bool-name? spawn-name)
+      [(string-eq type-key "bool")
         (match resolved
           [(AstTyBool) true]
           [_ false])]
-      [(tc-thread-spawn-unit-name? spawn-name)
+      [(string-eq type-key "unit")
         (match resolved
           [(AstTyUnit) true]
           [_ false])]
-      [(tc-thread-spawn-string-name? spawn-name)
-        (match resolved
-          [(AstTyString) true]
-          [_ false])]
-      [(tc-thread-spawn-array-i64-name? spawn-name)
-        (match resolved
-          [(AstTyDynArray elem)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (ty-node-get elem)))
-              [(AstTyI64) true]
-              [_ false])]
-          [_ false])]
-      [(tc-thread-spawn-box-i64-name? spawn-name)
-        (match resolved
-          [(AstTyBox elem)
-            (match (tc-type-strip-region
-              (tc-resolve-type ctx (ty-node-get elem)))
-              [(AstTyI64) true]
-              [_ false])]
-          [_ false])]
       [else false])))
+
+(define (tc-thread-safe-spawn-task-ret-type?
+  [ctx : TcContext]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
+  [ty : AstType]) : bool
+  (match generated-module
+    [(TcSomeString module)
+      (tc-thread-generated-spawn-task-ret-type? ctx module ty)]
+    [(TcNoString)
+      (let
+        [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+        (cond
+          [(or
+              (tc-thread-spawn-string-name? source-name)
+              (tc-thread-spawn-string-name? lookup-name))
+            (match resolved
+              [(AstTyString) true]
+              [_ false])]
+          [(or
+              (tc-thread-spawn-array-i64-name? source-name)
+              (tc-thread-spawn-array-i64-name? lookup-name))
+            (match resolved
+              [(AstTyDynArray elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (ty-node-get elem)))
+                  [(AstTyI64) true]
+                  [_ false])]
+              [_ false])]
+          [(or
+              (tc-thread-spawn-box-i64-name? source-name)
+              (tc-thread-spawn-box-i64-name? lookup-name))
+            (match resolved
+              [(AstTyBox elem)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (ty-node-get elem)))
+                  [(AstTyI64) true]
+                  [_ false])]
+              [_ false])]
+          [else false]))]))
 
 (define (tc-thread-safe-spawn-task-type?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
+  [generated-module : TcMaybeString]
   [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyFunc task-params task-ret-box)
@@ -13448,28 +14045,41 @@
         [(AstTypeNil)
           (tc-thread-safe-spawn-task-ret-type?
             ctx
-            spawn-name
+            source-name
+            lookup-name
+            generated-module
             (ty-node-get task-ret-box))]
         [_ false])]
     [_ false]))
 
 (define (tc-thread-safe-spawn-signature?
   [ctx : TcContext]
-  [spawn-name : String]
+  [source-name : String]
+  [lookup-name : String]
   [params : AstTypeList]
   [ret : AstType]) : bool
-  (and
-    (tc-thread-safe-spawn-result-type? ctx spawn-name ret)
-    (match params
-      [(AstTypeCons task-param rest-box)
-        (match (box-get rest-box)
-          [(AstTypeNil)
-            (tc-thread-safe-spawn-task-type?
-              ctx
-              spawn-name
-              (ty-node-get task-param))]
-          [_ false])]
-      [_ false])))
+  (let
+    [generated-module : TcMaybeString
+      (tc-thread-generated-spawn-module ctx source-name lookup-name ret)]
+    (and
+      (tc-thread-safe-spawn-result-type?
+        ctx
+        source-name
+        lookup-name
+        generated-module
+        ret)
+      (match params
+        [(AstTypeCons task-param rest-box)
+          (match (box-get rest-box)
+            [(AstTypeNil)
+              (tc-thread-safe-spawn-task-type?
+                ctx
+                source-name
+                lookup-name
+                generated-module
+                (ty-node-get task-param))]
+            [_ false])]
+        [_ false]))))
 
 (define (tc-thread-transfer-class-merge
   [left : TcThreadTransferClass]
@@ -13932,32 +14542,39 @@
     [(TcNoString)
       (tc-check-thread-safe-spawn-direct-lambda-arg spawn-name ctx env arg)]))
 
-(define (tc-check-thread-spawn-i64-call
+(define (tc-check-thread-safe-spawn-call
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]) : ResultTcUnit
-  (match (tc-thread-safe-spawn-call-name func)
-    [(TcSomeString spawn-name)
-      (if (tc-thread-safe-spawn-signature? ctx spawn-name params ret)
-        (match args
-          [(AstExprCons arg rest)
-            (match (box-get rest)
-              [(AstExprNil)
-                (tc-check-thread-safe-spawn-direct-lambda
-                  spawn-name
-                  ctx
-                  env
-                  (ast-node-get arg))]
-              [_
-                (ErrTcUnit
-                  (str-cat "typecheck: " spawn-name " expects one argument"))])]
-          [(AstExprNil)
-            (ErrTcUnit
-              (str-cat "typecheck: " spawn-name " expects one argument"))])
-        OkTcUnit)]
+  (match (tc-thread-safe-spawn-call-name ctx env func)
+    [(TcSomeString source-name)
+      (let
+        [lookup-name : String (tc-thread-spawn-lookup-name ctx env source-name)]
+        (if (tc-thread-safe-spawn-signature?
+          ctx
+          source-name
+          lookup-name
+          params
+          ret)
+          (match args
+            [(AstExprCons arg rest)
+              (match (box-get rest)
+                [(AstExprNil)
+                  (tc-check-thread-safe-spawn-direct-lambda
+                    source-name
+                    ctx
+                    env
+                    (ast-node-get arg))]
+                [_
+                  (ErrTcUnit
+                    (str-cat "typecheck: " source-name " expects one argument"))])]
+            [(AstExprNil)
+              (ErrTcUnit
+                (str-cat "typecheck: " source-name " expects one argument"))])
+          OkTcUnit))]
     [(TcNoString) OkTcUnit]))
 
 (define (tc-thread-channel-send-message
@@ -14079,7 +14696,7 @@
                     (TcArityDetailed func args params)
                     c-abi-args)
                     [(OkTcUnit)
-                      (match (tc-check-thread-spawn-i64-call
+                      (match (tc-check-thread-safe-spawn-call
                         ctx
                         env
                         func
@@ -16445,7 +17062,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -16927,9 +17544,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -16961,7 +17578,7 @@
                                 init-class
                                 TcSpmdLocal)
                               rest
-                              (+ count 1)))])]
+                              mark))])]
                     [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])]
                 [(ErrTcUnit message) (ErrTcSpmdLetState message)]))]))]))
 
@@ -17002,7 +17619,12 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-masked-if-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-masked-if-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
                   [(TcSpmdLetState body-env body-spmd-env _)
@@ -17150,9 +17772,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -17182,7 +17804,7 @@
                             init-class
                             TcSpmdLocal)
                           rest
-                          (+ count 1)))])]
+                          mark))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)]))]))]))
 
 (define (tc-spmd-expr-list
@@ -17657,9 +18279,9 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [bindings : AstLetBindingList]
-  [count : i64]) : ResultTcSpmdLetState
+  [mark : TcSpmdEnvMark]) : ResultTcSpmdLetState
   (match bindings
-    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env mark))]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -17689,7 +18311,7 @@
                             init-class
                             TcSpmdLocal)
                           rest
-                          (+ count 1)))])]
+                          mark))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)]))]))]))
 
 (define (tc-spmd-reduce-class
@@ -17773,10 +18395,15 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-reduce-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-reduce-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
-                  [(TcSpmdLetState body-env body-spmd-env count)
+                  [(TcSpmdLetState body-env body-spmd-env mark)
                     (match (tc-spmd-reduce-class
                       ctx
                       body-env
@@ -17788,7 +18415,7 @@
                             (tc-spmd-reduce-class-finish
                               ctx
                               env
-                              (tc-spmd-env-pop final-spmd-env count)
+                              (tc-spmd-env-restore final-spmd-env mark)
                               expr
                               body-class)])]
                       [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
@@ -18062,10 +18689,15 @@
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
+            (match (tc-spmd-let-bindings
+              ctx
+              env
+              spmd-env
+              bindings
+              (tc-spmd-env-mark spmd-env))
               [(OkTcSpmdLetState state)
                 (match state
-                  [(TcSpmdLetState body-env body-spmd-env count)
+                  [(TcSpmdLetState body-env body-spmd-env mark)
                     (match (tc-spmd-expr ctx body-env body-spmd-env body)
                       [(OkTcSpmdExprInfo body-info)
                         (match body-info
@@ -18073,7 +18705,7 @@
                             (tc-spmd-finish
                               expr-ty
                               body-class
-                              (tc-spmd-env-pop final-spmd-env count))])]
+                              (tc-spmd-env-restore final-spmd-env mark))])]
                       [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
               [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)]))])]
     [(AstExprLambda _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
@@ -18561,15 +19193,8 @@
     [(AstExprUnquoteSplicing _)
       (ErrTcSpmdExprInfo
         "typecheck: unquote-splicing is only valid inside quasiquote")]
-    [(AstExprTry inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-spmd-expr ctx env spmd-env inner)
-          [(OkTcSpmdExprInfo info)
-            (match info
-              [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
-          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprTry _)
+      (ErrTcSpmdExprInfo "typecheck: try inside foreach is not supported")]
     [(AstExprReturn _)
       (ErrTcSpmdExprInfo "typecheck: return inside foreach is not supported")]
     [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
@@ -20104,19 +20729,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _ _ _) program]))
+    [(TcContext program _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _ _ _) symbols]))
+    [(TcContext _ symbols _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _ _ _) registries]))
-
-(define (tc-context-exports [ctx : TcContext]) : CompilerExports
-  (match ctx
-    [(TcContext _ _ _ exports _ _) exports]))
+    [(TcContext _ _ registries _ _) registries]))
 
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
@@ -20256,9 +20877,11 @@
   (match fields
     [(TcReprCFieldLayoutNil) -1]
     [(TcReprCFieldLayoutCons field rest)
-      (if (string-eq (tc-repr-c-field-layout-name field) name)
-        (tc-repr-c-field-layout-offset field)
-        (tc-repr-c-layout-field-offset (box-get rest) name))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 1))
+        (if (string-eq (tc-repr-c-field-layout-name field) name)
+          (tc-repr-c-field-layout-offset field)
+          (tc-repr-c-layout-field-offset (box-get rest) name)))]))
 
 (define (tc-inline-field-layout-name [field : TcInlineFieldLayout]) : String
   (match field
@@ -20278,9 +20901,11 @@
   (match fields
     [(TcInlineFieldLayoutNil) -1]
     [(TcInlineFieldLayoutCons field rest)
-      (if (string-eq (tc-inline-field-layout-name field) name)
-        (tc-inline-field-layout-offset field)
-        (tc-inline-field-layout-list-offset (box-get rest) name))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 3))
+        (if (string-eq (tc-inline-field-layout-name field) name)
+          (tc-inline-field-layout-offset field)
+          (tc-inline-field-layout-list-offset (box-get rest) name)))]))
 
 ;; #2601/#2855: register-resident aggregate eightbytes may be INTEGER (the
 ;; existing word-class data) or SSE. SSE admits exact aligned f64 fields and
@@ -20449,7 +21074,7 @@
   [payloads : TcInlinePayloadLayoutList]) : bool
   (match payloads
     [(TcInlinePayloadLayoutNil) true]
-    [_ false]))
+    [(TcInlinePayloadLayoutCons _ _) false]))
 
 (define (tc-inline-enum-variants-tag-only?
   [variants : TcInlineVariantLayoutList]) : bool
@@ -20492,9 +21117,11 @@
   (match payloads
     [(TcInlinePayloadLayoutNil) -1]
     [(TcInlinePayloadLayoutCons payload rest)
-      (if (= (tc-inline-payload-layout-index payload) index)
-        (tc-inline-payload-layout-offset payload)
-        (tc-inline-payload-layout-list-offset (box-get rest) index))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 5))
+        (if (= (tc-inline-payload-layout-index payload) index)
+          (tc-inline-payload-layout-offset payload)
+          (tc-inline-payload-layout-list-offset (box-get rest) index)))]))
 
 (define (tc-inline-variant-layout-name [variant : TcInlineVariantLayout]) : String
   (match variant
@@ -20547,9 +21174,11 @@
   (match variants
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
-      (if (string-eq (tc-inline-variant-layout-name variant) name)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-exact (box-get rest) name))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 7))
+        (if (string-eq (tc-inline-variant-layout-name variant) name)
+          (tc-inline-variant-layout-size variant)
+          (tc-inline-variant-layout-list-size-exact (box-get rest) name)))]))
 
 (define (tc-inline-variant-layout-list-size-fallback
   [variants : TcInlineVariantLayoutList]
@@ -20557,11 +21186,13 @@
   (match variants
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
-      (if (tc-inline-variant-layout-name-matches?
-        (tc-inline-variant-layout-name variant)
-        name)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-fallback (box-get rest) name))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 7))
+        (if (tc-inline-variant-layout-name-matches?
+          (tc-inline-variant-layout-name variant)
+          name)
+          (tc-inline-variant-layout-size variant)
+          (tc-inline-variant-layout-list-size-fallback (box-get rest) name)))]))
 
 (define (tc-inline-variant-layout-list-size
   [variants : TcInlineVariantLayoutList]
@@ -20579,14 +21210,16 @@
   (match variants
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
-      (if (string-eq (tc-inline-variant-layout-name variant) name)
-        (tc-inline-payload-layout-list-offset
-          (tc-inline-variant-layout-payloads variant)
-          index)
-        (tc-inline-variant-layout-list-payload-offset-exact
-          (box-get rest)
-          name
-          index))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 7))
+        (if (string-eq (tc-inline-variant-layout-name variant) name)
+          (tc-inline-payload-layout-list-offset
+            (tc-inline-variant-layout-payloads variant)
+            index)
+          (tc-inline-variant-layout-list-payload-offset-exact
+            (box-get rest)
+            name
+            index)))]))
 
 (define (tc-inline-variant-layout-list-payload-offset-fallback
   [variants : TcInlineVariantLayoutList]
@@ -20595,16 +21228,18 @@
   (match variants
     [(TcInlineVariantLayoutNil) -1]
     [(TcInlineVariantLayoutCons variant rest)
-      (if (tc-inline-variant-layout-name-matches?
-        (tc-inline-variant-layout-name variant)
-        name)
-        (tc-inline-payload-layout-list-offset
-          (tc-inline-variant-layout-payloads variant)
-          index)
-        (tc-inline-variant-layout-list-payload-offset-fallback
-          (box-get rest)
-          name
-          index))]))
+      (begin
+        (cfg compile-profile (tc-lp-note 7))
+        (if (tc-inline-variant-layout-name-matches?
+          (tc-inline-variant-layout-name variant)
+          name)
+          (tc-inline-payload-layout-list-offset
+            (tc-inline-variant-layout-payloads variant)
+            index)
+          (tc-inline-variant-layout-list-payload-offset-fallback
+            (box-get rest)
+            name
+            index)))]))
 
 (define (tc-inline-variant-layout-list-payload-offset
   [variants : TcInlineVariantLayoutList]
@@ -20667,7 +21302,7 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
@@ -20694,7 +21329,7 @@
 
 (define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols enum-name)
         [(SomeI64 handle)
           (if (=
@@ -20941,16 +21576,18 @@
                       [(OkTcInlineFieldsLayout rest-layout)
                         (match rest-layout
                           [(TcInlineFieldsLayout size align rest-fields)
-                            (OkTcInlineFieldsLayout
-                              (TcInlineFieldsLayout
-                                size
-                                align
-                                (TcInlineFieldLayoutCons
-                                  (TcInlineFieldLayout
-                                    (intern-str name)
-                                    resolved
-                                    offset)
-                                  (box rest-fields))))])]
+                            (begin
+                              (cfg compile-profile (tc-lp-note 2))
+                              (OkTcInlineFieldsLayout
+                                (TcInlineFieldsLayout
+                                  size
+                                  align
+                                  (TcInlineFieldLayoutCons
+                                    (TcInlineFieldLayout
+                                      (intern-str name)
+                                      resolved
+                                      offset)
+                                    (box rest-fields)))))])]
                       [(ErrTcInlineFieldsLayout message)
                         (ErrTcInlineFieldsLayout message)]))]
                 [(ErrTcLayoutInfo message) (ErrTcInlineFieldsLayout message)]))]))]))
@@ -20990,13 +21627,15 @@
                 [(OkTcInlinePayloadFieldsLayout rest-layout)
                   (match rest-layout
                     [(TcInlinePayloadFieldsLayout size align rest-payloads)
-                      (OkTcInlinePayloadFieldsLayout
-                        (TcInlinePayloadFieldsLayout
-                          size
-                          align
-                          (TcInlinePayloadLayoutCons
-                            (TcInlinePayloadLayout index ty offset)
-                            (box rest-payloads))))])]
+                      (begin
+                        (cfg compile-profile (tc-lp-note 4))
+                        (OkTcInlinePayloadFieldsLayout
+                          (TcInlinePayloadFieldsLayout
+                            size
+                            align
+                            (TcInlinePayloadLayoutCons
+                              (TcInlinePayloadLayout index ty offset)
+                              (box rest-payloads)))))])]
                 [(ErrTcInlinePayloadFieldsLayout message)
                   (ErrTcInlinePayloadFieldsLayout message)]))]
           [(ErrTcLayoutInfo message) (ErrTcInlinePayloadFieldsLayout message)]))]))
@@ -21067,17 +21706,19 @@
                                 enum-size
                                 enum-align
                                 rest-variants)
-                              (OkTcInlineAggregateLayout
-                                (TcInlineEnumLayout
-                                  enum-size
-                                  enum-align
-                                  (TcInlineVariantLayoutCons
-                                    (TcInlineVariantLayout
-                                      (intern-str variant-name)
-                                      variant-size
-                                      variant-align
-                                      payloads)
-                                    (box rest-variants))))]
+                              (begin
+                                (cfg compile-profile (tc-lp-note 6))
+                                (OkTcInlineAggregateLayout
+                                  (TcInlineEnumLayout
+                                    enum-size
+                                    enum-align
+                                    (TcInlineVariantLayoutCons
+                                      (TcInlineVariantLayout
+                                        (intern-str variant-name)
+                                        variant-size
+                                        variant-align
+                                        payloads)
+                                      (box rest-variants)))))]
                             [(TcInlineStructLayout _ _ _)
                               (ErrTcInlineAggregateLayout
                                 "typecheck: internal inline enum layout mismatch")])]
@@ -21215,16 +21856,23 @@
         (let
           [key : i64 (tc-agg-layout-cache-slot-key name)]
           (if (< key 0)
-            (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack)
+            (begin
+              (cfg compile-profile (tc-lp-note 14))
+              (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack))
             (match (array-ref tc-agg-layout-cache key)
-              [(TcAggLayoutCacheFull layout) (OkTcInlineAggregateLayout layout)]
+              [(TcAggLayoutCacheFull layout)
+                (begin
+                  (cfg compile-profile (tc-lp-note 12))
+                  (OkTcInlineAggregateLayout layout))]
               [(TcAggLayoutCacheEmpty)
-                (tc-inline-aggregate-layout-fill-cache
-                  ctx
-                  name
-                  handle
-                  stack
-                  key)]))))]
+                (begin
+                  (cfg compile-profile (tc-lp-note 13))
+                  (tc-inline-aggregate-layout-fill-cache
+                    ctx
+                    name
+                    handle
+                    stack
+                    key))]))))]
     [(NoneI64)
       (ErrTcInlineAggregateLayout
         (string-append "typecheck: unknown aggregate " name))]))
@@ -21698,16 +22346,18 @@
                       next-align
                       seen)
                       [(OkTcReprCLayout rest-layout)
-                        (OkTcReprCLayout
-                          (TcReprCLayout
-                            (tc-repr-c-layout-size rest-layout)
-                            (tc-repr-c-layout-align rest-layout)
-                            (TcReprCFieldLayoutCons
-                              (TcReprCFieldLayout
-                                (intern-str name)
-                                resolved
-                                offset)
-                              (box (tc-repr-c-layout-fields rest-layout)))))]
+                        (begin
+                          (cfg compile-profile (tc-lp-note 0))
+                          (OkTcReprCLayout
+                            (TcReprCLayout
+                              (tc-repr-c-layout-size rest-layout)
+                              (tc-repr-c-layout-align rest-layout)
+                              (TcReprCFieldLayoutCons
+                                (TcReprCFieldLayout
+                                  (intern-str name)
+                                  resolved
+                                  offset)
+                                (box (tc-repr-c-layout-fields rest-layout))))))]
                       [(ErrTcReprCLayout message) (ErrTcReprCLayout message)]))]
                 [(ErrTcLayoutInfo message) (ErrTcReprCLayout message)]))]))]))
 
@@ -21919,7 +22569,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _)
       (match program
         [(AstProgram decls-box)
           (let
@@ -21932,161 +22582,6 @@
                 ""
                 (ctfe-layout-info-list-with-capacity
                   (ctfe-metadata-decl-capacity decls)))))])]))
-
-(define (tc-ctfe-module-export-item-capacity [item : AstExportItem]) : i64
-  (match item
-    [(AstExportValue _) 1]
-    [(AstExportType _) 1]
-    [(AstExportMacro _) 1]
-    [_ 0]))
-
-(define (tc-ctfe-module-export-items-capacity [items : AstExportItemList]) : i64
-  (match items
-    [(AstExportItemNil) 0]
-    [(AstExportItemCons item rest)
-      (+
-        (tc-ctfe-module-export-item-capacity item)
-        (tc-ctfe-module-export-items-capacity (box-get rest)))]))
-
-(define (tc-ctfe-module-export-decl-capacity [decl : AstDecl]) : i64
-  (match decl
-    [(AstDeclExport items) (tc-ctfe-module-export-items-capacity items)]
-    [(AstDeclUnsafe inner-box)
-      (tc-ctfe-module-export-decl-capacity (box-get inner-box))]
-    [_ 0]))
-
-(define (tc-ctfe-module-export-capacity [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
-      (+
-        (tc-ctfe-module-export-decl-capacity decl)
-        (tc-ctfe-module-export-capacity (box-get rest)))]))
-
-(define (tc-ctfe-module-export-handle-type
-  [ctx : TcContext]
-  [kind : String]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultTcType
-  (if (string-eq kind (compiler-export-kind-type))
-    (OkTcType
-      (tc-resolved-nominal-type (compiler-symbol-module-key module name) handle))
-    (match (compiler-symbols-decl-at-index
-      (tc-context-symbols ctx)
-      (compiler-symbol-handle-index handle))
-      [(ErrAstDecl message) (ErrTcType message)]
-      [(OkAstDecl decl)
-        (if (string-eq kind (compiler-export-kind-macro))
-          (match decl
-            [(AstDeclDefMacro _ params ret _)
-              (OkTcType
-                (ast-ty-func
-                  (tc-macro-param-type-list ctx params)
-                  (tc-resolve-type ctx ret)))]
-            [_ (ErrTcType "typecheck: exported macro has no macro signature")])
-          (if (tc-cleanup-value-handle? handle)
-            (tc-cleanup-value-handle-type module handle decl)
-            (tc-top-decl-type ctx decl)))])))
-
-(define (tc-ctfe-module-export-add
-  [ctx : TcContext]
-  [out : CtfeModuleExportInfoList]
-  [kind : String]
-  [module : String]
-  [name : String]) : CtfeModuleExportInfoList
-  (match (compiler-exports-lookup (tc-context-exports ctx) kind module name)
-    [(NoneI64) out]
-    [(SomeI64 handle)
-      (match (tc-ctfe-module-export-handle-type ctx kind module name handle)
-        [(OkTcType ty)
-          (ctfe-module-export-info-list-push
-            out
-            (CtfeModuleExportInfo module kind name ty))]
-        [(ErrTcType _) out])]))
-
-(define (tc-ctfe-module-export-items
-  [ctx : TcContext]
-  [items : AstExportItemList]
-  [module : String]
-  [out : CtfeModuleExportInfoList]) : CtfeModuleExportInfoList
-  (match items
-    [(AstExportItemNil) out]
-    [(AstExportItemCons item rest)
-      (let
-        [next : CtfeModuleExportInfoList
-          (match item
-            [(AstExportValue name)
-              (tc-ctfe-module-export-add
-                ctx
-                out
-                (compiler-export-kind-value)
-                module
-                name)]
-            [(AstExportType name)
-              (tc-ctfe-module-export-add
-                ctx
-                out
-                (compiler-export-kind-type)
-                module
-                name)]
-            [(AstExportMacro name)
-              (tc-ctfe-module-export-add
-                ctx
-                out
-                (compiler-export-kind-macro)
-                module
-                name)]
-            [_ out])]
-        (tc-ctfe-module-export-items ctx (box-get rest) module next))]))
-
-(define (tc-ctfe-module-exports-from-decls
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [module : String]
-  [out : CtfeModuleExportInfoList]) : CtfeModuleExportInfoList
-  (match decls
-    [(AstDeclNil) out]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-ctfe-module-exports-from-decls
-              ctx
-              rest
-              (intern-str next-module)
-              out)]
-          [(AstDeclExport items)
-            (tc-ctfe-module-exports-from-decls
-              ctx
-              rest
-              module
-              (tc-ctfe-module-export-items ctx items module out))]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDeclExport items)
-                  (tc-ctfe-module-exports-from-decls
-                    ctx
-                    rest
-                    module
-                    (tc-ctfe-module-export-items ctx items module out))]
-                [_ (tc-ctfe-module-exports-from-decls ctx rest module out)]))]
-          [_ (tc-ctfe-module-exports-from-decls ctx rest module out)]))]))
-
-(define (tc-ctfe-module-exports [ctx : TcContext]) : CtfeModuleExportInfoList
-  (match (tc-context-program ctx)
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (tc-ctfe-module-exports-from-decls
-          ctx
-          decls
-          ""
-          (ctfe-module-export-info-list-with-capacity
-            (tc-ctfe-module-export-capacity decls))))]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
@@ -22103,7 +22598,6 @@
       (ctfe-env-with-metadata-and-pools
         (tc-ctfe-layouts ctx)
         (ctfe-reflections-from-program (tc-context-program ctx))
-        (tc-ctfe-module-exports ctx)
         (tc-context-pools ctx))
       (ctfe-env-empty-with-pools (tc-context-pools ctx)))))
 
@@ -22186,7 +22680,13 @@
       (match (tc-result-variant-payload-type ctx err-name err-fields)
         [(OkTcType err-ty)
           (OkTcResultInfo
-            (TcResultInfo try-kind enum-name ok-name ok-ty err-name err-ty))]
+            (TcResultInfo
+              try-kind
+              enum-name
+              (tc-qualified-variant-name enum-name ok-name)
+              ok-ty
+              (tc-qualified-variant-name enum-name err-name)
+              err-ty))]
         [(ErrTcType message) (ErrTcResultInfo message)])]
     [(ErrTcType message) (ErrTcResultInfo message)]))
 
@@ -22216,9 +22716,9 @@
             (TcResultInfo
               TcTryOption
               enum-name
-              some-name
+              (tc-qualified-variant-name enum-name some-name)
               some-ty
-              none-name
+              (tc-qualified-variant-name enum-name none-name)
               none-ty))]
         [(ErrTcType message) (ErrTcResultInfo message)])]
     [(ErrTcType message) (ErrTcResultInfo message)]))
@@ -22410,8 +22910,6 @@
             (tc-variant-owner-name-list rest target index module)]
           [(AstDeclIncludeBin _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclExport _)
-            (tc-variant-owner-name-list rest target index module)]
           [(AstDeclModule next-module)
             (tc-variant-owner-name-list
               rest
@@ -22448,7 +22946,7 @@
 (define (tc-variant-constructor-type-for-lookup-or
   [ctx : TcContext]
   [lookup-name : String]
-  [display-name : String]
+  [_display-name : String]
   [not-found-message : String]) : ResultTcType
   (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
     [(OkTcString variant-key)
@@ -22456,29 +22954,23 @@
         (tc-context-registries ctx)
         variant-key)
         [(SomeI64 handle)
-          (match (tc-qualified-variant-visible-ok-with-display
-            ctx
-            variant-key
-            display-name)
-            [(OkTcUnit)
-              (match (tc-variant-owner-name ctx handle)
-                [(OkTcString owner)
-                  (match (compiler-registries-variant-fields-indexed
-                    (tc-context-symbols ctx)
-                    handle)
-                    [(OkAstTypeList fields)
-                      (match (tc-nominal-lifetimes ctx owner)
-                        [(OkTcLifetimeList lifetimes)
-                          (OkTcType
-                            (tc-enum-variant-constructor-type
-                              ctx
-                              owner
-                              lifetimes
-                              fields))]
-                        [(ErrTcLifetimeList message) (ErrTcType message)])]
-                    [(ErrAstTypeList message) (ErrTcType message)])]
-                [(ErrTcString message) (ErrTcType message)])]
-            [(ErrTcUnit message) (ErrTcType message)])]
+          (match (tc-variant-owner-name ctx handle)
+            [(OkTcString owner)
+              (match (compiler-registries-variant-fields-indexed
+                (tc-context-symbols ctx)
+                handle)
+                [(OkAstTypeList fields)
+                  (match (tc-nominal-lifetimes ctx owner)
+                    [(OkTcLifetimeList lifetimes)
+                      (OkTcType
+                        (tc-enum-variant-constructor-type
+                          ctx
+                          owner
+                          lifetimes
+                          fields))]
+                    [(ErrTcLifetimeList message) (ErrTcType message)])]
+                [(ErrAstTypeList message) (ErrTcType message)])]
+            [(ErrTcString message) (ErrTcType message)])]
         [(NoneI64) (ErrTcType not-found-message)])]
     [(ErrTcString _) (ErrTcType not-found-message)]))
 
@@ -22491,14 +22983,11 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (tc-qualified-field-visible-ok ctx struct-name field)
-        [(OkTcUnit)
-          (match (compiler-registries-struct-field-type-indexed
-            (tc-context-symbols ctx)
-            handle)
-            [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
-            [(ErrAstType message) (ErrTcType message)])]
-        [(ErrTcUnit message) (ErrTcType message)])]
+      (match (compiler-registries-struct-field-type-indexed
+        (tc-context-symbols ctx)
+        handle)
+        [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
+        [(ErrAstType message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -22524,22 +23013,15 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (tc-qualified-field-visible-ok ctx struct-name field)
-        [(OkTcUnit)
-          (match (compiler-registries-struct-field-type
-            (tc-context-program ctx)
-            handle)
-            [(OkAstType ty)
-              (match (tc-lifetime-subst-from-nominal-args
-                ctx
-                struct-name
-                lifetimes)
-                [(OkTcLifetimeSubst subst)
-                  (OkTcType
-                    (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
-                [(ErrTcLifetimeSubst message) (ErrTcType message)])]
-            [(ErrAstType message) (ErrTcType message)])]
-        [(ErrTcUnit message) (ErrTcType message)])]
+      (match (compiler-registries-struct-field-type
+        (tc-context-program ctx)
+        handle)
+        [(OkAstType ty)
+          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+            [(OkTcLifetimeSubst subst)
+              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
+            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
+        [(ErrAstType message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -23002,58 +23484,51 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-source-variant-visible-ok ctx variant-name lookup-name)
-          [(OkTcUnit)
-            (match (tc-variant-owner-name ctx handle)
-              [(OkTcString owner)
-                (if (string-eq owner enum-name)
-                  (match (compiler-registries-variant-fields-indexed
-                    (tc-context-symbols ctx)
-                    handle)
-                    [(OkAstTypeList fields)
-                      (match enum-lifetimes
-                        [(AstLifetimeNil)
-                          (tc-bind-sub-pattern-list
-                            ctx
-                            env
-                            args
-                            (match payload-region
-                              [(TcSomeString region)
-                                (tc-tag-type-list-region region fields)]
-                              [(TcNoString) fields]))]
-                        [_
-                          (match (tc-lifetime-subst-from-nominal-args
-                            ctx
-                            enum-name
-                            enum-lifetimes)
-                            [(OkTcLifetimeSubst subst)
-                              (let
-                                [subst-fields : AstTypeList
-                                  (tc-lifetime-subst-type-list subst fields)]
-                                (tc-bind-sub-pattern-list
-                                  ctx
-                                  env
-                                  args
-                                  (match payload-region
-                                    [(TcSomeString region)
-                                      (tc-tag-type-list-region
-                                        region
-                                        subst-fields)]
-                                    [(TcNoString) subst-fields])))]
-                            [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
-                    [(ErrAstTypeList message) (ErrTcEnv message)])
-                  (ErrTcEnv
+        (match (tc-variant-owner-name ctx handle)
+          [(OkTcString owner)
+            (if (string-eq owner enum-name)
+              (match (compiler-registries-variant-fields-indexed
+                (tc-context-symbols ctx)
+                handle)
+                [(OkAstTypeList fields)
+                  (match enum-lifetimes
+                    [(AstLifetimeNil)
+                      (tc-bind-sub-pattern-list
+                        ctx
+                        env
+                        args
+                        (match payload-region
+                          [(TcSomeString region)
+                            (tc-tag-type-list-region region fields)]
+                          [(TcNoString) fields]))]
+                    [_
+                      (match (tc-lifetime-subst-from-nominal-args
+                        ctx
+                        enum-name
+                        enum-lifetimes)
+                        [(OkTcLifetimeSubst subst)
+                          (let
+                            [subst-fields : AstTypeList
+                              (tc-lifetime-subst-type-list subst fields)]
+                            (tc-bind-sub-pattern-list
+                              ctx
+                              env
+                              args
+                              (match payload-region
+                                [(TcSomeString region)
+                                  (tc-tag-type-list-region region subst-fields)]
+                                [(TcNoString) subst-fields])))]
+                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                [(ErrAstTypeList message) (ErrTcEnv message)])
+              (ErrTcEnv
+                (string-append
+                  "typecheck: variant "
+                  (string-append
+                    variant-name
                     (string-append
-                      "typecheck: variant "
-                      (string-append
-                        variant-name
-                        (string-append
-                          " belongs to enum "
-                          (string-append
-                            owner
-                            (string-append ", not " enum-name)))))))]
-              [(ErrTcString message) (ErrTcEnv message)])]
-          [(ErrTcUnit message) (ErrTcEnv message)])]
+                      " belongs to enum "
+                      (string-append owner (string-append ", not " enum-name)))))))]
+          [(ErrTcString message) (ErrTcEnv message)])]
       [(NoneI64)
         (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
 
@@ -23135,15 +23610,11 @@
   [struct-name : String]
   [pattern-name : String]) : ResultTcString
   (if (tc-name-qualified? pattern-name)
-    (match (tc-qualified-type-visible-ok ctx pattern-name)
-      [(OkTcUnit)
-        (let
-          [qualifier : String (tc-qualified-name-module pattern-name)]
-          [base : String (tc-qualified-name-base pattern-name)]
-          [target-module : String
-            (tc-qualified-access-target-module ctx qualifier)]
-          (OkTcString (compiler-symbol-module-key target-module base)))]
-      [(ErrTcUnit message) (ErrTcString message)])
+    (let
+      [qualifier : String (tc-qualified-name-module pattern-name)]
+      [base : String (tc-qualified-name-base pattern-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (OkTcString (compiler-symbol-module-key target-module base)))
     (match (tc-source-type-name-lookup-key ctx pattern-name)
       [(OkTcString lookup-name)
         (OkTcString
@@ -23408,51 +23879,46 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-source-variant-visible-ok ctx variant-name lookup-name)
-          [(OkTcUnit)
-            (match (tc-variant-owner-name ctx handle)
-              [(OkTcString owner)
-                (if (string-eq owner enum-name)
-                  (match (compiler-registries-variant-fields-indexed
-                    (tc-context-symbols ctx)
-                    handle)
-                    [(OkAstTypeList fields)
-                      (match enum-lifetimes
-                        [(AstLifetimeNil)
+        (match (tc-variant-owner-name ctx handle)
+          [(OkTcString owner)
+            (if (string-eq owner enum-name)
+              (match (compiler-registries-variant-fields-indexed
+                (tc-context-symbols ctx)
+                handle)
+                [(OkAstTypeList fields)
+                  (match enum-lifetimes
+                    [(AstLifetimeNil)
+                      (tc-bind-borrowed-sub-pattern-list
+                        ctx
+                        env
+                        lifetime
+                        args
+                        (tc-resolve-type-list ctx fields))]
+                    [_
+                      (match (tc-lifetime-subst-from-nominal-args
+                        ctx
+                        enum-name
+                        enum-lifetimes)
+                        [(OkTcLifetimeSubst subst)
                           (tc-bind-borrowed-sub-pattern-list
                             ctx
                             env
                             lifetime
                             args
-                            (tc-resolve-type-list ctx fields))]
-                        [_
-                          (match (tc-lifetime-subst-from-nominal-args
-                            ctx
-                            enum-name
-                            enum-lifetimes)
-                            [(OkTcLifetimeSubst subst)
-                              (tc-bind-borrowed-sub-pattern-list
-                                ctx
-                                env
-                                lifetime
-                                args
-                                (tc-resolve-type-list
-                                  ctx
-                                  (tc-lifetime-subst-type-list subst fields)))]
-                            [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
-                    [(ErrAstTypeList message) (ErrTcEnv message)])
-                  (ErrTcEnv
+                            (tc-resolve-type-list
+                              ctx
+                              (tc-lifetime-subst-type-list subst fields)))]
+                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                [(ErrAstTypeList message) (ErrTcEnv message)])
+              (ErrTcEnv
+                (string-append
+                  "typecheck: variant "
+                  (string-append
+                    variant-name
                     (string-append
-                      "typecheck: variant "
-                      (string-append
-                        variant-name
-                        (string-append
-                          " belongs to enum "
-                          (string-append
-                            owner
-                            (string-append ", not " enum-name)))))))]
-              [(ErrTcString message) (ErrTcEnv message)])]
-          [(ErrTcUnit message) (ErrTcEnv message)])]
+                      " belongs to enum "
+                      (string-append owner (string-append ", not " enum-name)))))))]
+          [(ErrTcString message) (ErrTcEnv message)])]
       [(NoneI64)
         (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
 
@@ -23539,7 +24005,7 @@
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : ResultTcEnv
-  (match (tc-type-strip-region scrut-ty)
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
     [(AstTyRef lifetime referent-box)
       (let
         [referent-ty : AstType
@@ -25958,19 +26424,19 @@
                             name-text
                             lookup-name))
                           [(OkTcUnit)
-                            (match (tc-source-value-visible-ok
+                            (match (tc-unqualified-import-ambiguity-message
                               ctx
-                              name-text
-                              lookup-name)
-                              [(OkTcUnit) (OkTcType ty)]
-                              [(ErrTcUnit message) (ErrTcType message)])]
+                              env
+                              name)
+                              [(TcNoString) (OkTcType ty)]
+                              [(TcSomeString message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])
-                        (match (tc-source-value-visible-ok
+                        (match (tc-unqualified-import-ambiguity-message
                           ctx
-                          name-text
-                          lookup-name)
-                          [(OkTcUnit) (OkTcType ty)]
-                          [(ErrTcUnit message) (ErrTcType message)]))]
+                          env
+                          name)
+                          [(TcNoString) (OkTcType ty)]
+                          [(TcSomeString message) (ErrTcType message)]))]
                     [(ErrTcTypeUnsafe message)
                       (tc-variant-constructor-type-for-lookup-or
                         ctx
@@ -27005,10 +27471,10 @@
       [(string-eq call-name "expr-bool") true]
       [(string-eq call-name "expr-int") true]
       [(string-eq call-name "expr-var") true]
+      [(string-eq call-name "expr-struct-get") true]
       [(string-eq call-name "expr-splice") true]
       [(string-eq call-name "expr-if") true]
       [(string-eq call-name "expr-type") true]
-      [(ctfe-module-export-query-name? call-name) true]
       [(ctfe-expr-inspector-name? call-name) true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-inspector-name? call-name) true]
@@ -29662,10 +30128,15 @@
                     [(OkTcMove moved2)
                       (tc-move-check-let-bindings
                         ctx
-                        (tc-bind-id
-                          env
-                          name
-                          (tc-move-binding-type ctx env maybe-ty init))
+                        (let
+                          [binding-ty : AstType
+                            (tc-move-binding-type ctx env maybe-ty init)]
+                          (tc-bind-c-abi-fnptr-if-needed-id
+                            ctx
+                            env
+                            name
+                            binding-ty
+                            init))
                         (tc-moved-add locals (intern-str name))
                         (tc-moved-remove-root-state
                           loop-carried
@@ -32738,10 +33209,15 @@
                     [(OkTcBorrowCheck borrowed2)
                       (tc-borrow-check-let-bindings
                         ctx
-                        (tc-bind-id
-                          env
-                          name
-                          (tc-move-binding-type ctx env maybe-ty init))
+                        (let
+                          [binding-ty : AstType
+                            (tc-move-binding-type ctx env maybe-ty init)]
+                          (tc-bind-c-abi-fnptr-if-needed-id
+                            ctx
+                            env
+                            name
+                            binding-ty
+                            init))
                         (tc-moved-add locals (intern-str name))
                         (tc-borrow-check-remove-root-state
                           borrowed2
@@ -33834,18 +34310,6 @@
 (define macro-expand-expr-type-macro-names : TcStringList
   (TcStringNil))
 
-;; Cached program export table for the current expansion run. `macro-qualified-
-;; call-decl` previously rebuilt the entire export table on EVERY qualified macro
-;; call; combined with the recursive re-expansion of variadic core macros, that
-;; made expanding a single nested qualified chain rebuild the whole program's
-;; exports O(n^2) times -- hundreds of
-;; MB for one predicate. The exports are invariant across an expansion run, so
-;; build them once (in `macro-expand-program`) and reuse.
-(define macro-expand-exports-ready : bool
-  false)
-(define macro-expand-exports-value : CompilerExports
-  (CompilerExports (i64-i64-map-with-capacity 1)))
-
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
 ;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
 ;; `ctfe-reflections-from-program` over the WHOLE program (O(program)) -- on EVERY
@@ -33881,21 +34345,51 @@
     (tc-hygiene-template-base name)
     name))
 
+(define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
+  (let
+    [cursor : AstDeclList items]
+    [result : AstDeclList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons head rest)
+            (begin
+              (set! result (ast-decl-cons head result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
+  (macro-decl-list-reverse-into items AstDeclNil))
+
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
-  (match left
-    [(AstDeclNil) right]
-    [(AstDeclCons head rest)
-      (ast-decl-cons head (macro-decl-list-append (box-get rest) right))]))
+  (macro-decl-list-reverse-into (macro-decl-list-reverse left) right))
+
+(define (macro-decl-path-list-reverse-into
+  [items : AstDeclPathList]
+  [out : AstDeclPathList]) : AstDeclPathList
+  (let
+    [cursor : AstDeclPathList items]
+    [result : AstDeclPathList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclPathNil) (set! done true)]
+          [(AstDeclPathCons head rest)
+            (begin
+              (set! result (ast-decl-path-cons head result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
+  (macro-decl-path-list-reverse-into items AstDeclPathNil))
 
 (define (macro-decl-path-list-append
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
-  (match left
-    [(AstDeclPathNil) right]
-    [(AstDeclPathCons head rest)
-      (ast-decl-path-cons
-        head
-        (macro-decl-path-list-append (box-get rest) right))]))
+  (macro-decl-path-list-reverse-into (macro-decl-path-list-reverse left) right))
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
   (match decls
@@ -33964,6 +34458,90 @@
               [(ErrGenKey diag) (ErrGenKey diag)])]
           [(ErrGenKey diag) (ErrGenKey diag)]))]))
 
+(define (macro-identity-key-sexpr [sexpr : SpannedSexpr]) : String
+  (match sexpr
+    [(SpSInt _ text _) (str-cat "int:" (spec-string-key text))]
+    [(SpSSym name _) (str-cat "sym:" (spec-string-key name))]
+    [(SpSNil _) "nil"]
+    [(SpSCons head tail _)
+      (str-cat
+        "cons:"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get head)))
+        ":"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get tail))))]
+    [(SpSStr text _) (str-cat "str:" (spec-string-key text))]
+    [(SpSChar c _) (str-cat "char:" (int->string (cast c : i64)))]
+    [(SpSFloat text _) (str-cat "float:" (spec-string-key text))]
+    [(SpSBracketList items _)
+      (str-cat
+        "bracket:"
+        (spec-string-key (macro-identity-key-sexpr (sp-node-get items))))]))
+
+(define (macro-identity-key-syntax-expr
+  [expr : AstExpr]
+  [origin : AstExpr]
+  [fuel : i64]) : ResultGenKey
+  (match (macro-expr-to-spanned-sexpr expr origin)
+    [(OkMacroSexpr sexpr)
+      (OkGenKey (str-cat "syntax:" (macro-identity-key-sexpr sexpr)) fuel)]
+    [(ErrMacroSexpr diag) (ErrGenKey diag)]))
+
+(define (macro-identity-syntax-param-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-resolve-type ctx (tc-macro-signature-type ty))]
+    (or
+      (tc-type-eq resolved (AstTyExpr))
+      (tc-type-eq resolved (AstTyExprList))
+      (tc-macro-expr-clause-type? resolved)
+      (tc-macro-expr-clause-list-type? resolved)
+      (tc-macro-expr-binding-clause-type? resolved)
+      (tc-macro-expr-binding-clause-list-type? resolved))))
+
+(define (macro-identity-key-param-expr
+  [ctx : TcContext]
+  [ty : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (if (macro-identity-syntax-param-type? ctx ty)
+    (match (macro-identity-key-string-expr expr env fuel)
+      [(OkGenKey key next-fuel) (OkGenKey key next-fuel)]
+      [(ErrGenKey _) (macro-identity-key-syntax-expr expr call-expr fuel)])
+    (macro-identity-key-string-expr expr env fuel)))
+
+(define (macro-identity-key-param-exprs
+  [ctx : TcContext]
+  [ty : AstType]
+  [exprs : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [call-expr : AstExpr]) : ResultGenKey
+  (match exprs
+    [(AstExprNil) (OkGenKey "" fuel)]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        (match (macro-identity-key-param-expr
+          ctx
+          ty
+          head-expr
+          env
+          fuel
+          call-expr)
+          [(OkGenKey head-key head-fuel)
+            (match (macro-identity-key-param-exprs
+              ctx
+              ty
+              (box-get rest)
+              env
+              head-fuel
+              call-expr)
+              [(OkGenKey tail tail-fuel)
+                (OkGenKey (macro-identity-key-join head-key tail) tail-fuel)]
+              [(ErrGenKey diag) (ErrGenKey diag)])]
+          [(ErrGenKey diag) (ErrGenKey diag)]))]))
+
 (define (macro-identity-key-params
   [ctx : TcContext]
   [params : AstMacroParamList]
@@ -33991,7 +34569,15 @@
                   (ctfe-diagnostic-at-expr
                     call-expr
                     "typecheck: type macro operand cannot be variadic"))
-                (macro-identity-key-string-exprs args env fuel))
+                (if (macro-identity-syntax-param-type? ctx ty)
+                  (macro-identity-key-param-exprs
+                    ctx
+                    ty
+                    args
+                    env
+                    fuel
+                    call-expr)
+                  (macro-identity-key-string-exprs args env fuel)))
               (match args
                 [(AstExprNil)
                   (ErrGenKey
@@ -34009,7 +34595,13 @@
                             (str-cat "type_" (ctfe-type-key resolved-ty))
                             fuel)]
                         [(ErrMacroTypeArg diag) (ErrGenKey diag)])
-                      (macro-identity-key-string-expr head-expr env fuel))
+                      (macro-identity-key-param-expr
+                        ctx
+                        ty
+                        head-expr
+                        env
+                        fuel
+                        call-expr))
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
@@ -34044,6 +34636,9 @@
       (OkGenKey (str-cat definition-module ":" macro-name "(" arg-key ")") fuel)]
     [(ErrGenKey diag) (ErrGenKey diag)]))
 
+(define (macro-decls-generated-key [identity : String]) : String
+  (string-append "decls:" identity))
+
 (define (macro-generated-meta
   [generator : String]
   [item : String]
@@ -34076,7 +34671,6 @@
           (macro-generated-meta generator "import" key)
           decl)
         decl)]
-    [(AstDeclExport _) decl]
     [_
       (match (gen-decl-visible-name decl)
         [(SpecSomeString item)
@@ -34095,6 +34689,28 @@
       (ast-decl-cons
         (macro-wrap-generated-decl decl generator key)
         (macro-wrap-generated-decls (box-get rest) generator key))]))
+
+(define (macro-wrap-generated-decl-decls
+  [decl : AstDecl]
+  [generator : String]
+  [key : String]) : AstDecl
+  (match (gen-decl-visible-name decl)
+    [(SpecSomeString item)
+      (ast-decl-comptime-decl-with-meta
+        (macro-generated-meta generator item key)
+        decl)]
+    [(SpecNoString) decl]))
+
+(define (macro-wrap-generated-decls-decls
+  [decls : AstDeclList]
+  [generator : String]
+  [key : String]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (ast-decl-cons
+        (macro-wrap-generated-decl-decls decl generator key)
+        (macro-wrap-generated-decls-decls (box-get rest) generator key))]))
 
 (define (macro-generated-context-import-kind
   [kind : AstImportKind]
@@ -35010,20 +35626,44 @@
 (define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
 
-(define (macro-parse-decl-sexpr [form : SpannedSexpr] [origin : AstExpr]) : ResultMacroParsedDecls
-  (match (parse-ast-decl-maybe (compiler-parse-dispatch-env) form)
+(define (macro-stdlib-private-dynamic-buffer-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (or
+    (and
+      (string-eq definition-module "stdlib.vector")
+      (string-eq macro-name "stdlib.vector/vector"))
+    (and
+      (string-eq definition-module "stdlib.vector_family")
+      (string-eq macro-name "stdlib.vector_family/vector-family"))))
+
+(define (macro-parse-dispatch-for-macro
+  [macro-name : String]
+  [definition-module : String]) : SymI64Env
+  (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
+    (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
+    (compiler-parse-dispatch-env)))
+
+(define (macro-parse-decl-sexpr
+  [dispatch : SymI64Env]
+  [form : SpannedSexpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
+  (match (parse-ast-decl-maybe dispatch form)
     [(OkAstSomeDecl decl) (OkMacroParsedDecls (ast-decl-cons decl AstDeclNil))]
     [(OkAstDecls decls) (OkMacroParsedDecls decls)]
     [(OkAstNoDecl) (OkMacroParsedDecls AstDeclNil)]
     [(ErrAstMaybeDecl message)
       (ErrMacroParsedDecls (macro-output-syntax-diag origin message))]))
 
-(define (macro-parse-decls-from-one-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-one-expr
+  [dispatch : SymI64Env]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (let
     [mark : i64 (sp-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr expr origin)
       [(OkMacroSexpr form)
-        (match (macro-parse-decl-sexpr form origin)
+        (match (macro-parse-decl-sexpr dispatch form origin)
           [(OkMacroParsedDecls decls)
             (begin
               (sp-node-pool-truncate! mark)
@@ -35037,41 +35677,49 @@
           (sp-node-pool-truncate! mark)
           (ErrMacroParsedDecls diag))])))
 
-(define (macro-parse-decls-from-exprs [exprs : AstExprList] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-exprs
+  [dispatch : SymI64Env]
+  [exprs : AstExprList]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
     [(AstExprNil) (OkMacroParsedDecls AstDeclNil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (macro-parse-decls-from-expr head-expr origin)
+        (match (macro-parse-decls-from-expr dispatch head-expr origin)
           [(OkMacroParsedDecls head-decls)
-            (match (macro-parse-decls-from-exprs rest origin)
+            (match (macro-parse-decls-from-exprs dispatch rest origin)
               [(OkMacroParsedDecls rest-decls)
                 (OkMacroParsedDecls
                   (macro-decl-list-append head-decls rest-decls))]
               [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)])]
           [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)]))]))
 
-(define (macro-parse-decls-from-expr [expr : AstExpr] [origin : AstExpr]) : ResultMacroParsedDecls
+(define (macro-parse-decls-from-expr
+  [dispatch : SymI64Env]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultMacroParsedDecls
   (match (ast-expr-unspan expr)
-    [(AstExprBegin exprs) (macro-parse-decls-from-exprs exprs origin)]
+    [(AstExprBegin exprs) (macro-parse-decls-from-exprs dispatch exprs origin)]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (ast-expr-unspan func)
           [(AstExprVar name)
             (if (string-eq (macro-output-syntax-name (intern-str name)) "begin")
-              (macro-parse-decls-from-exprs args origin)
-              (macro-parse-decls-from-one-expr expr origin))]
-          [_ (macro-parse-decls-from-one-expr expr origin)]))]
-    [_ (macro-parse-decls-from-one-expr expr origin)]))
+              (macro-parse-decls-from-exprs dispatch args origin)
+              (macro-parse-decls-from-one-expr dispatch expr origin))]
+          [_ (macro-parse-decls-from-one-expr dispatch expr origin)]))]
+    [_ (macro-parse-decls-from-one-expr dispatch expr origin)]))
 
 (define (macro-module-decls-from-ctfe-value
   [value : CompilerCtfeValue]
-  [origin : AstExpr]) : ResultMacroParsedDecls
+  [origin : AstExpr]
+  [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _) (macro-parse-decls-from-expr (ast-node-get node) origin)]
+    [(CtfeExpr node _)
+      (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
         (macro-output-syntax-diag
@@ -35080,9 +35728,11 @@
 
 (define (macro-decls-from-ctfe-value
   [value : CompilerCtfeValue]
-  [origin : AstExpr]) : ResultMacroParsedDecls
+  [origin : AstExpr]
+  [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _) (macro-parse-decls-from-expr (ast-node-get node) origin)]
+    [(CtfeExpr node _)
+      (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
         (macro-output-syntax-diag
@@ -35099,12 +35749,20 @@
     [_ acc]))
 
 (define (macro-collect-macro-names [decls : AstDeclList] [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (macro-collect-macro-names
-        (box-get rest)
-        (macro-collect-decl-name decl acc))]))
+  (let
+    [cur : AstDeclList decls]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (set! out (macro-collect-decl-name decl out))
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
@@ -35138,20 +35796,29 @@
   [decls : AstDeclList]
   [module : String]
   [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            (intern-str next-module)
-            acc)]
-        [_
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            module
-            (macro-collect-expr-type-decl-name decl module acc))])]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-module-id : i64 (intern module)]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (match decl
+                [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                [_
+                  (set!
+                    out
+                    (macro-collect-expr-type-decl-name
+                      decl
+                      (intern-str cur-module-id)
+                      out))])
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
   (macro-collect-expr-type-macro-names-in decls "" TcStringNil))
@@ -35894,17 +36561,39 @@
 ;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
-;; way macro-decl-from-decl does), so this returns the identical MacroSomeDecl the
-;; previous O(decls) macro-find-decl-by-index walk produced. The defining module
-;; is supplied by the caller -- every call site looks the macro up in the module
-;; it is defined in, which is exactly the module the scan recovered by tracking
-;; AstDeclModule as it walked.
+;; way macro-decl-from-decl does), so direct module lookups return the identical
+;; MacroSomeDecl the previous O(decls) macro-find-decl-by-index walk produced.
+(define (macro-decl-owner-module-or
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [fallback : String]) : String
+  (match (compiler-symbols-owner-name-at-index symbols target)
+    [(CompilerSomeString owner-name)
+      (if (tc-name-qualified? owner-name)
+        (tc-qualified-name-module owner-name)
+        fallback)]
+    [(CompilerNoString) fallback]))
+
 (define (macro-decl-at-index-in-module
   [symbols : CompilerSymbols]
   [target : i64]
   [module : String]) : MacroMaybeDecl
   (match (compiler-symbols-decl-at-index symbols target)
     [(OkAstDecl decl) (macro-decl-from-decl decl module)]
+    [(ErrAstDecl _) (MacroNoDecl)]))
+
+;; Imported macro aliases can be looked up from the importing module. In that
+;; path, recover the indexed owner module so the transformer still runs as its
+;; original definition module.
+(define (macro-decl-at-index-with-owner-module
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [module : String]) : MacroMaybeDecl
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(OkAstDecl decl)
+      (macro-decl-from-decl
+        decl
+        (macro-decl-owner-module-or symbols target module))]
     [(ErrAstDecl _) (MacroNoDecl)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
@@ -36493,22 +37182,22 @@
     [(TcSomeString target) target]
     [(TcNoString) qualifier]))
 
-(define (macro-missing-export-message [name : String]) : String
-  (string-append "typecheck: missing macro export " name))
+(define (macro-missing-macro-message [name : String]) : String
+  (string-append "typecheck: missing macro " name))
 
-(define (macro-qualified-call-decl-with-exports
+(define (macro-qualified-call-decl-in-module
   [ctx : TcContext]
-  [exports : CompilerExports]
   [_decls : AstDeclList]
   [target-module : String]
   [base : String]
   [name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup-id
-    exports
-    (intern (compiler-export-kind-macro))
+  (match (compiler-symbols-lookup-macro-in-module-id
+    (tc-context-symbols ctx)
     (intern target-module)
     (intern base))
+    ;; A macro that exists in the target module resolves directly from the
+    ;; symbol table.
     [(SomeI64 handle)
       (match (macro-decl-at-index-in-module
         (tc-context-symbols ctx)
@@ -36521,38 +37210,18 @@
           (ErrMacroCallDecl
             (ctfe-diagnostic-at-expr
               call-expr
-              (macro-missing-export-message name)))])]
+              (macro-missing-macro-message name)))])]
     [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module-id
+      (match (compiler-symbols-lookup-value-in-module-id
         (tc-context-symbols ctx)
         (intern target-module)
         (intern base))
-        ;; Everything is exported by default: a macro that exists in the target
-        ;; module resolves whether or not it appeared in a legacy export list.
-        [(SomeI64 handle)
-          (match (macro-decl-at-index-in-module
-            (tc-context-symbols ctx)
-            (compiler-symbol-handle-index handle)
-            target-module)
-            [(MacroSomeDecl macro-name def-module params ret body)
-              (OkMacroCallDecl
-                (MacroSomeDecl macro-name def-module params ret body))]
-            [(MacroNoDecl)
-              (ErrMacroCallDecl
-                (ctfe-diagnostic-at-expr
-                  call-expr
-                  (macro-missing-export-message name)))])]
+        [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
         [(NoneI64)
-          (match (compiler-symbols-lookup-value-in-module-id
-            (tc-context-symbols ctx)
-            (intern target-module)
-            (intern base))
-            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
-            [(NoneI64)
-              (ErrMacroCallDecl
-                (ctfe-diagnostic-at-expr
-                  call-expr
-                  (macro-missing-export-message name)))])])]))
+          (ErrMacroCallDecl
+            (ctfe-diagnostic-at-expr
+              call-expr
+              (macro-missing-macro-message name)))])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -36564,46 +37233,27 @@
     [base : String (tc-qualified-name-base name)]
     [target-module : String
       (macro-resolve-qualified-module decls (tc-context-module ctx) qualifier)]
-    (if macro-expand-exports-ready
-      (macro-qualified-call-decl-with-exports
-        ctx
-        macro-expand-exports-value
-        decls
-        target-module
-        base
-        name
-        call-expr)
-      (match (build-compiler-exports-with
-        (tc-context-program ctx)
-        (tc-context-symbols ctx)
-        (tc-context-registries ctx))
-        [(OkCompilerExports exports)
-          (macro-qualified-call-decl-with-exports
-            ctx
-            exports
-            decls
-            target-module
-            base
-            name
-            call-expr)]
-        [(ErrCompilerExports message)
-          (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))]))))
+    (macro-qualified-call-decl-in-module
+      ctx
+      decls
+      target-module
+      base
+      name
+      call-expr)))
 
 ;; The implicit core macro prelude module (stdlib/core_macros.tl). A bare name
 ;; that is not bound as a macro in the current module falls back to this module's
-;; EXPORTED macros, so `and`/`or`/`when`/`unless`/`cond` resolve without an
+;; available macros, so `and`/`or`/`when`/`unless`/`cond` resolve without an
 ;; explicit import (#2060). Local macros and explicit imports therefore take
 ;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
-(define (macro-prelude-resolve-module-with-exports
-  [_exports : CompilerExports]
+(define (macro-prelude-resolve-module
   [symbols : CompilerSymbols]
   [module-name : String]
   [lookup-name : String]) : ResultMacroCallDecl
-  ;; Everything is exported by default: the implicit core_macros prelude resolves
-  ;; its macros straight from the module's symbol table rather than an export
-  ;; list. core_macros declares exactly the prelude macros, so this resolves the
-  ;; same set (`and`, `or`, `when`, `unless`, `cond`).
+  ;; The implicit core_macros prelude resolves its macros straight from the
+  ;; module's symbol table. core_macros declares exactly the prelude macros, so
+  ;; this resolves the same set (`and`, `or`, `when`, `unless`, `cond`).
   (match (compiler-symbols-lookup-macro-in-module-id
     symbols
     (intern module-name)
@@ -36619,22 +37269,16 @@
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
 
-(define (macro-prelude-resolve-with-exports
-  [exports : CompilerExports]
+(define (macro-prelude-resolve
   [symbols : CompilerSymbols]
   [lookup-name : String]) : ResultMacroCallDecl
-  (match (macro-prelude-resolve-module-with-exports
-    exports
-    symbols
-    "stdlib.core_macros"
-    lookup-name)
+  (match (macro-prelude-resolve-module symbols "stdlib.core_macros" lookup-name)
     [(OkMacroCallDecl maybe-decl)
       (match maybe-decl
         [(MacroNoDecl)
           ;; Compatibility fallback for sources loaded with the old module
           ;; identity before the core_macros spelling migration.
-          (macro-prelude-resolve-module-with-exports
-            exports
+          (macro-prelude-resolve-module
             symbols
             "stdlib.core-macros"
             lookup-name)]
@@ -36645,35 +37289,20 @@
   [ctx : TcContext]
   [_decls : AstDeclList]
   [lookup-name : String]
-  [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if macro-expand-exports-ready
-    (macro-prelude-resolve-with-exports
-      macro-expand-exports-value
-      (tc-context-symbols ctx)
-      lookup-name)
-    (match (build-compiler-exports-with
-      (tc-context-program ctx)
-      (tc-context-symbols ctx)
-      (tc-context-registries ctx))
-      [(OkCompilerExports exports)
-        (macro-prelude-resolve-with-exports
-          exports
-          (tc-context-symbols ctx)
-          lookup-name)]
-      [(ErrCompilerExports message)
-        (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
+  [_call-expr : AstExpr]) : ResultMacroCallDecl
+  (macro-prelude-resolve (tc-context-symbols ctx) lookup-name))
 
-(define (macro-unqualified-imported-target-call-decl-with-exports
+(define (macro-unqualified-imported-target-call-decl
   [ctx : TcContext]
-  [exports : CompilerExports]
   [target-module : String]
   [lookup-name : String]
   [_call-expr : AstExpr]) : ResultMacroCallDecl
-  (match (compiler-exports-lookup-id
-    exports
-    (intern (compiler-export-kind-macro))
+  (match (compiler-symbols-lookup-macro-in-module-id
+    (tc-context-symbols ctx)
     (intern target-module)
     (intern lookup-name))
+    ;; Resolve an imported macro that exists in the target module directly from
+    ;; the symbol table.
     [(SomeI64 handle)
       (match (macro-decl-at-index-in-module
         (tc-context-symbols ctx)
@@ -36683,48 +37312,22 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module-id
-        (tc-context-symbols ctx)
-        (intern target-module)
-        (intern lookup-name))
-        ;; Everything is exported by default: resolve an imported macro that
-        ;; exists in the target module regardless of legacy export lists.
-        [(SomeI64 handle)
-          (match (macro-decl-at-index-in-module
-            (tc-context-symbols ctx)
-            (compiler-symbol-handle-index handle)
-            target-module)
-            [(MacroSomeDecl macro-name def-module params ret body)
-              (OkMacroCallDecl
-                (MacroSomeDecl macro-name def-module params ret body))]
-            [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-        [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])]))
+    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
 
-(define (macro-unqualified-imported-call-target-with-exports
+(define (macro-unqualified-imported-call-target
   [ctx : TcContext]
-  [exports : CompilerExports]
   [target-module-id : i64]
   [lookup-name-id : i64]) : i64
-  (match (compiler-exports-lookup-id
-    exports
-    (intern (compiler-export-kind-macro))
+  (match (compiler-symbols-lookup-macro-in-module-id
+    (tc-context-symbols ctx)
     target-module-id
     lookup-name-id)
+    ;; Any macro present in the target module is a resolution candidate.
     [(SomeI64 _) target-module-id]
-    [(NoneI64)
-      (match (compiler-symbols-lookup-macro-in-module-id
-        (tc-context-symbols ctx)
-        target-module-id
-        lookup-name-id)
-        ;; Everything is exported by default: any macro present in the target
-        ;; module is a resolution candidate, not a private-access error.
-        [(SomeI64 _) target-module-id]
-        [(NoneI64) -1])]))
+    [(NoneI64) -1]))
 
 (define (macro-unqualified-imported-call-target-from-imports
   [ctx : TcContext]
-  [exports : CompilerExports]
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
   (match targets
@@ -36732,37 +37335,32 @@
     [(MacroFlatImportTargetCons target-module-id rest-box)
       (let
         [target : i64
-          (macro-unqualified-imported-call-target-with-exports
+          (macro-unqualified-imported-call-target
             ctx
-            exports
             target-module-id
             lookup-name-id)]
         (if (= target -1)
           (macro-unqualified-imported-call-target-from-imports
             ctx
-            exports
             (box-get rest-box)
             lookup-name-id)
           target))]))
 
 (define (macro-unqualified-imported-call-decl-from-target
   [ctx : TcContext]
-  [exports : CompilerExports]
   [target : i64]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (if (>= target 0)
-    (macro-unqualified-imported-target-call-decl-with-exports
+    (macro-unqualified-imported-target-call-decl
       ctx
-      exports
       (intern-str target)
       lookup-name
       call-expr)
     (OkMacroCallDecl (MacroNoDecl))))
 
-(define (macro-unqualified-imported-call-decl-with-exports
+(define (macro-unqualified-imported-call-decl-cached
   [ctx : TcContext]
-  [exports : CompilerExports]
   [decls : AstDeclList]
   [module : String]
   [lookup-name : String]
@@ -36781,7 +37379,6 @@
               [resolved : i64
                 (macro-unqualified-imported-call-target-from-imports
                   ctx
-                  exports
                   (macro-flat-import-targets decls module-id)
                   lookup-name-id)]
               (begin
@@ -36793,7 +37390,6 @@
             cached)]
         (macro-unqualified-imported-call-decl-from-target
           ctx
-          exports
           target
           lookup-name
           call-expr)))))
@@ -36804,28 +37400,12 @@
   [module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if macro-expand-exports-ready
-    (macro-unqualified-imported-call-decl-with-exports
-      ctx
-      macro-expand-exports-value
-      decls
-      module
-      lookup-name
-      call-expr)
-    (match (build-compiler-exports-with
-      (tc-context-program ctx)
-      (tc-context-symbols ctx)
-      (tc-context-registries ctx))
-      [(OkCompilerExports exports)
-        (macro-unqualified-imported-call-decl-with-exports
-          ctx
-          exports
-          decls
-          module
-          lookup-name
-          call-expr)]
-      [(ErrCompilerExports message)
-        (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
+  (macro-unqualified-imported-call-decl-cached
+    ctx
+    decls
+    module
+    lookup-name
+    call-expr))
 
 (define (macro-alias-self-call-decl
   [ctx : TcContext]
@@ -36837,9 +37417,8 @@
   ;; should resolve to macro `vector` in that aliased module.
   (match (macro-import-alias-target-cached decls (intern module) lookup-name)
     [(TcSomeString target-module)
-      (macro-unqualified-imported-target-call-decl-with-exports
+      (macro-unqualified-imported-target-call-decl
         ctx
-        macro-expand-exports-value
         target-module
         lookup-name
         call-expr)]
@@ -36856,7 +37435,7 @@
     (intern module)
     (intern lookup-name))
     [(SomeI64 handle)
-      (match (macro-decl-at-index-in-module
+      (match (macro-decl-at-index-with-owner-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         module)
@@ -37809,42 +38388,50 @@
       [(AstExprCall func-box args)
         (let
           [func : AstExpr (ast-node-get func-box)]
-          (match (macro-call-decl ctx func decls expr)
-            [(OkMacroCallDecl maybe-decl)
-              (match maybe-decl
-                [(MacroSomeDecl macro-name definition-module params ret body)
-                  (macro-expand-call
-                    ctx
-                    env
-                    decls
-                    macro-name
-                    definition-module
-                    params
-                    ret
-                    body
-                    args
-                    depth
-                    expr)]
-                [(MacroNoDecl)
-                  (match (macro-expand-compat-call
-                    ctx
-                    env
-                    decls
-                    depth
-                    func
-                    args
-                    expr)
-                    [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
-                    [(NoMacroCompatCall)
-                      (match (macro-expand-expr ctx env decls depth func)
-                        [(OkMacroExpr nfunc)
-                          (match (macro-expand-exprs ctx env decls depth args)
-                            [(OkMacroExprList nargs)
-                              (OkMacroExpr (ast-expr-call nfunc nargs))]
-                            [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                        [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                    [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
-            [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
+          (if (macro-call-callee-maybe-macro? func)
+            (match (macro-call-decl ctx func decls expr)
+              [(OkMacroCallDecl maybe-decl)
+                (match maybe-decl
+                  [(MacroSomeDecl macro-name definition-module params ret body)
+                    (macro-expand-call
+                      ctx
+                      env
+                      decls
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      body
+                      args
+                      depth
+                      expr)]
+                  [(MacroNoDecl)
+                    (match (macro-expand-compat-call
+                      ctx
+                      env
+                      decls
+                      depth
+                      func
+                      args
+                      expr)
+                      [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
+                      [(NoMacroCompatCall)
+                        (match (macro-expand-expr ctx env decls depth func)
+                          [(OkMacroExpr nfunc)
+                            (match (macro-expand-exprs ctx env decls depth args)
+                              [(OkMacroExprList nargs)
+                                (OkMacroExpr (ast-expr-call nfunc nargs))]
+                              [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                      [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
+              [(ErrMacroCallDecl diag) (ErrMacroExpr diag)])
+            (match (macro-expand-expr ctx env decls depth func)
+              [(OkMacroExpr nfunc)
+                (match (macro-expand-exprs ctx env decls depth args)
+                  [(OkMacroExprList nargs)
+                    (OkMacroExpr (ast-expr-call nfunc nargs))]
+                  [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])))]
       [(AstExprBracketClause items)
         (match (macro-expand-exprs ctx env decls depth items)
           [(OkMacroExprList nitems)
@@ -38549,39 +39136,71 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl lookup-module)
+            [(OkMacroCallDeclModule maybe-decl _)
               (let
-                [decl-ctx : TcContext
-                  (tc-context-with-module ctx lookup-module)]
+                [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
                   [(MacroSomeDecl macro-name definition-module params ret body)
                     (if (tc-macro-result-decls? ret)
-                      (match (macro-eval-transformer
-                        decl-ctx
+                      (match (macro-expand-exprs
+                        call-ctx
                         global-env
                         orig-decls
-                        macro-name
-                        params
-                        body
-                        args
                         0
-                        call-expr)
-                        [(OkMacroValue value)
-                          (match (macro-decls-from-ctfe-value value call-expr)
-                            [(OkMacroParsedDecls generated)
-                              (let
-                                [contextual-generated : AstDeclList
-                                  (macro-generated-context-decls
-                                    generated
-                                    definition-module)]
-                                (OkMacroDeclExpansion
-                                  contextual-generated
-                                  (macro-paths-for-decls
-                                    contextual-generated
-                                    decl-path)))]
-                            [(ErrMacroParsedDecls diag)
-                              (ErrMacroDeclExpansion diag)])]
-                        [(ErrMacroValue diag) (ErrMacroDeclExpansion diag)])
+                        args)
+                        [(OkMacroExprList expanded-args)
+                          (match (macro-module-identity
+                            call-ctx
+                            macro-name
+                            definition-module
+                            params
+                            expanded-args
+                            (tc-ctfe-env call-ctx)
+                            call-expr)
+                            [(OkGenKey identity _)
+                              (match (macro-eval-transformer
+                                call-ctx
+                                global-env
+                                orig-decls
+                                macro-name
+                                params
+                                body
+                                args
+                                0
+                                call-expr)
+                                [(OkMacroValue value)
+                                  (let
+                                    [parse-dispatch : SymI64Env
+                                      (macro-parse-dispatch-for-macro
+                                        macro-name
+                                        definition-module)]
+                                    (match (macro-decls-from-ctfe-value
+                                      value
+                                      call-expr
+                                      parse-dispatch)
+                                      [(OkMacroParsedDecls generated)
+                                        (let
+                                          [contextual-generated : AstDeclList
+                                            (macro-generated-context-decls
+                                              generated
+                                              definition-module)]
+                                          [wrapped : AstDeclList
+                                            (macro-wrap-generated-decls-decls
+                                              contextual-generated
+                                              macro-name
+                                              (macro-decls-generated-key
+                                                identity))]
+                                          (OkMacroDeclExpansion
+                                            wrapped
+                                            (macro-paths-for-decls
+                                              wrapped
+                                              decl-path)))]
+                                      [(ErrMacroParsedDecls diag)
+                                        (ErrMacroDeclExpansion diag)]))]
+                                [(ErrMacroValue diag)
+                                  (ErrMacroDeclExpansion diag)])]
+                            [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
+                        [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                       (if (tc-macro-result-module? ret)
                         (ErrMacroDeclExpansion
                           (ctfe-diagnostic-at-expr
@@ -38625,31 +39244,30 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl lookup-module)
+            [(OkMacroCallDeclModule maybe-decl _)
               (let
-                [decl-ctx : TcContext
-                  (tc-context-with-module ctx lookup-module)]
+                [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
                   [(MacroSomeDecl macro-name definition-module params ret body)
                     (if (tc-macro-result-module? ret)
                       (match (macro-expand-exprs
-                        decl-ctx
+                        call-ctx
                         global-env
                         orig-decls
                         0
                         args)
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
-                            decl-ctx
+                            call-ctx
                             macro-name
                             definition-module
                             params
                             expanded-args
-                            (tc-ctfe-env decl-ctx)
+                            (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer
-                                decl-ctx
+                                call-ctx
                                 global-env
                                 orig-decls
                                 macro-name
@@ -38659,24 +39277,30 @@
                                 0
                                 call-expr)
                                 [(OkMacroValue value)
-                                  (match (macro-module-decls-from-ctfe-value
-                                    value
-                                    call-expr)
-                                    [(OkMacroParsedDecls generated)
-                                      (macro-expand-module-generated-decls
-                                        orig-decls
-                                        module
-                                        alias
-                                        span
-                                        decl-path
+                                  (let
+                                    [parse-dispatch : SymI64Env
+                                      (macro-parse-dispatch-for-macro
                                         macro-name
-                                        identity
-                                        (macro-generated-context-decls
-                                          generated
-                                          definition-module)
-                                        call-expr)]
-                                    [(ErrMacroParsedDecls diag)
-                                      (ErrMacroDeclExpansion diag)])]
+                                        definition-module)]
+                                    (match (macro-module-decls-from-ctfe-value
+                                      value
+                                      call-expr
+                                      parse-dispatch)
+                                      [(OkMacroParsedDecls generated)
+                                        (macro-expand-module-generated-decls
+                                          orig-decls
+                                          module
+                                          alias
+                                          span
+                                          decl-path
+                                          macro-name
+                                          identity
+                                          (macro-generated-context-decls
+                                            generated
+                                            definition-module)
+                                          call-expr)]
+                                      [(ErrMacroParsedDecls diag)
+                                        (ErrMacroDeclExpansion diag)]))]
                                 [(ErrMacroValue diag)
                                   (ErrMacroDeclExpansion diag)])]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
@@ -38830,204 +39454,8 @@
     [(AstSomeImportAlias alias-name) (string-eq alias-name "")]
     [(AstNoImportAlias) true]))
 
-(define (macro-export-value-name [item : AstExportItem]) : TcMaybeString
-  (match item
-    [(AstExportValue name) (TcSomeString name)]
-    [(AstExportConstructor name) (TcSomeString name)]
-    [(AstExportVariant name) (TcSomeString name)]
-    [_ (TcNoString)]))
-
-(define (macro-export-table-has?
-  [kind : String]
-  [target-module : String]
-  [name : String]) : bool
-  (match (compiler-exports-lookup
-    macro-expand-exports-value
-    kind
-    target-module
-    name)
-    [(SomeI64 _) true]
-    [(NoneI64) false]))
-
-(define (macro-generated-module-exports-value?
-  [target-module : String]
-  [name : String]) : bool
-  (or
-    (macro-export-table-has? (compiler-export-kind-value) target-module name)
-    (macro-export-table-has?
-      (compiler-export-kind-constructor)
-      target-module
-      name)
-    (macro-export-table-has? (compiler-export-kind-variant) target-module name)))
-
-(define (macro-variant-list-contains-value?
-  [variants : AstVariantDefList]
-  [name : String]) : bool
-  (match variants
-    [(AstVariantDefNil) false]
-    [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef variant-name _ _)
-          (or
-            (string-eq (intern-str variant-name) name)
-            (macro-variant-list-contains-value? (box-get rest) name))])]))
-
-(define (macro-local-decl-has-value? [decl : AstDecl] [name : String]) : bool
-  (match decl
-    [(AstDeclDef local-name _ _) (string-eq (intern-str local-name) name)]
-    [(AstDeclDefFn local-name _ _ _ _) (string-eq (intern-str local-name) name)]
-    [(AstDeclDefMacro _ _ _ _) false]
-    [(AstDeclExtern local-name _ _ _) (string-eq (intern-str local-name) name)]
-    [(AstDeclDefDispatch local-name _) (string-eq (intern-str local-name) name)]
-    [(AstDeclDefEnum _ _ variants)
-      (macro-variant-list-contains-value? variants name)]
-    [(AstDeclDefEnumLifetimes _ _ _ variants)
-      (macro-variant-list-contains-value? variants name)]
-    [(AstDeclDefStruct local-name _ _ _)
-      (string-eq (intern-str local-name) name)]
-    [(AstDeclDefStructLifetimes local-name _ _ _ _)
-      (string-eq (intern-str local-name) name)]
-    [(AstDeclUnsafe inner-box)
-      (macro-local-decl-has-value? (box-get inner-box) name)]
-    [(AstDeclComptimeDecl _ template-box)
-      (macro-local-decl-has-value? (box-get template-box) name)]
-    [_ false]))
-
 (define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
-
-(define (macro-generated-generated-collision-message
-  [name : String]
-  [existing-identity : String]
-  [current-identity : String]) : String
-  (str-cat
-    "typecheck: generated import collision for value "
-    name
-    " between generated identities "
-    existing-identity
-    " and "
-    current-identity
-    "; use an explicit alias or full generated-module access"))
-
-(define (macro-generated-local-collision-message
-  [name : String]
-  [identity : String]) : String
-  (str-cat
-    "typecheck: generated import collision for value "
-    name
-    " from generated identity "
-    identity
-    " with ordinary binding local declaration; use an explicit alias or full generated-module access"))
-
-(define (macro-check-generated-import-value-collision-in
-  [all-decls : AstDeclList]
-  [decls : AstDeclList]
-  [module : String]
-  [import-module : String]
-  [identity : String]
-  [name : String]) : CompilerMaybeString
-  (match decls
-    [(AstDeclNil) CompilerNoString]
-    [(AstDeclCons decl rest-box)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-check-generated-import-value-collision-in
-            all-decls
-            (box-get rest-box)
-            (intern-str next-module)
-            import-module
-            identity
-            name)]
-        [(AstDeclImport
-            (AstImportSpec _ _ (AstSomeModuleName target-module) alias _))
-          (if (string-eq module import-module)
-            (if (macro-import-unqualified? alias)
-              (match (macro-module-generated-identity all-decls target-module)
-                [(CompilerSomeString existing-identity)
-                  (if (and
-                    (not (string-eq existing-identity identity))
-                    (macro-generated-module-exports-value? target-module name))
-                    (CompilerSomeString
-                      (macro-generated-generated-collision-message
-                        name
-                        existing-identity
-                        identity))
-                    (macro-check-generated-import-value-collision-in
-                      all-decls
-                      (box-get rest-box)
-                      module
-                      import-module
-                      identity
-                      name))]
-                [CompilerNoString
-                  (if (macro-generated-module-exports-value? target-module name)
-                    (CompilerSomeString
-                      (macro-generated-local-collision-message name identity))
-                    (macro-check-generated-import-value-collision-in
-                      all-decls
-                      (box-get rest-box)
-                      module
-                      import-module
-                      identity
-                      name))])
-              (macro-check-generated-import-value-collision-in
-                all-decls
-                (box-get rest-box)
-                module
-                import-module
-                identity
-                name))
-            (macro-check-generated-import-value-collision-in
-              all-decls
-              (box-get rest-box)
-              module
-              import-module
-              identity
-              name))]
-        [_
-          (if (and
-            (string-eq module import-module)
-            (macro-local-decl-has-value? decl name))
-            (CompilerSomeString
-              (macro-generated-local-collision-message name identity))
-            (macro-check-generated-import-value-collision-in
-              all-decls
-              (box-get rest-box)
-              module
-              import-module
-              identity
-              name))])]))
-
-(define (macro-check-generated-export-item-collisions
-  [all-decls : AstDeclList]
-  [items : AstExportItemList]
-  [import-module : String]
-  [identity : String]) : CompilerMaybeString
-  (match items
-    [(AstExportItemNil) CompilerNoString]
-    [(AstExportItemCons item rest-box)
-      (match (macro-export-value-name item)
-        [(TcSomeString name)
-          (match (macro-check-generated-import-value-collision-in
-            all-decls
-            all-decls
-            ""
-            import-module
-            identity
-            name)
-            [CompilerNoString
-              (macro-check-generated-export-item-collisions
-                all-decls
-                (box-get rest-box)
-                import-module
-                identity)]
-            [(CompilerSomeString message) (CompilerSomeString message)])]
-        [(TcNoString)
-          (macro-check-generated-export-item-collisions
-            all-decls
-            (box-get rest-box)
-            import-module
-            identity)])]))
 
 (define (macro-check-generated-import-collisions-in
   [all-decls : AstDeclList]
@@ -39038,19 +39466,6 @@
     [(AstDeclNil) CompilerNoString]
     [(AstDeclCons decl rest-box)
       (match decl
-        [(AstDeclExport items)
-          (match (macro-check-generated-export-item-collisions
-            all-decls
-            items
-            import-module
-            identity)
-            [CompilerNoString
-              (macro-check-generated-import-collisions-in
-                all-decls
-                (box-get rest-box)
-                import-module
-                identity)]
-            [(CompilerSomeString message) (CompilerSomeString message)])]
         [_
           (macro-check-generated-import-collisions-in
             all-decls
@@ -39059,18 +39474,12 @@
             identity)])]))
 
 (define (macro-check-generated-import-collisions
-  [all-decls : AstDeclList]
-  [generated-body : AstDeclList]
-  [import-module : String]
-  [alias : AstMaybeImportAlias]
-  [identity : String]) : CompilerMaybeString
-  (if (macro-module-import-request-unqualified? alias)
-    (macro-check-generated-import-collisions-in
-      all-decls
-      generated-body
-      import-module
-      identity)
-    CompilerNoString))
+  [_all-decls : AstDeclList]
+  [_generated-body : AstDeclList]
+  [_import-module : String]
+  [_alias : AstMaybeImportAlias]
+  [_identity : String]) : CompilerMaybeString
+  CompilerNoString)
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
@@ -39099,6 +39508,45 @@
           (intern-str name)))]
     [_ (TcNoString)]))
 
+(define (macro-call-callee-last-dot [name : String]) : i64
+  (let
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string-length name)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (char-eq (string-ref name i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      last-dot)))
+
+(define (macro-call-callee-base-name [name : String]) : String
+  (let
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [last-dot : i64 (macro-call-callee-last-dot source)]
+    [n : i64 (string-length source)]
+    (if (and (>= last-dot 0) (< last-dot (- n 1)))
+      (substring source (+ last-dot 1) (- n (+ last-dot 1)))
+      source)))
+
+(define (macro-call-name-maybe-macro? [name : String]) : bool
+  (let
+    [base : String (macro-call-callee-base-name name)]
+    (or
+      (tc-string-list-contains macro-expand-macro-names base)
+      (string-eq base "when")
+      (string-eq base "unless"))))
+
+(define (macro-call-callee-maybe-macro? [func : AstExpr]) : bool
+  (match (macro-call-callee-name func)
+    [(TcSomeString name) (macro-call-name-maybe-macro? name)]
+    [(TcNoString) false]))
+
 (define (macro-call-is-expandable?
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -39106,17 +39554,11 @@
   [call-expr : AstExpr]) : bool
   (match (macro-call-callee-name func)
     [(TcSomeString name)
-      ;; A qualified call (`mod.x`, formerly `mod/x`) may be an imported macro,
-      ;; a macro diagnostic, or a real value call that should fall through to
-      ;; ordinary typechecking. It still needs precise resolution. An
-      ;; unqualified call only needs the precise (allocating) resolution when its
-      ;; name matches a declared macro or `when`/`unless`; otherwise it is a
-      ;; plain function call that the macro pass leaves untouched, so skip it
-      ;; cheaply.
-      (if (or
-        (tc-name-qualified? name)
-        (>= (tc-name-first-dot name) 0)
-        (tc-string-list-contains macro-expand-macro-names name))
+      ;; Only callees whose base name matches a declared macro need precise
+      ;; alias/module resolution. This keeps value-heavy dotted imports such as
+      ;; `string.length` on the cheap path while still resolving qualified macro
+      ;; calls through `macro-call-decl`.
+      (if (macro-call-name-maybe-macro? name)
         (match (macro-call-decl ctx func decls call-expr)
           [(OkMacroCallDecl maybe)
             (match maybe
@@ -39385,15 +39827,6 @@
           [(AstLetBinding _ _ init-box) (ctfe-node-has-type-literal? init-box)])
         (ctfe-bindings-have-type-literal? (box-get rest)))]))
 
-(define (ctfe-expr-is-module-export-query? [expr : AstExpr]) : bool
-  (match expr
-    [(AstExprSpanned inner-box _)
-      (ctfe-expr-is-module-export-query? (ast-node-get inner-box))]
-    [(AstExprVar name)
-      (ctfe-module-export-query-name?
-        (ctfe-comptime-helper-call-name (intern-str name)))]
-    [_ false]))
-
 (define (ctfe-expr-has-type-literal? [expr : AstExpr]) : bool
   (match expr
     [(AstExprTypeLiteral _) true]
@@ -39408,7 +39841,6 @@
     [(AstExprSpanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
     [(AstExprCall func-box args)
       (or
-        (ctfe-expr-is-module-export-query? (ast-node-get func-box))
         (ctfe-node-has-type-literal? func-box)
         (ctfe-exprs-have-type-literal? args))]
     [(AstExprBracketClause items) (ctfe-exprs-have-type-literal? items)]
@@ -39541,81 +39973,106 @@
   [orig-decls : AstDeclList]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [module : String]
-  [compat-only : bool]) : ResultMacroDeclsWithPaths
-  (match decls
-    [(AstDeclNil) (OkMacroDeclsWithPaths AstDeclNil AstDeclPathNil)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (match (macro-expand-decls
-              ctx
-              top-env
-              orig-decls
-              rest
-              rest-paths
-              (intern-str next-module)
-              compat-only)
-              [(OkMacroDeclsWithPaths nrest nrest-paths)
+  [module : String]) : ResultMacroDeclsWithPaths
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-module : String module]
+    [out-rev : AstDeclList AstDeclNil]
+    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [result : ResultMacroDeclsWithPaths
+      (ErrMacroDeclsWithPaths
+        (tc-diag-at-start "macro: internal decl expansion walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set!
+                result
                 (OkMacroDeclsWithPaths
-                  (ast-decl-cons decl nrest)
-                  (ast-decl-path-cons decl-path nrest-paths))]
-              [(ErrMacroDeclsWithPaths diag) (ErrMacroDeclsWithPaths diag)])]
-          [_
-            (if (macro-decl-import-placeholder? decl)
-              (match (macro-expand-decl-with-path
-                ctx
-                top-env
-                orig-decls
-                module
-                decl
-                decl-path)
-                [(OkMacroDeclExpansion expanded expanded-paths)
-                  (OkMacroDeclsWithPaths
-                    (macro-decl-list-append expanded rest)
-                    (macro-decl-path-list-append expanded-paths rest-paths))]
-                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)])
-              (match (macro-expand-decl-with-path
-                ctx
-                top-env
-                orig-decls
-                module
-                decl
-                decl-path)
-                [(OkMacroDeclExpansion expanded expanded-paths)
-                  (let
-                    [next-module : String
-                      (macro-decls-final-module expanded module)]
-                    (match (macro-expand-decls
+                  (macro-decl-list-reverse out-rev)
+                  (macro-decl-path-list-reverse out-paths-rev)))
+              (set! done true))]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! out-rev (ast-decl-cons decl out-rev))
+                    (set!
+                      out-paths-rev
+                      (ast-decl-path-cons decl-path out-paths-rev))
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths)
+                    (set! cur-module (intern-str next-module)))]
+                [_
+                  (if (macro-decl-import-placeholder? decl)
+                    (match (macro-expand-decl-with-path
                       ctx
                       top-env
                       orig-decls
-                      rest
-                      rest-paths
-                      next-module
-                      compat-only)
-                      [(OkMacroDeclsWithPaths nrest nrest-paths)
-                        (OkMacroDeclsWithPaths
-                          (macro-decl-list-append expanded nrest)
-                          (macro-decl-path-list-append
-                            expanded-paths
-                            nrest-paths))]
-                      [(ErrMacroDeclsWithPaths diag)
-                        (ErrMacroDeclsWithPaths diag)]))]
-                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)]))]))]))
+                      cur-module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (begin
+                          (set!
+                            result
+                            (OkMacroDeclsWithPaths
+                              (macro-decl-list-append
+                                (macro-decl-list-reverse out-rev)
+                                (macro-decl-list-append expanded rest))
+                              (macro-decl-path-list-append
+                                (macro-decl-path-list-reverse out-paths-rev)
+                                (macro-decl-path-list-append
+                                  expanded-paths
+                                  rest-paths))))
+                          (set! done true))]
+                      [(ErrMacroDeclExpansion diag)
+                        (begin
+                          (set! result (ErrMacroDeclsWithPaths diag))
+                          (set! done true))])
+                    (match (macro-expand-decl-with-path
+                      ctx
+                      top-env
+                      orig-decls
+                      cur-module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (begin
+                          (set!
+                            out-rev
+                            (macro-decl-list-reverse-into expanded out-rev))
+                          (set!
+                            out-paths-rev
+                            (macro-decl-path-list-reverse-into
+                              expanded-paths
+                              out-paths-rev))
+                          (set!
+                            cur-module
+                            (macro-decls-final-module expanded cur-module))
+                          (set! cur-decls rest)
+                          (set! cur-paths rest-paths))]
+                      [(ErrMacroDeclExpansion diag)
+                        (begin
+                          (set! result (ErrMacroDeclsWithPaths diag))
+                          (set! done true))]))]))]))
+      result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -39705,160 +40162,179 @@
         (macro-decl-has-module-placeholder? decl)
         (macro-program-has-module-placeholder? (box-get rest)))]))
 
+(define (macro-decl-module-placeholder-count [decl : AstDecl]) : i64
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacro _ _) 1]
+        [(AstImportMacroDecls _ _) 1]
+        [_ 0])]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-module-placeholder-count (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-module-placeholder-count (box-get template-box))]
+    [_ 0]))
+
+(define (macro-program-module-placeholder-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (+
+        (macro-decl-module-placeholder-count decl)
+        (macro-program-module-placeholder-count (box-get rest)))]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
-(define (macro-expand-program-pass-with-paths
+(define (macro-expand-program-pass-with-paths-and-pools
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultMacroExpand
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [has-defmacro : bool (macro-program-has-defmacro? decls)]
-        [expr-type-macro-names : TcStringList
-          (if has-defmacro
-            (macro-collect-expr-type-macro-names decls)
-            TcStringNil)]
-        [has-expr-type-macros : bool
-          (match expr-type-macro-names
-            [(TcStringNil) false]
-            [_ true])]
-        (begin
-          ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
-          ;; (or the next program in a multi-program process) never reuses a stale
-          ;; or another program's metadata. The cache is repopulated eagerly below.
-          (set! macro-expand-ctfe-env-ready false)
-          (cfg compile-profile (compiler-tc-macro-profile-reset))
-          ;; Same per-compile reset for the clone-able type set cache.
-          (tc-clone-able-cache-reset!)
-          ;; Same per-compile reset for the qualified-alias resolution cache:
-          ;; the (module, qualifier) -> target mapping is derived from this
-          ;; program's declarations.
-          (macro-alias-cache-reset!)
-          (set! macro-expand-expr-type-macro-names expr-type-macro-names)
-          ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
-          ;; the program actually contains a `(type T)` literal -- the sole entry
-          ;; point for every CTFE reflection/layout query.
-          (set!
-            ctfe-needs-metadata
-            (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
-          (if (or has-defmacro (macro-program-needs-expansion? decls))
-            (begin
-              (cfg compile-profile (compiler-tc-profile-start))
-              (match (build-compiler-symbols-with-paths program paths)
-                [(OkCompilerSymbols symbols)
-                  (match (build-compiler-registries-with-symbols
-                    program
-                    symbols)
-                    [(OkCompilerRegistries registries)
-                      (match (build-compiler-exports-with
-                        program
-                        symbols
-                        registries)
-                        [(OkCompilerExports exports)
-                          (match (build-compiler-exports-with
-                            program
-                            symbols
-                            registries)
-                            [(OkCompilerExports ctx-exports)
-                              (begin
-                                (set! macro-expand-exports-value exports)
-                                (set! macro-expand-exports-ready true)
-                                (set! macro-expand-active-module "")
-                                (set!
-                                  macro-expand-macro-names
-                                  (macro-collect-macro-names
-                                    decls
-                                    (tc-string-list-add
-                                      (tc-string-list-add (TcStringNil) "when")
-                                      "unless")))
-                                (let
-                                  [ctx : TcContext
-                                    (TcContext
-                                      program
-                                      symbols
-                                      registries
-                                      ctx-exports
-                                      ""
-                                      (ast-node-pool-context-capture-active))]
-                                  (match (tc-stdlib-comptime-surface-ok ctx)
-                                    [(OkTcUnit)
-                                      (match (tc-build-top-env ctx program)
-                                        [(OkTcEnv top-env)
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultMacroExpand
+  (begin
+    (ast-node-pool-context-install! pools)
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          [has-defmacro : bool (macro-program-has-defmacro? decls)]
+          [expr-type-macro-names : TcStringList
+            (if has-defmacro
+              (macro-collect-expr-type-macro-names decls)
+              TcStringNil)]
+          [has-expr-type-macros : bool
+            (match expr-type-macro-names
+              [(TcStringNil) false]
+              [_ true])]
+          (begin
+            ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
+            ;; (or the next program in a multi-program process) never reuses a stale
+            ;; or another program's metadata. The cache is repopulated eagerly below.
+            (set! macro-expand-ctfe-env-ready false)
+            (cfg compile-profile (compiler-tc-macro-profile-reset))
+            ;; Same per-compile reset for the clone-able type set cache.
+            (tc-clone-able-cache-reset!)
+            ;; Same per-compile reset for the qualified-alias resolution cache:
+            ;; the (module, qualifier) -> target mapping is derived from this
+            ;; program's declarations.
+            (macro-alias-cache-reset!)
+            (set! macro-expand-expr-type-macro-names expr-type-macro-names)
+            ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
+            ;; the program actually contains a `(type T)` literal -- the sole entry
+            ;; point for every CTFE reflection/layout query.
+            (set!
+              ctfe-needs-metadata
+              (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
+            (if (or has-defmacro (macro-program-needs-expansion? decls))
+              (begin
+                (cfg compile-profile (compiler-tc-profile-start))
+                (match (build-compiler-symbols-with-paths program paths)
+                  [(OkCompilerSymbols symbols)
+                    (match (build-compiler-registries-with-symbols
+                      program
+                      symbols)
+                      [(OkCompilerRegistries registries)
+                        (begin
+                          (set! macro-expand-active-module "")
+                          (set!
+                            macro-expand-macro-names
+                            (macro-collect-macro-names
+                              decls
+                              (tc-string-list-add
+                                (tc-string-list-add (TcStringNil) "when")
+                                "unless")))
+                          (let
+                            [ctx : TcContext
+                              (TcContext program symbols registries "" pools)]
+                            (match (tc-stdlib-comptime-surface-ok ctx)
+                              [(OkTcUnit)
+                                (match (tc-build-top-env ctx program)
+                                  [(OkTcEnv top-env)
+                                    (begin
+                                      (tc-hygiene-reset-active-top-env! top-env)
+                                      (tc-context-capture-active-pools! ctx)
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-finish
+                                          "macro_setup"))
+                                      (set!
+                                        macro-expand-ctfe-env-value
+                                        (tc-ctfe-env ctx))
+                                      (set! macro-expand-ctfe-env-ready true)
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-start))
+                                      (match (macro-expand-decls
+                                        ctx
+                                        top-env
+                                        decls
+                                        decls
+                                        paths
+                                        "")
+                                        [(OkMacroDeclsWithPaths ndecls npaths)
                                           (begin
-                                            (tc-hygiene-reset-active-top-env!
-                                              top-env)
                                             (tc-context-capture-active-pools!
                                               ctx)
                                             (cfg
                                               compile-profile
                                               (compiler-tc-profile-finish
-                                                "macro_setup"))
-                                            (set!
-                                              macro-expand-ctfe-env-value
-                                              (tc-ctfe-env ctx))
-                                            (set!
-                                              macro-expand-ctfe-env-ready
-                                              true)
+                                                "macro_walk"))
                                             (cfg
                                               compile-profile
-                                              (compiler-tc-profile-start))
-                                            (match (macro-expand-decls
-                                              ctx
-                                              top-env
-                                              decls
-                                              decls
-                                              paths
-                                              ""
-                                              (not has-defmacro))
-                                              [(OkMacroDeclsWithPaths
-                                                  ndecls
-                                                  npaths)
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-profile-finish
-                                                      "macro_walk"))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-macro-profile-emit))
-                                                  (OkMacroExpand
-                                                    (ast-program ndecls)
-                                                    npaths))]
-                                              [(ErrMacroDeclsWithPaths diag)
-                                                (begin
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-profile-finish
-                                                      "macro_walk"))
-                                                  (cfg
-                                                    compile-profile
-                                                    (compiler-tc-macro-profile-emit))
-                                                  (ErrMacroExpand diag))]))]
-                                        [(ErrTcEnv message)
-                                          (ErrMacroExpand
-                                            (tc-diag-at-start message))])]
-                                    [(ErrTcUnit message)
-                                      (ErrMacroExpand
-                                        (tc-diag-at-start message))])))]
-                            [(ErrCompilerExports message)
-                              (ErrMacroExpand (tc-diag-at-start message))])]
-                        [(ErrCompilerExports message)
-                          (ErrMacroExpand (tc-diag-at-start message))])]
-                    [(ErrCompilerRegistries message)
-                      (ErrMacroExpand (tc-diag-at-start message))])]
-                [(ErrCompilerSymbols message)
-                  (ErrMacroExpand (tc-diag-at-start message))]))
-            (OkMacroExpand program paths))))]))
+                                              (compiler-tc-macro-profile-emit))
+                                            (OkMacroExpand
+                                              (ast-program ndecls)
+                                              npaths))]
+                                        [(ErrMacroDeclsWithPaths diag)
+                                          (begin
+                                            (tc-context-capture-active-pools!
+                                              ctx)
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-profile-finish
+                                                "macro_walk"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-macro-profile-emit))
+                                            (ErrMacroExpand diag))]))]
+                                  [(ErrTcEnv message)
+                                    (ErrMacroExpand (tc-diag-at-start message))])]
+                              [(ErrTcUnit message)
+                                (ErrMacroExpand (tc-diag-at-start message))])))]
+                      [(ErrCompilerRegistries message)
+                        (ErrMacroExpand (tc-diag-at-start message))])]
+                  [(ErrCompilerSymbols message)
+                    (ErrMacroExpand (tc-diag-at-start message))]))
+              (OkMacroExpand program paths))))])))
+
+(define (macro-expand-program-pass-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultMacroExpand
+  (macro-expand-program-pass-with-paths-and-pools
+    program
+    paths
+    (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-fixed-point-limit) : i64
   8)
 
-(define (macro-expand-program-with-paths-loop
+;; The walker expands one existing module-macro placeholder per pass; generated
+;; modules can introduce their own import placeholders for the next pass. Keep a
+;; fixed guard, but scale it with loaded placeholder volume so legitimate nested
+;; module families converge under `test` cfg stdlib imports.
+(define (macro-expand-fixed-point-limit-for-program [program : AstProgram]) : i64
+  (match program
+    [(AstProgram decls-box)
+      (+
+        (macro-expand-fixed-point-limit)
+        (*
+          (macro-expand-fixed-point-limit)
+          (macro-program-module-placeholder-count (box-get decls-box))))]))
+
+(define (macro-expand-program-with-paths-loop-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ErrMacroExpand
@@ -39869,29 +40345,65 @@
         (match program
           [(AstProgram input-decls-box)
             (macro-program-has-module-placeholder? (box-get input-decls-box))])]
-      (match (macro-expand-program-pass-with-paths program paths)
+      (match (macro-expand-program-pass-with-paths-and-pools
+        program
+        paths
+        pools)
         [(OkMacroExpand expanded expanded-paths)
-          (match expanded
-            [(AstProgram decls-box)
-              (let
-                [decls : AstDeclList (box-get decls-box)]
-                (if (or
-                  had-placeholders
-                  (macro-program-has-module-placeholder? decls))
-                  (macro-expand-program-with-paths-loop
-                    expanded
-                    expanded-paths
-                    (- fuel 1))
-                  (OkMacroExpand expanded expanded-paths)))])]
+          (let
+            [normalized-result : ResultGenProgramWithPaths
+              (if (compiler-specialize-needed? expanded)
+                (gen-normalize-program-with-paths-and-pools
+                  expanded
+                  expanded-paths
+                  (tc-decl-path-list-last expanded-paths "")
+                  pools)
+                (OkGenProgramWithPaths expanded expanded-paths))]
+            (match normalized-result
+              [(OkGenProgramWithPaths normalized normalized-paths)
+                (match normalized
+                  [(AstProgram decls-box)
+                    (let
+                      [decls : AstDeclList (box-get decls-box)]
+                      (if (or
+                        had-placeholders
+                        (macro-program-has-module-placeholder? decls))
+                        (macro-expand-program-with-paths-loop-and-pools
+                          normalized
+                          normalized-paths
+                          pools
+                          (- fuel 1))
+                        (OkMacroExpand normalized normalized-paths)))])]
+              [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
         [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
+
+(define (macro-expand-program-with-paths-loop
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [fuel : i64]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    (ast-node-pool-context-capture-active)
+    fuel))
+
+(define (macro-expand-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    pools
+    (macro-expand-fixed-point-limit-for-program program)))
 
 (define (macro-expand-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop
+  (macro-expand-program-with-paths-and-pools
     program
     paths
-    (macro-expand-fixed-point-limit)))
+    (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (macro-expand-program-with-paths program AstDeclPathNil))
@@ -40631,7 +41143,6 @@
     [(AstDeclImport _) "import"]
     [(AstDeclIncludeStr name _) (str-cat "include-str:" name)]
     [(AstDeclIncludeBin name _) (str-cat "include-bin:" name)]
-    [(AstDeclExport _) "export"]
     [(AstDeclDefDispatch name _) (str-cat "dispatch:" (intern-str name))]
     [(AstDeclTest name _ _) (str-cat "test:" (intern-str name))]
     [(AstDeclUnsafe inner)
@@ -40995,173 +41506,214 @@
   [cache : TcModuleLocalEnvCache]
   [local-env : TcTypeEnv]
   [global-env : TcTypeEnv]) : ResultCompilerTypecheck
-  (match decls
-    [(AstDeclNil)
-      (begin
-        (cfg compile-profile (compiler-tc-decl-profile-finish))
-        (OkCompilerTypecheck summary))]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
+  ;; #2599: this walks every expanded top-level declaration during self-compile.
+  ;; Keep it iterative so a large program does not consume one native stack frame
+  ;; per declaration on Windows selfhost binaries.
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-summary : CompilerTypecheckSummary summary]
+    [cur-module : String module]
+    [cur-cache : TcModuleLocalEnvCache cache]
+    [cur-local-env : TcTypeEnv local-env]
+    [cur-global-env : TcTypeEnv global-env]
+    [result : ResultCompilerTypecheck
+      (ErrCompilerTypecheck (tc-diag-at-start "typecheck: internal decls walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
             (begin
-              (cfg compile-profile (compiler-tc-decl-profile-start-section))
-              (tc-context-capture-active-pools! ctx)
-              (match (tc-module-local-env-cached
-                ctx
-                top-env
-                (intern-str next-module)
-                cache)
-                [(OkTcModuleLocalEnv next-local-env next-cache)
+              (cfg compile-profile (compiler-tc-decl-profile-finish))
+              (set! result (OkCompilerTypecheck cur-summary))
+              (set! done true))]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-tc-decl-profile-add-local-env))
-                    (tc-check-decls-with-paths-in-module-env
+                      (compiler-tc-decl-profile-start-section))
+                    (tc-context-capture-active-pools! ctx)
+                    (match (tc-module-local-env-cached
                       ctx
                       top-env
-                      rest
-                      rest-paths
-                      summary
                       (intern-str next-module)
-                      next-cache
-                      next-local-env
-                      (tc-hygiene-global-env next-local-env)))]
-                [(ErrTcModuleLocalEnv message)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-tc-decl-profile-add-local-env))
-                    (ErrCompilerTypecheck
-                      (tc-typecheck-diag-with-path decl decl-path message)))]))]
-          [_
-            (if (tc-generated-clone-decl-with-path? decl decl-path)
-              (tc-check-decls-with-paths-in-module-env
-                ctx
-                top-env
-                rest
-                rest-paths
-                (tc-summary-add-decl summary decl)
-                module
-                cache
-                local-env
-                global-env)
-              (let
-                [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                [prev-path : String
-                  (tc-unused-unsafe-set-current-path! decl-path)]
-                (begin
-                  (cfg compile-profile (compiler-tc-decl-profile-start-section))
-                  (tc-context-capture-active-pools! decl-ctx)
-                  (match (tc-check-decl-with-global-env
-                    decl-ctx
-                    local-env
-                    global-env
-                    decl)
-                    [(OkTcUnit)
-                      (begin
-                        (tc-unused-unsafe-restore-current-path! prev-path)
-                        (cfg
-                          compile-profile
-                          (compiler-tc-decl-profile-record decl))
-                        (tc-check-decls-with-paths-in-module-env
+                      cur-cache)
+                      [(OkTcModuleLocalEnv next-local-env next-cache)
+                        (match (tc-module-local-env-cached
                           ctx
                           top-env
-                          rest
-                          rest-paths
-                          (tc-summary-add-decl summary decl)
-                          module
-                          cache
-                          local-env
-                          global-env))]
-                    [(ErrTcUnit message)
+                          (intern-str next-module)
+                          cur-cache)
+                          [(OkTcModuleLocalEnv next-local-env-copy _)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-add-local-env))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths)
+                              (set! cur-module (intern-str next-module))
+                              (set! cur-cache next-cache)
+                              (set!
+                                cur-global-env
+                                (tc-hygiene-global-env next-local-env))
+                              (set! cur-local-env next-local-env-copy))]
+                          [(ErrTcModuleLocalEnv message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-add-local-env))
+                              (set!
+                                result
+                                (ErrCompilerTypecheck
+                                  (tc-typecheck-diag-with-path
+                                    decl
+                                    decl-path
+                                    message)))
+                              (set! done true))])]
+                      [(ErrTcModuleLocalEnv message)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-decl-profile-add-local-env))
+                          (set!
+                            result
+                            (ErrCompilerTypecheck
+                              (tc-typecheck-diag-with-path
+                                decl
+                                decl-path
+                                message)))
+                          (set! done true))]))]
+                [_
+                  (if (tc-generated-clone-decl-with-path? decl decl-path)
+                    (begin
+                      (set! cur-decls rest)
+                      (set! cur-paths rest-paths)
+                      (set! cur-summary (tc-summary-add-decl cur-summary decl)))
+                    (let
+                      [decl-ctx : TcContext
+                        (tc-context-with-module ctx cur-module)]
+                      [prev-path : String
+                        (tc-unused-unsafe-set-current-path! decl-path)]
                       (begin
-                        (tc-unused-unsafe-restore-current-path! prev-path)
-                        (ErrCompilerTypecheck
-                          (tc-typecheck-diag-with-path decl decl-path message)))]))))]))]))
+                        (cfg
+                          compile-profile
+                          (compiler-tc-decl-profile-start-section))
+                        (tc-context-capture-active-pools! decl-ctx)
+                        (match (tc-check-decl-with-global-env
+                          decl-ctx
+                          cur-local-env
+                          cur-global-env
+                          decl)
+                          [(OkTcUnit)
+                            (begin
+                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-record decl))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths)
+                              (set!
+                                cur-summary
+                                (tc-summary-add-decl cur-summary decl)))]
+                          [(ErrTcUnit message)
+                            (begin
+                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (set!
+                                result
+                                (ErrCompilerTypecheck
+                                  (tc-typecheck-diag-with-path
+                                    decl
+                                    decl-path
+                                    message)))
+                              (set! done true))]))))]))]))
+      result)))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (ast-node-pool-context-install! pools)
+    (match (build-compiler-symbols-with-paths program paths)
+      [(OkCompilerSymbols symbols)
+        (match (build-compiler-registries-with-symbols program symbols)
+          [(OkCompilerRegistries registries)
+            (let
+              [ctx : TcContext (TcContext program symbols registries "" pools)]
+              (match (tc-stdlib-comptime-surface-ok ctx)
+                [(OkTcUnit)
+                  (match (tc-program-source-types-policy-ok ctx program)
+                    [(OkTcUnit)
+                      (match (tc-build-top-env ctx program)
+                        [(OkTcEnv top-env)
+                          (match program
+                            [(AstProgram decls-box)
+                              (let
+                                [decls : AstDeclList (box-get decls-box)]
+                                (begin
+                                  (tc-hygiene-reset-active-top-env! top-env)
+                                  (tc-context-capture-active-pools! ctx)
+                                  (tc-clone-able-cache-populate! ctx)
+                                  (tc-macro-helper-env-cache-reset!)
+                                  (match (tc-check-decls-with-paths
+                                    ctx
+                                    top-env
+                                    decls
+                                    paths
+                                    (CompilerTypecheckSummary 0 0 0)
+                                    stdlib-roots
+                                    cache-scope)
+                                    [(OkCompilerTypecheck summary)
+                                      (begin
+                                        (tc-context-capture-active-pools! ctx)
+                                        (OkCompilerTypecheckChecked
+                                          summary
+                                          ctx
+                                          top-env))]
+                                    [(ErrCompilerTypecheck diag)
+                                      (ErrCompilerTypecheckChecked diag)])))])]
+                        [(ErrTcEnv message)
+                          (ErrCompilerTypecheckChecked
+                            (tc-diag-at-start message))])]
+                    [(ErrTcUnit message)
+                      (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+                [(ErrTcUnit message)
+                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
+          [(ErrCompilerRegistries message)
+            (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+      [(ErrCompilerSymbols message)
+        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
-  (begin
-    (tc-nominal-owner-cache-reset!)
-    (let
-      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-      (match (build-compiler-symbols-with-paths program paths)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries-with-symbols program symbols)
-            [(OkCompilerRegistries registries)
-              (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports exports)
-                  (let
-                    [ctx : TcContext
-                      (TcContext program symbols registries exports "" pools)]
-                    (begin
-                      (ast-node-pool-context-install! pools)
-                      (match (tc-stdlib-comptime-surface-ok ctx)
-                        [(OkTcUnit)
-                          (match (tc-program-source-types-policy-ok ctx program)
-                            [(OkTcUnit)
-                              (match (tc-build-top-env ctx program)
-                                [(OkTcEnv top-env)
-                                  (match program
-                                    [(AstProgram decls-box)
-                                      (let
-                                        [decls : AstDeclList
-                                          (box-get decls-box)]
-                                        (begin
-                                          (tc-hygiene-reset-active-top-env!
-                                            top-env)
-                                          (tc-context-capture-active-pools! ctx)
-                                          (tc-clone-able-cache-populate! ctx)
-                                          (tc-macro-helper-env-cache-reset!)
-                                          (match (tc-check-decls-with-paths
-                                            ctx
-                                            top-env
-                                            decls
-                                            paths
-                                            (CompilerTypecheckSummary 0 0 0)
-                                            stdlib-roots
-                                            cache-scope)
-                                            [(OkCompilerTypecheck summary)
-                                              (begin
-                                                (tc-context-capture-active-pools!
-                                                  ctx)
-                                                (OkCompilerTypecheckChecked
-                                                  summary
-                                                  ctx
-                                                  top-env))]
-                                            [(ErrCompilerTypecheck diag)
-                                              (ErrCompilerTypecheckChecked diag)])))])]
-                                [(ErrTcEnv message)
-                                  (ErrCompilerTypecheckChecked
-                                    (tc-diag-at-start message))])]
-                            [(ErrTcUnit message)
-                              (ErrCompilerTypecheckChecked
-                                (tc-diag-at-start message))])]
-                        [(ErrTcUnit message)
-                          (ErrCompilerTypecheckChecked
-                            (tc-diag-at-start message))])))]
-                [(ErrCompilerExports message)
-                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-            [(ErrCompilerRegistries message)
-              (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
-        [(ErrCompilerSymbols message)
-          (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))))
+  (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]
@@ -41174,6 +41726,20 @@
       paths
       stdlib-roots
       cache-scope)))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (tc-typecheck-checked-result-with-pool-check
+    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked
   [program : AstProgram]
@@ -41197,6 +41763,21 @@
     [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
     [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
 
+(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools)
+    [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
+    [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))
+
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
@@ -41214,6 +41795,7 @@
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
     (macro-alias-cache-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)
@@ -41228,10 +41810,6 @@
     (set! macro-expand-active-module "")
     (set! macro-expand-macro-names (TcStringNil))
     (set! macro-expand-expr-type-macro-names (TcStringNil))
-    (set! macro-expand-exports-ready false)
-    (set!
-      macro-expand-exports-value
-      (CompilerExports (i64-i64-map-with-capacity 1)))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))
     (set! ctfe-needs-metadata true)))

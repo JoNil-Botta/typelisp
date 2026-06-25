@@ -172,20 +172,3 @@
       (string-caller-result-test-string-eq
         (string-replace-result-string helper-owned)
         "alrena"))))
-
-(export
-  (value string-replace-result-borrowed?)
-  (value string-replace-result-owned?)
-  (value string-replace-borrowed-result)
-  (value string-replace-owned-result-like)
-  (value string-replace-result-string)
-  (value string-replace-find-index)
-  (value string-replace-owned-at)
-  (value string-replace-result)
-  (type StringReplaceResult)
-  (constructor StringReplaceResult)
-  (field StringReplaceResult borrowed)
-  (field StringReplaceResult old-text)
-  (field StringReplaceResult replacement-text)
-  (field StringReplaceResult owned)
-  (field StringReplaceResult is-owned))

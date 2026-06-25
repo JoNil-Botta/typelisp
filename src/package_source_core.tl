@@ -9,8 +9,7 @@
 (import "../stdlib/fs.tl")
 (import "../stdlib/io.tl")
 (import stdlib.io)
-(import "../stdlib/list.tl")
-(import stdlib.list)
+(import stdlib.vector)
 (import "../stdlib/vector.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
@@ -211,57 +210,36 @@
     unit
     (panic "package-source: vector insert self-test mismatch")))
 
-(define (package-source-entry-list-insert
-  [items : list.StringList]
-  [value : String]) : list.StringList
-  (match items
-    [(list.StringNil) (list.StringCons value (box (list.StringNil)))]
-    [(list.StringCons head rest)
-      (if (package-source-string-less? value head)
-        (list.StringCons value (box items))
-        (list.StringCons
-          head
-          (box (package-source-entry-list-insert (box-get rest) value))))]))
+(define (package-source-sort-entries-from
+  [entries : vector.StringVec]
+  [index : i64]
+  [acc : StringVec]) : StringVec
+  (if (>= index (vector.string-vec-len entries))
+    acc
+    (package-source-sort-entries-from
+      entries
+      (+ index 1)
+      (package-source-vec-insert acc (vector.string-vec-get entries index "")))))
 
-(define (package-source-sort-entries-into
-  [entries : list.StringList]
-  [acc : list.StringList]) : list.StringList
-  (match entries
-    [(list.StringNil) acc]
-    [(list.StringCons head rest)
-      (package-source-sort-entries-into
-        (box-get rest)
-        (package-source-entry-list-insert acc head))]))
-
-(define (package-source-sort-entries [entries : list.StringList]) : list.StringList
-  (package-source-sort-entries-into entries (list.StringNil)))
+(define (package-source-sort-entries [entries : vector.StringVec]) : StringVec
+  (package-source-sort-entries-from entries 0 (string-vec-new)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
-    [items : list.StringList
+    [items : StringVec
       (package-source-sort-entries
-        (list.StringCons
-          "zeta"
-          (box
-            (list.StringCons
-              "alpha"
-              (box (list.StringCons "middle" (box (list.StringNil))))))))]
+        (vector.string-vec-push
+          (vector.string-vec-push
+            (vector.string-vec-push (vector.string-vec-new) "zeta")
+            "alpha")
+          "middle"))]
     (match items
-      [(list.StringCons first rest1)
-        (match (box-get rest1)
-          [(list.StringCons second rest2)
-            (match (box-get rest2)
-              [(list.StringCons third rest3)
-                (and
-                  (string-eq first "alpha")
-                  (string-eq second "middle")
-                  (string-eq third "zeta")
-                  (match (box-get rest3)
-                    [(list.StringNil) true]
-                    [_ false]))]
-              [_ false])]
-          [_ false])]
-      [_ false])))
+      [_
+        (and
+          (= (string-vec-len items) 3)
+          (string-eq (string-vec-get items 0 "") "alpha")
+          (string-eq (string-vec-get items 1 "") "middle")
+          (string-eq (string-vec-get items 2 "") "zeta"))])))
 
 (test
   package-source-sorts-directory-entries-before-scanning
@@ -318,9 +296,8 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
-      [(ErrIoStringList error)
-        (package-source-read-dir-error command dir error)]
-      [(OkIoStringList entries)
+      [(ErrIoStringVec error) (package-source-read-dir-error command dir error)]
+      [(OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
@@ -336,11 +313,11 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (try-read-dir (& dir))
-      [(ErrIoStringList error)
+      [(ErrIoStringVec error)
         (if (or (io.io-error-not-found? error) (io.io-error-unsupported? error))
           (OkPackageSourceList acc)
           (package-source-read-dir-error command dir error))]
-      [(OkIoStringList entries)
+      [(OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
@@ -354,11 +331,11 @@
   (let
     [root : String (struct-get source-set manifest-dir)]
     (match (try-read-dir (& root))
-      [(ErrIoStringList error)
+      [(ErrIoStringVec error)
         (if (io.io-error-unsupported? error)
           (OkPackageSourceList (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
-      [(OkIoStringList entries)
+      [(OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
@@ -394,24 +371,38 @@
                     (compiler-load-normalize-path child-path)))
                 (OkPackageSourceList acc))))]))))
 
+(define (package-source-scan-entries-from
+  [command : String]
+  [root : String]
+  [relative : String]
+  [entries : StringVec]
+  [index : i64]
+  [acc : StringVec]) : ResultPackageSourceList
+  (if (>= index (string-vec-len entries))
+    (OkPackageSourceList acc)
+    (match (package-source-scan-one
+      command
+      root
+      relative
+      (string-vec-get entries index "")
+      acc)
+      [(ErrPackageSourceList message) (ErrPackageSourceList message)]
+      [(OkPackageSourceList next)
+        (package-source-scan-entries-from
+          command
+          root
+          relative
+          entries
+          (+ index 1)
+          next)])))
+
 (define (package-source-scan-entries
   [command : String]
   [root : String]
   [relative : String]
-  [entries : list.StringList]
+  [entries : StringVec]
   [acc : StringVec]) : ResultPackageSourceList
-  (match entries
-    [(list.StringNil) (OkPackageSourceList acc)]
-    [(list.StringCons name rest)
-      (match (package-source-scan-one command root relative name acc)
-        [(ErrPackageSourceList message) (ErrPackageSourceList message)]
-        [(OkPackageSourceList next)
-          (package-source-scan-entries
-            command
-            root
-            relative
-            (box-get rest)
-            next)])]))
+  (package-source-scan-entries-from command root relative entries 0 acc))
 
 (define (package-source-discover-for
   [command : String]

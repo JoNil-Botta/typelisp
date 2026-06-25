@@ -89,10 +89,6 @@
   (define (char-at [text : (& text str)] [index : i64]) : char
     (__tl_string_ref text index)))
 
-(cfg
-  feature-compiler-private-string-intrinsics
-  (export (value string-length) (value string-ref) (value char-at)))
-
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!
   [dst : (MutPtr u8)]
@@ -610,11 +606,10 @@
               (set! found true)
               (set! i (+ i 1))))))
       (if found
-        (begin
-          (string-concat3
-            (substring s 0 i)
-            new
-            (substring s (+ i olen) (- (- hlen i) olen))))
+        (string-concat3
+          (substring s 0 i)
+          new
+          (substring s (+ i olen) (- (- hlen i) olen)))
         s))))
 
 ;: Return true if haystack has needle at position start.
@@ -1200,36 +1195,3 @@
   (test
     string-api-edges
     (test.assert-i64-eq (string-test-main) 42 "string-api-edges fixture result")))
-
-(export
-  (value tl_oob_abort)
-  (value string-runtime-alloc)
-  (value int->string-write-byte!)
-  (value int->string-negative-digit-count)
-  (value int->string-write-negative-digits!)
-  (value int->string)
-  (value substring-bounds-check)
-  (value str-copy-bytes-into)
-  (value substring-copy-checked)
-  (value string-append)
-  (value string-copy)
-  (value string-concat)
-  (value string-concat-all)
-  (value string-concat-all-pack-part)
-  (value string-concat3)
-  (value string-concat4)
-  (value string-concat5)
-  (value substring)
-  (value string-slice)
-  (value is-char-whitespace)
-  (value char-eq)
-  (value string-eq)
-  (value string=?)
-  (value string->int)
-  (value string-trim-left)
-  (value string-trim-right)
-  (value string-trim)
-  (value string-contains)
-  (value string-contains-char)
-  (value string-replace)
-  (value is-string-prefix-at))

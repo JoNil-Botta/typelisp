@@ -413,11 +413,7 @@
 (define (scan-str-end [src : String] [start : i64] [n : i64]) : i64
   (match (scan-str-end-result src start n)
     [(OkLexI64 end) end]
-    [(ErrLexI64 message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        n)]))
+    [(ErrLexI64 message) (panic message)]))
 
 (define (string-escape-piece [src : String] [idx : i64]) : String
   (let
@@ -751,11 +747,7 @@
   [starts : (Array i64)]) : i64
   (match (lex-into-spanned-result src toks starts)
     [(OkLexIntoSpanned count) count]
-    [(ErrLexIntoSpanned err)
-      (begin
-        (panic (source-error-message err))
-        ;; lint-allow: unreachable-code
-        0)]))
+    [(ErrLexIntoSpanned err) (panic (source-error-message err))]))
 
 (defenum LexPosition
   (LexPosition i64 i64))
@@ -1007,11 +999,7 @@
 (define (lex [src : String]) : (Array Token)
   (match (lex-result src)
     [(OkTokens toks) toks]
-    [(ErrTokens message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        (make-array Token 1))]))
+    [(ErrTokens message) (panic message)]))
 
 ;; ---- Spanned token stream (#599) --------------------------------------------
 ;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
@@ -1086,11 +1074,7 @@
 (define (lex-spanned [src : String]) : (Array SpannedToken)
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks) toks]
-    [(ErrSpannedTokens err)
-      (begin
-        (panic (source-error-message err))
-        ;; lint-allow: unreachable-code
-        (make-array SpannedToken 1))]))
+    [(ErrSpannedTokens err) (panic (source-error-message err))]))
 
 (define (lex-percent-symbol-ok?) : bool
   (match (lex-result "(% n 16)")

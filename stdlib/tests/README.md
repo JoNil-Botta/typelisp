@@ -156,10 +156,6 @@ Inline stdlib coverage:
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and
   rendering.
-- `list.tl` owns inline tests for the monomorphic `StringList` and
-  `StringListBuilder` helpers: empty/single lists, count, reverse, append,
-  build-onto order, array conversion with count clamping, and `StringVec`
-  bridge round trips.
 - `vector.tl` owns inline tests for the generated concrete vector family:
   `I64Vec` compatibility, higher-order `I64Vec` fold/map helpers with named
   functions and scalar-capturing lambdas, `StringVec`
@@ -193,8 +189,9 @@ Inline stdlib coverage:
   boundaries, copied unrelated borrowed chunks, shared render materialization,
   length, and empty predicates.
 - `process_borrowed.tl` owns inline tests for borrowed executable, argv, cwd,
-  env, and stdin fields, validation diagnostics, and explicit conversion to
-  owned `ProcessCommand` before the runtime boundary.
+  env, and stdin fields, ordered borrowed argv/env append helpers, duplicate env
+  override order, validation diagnostics, and explicit conversion to owned
+  `ProcessCommand` before the runtime boundary.
 - `process_api.tl` owns standalone tests for owned command construction, argv
   append helpers, vector-backed argv conversion/builders, cwd/stdin/env
   accessors, vector-backed env override construction, validation,

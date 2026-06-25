@@ -18,19 +18,12 @@
   [stdlib-roots : StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
-  (begin
-    (ast-node-pool-context-install! pools)
-    (let
-      [result : ResultCompilerTypecheck
-        (typecheck-compiler-specialized-program-with-paths-cache
-          program
-          paths
-          stdlib-roots
-          cache-scope)]
-      (begin
-        (ast-node-pool-context-capture-active! pools)
-        (ast-node-pool-context-install! pools)
-        result))))
+  (typecheck-compiler-specialized-program-with-paths-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
@@ -38,25 +31,19 @@
   [stdlib-roots : StringVec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
-  (begin
-    (ast-node-pool-context-install! pools)
-    (let
-      [result : ResultCompilerTypecheckChecked
-        (typecheck-compiler-specialized-program-with-paths-checked-cache
-          program
-          paths
-          stdlib-roots
-          cache-scope)]
-      (begin
-        (ast-node-pool-context-capture-active! pools)
-        (ast-node-pool-context-install! pools)
-        result))))
+  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
 
-(define (typecheck-compiler-program-with-paths-cache
+(define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
-  [cache-scope : String]) : ResultCompilerTypecheck
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
   ;; expansion type-directs some sub-expressions (let-init / match-scrutinee
   ;; typing), which must be able to see generated functions; the later template
@@ -65,55 +52,87 @@
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
   (begin
     (tc-spmd-inline-helper-stack-reset!)
-    (let
-      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-      (tc-typecheck-result-with-pool-check
-        (let
-          [generated-result : ResultGenProgramWithPaths
-            (gen-normalize-program-with-paths-and-pools program paths "" pools)]
-          (begin
-            (ast-node-pool-context-install! pools)
-            (match generated-result
-              [(OkGenProgramWithPaths generated generated-paths)
-                (match (macro-expand-program-with-paths
-                  generated
-                  generated-paths)
-                  [(OkMacroExpand expanded expanded-paths)
-                    (begin
-                      (ast-node-pool-context-capture-active! pools)
-                      (if (compiler-specialize-needed? expanded)
-                        (match (build-compiler-symbols-with-paths
-                          expanded
-                          expanded-paths)
-                          [(OkCompilerSymbols _)
-                            (begin
-                              (ast-node-pool-context-capture-active! pools)
-                              (match (compiler-specialize-program-with-paths-and-pools
-                                expanded
-                                expanded-paths
-                                (tc-decl-path-list-last expanded-paths "")
-                                pools)
-                                [(OkSpecProgramWithPaths
-                                    specialized
-                                    specialized-paths)
-                                  (typecheck-compiler-specialized-program-with-paths-cache-and-pools
-                                    specialized
-                                    specialized-paths
-                                    stdlib-roots
-                                    cache-scope
-                                    pools)]
-                                [(ErrSpecProgramWithPaths diag)
-                                  (ErrCompilerTypecheck diag)]))]
-                          [(ErrCompilerSymbols message)
-                            (ErrCompilerTypecheck (tc-diag-at-start message))])
-                        (typecheck-compiler-specialized-program-with-paths-cache-and-pools
-                          expanded
-                          expanded-paths
-                          stdlib-roots
-                          cache-scope
-                          pools)))]
-                  [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
-              [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)])))))))
+    (tc-typecheck-result-with-pool-check
+      (let
+        [generated-result : ResultGenProgramWithPaths
+          (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+        (begin
+          (ast-node-pool-context-install! pools)
+          (match generated-result
+            [(OkGenProgramWithPaths generated generated-paths)
+              (match (macro-expand-program-with-paths-and-pools
+                generated
+                generated-paths
+                pools)
+                [(OkMacroExpand expanded expanded-paths)
+                  (begin
+                    (ast-node-pool-context-capture-active! pools)
+                    (if (compiler-specialize-needed? expanded)
+                      (match (gen-normalize-program-with-paths-and-pools
+                        expanded
+                        expanded-paths
+                        (tc-decl-path-list-last expanded-paths "")
+                        pools)
+                        [(OkGenProgramWithPaths normalized normalized-paths)
+                          (begin
+                            (ast-node-pool-context-install! pools)
+                            (if (compiler-specialize-needed? normalized)
+                              (match (build-compiler-symbols-with-paths
+                                normalized
+                                normalized-paths)
+                                [(OkCompilerSymbols _)
+                                  (begin
+                                    (ast-node-pool-context-capture-active!
+                                      pools)
+                                    (match (compiler-specialize-program-with-paths-and-pools
+                                      normalized
+                                      normalized-paths
+                                      (tc-decl-path-list-last
+                                        normalized-paths
+                                        "")
+                                      pools)
+                                      [(OkSpecProgramWithPaths
+                                          specialized
+                                          specialized-paths)
+                                        (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                          specialized
+                                          specialized-paths
+                                          stdlib-roots
+                                          cache-scope
+                                          pools)]
+                                      [(ErrSpecProgramWithPaths diag)
+                                        (ErrCompilerTypecheck diag)]))]
+                                [(ErrCompilerSymbols message)
+                                  (ErrCompilerTypecheck
+                                    (tc-diag-at-start message))])
+                              (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                normalized
+                                normalized-paths
+                                stdlib-roots
+                                cache-scope
+                                pools)))]
+                        [(ErrGenProgramWithPaths diag)
+                          (ErrCompilerTypecheck diag)])
+                      (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                        expanded
+                        expanded-paths
+                        stdlib-roots
+                        cache-scope
+                        pools)))]
+                [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+            [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))))
+
+(define (typecheck-compiler-program-with-paths-cache
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]) : ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths-cache-and-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
@@ -124,58 +143,95 @@
     (string-vec-new)
     (tc-prefix-default-cache-scope)))
 
+(define (typecheck-compiler-program-with-paths-checked-cache-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (begin
+    (tc-spmd-inline-helper-stack-reset!)
+    (tc-typecheck-checked-result-with-pool-check
+      (let
+        [generated-result : ResultGenProgramWithPaths
+          (gen-normalize-program-with-paths-and-pools program paths "" pools)]
+        (begin
+          (ast-node-pool-context-install! pools)
+          (match generated-result
+            [(OkGenProgramWithPaths generated generated-paths)
+              (match (macro-expand-program-with-paths-and-pools
+                generated
+                generated-paths
+                pools)
+                [(OkMacroExpand expanded expanded-paths)
+                  (begin
+                    (ast-node-pool-context-capture-active! pools)
+                    (if (compiler-specialize-needed? expanded)
+                      (match (gen-normalize-program-with-paths-and-pools
+                        expanded
+                        expanded-paths
+                        (tc-decl-path-list-last expanded-paths "")
+                        pools)
+                        [(OkGenProgramWithPaths normalized normalized-paths)
+                          (begin
+                            (ast-node-pool-context-install! pools)
+                            (if (compiler-specialize-needed? normalized)
+                              (match (build-compiler-symbols-with-paths
+                                normalized
+                                normalized-paths)
+                                [(OkCompilerSymbols _)
+                                  (begin
+                                    (ast-node-pool-context-capture-active!
+                                      pools)
+                                    (match (compiler-specialize-program-with-paths-and-pools
+                                      normalized
+                                      normalized-paths
+                                      (tc-decl-path-list-last
+                                        normalized-paths
+                                        "")
+                                      pools)
+                                      [(OkSpecProgramWithPaths
+                                          specialized
+                                          specialized-paths)
+                                        (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                          specialized
+                                          specialized-paths
+                                          stdlib-roots
+                                          cache-scope
+                                          pools)]
+                                      [(ErrSpecProgramWithPaths diag)
+                                        (ErrCompilerTypecheckChecked diag)]))]
+                                [(ErrCompilerSymbols message)
+                                  (ErrCompilerTypecheckChecked
+                                    (tc-diag-at-start message))])
+                              (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                normalized
+                                normalized-paths
+                                stdlib-roots
+                                cache-scope
+                                pools)))]
+                        [(ErrGenProgramWithPaths diag)
+                          (ErrCompilerTypecheckChecked diag)])
+                      (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                        expanded
+                        expanded-paths
+                        stdlib-roots
+                        cache-scope
+                        pools)))]
+                [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
+            [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)]))))))
+
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
-  (begin
-    (tc-spmd-inline-helper-stack-reset!)
-    (let
-      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-      [generated-result : ResultGenProgramWithPaths
-        (gen-normalize-program-with-paths-and-pools program paths "" pools)]
-      (begin
-        (ast-node-pool-context-install! pools)
-        (match generated-result
-          [(OkGenProgramWithPaths generated generated-paths)
-            (match (macro-expand-program-with-paths generated generated-paths)
-              [(OkMacroExpand expanded expanded-paths)
-                (begin
-                  (ast-node-pool-context-capture-active! pools)
-                  (if (compiler-specialize-needed? expanded)
-                    (match (build-compiler-symbols-with-paths
-                      expanded
-                      expanded-paths)
-                      [(OkCompilerSymbols _)
-                        (begin
-                          (ast-node-pool-context-capture-active! pools)
-                          (match (compiler-specialize-program-with-paths-and-pools
-                            expanded
-                            expanded-paths
-                            (tc-decl-path-list-last expanded-paths "")
-                            pools)
-                            [(OkSpecProgramWithPaths
-                                specialized
-                                specialized-paths)
-                              (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
-                                specialized
-                                specialized-paths
-                                stdlib-roots
-                                cache-scope
-                                pools)]
-                            [(ErrSpecProgramWithPaths diag)
-                              (ErrCompilerTypecheckChecked diag)]))]
-                      [(ErrCompilerSymbols message)
-                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])
-                    (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
-                      expanded
-                      expanded-paths
-                      stdlib-roots
-                      cache-scope
-                      pools)))]
-              [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
-          [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)])))))
+  (typecheck-compiler-program-with-paths-checked-cache-and-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    (ast-node-pool-context-capture-active)))
 
 (define (typecheck-compiler-program-with-paths-checked
   [program : AstProgram]
@@ -189,6 +245,83 @@
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
 
+(define (typecheck-compiler-source-language-cfgs) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-cfg-enable
+      (compiler-cfg-enable
+        (compiler-cfg-enable
+          (compiler-cfg-enable
+            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+            "feature-str-view")
+          "feature-private-string-intrinsics")
+        "feature-compiler-private-string-intrinsics")
+      "array-helper-intrinsics")
+    "feature-plain-comptime-well-known"))
+
+(define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
+  (let
+    [stdlib-roots : StringVec (string-vec-new)]
+    [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
+    (match (compiler-load-core-macro-prelude-with-roots-cfg
+      (sym-i64-empty)
+      stdlib-roots
+      cfgs)
+      [(OkCompilerLoadWithPaths
+          prelude-decls
+          prelude-paths
+          prelude-modules
+          prelude-seen)
+        (match (compiler-load-source-with-paths-and-roots-cfg
+          ""
+          src
+          prelude-seen
+          stdlib-roots
+          cfgs)
+          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
+            (OkCompilerLoadWithPaths
+              (compiler-load-decl-list-append prelude-decls entry-decls)
+              (compiler-load-decl-path-list-append prelude-paths entry-paths)
+              (compiler-load-decl-module-list-append
+                prelude-modules
+                entry-modules)
+              seen)]
+          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
+      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+
+(define (typecheck-compiler-source-stdlib-import-kind?
+  [kind : AstImportKind]
+  [path : String]) : bool
+  (match kind
+    [(AstImportPath) (compiler-load-stdlib-import? path)]
+    [(AstImportModule)
+      (compiler-load-stdlib-import? (compiler-load-dotted-module-path path))]
+    [_ false]))
+
+(define (typecheck-compiler-source-decl-has-stdlib-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind path _ _ _))
+      (typecheck-compiler-source-stdlib-import-kind? kind path)]
+    [(AstDeclUnsafe inner-box)
+      (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (typecheck-compiler-source-decl-has-stdlib-import? (box-get template-box))]
+    [_ false]))
+
+(define (typecheck-compiler-source-decls-have-stdlib-import?
+  [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (typecheck-compiler-source-decl-has-stdlib-import? decl)
+        (typecheck-compiler-source-decls-have-stdlib-import? (box-get rest)))]))
+
+(define (typecheck-compiler-source-program-has-stdlib-import?
+  [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (typecheck-compiler-source-decls-have-stdlib-import? (box-get decls-box))]))
+
 (define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
   (let
     [program : AstProgram (ast-program decls)]
@@ -199,37 +332,32 @@
         [(OkCompilerSymbols symbols)
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
-              (match (build-compiler-exports-with program symbols registries)
-                [(OkCompilerExports exports)
-                  (let
-                    [ctx : TcContext
-                      (TcContext
-                        program
-                        symbols
-                        registries
-                        exports
-                        ""
-                        (ast-node-pool-context-capture-active))]
-                    (match (tc-program-source-types-policy-ok ctx program)
+              (let
+                [ctx : TcContext
+                  (TcContext
+                    program
+                    symbols
+                    registries
+                    ""
+                    (ast-node-pool-context-capture-active))]
+                (match (tc-program-source-types-policy-ok ctx program)
+                  [(OkTcUnit)
+                    (match (tc-source-expr-policy-ok ctx expr)
                       [(OkTcUnit)
-                        (match (tc-source-expr-policy-ok ctx expr)
-                          [(OkTcUnit)
-                            (match (tc-build-top-env ctx program)
-                              [(OkTcEnv top-env)
-                                (match (tc-check-decls
-                                  ctx
-                                  top-env
-                                  decls
-                                  (CompilerTypecheckSummary 0 0 0))
-                                  [(OkCompilerTypecheck _)
-                                    (tc-expr ctx top-env expr)]
-                                  [(ErrCompilerTypecheck diag)
-                                    (ErrTcType
-                                      (compiler-diagnostic-message diag))])]
-                              [(ErrTcEnv message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)]))]
-                [(ErrCompilerExports message) (ErrTcType message)])]
+                        (match (tc-build-top-env ctx program)
+                          [(OkTcEnv top-env)
+                            (match (tc-check-decls
+                              ctx
+                              top-env
+                              decls
+                              (CompilerTypecheckSummary 0 0 0))
+                              [(OkCompilerTypecheck _)
+                                (tc-expr ctx top-env expr)]
+                              [(ErrCompilerTypecheck diag)
+                                (ErrTcType (compiler-diagnostic-message diag))])]
+                          [(ErrTcEnv message) (ErrTcType message)])]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcUnit message) (ErrTcType message)]))]
             [(ErrCompilerRegistries message) (ErrTcType message)])]
         [(ErrCompilerSymbols message) (ErrTcType message)]))))
 
@@ -240,6 +368,30 @@
     [_reset-before : unit (compiler-typecheck-reset-file-state!)]
     [result : ResultCompilerTypecheck
       (match (parse-ast-source-diagnostic "" src)
+        [(OkAstProgramDiagnostic program)
+          ;; Keep synthetic in-memory fixtures on the historical direct path,
+          ;; but route real stdlib imports through the loader so macro imports
+          ;; see loaded stdlib macro definitions and alias markers.
+          (if (typecheck-compiler-source-program-has-stdlib-import? program)
+            (match (typecheck-compiler-source-load src)
+              [(OkCompilerLoadWithPaths decls paths _ _)
+                (typecheck-compiler-program-with-paths
+                  (ast-program decls)
+                  paths)]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerTypecheck diag)])
+            (typecheck-compiler-program program))]
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      result)))
+
+(define (typecheck-compiler-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultCompilerTypecheck
+  (let
+    [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
+    [_dedup-reset : unit (ty-node-dedup-clear!)]
+    [_reset-before : unit (compiler-typecheck-reset-file-state!)]
+    [result : ResultCompilerTypecheck
+      (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
         [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
     (begin
@@ -532,6 +684,11 @@
     [(OkCompilerTypecheck _) true]
     [(ErrCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+  (match (typecheck-compiler-source-with-cfg src cfgs)
+    [(OkCompilerTypecheck _) true]
+    [(ErrCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-unbound-source) : String
   "(define (main) : i64 missing)")
 
@@ -764,6 +921,15 @@
     (foreach ([i : i64 0 n]) (return i))
     0))")
 
+(define (compiler-typecheck-foreach-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 i64))
+(define (main [out : (Array i64)] [flag : bool] [n : i64]) : ResultI64
+  (begin
+    (foreach
+      ([i : i64 0 n])
+      (array-set! out i (try (if flag (OkI64 1) (ErrI64 i)))))
+    (OkI64 0)))")
+
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
@@ -926,7 +1092,10 @@
       "typecheck: return requires enclosing function")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-return-source)
-      "typecheck: return inside foreach is not supported")))
+      "typecheck: return inside foreach is not supported")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-foreach-try-source)
+      "typecheck: try inside foreach is not supported")))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
@@ -1207,20 +1376,11 @@
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export (value get))
 (module right)
 (define same : i64 22)
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import left)
 (import right)
@@ -1247,14 +1407,6 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
@@ -1272,14 +1424,6 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
 (module main)
 (import pkg.data)
 (define (main) : i64
@@ -1305,7 +1449,6 @@
 (define (compiler-typecheck-dot-field-local-shadows-alias-source) : String
   "(module pkg.data)
 (define (value) : i64 99)
-(export (value value))
 (module main)
 (import pkg.data)
 (defstruct Pair (value i64))
@@ -1322,7 +1465,6 @@
 (define (compiler-typecheck-dotted-import-default-alias-with-macro-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module pkg.macros)
 (defmacro (identity [x : Expr]) : Expr x)
 (module main)
@@ -1332,7 +1474,6 @@
 (define (compiler-typecheck-dotted-import-full-path-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import pkg.data)
 (define (main) : i64 (pkg.data.get))")
@@ -1340,17 +1481,14 @@
 (define (compiler-typecheck-dotted-import-full-path-unimported-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (define (main) : i64 (pkg.data.get))")
 
 (define (compiler-typecheck-dotted-import-explicit-alias-collision-source) : String
   "(module left.same)
 (define (get) : i64 20)
-(export (value get))
 (module right.same)
 (define (get) : i64 22)
-(export (value get))
 (module main)
 (import left.same as l)
 (import right.same as r)
@@ -1359,7 +1497,6 @@
 (define (compiler-typecheck-dotted-import-unqualified-source) : String
   "(module pkg.data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import pkg.data)
 (define (main) : i64 (get))")
@@ -1381,199 +1518,9 @@
 (define (compiler-typecheck-slash-qualified-rejected-source) : String
   "(module data)
 (define (get) : i64 20)
-(export (value get))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64 (d/get))")
-
-(define (compiler-typecheck-export-unknown-source) : String
-  "(module data)
-(export (value missing))
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-export-visibility-allowed-source) : String
-  "(module data)
-(define (get) : i64 20)
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64) (hidden i64))
-(export
-  (value get)
-  (type Maybe)
-  (variant None)
-  (variant Some)
-  (type Point)
-  (constructor Point)
-  (field Point x))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (+
-    (d.get)
-    (+
-      (let ([p : d.Point (d.Point 7 9)])
-        (struct-get p x))
-      (match (d.Maybe.Some 3)
-        [(d.Maybe.Some v) v]
-        [d.Maybe.None 0]))))")
-
-(define (compiler-typecheck-export-private-alias-value-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64 d.private)")
-
-(define (compiler-typecheck-export-private-canonical-value-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import data)
-(define (main) : i64 data.private)")
-
-(define (compiler-typecheck-export-type-only-opaque-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(export (type Opaque))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (id [x : d.Opaque]) : d.Opaque x)
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-export-type-only-constructor-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(export (type Opaque))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : d.Opaque (d.Opaque 1))")
-
-(define (compiler-typecheck-export-type-only-field-source) : String
-  "(module data)
-(defstruct Opaque (value i64))
-(define (make) : Opaque (Opaque 1))
-(export (type Opaque) (value make))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (let ([x : d.Opaque (d.make)])
-    (struct-get x value)))")
-
-(define (compiler-typecheck-export-generated-decl-source) : String
-  "(module data)
-(comptime-decl (:generated generated-family Generated \"i64\")
-  (defstruct Generated (value i64)))
-(export (type Generated) (constructor Generated) (field Generated value))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (let ([x : d.Generated (d.Generated 7)])
-    (struct-get x value)))")
-
-(define (compiler-typecheck-export-generated-cleanup-source) : String
-  "(module data)
-(define (close-fd [fd : i64]) : unit unit)
-(defstruct Guard
-  (:cleanup cleanup-guard)
-  (fd i64 (:cleanup close-fd)))
-(export
-  (type Guard)
-  (constructor Guard)
-  (field Guard fd)
-  (value cleanup-guard))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (with ([guard (d.Guard 42) d.cleanup-guard])
-    (struct-get guard fd)))")
-
-(define (compiler-typecheck-export-private-type-source) : String
-  "(module data)
-(defstruct Hidden (value i64))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main [x : d.Hidden]) : i64 0)")
-
-(define (compiler-typecheck-export-private-variant-pattern-source) : String
-  "(module data)
-(defenum Choice (Hidden i64) (Visible i64))
-(define (make) : Choice (Hidden 1))
-(export (type Choice) (variant Visible) (value make))
-(module main)
-(import \"data.tl\" module data :as d)
-(define (main) : i64
-  (match (d.make)
-    [(d.Hidden v) v]
-    [(d.Visible v) v]))")
-
-(define (compiler-typecheck-export-same-module-private-source) : String
-  "(module data)
-(define private : i64 2)
-(defenum Maybe (None) (Some i64))
-(defstruct Point (x i64))
-(define (main) : i64
-  (+
-    data.private
-    (+
-      (let ([p : data.Point (data.Point 1)])
-        (struct-get p x))
-      (match (data.Maybe.Some 2)
-        [(data.Maybe.Some v) v]
-        [data.Maybe.None 0]))))")
-
-;; Everything is exported by default: items that are not named in a legacy
-;; `(export ...)` list are now reachable across modules, so the cases that used
-;; to be rejected as private must now type-check. These sources keep their
-;; "private" names because they describe the source shape (an item omitted from
-;; the export list), but the expectation is now success.
-(define (compiler-typecheck-export-visibility-tests-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-visibility-allowed-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-alias-value-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-canonical-value-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-opaque-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-constructor-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-type-only-field-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-generated-decl-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-generated-cleanup-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-type-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-private-variant-pattern-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-export-same-module-private-source))
-        unit
-        (set! ok false))
-      ok)))
 
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
@@ -1617,7 +1564,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
@@ -1675,7 +1621,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
@@ -1767,7 +1712,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
@@ -1792,7 +1736,6 @@
                       program
                       symbols
                       registries
-                      (compiler-exports-empty)
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
@@ -1857,7 +1800,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
@@ -1886,7 +1828,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
@@ -1936,7 +1877,6 @@
                     program
                     symbols
                     registries
-                    (compiler-exports-empty)
                     ""
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
@@ -2165,13 +2105,8 @@
 (defstruct CtfeReflectInfoList
   (slots (Array CtfeReflectInfo))
   (len i64))
-(defenum CtfeModuleExportInfo
-  (CtfeModuleExportInfo String String String AstType))
-(defstruct CtfeModuleExportInfoList
-  (slots (Array CtfeModuleExportInfo))
-  (len i64))
 (defenum CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList CtfeModuleExportInfoList)
+  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
   (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
@@ -2183,8 +2118,7 @@
       (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
       (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
-      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList")
-      (compiler-typecheck-inline-layout-ok? src "CtfeModuleExportInfoList"))))
+      (compiler-typecheck-inline-layout-ok? src "CtfeReflectVariantList"))))
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
@@ -2530,14 +2464,6 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-slash-qualified-rejected-source)
         "typecheck: slash-qualified name d/get is no longer supported; use d.get")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-export-unknown-source)
-        "symbols: cannot export unknown value data/missing")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-export-visibility-tests-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-repr-c-tests-ok?)
@@ -3224,7 +3150,6 @@
 (define (compiler-typecheck-cleanup-struct-imported-cleanup-source) : String
   "(module cleanup)
 (define (close-fd [fd : i64]) : unit unit)
-(export (value close-fd))
 (module main)
 (import \"cleanup.tl\" module cleanup :as c)
 (defstruct FileHandle
@@ -4163,8 +4088,29 @@
     [owner : Arena (arena-make-atomic)]
     [channel : ChannelString (ChannelString 0)]
     [message (in-arena owner (string-append \"atom\" \"ic\"))]
+    (match (channel-string-send channel message)
+      [(ChannelStringSendOk) 42]
+      [(ChannelStringSendErr _) 2])))"))
+
+(define (compiler-typecheck-channel-atomic-string-send-bound-source) : String
+  (compiler-typecheck-with-arena-source
+    "(defstruct ChannelString (raw i64))
+(defenum ChannelStringSendResult
+  (ChannelStringSendOk)
+  (ChannelStringSendErr String))
+(define (channel-string-send
+  [channel : ChannelString]
+  [message : String]) : ChannelStringSendResult
+  (ChannelStringSendOk))
+(define (main) : i64
+  (let
+    [owner : Arena (arena-make-atomic)]
+    [channel : ChannelString (ChannelString 0)]
+    [message (in-arena owner (string-append \"atom\" \"ic\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
-    42))"))
+    (match sent
+      [(ChannelStringSendOk) 42]
+      [(ChannelStringSendErr _) 2])))"))
 
 (define (compiler-typecheck-channel-ordinary-string-send-source) : String
   (compiler-typecheck-with-arena-source
@@ -4199,6 +4145,8 @@
       "typecheck: region-tagged value cannot escape with-arena 'phase'")
     (compiler-typecheck-ok?
       (compiler-typecheck-channel-atomic-string-send-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-channel-atomic-string-send-bound-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-channel-ordinary-string-send-source)
       "typecheck: channel-string-send cannot send value of type String; owned heap storage needs a static/program or spanning atomic owner proof")
@@ -6098,63 +6046,43 @@
 (define (main) : i64 (field-count 1))")
 
 (define (compiler-typecheck-type-literal-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (twice [comptime n : i64]) : i64 (* n 2))
+  (let
+    [private-cfg : SymI64Env
+      (compiler-cfg-enable
+        (compiler-cfg-empty)
+        "feature-compiler-private-dynamic-buffer")]
+    (and
+      (compiler-typecheck-ok?
+        "(define (twice [comptime n : i64]) : i64 (* n 2))
 (define (main) : i64 (twice 21))")
-    (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type i64) 0))"
-      "type value i64 is compile-time only")
-    (compiler-typecheck-error-ok?
-      "(define (main) : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (f [value : type]) : i64 0)"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define value : type (type i64))"
-      (compiler-typecheck-unknown-type-policy-message "type"))
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (begin (type Missing) 0))"
-      (compiler-typecheck-unknown-type-policy-message "Missing"))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-type-valued-comptime-scalar-arg-source)
-      "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`")))
+      (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
+      (compiler-typecheck-error-ok?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
+      (compiler-typecheck-ok-with-cfg?
+        "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
+        private-cfg)
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type i64) 0))"
+        "type value i64 is compile-time only")
+      (compiler-typecheck-error-ok?
+        "(define (main) : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (f [value : type]) : i64 0)"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define value : type (type i64))"
+        (compiler-typecheck-unknown-type-policy-message "type"))
+      (compiler-typecheck-error-ok?
+        "(define (main) : i64 (begin (type Missing) 0))"
+        (compiler-typecheck-unknown-type-policy-message "Missing"))
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-type-valued-comptime-scalar-arg-source)
+        "comptime argument 'T' for function 'field-count' must be a type value such as `(type i64)`"))))
 
 (define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
-  "(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr
-    (ExprBool bool)
-    (ExprInt i64)
-    (ExprVar String)
-    (ExprSplice (Box Expr))
-    (ExprIf (Box Expr) (Box Expr) (Box Expr))
-    (ExprCall (Box Expr) ExprList)
-    (ExprBegin ExprList)
-    (ExprQuote (Box Expr))
-    (ExprQuasiquote (Box Expr))
-    (ExprUnquote (Box Expr))
-    (ExprUnquoteSplicing (Box Expr))))")
-
-(define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
-  "(module stdlib.comptime)
-(comptime-decl (:generated stdlib/comptime-well-known Expr \"v0\")
-  (defenum Expr
-    (ExprInt i64)))")
-
-(define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
-  (str-cat
-    "(module stdlib.comptime)\n"
-    (compiler-typecheck-stdlib-comptime-expr-decl-source)
-    "\n(comptime-decl (:generated stdlib/comptime-well-known ExprList \"v0\")
-  (defenum ExprList
-    (ExprListNil)
-    (ExprListCons Expr (Box ExprList))))"))
-
-(define (compiler-typecheck-stdlib-comptime-plain-expr-source) : String
-  "(module stdlib.comptime)
-(defenum Expr
+  "(defenum Expr
   (ExprBool bool)
   (ExprInt i64)
   (ExprVar String)
@@ -6167,9 +6095,22 @@
   (ExprUnquote (Box Expr))
   (ExprUnquoteSplicing (Box Expr)))")
 
-(define (compiler-typecheck-stdlib-comptime-stale-expr-source) : String
+(define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
   "(module stdlib.comptime)
-(comptime-decl (:generated stdlib/comptime-well-known Expr \"v1\")
+(defenum Expr
+  (ExprInt i64))")
+
+(define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
+  (str-cat
+    "(module stdlib.comptime)\n"
+    (compiler-typecheck-stdlib-comptime-expr-decl-source)
+    "\n(defenum ExprList
+  (ExprListNil)
+  (ExprListCons Expr (Box ExprList)))"))
+
+(define (compiler-typecheck-stdlib-comptime-wrapper-expr-source) : String
+  "(module stdlib.comptime)
+(comptime-decl
   (defenum Expr
     (ExprBool bool)
     (ExprInt i64)
@@ -6192,11 +6133,8 @@
       (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
       "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-stdlib-comptime-plain-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-stdlib-comptime-stale-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected comptime-decl generated metadata stdlib/comptime-well-known \"v0\"")))
+      (compiler-typecheck-stdlib-comptime-wrapper-expr-source)
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected plain stdlib.comptime well-known declaration")))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and
@@ -6520,7 +6458,6 @@
 (define (compiler-typecheck-unsafe-import-safe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
-(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (f.danger 42))")
@@ -6528,7 +6465,6 @@
 (define (compiler-typecheck-unsafe-import-unsafe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
-(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (unsafe (f.danger 42)))")
@@ -6841,74 +6777,9 @@
 (define (compiler-typecheck-reflection-kind-mismatch-source) : String
   "(define (main) : i64 (comptime (struct-field-count (type i64))))")
 
-(define (compiler-typecheck-module-export-reflection-source) : String
-  "(module tc.module.export.reflection)
-(defstruct PublicBox (value i64))
-(define (iterator [box : PublicBox]) : PublicBox box)
-(defstruct PrivateBox (value i64))
-(defmacro (probe [x : Expr]) : i64 x)
-(export
-  (type PublicBox)
-  (constructor PublicBox)
-  (value iterator)
-  (macro probe))
-(define (main) : i64
-  (+ (comptime (if (module-export-value? \"tc.module.export.reflection\" \"iterator\") 1 0))
-     (+ (comptime (if (module-export-type? \"tc.module.export.reflection\" \"PublicBox\") 2 0))
-        (+ (comptime (if (module-export-macro? \"tc.module.export.reflection\" \"probe\") 4 0))
-           (+ (comptime
-                (if (string-eq
-                  (type-nominal-name
-                    (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
-                  \"PublicBox\")
-                  8
-                  0))
-              (+ (comptime
-                   (function-param-count
-                     (module-export-value-type \"tc.module.export.reflection\" \"iterator\")))
-                 (+ (comptime
-                      (if (not
-                        (module-export-type? \"tc.module.export.reflection\" \"PrivateBox\"))
-                        32
-                        0))
-                    (comptime
-                      (if (string-eq
-                        (type-nominal-module
-                          (module-export-type \"tc.module.export.reflection\" \"PublicBox\"))
-                        \"tc.module.export.reflection\")
-                        64
-                        0)))))))))")
-
-(define (compiler-typecheck-module-export-generated-source) : String
-  "(defmacro (gen) : Module
-  `(begin
-    (module generated.tc_export_reflection)
-    (defstruct GenBox (value i64))
-    (define (score [box : GenBox]) : i64 (struct-get box value))
-    (export
-      (type GenBox)
-      (constructor GenBox)
-      (value score))))
-(import (gen) as gen)
-(define (main) : bool
-  (comptime
-    (if (module-export-type? \"generated.tc_export_reflection\" \"GenBox\")
-      (module-export-value? \"generated.tc_export_reflection\" \"score\")
-      false)))")
-
-(define (compiler-typecheck-module-export-missing-source) : String
-  "(module tc.module.export.reflection)
-(define (main) : i64
-  (comptime
-    (function-param-count
-      (module-export-value-type \"tc.module.export.reflection\" \"missing\"))))")
-
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-module-export-reflection-source))
-    (compiler-typecheck-ok? (compiler-typecheck-module-export-generated-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-runtime-source)
       "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
@@ -6917,10 +6788,7 @@
       "String value is compile-time only")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-kind-mismatch-source)
-      "struct-field-count requires struct type")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-module-export-missing-source)
-      "module-export-value-type: module tc.module.export.reflection does not export value missing")))
+      "struct-field-count requires struct type")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
@@ -6940,6 +6808,12 @@
   "(defmacro (answer-name) : i64 (expr-var (string-concat \"ans\" \"wer\")))
 (define answer : i64 42)
 (define (main) : i64 (answer-name))")
+
+(define (compiler-typecheck-defmacro-expr-struct-get-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defmacro (field-x [target : Expr]) : i64
+  (comptime.expr-struct-get target (string-concat \"x\" \"\")))
+(define (main) : i64 (field-x (Point 42 7)))")
 
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
   "(defmacro (all [args : bool ...]) : bool
@@ -7006,6 +6880,8 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-pure-string-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-expr-struct-get-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defmacro-comptime-qualified-helper-source))
     (compiler-typecheck-error-ok?
@@ -7192,7 +7068,6 @@
   "(module bool)
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
-(export (macro and2))
 (module main)
 (import \"bool.tl\" module bool :as b)
 (define (main) : i64
@@ -7204,27 +7079,8 @@
 (define (main) : i64
   (if (b.and-later true true) 42 0))
 (module bool)
-(export (macro and-later))
 (defmacro (and-later [lhs : bool] [rhs : bool]) : bool
   `(if ,lhs ,rhs false))")
-
-(define (compiler-typecheck-macro-private-source) : String
-  "(module hidden)
-(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
-  (expr-if lhs rhs (expr-bool false)))
-(module main)
-(import \"hidden.tl\" module hidden :as hidden)
-(define (main) : i64
-  (if (hidden.private-and true true) 0 1))")
-
-(define (compiler-typecheck-macro-missing-export-source) : String
-  "(module hidden)
-(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
-  (expr-if lhs rhs (expr-bool false)))
-(module main)
-(import \"hidden.tl\" module hidden :as hidden)
-(define (main) : i64
-  (if (hidden.missing true true) 0 1))")
 
 (define (compiler-typecheck-macro-forward-local-source) : String
   "(define eager : bool (late true))
@@ -7247,8 +7103,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen))
 (define (main) : i64 (answer))")
 
@@ -7256,8 +7111,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen) as generated)
 (define (main) : i64 (generated.answer))")
 
@@ -7265,8 +7119,7 @@
   "(defmacro (gen) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen))
 (import (gen))
 (define (main) : i64 (answer))")
@@ -7275,13 +7128,24 @@
   "(defmacro (gen-a) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (defmacro (gen-b) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 99)
-    (export (value answer))))
+    (define (answer) : i64 99)))
+(import (gen-a))
+(import (gen-b))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-module-macro-import-distinct-collision-source) : String
+  "(defmacro (gen-a) : Module
+  `(begin
+    (module generated.a)
+    (define (answer) : i64 42)))
+(defmacro (gen-b) : Module
+  `(begin
+    (module generated.b)
+    (define (answer) : i64 99)))
 (import (gen-a))
 (import (gen-b))
 (define (main) : i64 (answer))")
@@ -7322,7 +7186,6 @@
 (define (compiler-typecheck-decls-macro-import-followup-source) : String
   "(module generated)
 (define (answer) : i64 42)
-(export (value answer))
 (module main)
 (defmacro (gen) : Decls
   `(import generated))
@@ -7364,10 +7227,6 @@
   `(if ,condition ,body unit))
 (defmacro (unless [condition : bool] [body : unit]) : unit
   `(if ,condition unit ,body))
-(export (macro and))
-(export (macro or))
-(export (macro when))
-(export (macro unless))
 (module main)
 (define (main) : i64
       (let [value : i64 0]
@@ -7390,8 +7249,6 @@
     `(if ,(expr-list-head args)
        true
        (or ,@(expr-list-tail args)))))
-(export (macro and))
-(export (macro or))
 (module main)
 ")
 
@@ -7453,7 +7310,6 @@
   `(if (macro-helper ,condition)
      ,body
      0))
-(export (macro choose-helper))
 (module main)
 (import \"macros.tl\" module macros as m)
 (define (macro-helper [x : bool]) : i64 7)
@@ -7467,7 +7323,6 @@
   `(if (macro-helper ,condition)
      ,body
      0))
-(export (macro choose-helper))
 (module main)
 (import pkg.macros)
 (define (macro-helper [x : bool]) : i64 7)
@@ -7477,7 +7332,6 @@
 (define (compiler-typecheck-macro-qualified-local-alias-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module main)
 (import pkg.data)
 (defmacro (call-get) : i64 `(data.get))
@@ -7486,7 +7340,6 @@
 (define (compiler-typecheck-macro-qualified-local-full-path-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module main)
 (import pkg.data)
 (defmacro (call-get) : i64 `(pkg.data.get))
@@ -7496,8 +7349,6 @@
   "(module pkg.macros)
 (define (helper) : i64 41)
 (defmacro (call-helper) : i64 `(pkg.macros.helper))
-(export (value helper))
-(export (macro call-helper))
 (module main)
 (import pkg.macros)
 (define (main) : i64 (+ (macros.call-helper) 1))")
@@ -7506,8 +7357,6 @@
   "(module pkg.macros)
 (defmacro (helper [x : i64]) : i64 `(+ ,x 1))
 (defmacro (call-helper [x : i64]) : i64 `(pkg.macros.helper ,x))
-(export (macro helper))
-(export (macro call-helper))
 (module main)
 (import pkg.macros)
 (define (main) : i64 (macros.call-helper 41))")
@@ -7515,29 +7364,18 @@
 (define (compiler-typecheck-macro-qualified-imported-other-source) : String
   "(module pkg.data)
 (define (get) : i64 41)
-(export (value get))
 (module pkg.macros)
 (import pkg.data)
 (defmacro (call-data) : i64 `(data.get))
-(export (macro call-data))
 (module main)
 (import pkg.data)
 (import pkg.macros)
 (define (main) : i64 (+ (macros.call-data) 1))")
 
-(define (compiler-typecheck-macro-qualified-private-source) : String
-  "(module data)
-(define private : i64 1)
-(module main)
-(import data)
-(defmacro (call-private) : i64 `data.private)
-(define (main) : i64 (call-private))")
-
 (define (compiler-typecheck-macro-hygiene-imported-builtin-source) : String
   "(module macros)
 (defmacro (dyn-len [items : Expr]) : i64
   `(array-length ,items))
-(export (macro dyn-len))
 (module main)
 (import \"macros.tl\" module macros as m)
 (define (main [items : (Array i64)]) : i64
@@ -7559,8 +7397,6 @@
 (defmacro (with-temp [value : i64]) : i64
   `(let ([tmp : i64 ,value])
      (id-expr tmp)))
-(export (macro id-expr))
-(export (macro with-temp))
 (module main)
 (import m)
 (define (main) : i64 (m.with-temp 42))")
@@ -7649,13 +7485,6 @@
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-forward-qualified-export-source))
-    ;; Everything is exported by default: a macro that exists in the imported
-    ;; module now resolves even without a legacy export list. A name that does
-    ;; not exist at all is still a missing-export error.
-    (compiler-typecheck-ok? (compiler-typecheck-macro-private-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-missing-export-source)
-      "typecheck: missing macro export hidden/missing")
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-local-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-chain-source))
     (compiler-typecheck-error-ok?
@@ -7666,9 +7495,16 @@
       (compiler-typecheck-module-macro-import-alias-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-duplicate-source))
+    ;; Two generated modules sharing the `generated.module` identity that both
+    ;; declare `answer` are a duplicate declaration. There is no special
+    ;; import-time collision pre-check anymore; collisions surface through
+    ;; ordinary resolution/usage.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
-      "typecheck: generated import collision for value answer between generated identities :gen-a() and :gen-b(); use an explicit alias or full generated-module access")
+      "symbols: duplicate value declaration generated.module/answer")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-import-distinct-collision-source)
+      "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-missing-module-source)
       "typecheck: Module macro output must include a module declaration")
@@ -7765,7 +7601,6 @@
       (compiler-typecheck-macro-qualified-imported-own-macro-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-qualified-imported-other-source))
-    (compiler-typecheck-ok? (compiler-typecheck-macro-qualified-private-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-hygiene-imported-builtin-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-nested-source))
@@ -7838,11 +7673,7 @@
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
           (panic "typecheck: smoke score mismatch"))]
-      [(ErrCompilerTypecheck diag)
-        (begin
-          (panic (compiler-diagnostic-message diag))
-          ;; lint-allow: unreachable-code
-          unit)])
+      [(ErrCompilerTypecheck diag) (panic (compiler-diagnostic-message diag))])
     unit))
 
 ;; --- move checker fixtures (#1048) ------------------------------------------
@@ -9412,7 +9243,6 @@
   "(module kernels)
 (define (dot-scalar [x : i64]) : i64 x)
 (defdispatch dot (scalar dot-scalar))
-(export (value dot))
 (module app)
 (import \"kernels.tl\" module kernels :as k)
 (define (main [x : i64]) : i64 (k.dot x))")
@@ -9504,7 +9334,6 @@
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)
 (define (helper [x : i64]) : i64 x)
-(export (value helper))
 (module main)
 (import left)
 (define (main) : i64 (left.helper true))")
@@ -9951,22 +9780,13 @@
       (panic "typecheck: comptime reflection tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: layout query tests failed")
-        ;; lint-allow: unreachable-code
-        unit))
+      (panic "typecheck: layout query tests failed"))
     (if (compiler-typecheck-defmacro-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: defmacro tests failed")
-        ;; lint-allow: unreachable-code
-        unit))
+      (panic "typecheck: defmacro tests failed"))
     (if (compiler-typecheck-macro-expand-tests-ok?)
       unit
-      (begin
-        (panic "typecheck: macro expansion tests failed")
-        ;; lint-allow: unreachable-code
-        unit))))
+      (panic "typecheck: macro expansion tests failed"))))
 
 (define (compiler-typecheck-self-test) : i64
   (begin

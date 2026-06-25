@@ -23,16 +23,10 @@
 
 (import stdlib.env)
 (import stdlib.io)
-(import stdlib.list)
 (import stdlib.string)
 (import stdlib.vector)
 
 ;: Result type for directory-listing APIs.
-(defenum ResultIoStringList
-  (OkIoStringList list.StringList)
-  (ErrIoStringList io.IoError))
-
-;: Result type for vector-backed directory-listing APIs.
 (defenum ResultIoStringVec
   (OkIoStringVec vector.StringVec)
   (ErrIoStringVec io.IoError))
@@ -1417,17 +1411,13 @@
           (string.substring entries start (- n start)))
         items))))
 
-;: Split the runtime's newline-delimited directory payload into entry names.
-(define (fs-read-dir-split [entries : String]) : list.StringList
-  (list.string-list-from-vec (stdlib.fs.fs-read-dir-split-vec entries)))
-
 ;: Read one directory and return entry names as a `StringVec`.
 ;:
 ;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
 ;: Host directory order is preserved and not guaranteed to be stable; callers
 ;: that need stable ordering should sort the returned vector. The returned
 ;: vector storage and entry strings allocate in the active arena.
-(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+(define (try-read-dir [path : (& path str)]) : ResultIoStringVec
   (let
     [path-text : String (string.string-copy path)]
     (if (io.io-empty-path? path)
@@ -1439,17 +1429,10 @@
             (stdlib.fs.fs-read-dir-split-vec (stdlib.fs.fs-read-dir path-text)))
           (ErrIoStringVec (io.io-error-from-status path status)))))))
 
-;: Read one directory and return entry names as a `StringList`.
-;:
-;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
-;: Host directory order is preserved and not guaranteed to be stable; callers
-;: that need stable ordering should sort the returned list. The returned list
-;: spine and entry strings allocate in the active arena.
-(define (try-read-dir [path : (& path str)]) : ResultIoStringList
-  (match (try-read-dir-vec path)
-    [(OkIoStringVec entries)
-      (OkIoStringList (list.string-list-from-vec entries))]
-    [(ErrIoStringVec error) (ErrIoStringList error)]))
+;: Compatibility spelling for callers already migrated to the explicit vector
+;: name before `try-read-dir` became vector-backed.
+(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+  (try-read-dir path))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
@@ -1751,15 +1734,6 @@
 
 (cfg
   test
-  (define (fs-test-expect-ok-string-list
-    [result : ResultIoStringList]
-    [message : String]) : list.StringList
-    (match result
-      [(OkIoStringList value) value]
-      [(ErrIoStringList error) (io.panic message)])))
-
-(cfg
-  test
   (define (fs-test-expect-ok-string-vec
     [result : ResultIoStringVec]
     [message : String]) : vector.StringVec
@@ -1769,39 +1743,30 @@
 
 (cfg
   test
-  (define (fs-test-assert-unsupported-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-not-found-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-not-found-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-invalid-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-invalid-string-list
-    [result : ResultIoStringList]
+  (define (fs-test-assert-error-string-vec
+    [result : ResultIoStringVec]
     [message : String]) : unit
     (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList error) unit])))
-
-(cfg
-  test
-  (define (fs-test-assert-error-string-list
-    [result : ResultIoStringList]
-    [message : String]) : unit
-    (match result
-      [(OkIoStringList _) (io.panic message)]
-      [(ErrIoStringList _) unit])))
+      [(OkIoStringVec _) (io.panic message)]
+      [(ErrIoStringVec _) unit])))
 
 (cfg
   test
@@ -1917,7 +1882,7 @@
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringList
+  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringVec
     (stdlib.fs.try-read-dir (& path))))
 
 (cfg
@@ -2343,8 +2308,8 @@
           (fs-api-test-try-mkdir child-dir)
           "read-dir child dir: ")
         (let
-          [entries : list.StringList
-            (fs-test-expect-ok-string-list
+          [entries : vector.StringVec
+            (fs-test-expect-ok-string-vec
               (fs-api-test-try-read-dir root)
               "read dir: ")]
           [entries-vec : vector.StringVec
@@ -2353,19 +2318,19 @@
               "read dir vec: ")]
           (begin
             (fs-test-assert-true
-              (list.string-list-contains? entries "alpha.txt")
+              (vector.string-vec-contains? entries "alpha.txt")
               "read-dir includes first file name")
             (fs-test-assert-true
-              (list.string-list-contains? entries "beta data.txt")
+              (vector.string-vec-contains? entries "beta data.txt")
               "read-dir includes second file name")
             (fs-test-assert-true
-              (list.string-list-contains? entries "child-dir")
+              (vector.string-vec-contains? entries "child-dir")
               "read-dir includes subdirectory name")
             (fs-test-assert-false
-              (list.string-list-contains? entries ".")
+              (vector.string-vec-contains? entries ".")
               "read-dir filters dot")
             (fs-test-assert-false
-              (list.string-list-contains? entries "..")
+              (vector.string-vec-contains? entries "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
               (vector.string-vec-contains? entries-vec "alpha.txt")
@@ -2382,13 +2347,13 @@
             (fs-test-assert-false
               (vector.string-vec-contains? entries-vec "..")
               "read-dir vec filters dotdot")
-            (fs-test-assert-not-found-string-list
+            (fs-test-assert-not-found-string-vec
               (fs-api-test-try-read-dir missing)
               "read-dir missing path reports not found")
-            (fs-test-assert-error-string-list
+            (fs-test-assert-error-string-vec
               (fs-api-test-try-read-dir file-a)
               "read-dir file path reports an IoError")
-            (fs-test-assert-invalid-string-list
+            (fs-test-assert-invalid-string-vec
               (fs-api-test-try-read-dir "")
               "read-dir empty path invalid")
             (fs-test-assert-ok-unit
@@ -2802,133 +2767,3 @@
                 (fs-api-test-try-remove-dir dir-d)
                 "cleanup read-dir temp dir: ")
               42)))))))
-
-(cfg test (export (value fs-test-api-main)))
-
-(export
-  (value fs-linux-syscall-mkdir)
-  (value fs-linux-syscall-unlink)
-  (value fs-linux-syscall-rmdir)
-  (value fs-linux-syscall-rename)
-  (value fs-linux-syscall-getpid)
-  (value fs-linux-syscall-getcwd)
-  (value fs-linux-syscall-openat)
-  (value fs-linux-syscall-getdents64)
-  (value fs-windows-get-current-process-id)
-  (value fs-windows-get-current-directory)
-  (value fs-status-from-result)
-  (value fs-mkdir-status-owned)
-  (value fs-mkdir-status)
-  (value fs-remove-file-status-owned)
-  (value fs-remove-file-status)
-  (value fs-remove-dir-status-owned)
-  (value fs-remove-dir-status)
-  (value fs-rename-status-owned)
-  (value fs-rename-status)
-  (value fs-process-id)
-  (value fs-linux-at-fdcwd)
-  (value fs-linux-open-directory)
-  (value fs-read-dir-buffer-size)
-  (value fs-windows-find-data-size)
-  (value fs-windows-find-data-name-offset)
-  (value fs-c-string-byte)
-  (value fs-read-dir-dot-entry?)
-  (value fs-read-dir-append-entry!)
-  (value fs-read-dir-bytes-string)
-  (value fs-read-dir-status)
-  (value fs-read-dir)
-  (value fs-file-kind-regular-code)
-  (value fs-file-kind-directory-code)
-  (value fs-file-kind-other-code)
-  (value fs-windows-file-attribute-data-size)
-  (value fs-windows-file-attribute-directory)
-  (value fs-windows-file-attributes-offset)
-  (value fs-windows-file-size-high-offset)
-  (value fs-windows-file-size-low-offset)
-  (value fs-metadata-read-u32-at)
-  (value fs-metadata-read-i64-at)
-  (value fs-file-metadata-probe)
-  (value fs-file-kind-status)
-  (value fs-file-size-status)
-  (value fs-file-size)
-  (value fs-status-range)
-  (value fs-current-dir-initial-capacity)
-  (value fs-current-dir-max-capacity)
-  (value fs-current-dir-next-capacity)
-  (value fs-current-dir-status-loop)
-  (value fs-current-dir-loop)
-  (value fs-current-dir-status)
-  (value fs-current-dir)
-  (value fs-status-already-exists)
-  (value fs-temp-attempt-limit)
-  (value fs-windows?)
-  (value fs-path-separator)
-  (value fs-path-separator-char)
-  (value fs-path-separator?)
-  (value fs-path-starts-separator?)
-  (value fs-path-ends-separator?)
-  (value fs-path-drive-qualified?)
-  (value fs-path-absolute?)
-  (value fs-path-segment-vec-render-from)
-  (value fs-path-segment-vec-render)
-  (value fs-path-normalize-segment)
-  (value fs-path-normalize)
-  (value fs-path-normalized-escapes?)
-  (value fs-path-safe-relative?)
-  (value fs-path-join)
-  (value fs-path-join-owned-pair)
-  (value fs-last-separator-index)
-  (value fs-dirname)
-  (value fs-basename)
-  (value fs-extension)
-  (value fs-status-result)
-  (value fs-file-kind-status-result)
-  (value try-mkdir)
-  (value try-mkdir-if-missing)
-  (value try-remove-file)
-  (value try-remove-dir)
-  (value try-rename)
-  (value try-file-kind)
-  (value fs-file-kind-regular?)
-  (value fs-file-kind-directory?)
-  (value fs-file-kind-other?)
-  (value fs-metadata-kind)
-  (value fs-metadata-size)
-  (value try-file-metadata)
-  (value fs-read-dir-split-vec)
-  (value fs-read-dir-split)
-  (value try-read-dir-vec)
-  (value try-read-dir)
-  (value try-remove-file-if-exists)
-  (value try-remove-dir-if-exists)
-  (value fs-temp-root)
-  (value try-current-dir)
-  (value fs-temp-name)
-  (value fs-create-temp-dir-loop)
-  (value try-create-temp-dir)
-  (type ResultIoStringList)
-  (type ResultIoStringVec)
-  (type FsFileMetadataProbe)
-  (type FsFileKind)
-  (type FsMetadata)
-  (type ResultFsFileKind)
-  (type ResultFsMetadata)
-  (constructor FsFileMetadataProbe)
-  (constructor FsMetadata)
-  (field FsFileMetadataProbe status)
-  (field FsFileMetadataProbe kind)
-  (field FsFileMetadataProbe size)
-  (field FsMetadata kind)
-  (field FsMetadata size)
-  (variant OkIoStringList)
-  (variant ErrIoStringList)
-  (variant OkIoStringVec)
-  (variant ErrIoStringVec)
-  (variant FsFileRegular)
-  (variant FsFileDirectory)
-  (variant FsFileOther)
-  (variant OkFsFileKind)
-  (variant ErrFsFileKind)
-  (variant OkFsMetadata)
-  (variant ErrFsMetadata)
-  (macro fs-path-join-many))

@@ -559,15 +559,15 @@
 (define legacy : i64 1)")
 
 (define (doc-extract-generated-smoke-source) : String
-  ";: generated option doc
-(comptime-decl (:generated option-family Option_String \"String\")
-  (defenum Option_String
-    (None_String)
-    (Some_String String)))
+  ";: generated box doc
+(comptime-decl (:generated sample-family Box_String \"String\")
+  (defstruct Box_String
+    (value String)))
 
 ;: generated helper doc
-(comptime-decl (:generated option-family option-string-some? \"String\")
-  (define (option-string-some? [value : Option_String]) : bool true))")
+(comptime-decl (:generated sample-family box-string-value \"String\")
+  (define (box-string-value [value : Box_String]) : String
+    (struct-get value value)))")
 
 (define (doc-item-ok?
   [item : DocItem]
@@ -665,16 +665,16 @@
                   (and
                     (doc-item-ok?
                       option-item
-                      4
-                      "Option_String"
-                      "generated option doc"
-                      "(:generated option-family Option_String")
+                      5
+                      "Box_String"
+                      "generated box doc"
+                      "(:generated sample-family Box_String")
                     (doc-item-ok?
                       helper-item
                       2
-                      "option-string-some?"
+                      "box-string-value"
                       "generated helper doc"
-                      "(:generated option-family option-string-some?"))]
+                      "(:generated sample-family box-string-value"))]
                 [_ false])]
             [_ false])]
         [_ false])]))
@@ -687,49 +687,25 @@
           (string-eq
             module-doc
             "Module title\nsecond module line\nlater module")
-          (return
-            (begin
-              (panic "doc-extract: module doc smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+          (return (panic "doc-extract: module doc smoke mismatch")))
         (unless
           (= (doc-item-list-count items) 6)
-          (return
-            (begin
-              (panic "doc-extract: item count smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+          (return (panic "doc-extract: item count smoke mismatch")))
         (unless
           (doc-extract-smoke-items-ok? items)
-          (return
-            (begin
-              (panic "doc-extract: item doc smoke mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+          (return (panic "doc-extract: item doc smoke mismatch")))
         (unless
           (doc-extract-generated-smoke-ok?)
-          (return
-            (begin
-              (panic "doc-extract: generated item mismatch")
-              ;; lint-allow: unreachable-code
-              0)))
+          (return (panic "doc-extract: generated item mismatch")))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)
             (begin
               (unless
                 (string-eq legacy-module "Legacy module")
-                (return
-                  (begin
-                    (panic "doc-extract: legacy module doc mismatch")
-                    ;; lint-allow: unreachable-code
-                    0)))
+                (return (panic "doc-extract: legacy module doc mismatch")))
               (unless
                 (= (doc-item-list-count legacy-items) 1)
-                (return
-                  (begin
-                    (panic "doc-extract: legacy item count mismatch")
-                    ;; lint-allow: unreachable-code
-                    0)))
+                (return (panic "doc-extract: legacy item count mismatch")))
               (match legacy-items
                 [(DocItemCons legacy legacy-rest)
                   (match (box-get legacy-rest)
@@ -742,11 +718,7 @@
                             "legacy"
                             "legacy item"
                             "(define legacy : i64 1)")
-                          (return
-                            (begin
-                              (panic "doc-extract: legacy item mismatch")
-                              ;; lint-allow: unreachable-code
-                              0)))
+                          (return (panic "doc-extract: legacy item mismatch")))
                         42)]
                     [_ 0])]
                 [_ 0]))]))]))

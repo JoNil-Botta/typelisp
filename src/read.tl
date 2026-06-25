@@ -518,20 +518,12 @@
 (define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-form-result toks cur)
     [(OkSexpr form) form]
-    [(ErrSexpr message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        SNil)]))
+    [(ErrSexpr message) (panic message)]))
 
 (define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-list-result toks cur)
     [(OkSexpr list) list]
-    [(ErrSexpr message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        SNil)]))
+    [(ErrSexpr message) (panic message)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
@@ -554,17 +546,9 @@
 (define (read-spanned [toks : (Array SpannedToken)]) : SpannedSexpr
   (match (read-spanned-result toks)
     [(OkSpannedSexpr form) form]
-    [(ErrSpannedSexpr err)
-      (begin
-        (panic (source-error-message err))
-        ;; lint-allow: unreachable-code
-        (SpSNil (source-error-span err)))]))
+    [(ErrSpannedSexpr err) (panic (source-error-message err))]))
 
 (define (read [toks : (Array Token)]) : Sexpr
   (match (read-result toks)
     [(OkSexpr form) form]
-    [(ErrSexpr message)
-      (begin
-        (panic message)
-        ;; lint-allow: unreachable-code
-        SNil)]))
+    [(ErrSexpr message) (panic message)]))

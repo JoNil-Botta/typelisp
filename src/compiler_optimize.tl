@@ -12101,6 +12101,26 @@
 (defenum OptLicmBlocksResult
   (OptLicmBlocksResult CompilerIrBlockList CompilerIrInstrList I64I64Map bool))
 
+(defstruct OptLicmStoreSummary
+  (call-or-unknown? bool)
+  (header-or-unknown-store? bool)
+  (element-only-store? bool))
+
+(defenum OptLicmPtrKind
+  (OptLicmPtrUnknown)
+  (OptLicmHeaderSlot i64)
+  (OptLicmDataSlot i64)
+  (OptLicmDataBuffer i64)
+  (OptLicmDataElement i64))
+
+(defenum OptLicmPtrEnv
+  (OptLicmPtrNil)
+  (OptLicmPtrCons i64 OptLicmPtrKind (Box OptLicmPtrEnv)))
+
+(defstruct OptLicmStoreState
+  (summary OptLicmStoreSummary)
+  (ptrs OptLicmPtrEnv))
+
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
 
@@ -12173,39 +12193,398 @@
     (opt-licm-value-invariant? loop-defs hoisted a)
     (opt-licm-value-invariant? loop-defs hoisted b)))
 
-(define (opt-licm-memory-blocker-instr? [instr : CompilerIrInstr]) : bool
-  (opt-alias-instr-clears-all? instr))
+(define (opt-licm-store-summary-empty) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false false))
 
-(define (opt-licm-memory-safe-instr-seq-from?
+(define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
+  (OptLicmStoreSummary true false false))
+
+(define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
+  (OptLicmStoreSummary false true false))
+
+(define (opt-licm-store-summary-element-only-store) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false true))
+
+(define (opt-licm-store-summary-merge
+  [left : OptLicmStoreSummary]
+  [right : OptLicmStoreSummary]) : OptLicmStoreSummary
+  (OptLicmStoreSummary
+    (or (struct-get left call-or-unknown?) (struct-get right call-or-unknown?))
+    (or
+      (struct-get left header-or-unknown-store?)
+      (struct-get right header-or-unknown-store?))
+    (or
+      (struct-get left element-only-store?)
+      (struct-get right element-only-store?))))
+
+(define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
+  (and
+    (not (struct-get summary call-or-unknown?))
+    (not (struct-get summary header-or-unknown-store?))
+    (not (struct-get summary element-only-store?))))
+
+(define (opt-licm-store-summary-header-load-safe?
+  [summary : OptLicmStoreSummary]) : bool
+  (and
+    (not (struct-get summary call-or-unknown?))
+    (not (struct-get summary header-or-unknown-store?))))
+
+(define (opt-licm-store-summary-from-effect [effect : CompilerIrEffect]) : OptLicmStoreSummary
+  (match effect
+    [(IrEffectMemoryWrite) (opt-licm-store-summary-header-or-unknown-store)]
+    [(IrEffectCpuProbe) (opt-licm-store-summary-call-or-unknown)]
+    [(IrEffectUnknown) (opt-licm-store-summary-call-or-unknown)]
+    [_ (opt-licm-store-summary-empty)]))
+
+(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
+  (match env
+    [(OptLicmPtrNil) (OptLicmPtrNil)]
+    [(OptLicmPtrCons id kind rest)
+      (let
+        [tail : OptLicmPtrEnv (opt-licm-ptr-unbind (box-get rest) var)]
+        (if (= id var)
+          tail
+          (OptLicmPtrCons id kind (box tail))))]))
+
+(define (opt-licm-ptr-bind
+  [env : OptLicmPtrEnv]
+  [var : i64]
+  [kind : OptLicmPtrKind]) : OptLicmPtrEnv
+  (match kind
+    [(OptLicmPtrUnknown) (opt-licm-ptr-unbind env var)]
+    [_ (OptLicmPtrCons var kind (box (opt-licm-ptr-unbind env var)))]))
+
+(define (opt-licm-ptr-lookup [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrKind
+  (match env
+    [(OptLicmPtrNil) (OptLicmPtrUnknown)]
+    [(OptLicmPtrCons id kind rest)
+      (if (= id var)
+        kind
+        (opt-licm-ptr-lookup (box-get rest) var))]))
+
+(define (opt-licm-type-env-bind
+  [types : OptSsaVarTypes]
+  [var : i64]
+  [ty : AstType]) : OptSsaVarTypes
+  (OptSsaVarTypesCons var ty (box types)))
+
+(define (opt-licm-type-env-add-param
+  [types : OptSsaVarTypes]
+  [param : CompilerIrParam]) : OptSsaVarTypes
+  (match param
+    [(IrParam _ ty var) (opt-licm-type-env-bind types var ty)]))
+
+(define (opt-licm-type-env-add-params
+  [params : CompilerIrParamList]
+  [types : OptSsaVarTypes]) : OptSsaVarTypes
+  (match params
+    [(IrParamNil) types]
+    [(IrParamCons param rest)
+      (opt-licm-type-env-add-params
+        (box-get rest)
+        (opt-licm-type-env-add-param types param))]))
+
+(define (opt-licm-type-env-add-instr
+  [types : OptSsaVarTypes]
+  [instr : CompilerIrInstr]) : OptSsaVarTypes
+  (match instr
+    [(IrInstrMov dst _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrLoad dst _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrCall dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrCallIndirect dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrCallIndirectC dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrPhi dst _ ty) (opt-licm-type-env-bind types dst ty)]
+    [_ types]))
+
+(define (opt-licm-type-env-add-instr-seq-from
   [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
+  [index : i64]
+  [types : OptSsaVarTypes]) : OptSsaVarTypes
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    true
-    (if (opt-licm-memory-blocker-instr?
-      (compiler-ir-instr-seq-ref instrs index))
-      false
-      (opt-licm-memory-safe-instr-seq-from? instrs (+ index 1)))))
+    types
+    (opt-licm-type-env-add-instr-seq-from
+      instrs
+      (+ index 1)
+      (opt-licm-type-env-add-instr
+        types
+        (compiler-ir-instr-seq-ref instrs index)))))
 
-(define (opt-licm-memory-safe-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
-  (opt-licm-memory-safe-instr-seq-from? instrs 0))
-
-(define (opt-licm-memory-safe-blocks? [blocks : CompilerIrBlockList]) : bool
+(define (opt-licm-type-env-add-blocks
+  [blocks : CompilerIrBlockList]
+  [types : OptSsaVarTypes]) : OptSsaVarTypes
   (match blocks
-    [(IrBlockNil) true]
+    [(IrBlockNil) types]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (and
-            (opt-licm-memory-safe-instr-seq? instrs)
-            (opt-licm-memory-safe-blocks? (box-get rest)))])]
+          (opt-licm-type-env-add-blocks
+            (box-get rest)
+            (opt-licm-type-env-add-instr-seq-from instrs 0 types))])]
     [(IrBlockArray seq)
-      (opt-licm-memory-safe-blocks? (compiler-ir-block-seq-to-list seq))]))
+      (opt-licm-type-env-add-blocks (compiler-ir-block-seq-to-list seq) types)]))
+
+(define (opt-licm-type-env-from-function
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptSsaVarTypes
+  (opt-licm-type-env-add-blocks
+    blocks
+    (opt-licm-type-env-add-params params (OptSsaVarTypesNil))))
+
+(define (opt-licm-array-header-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyDynArray _) true]
+    [(AstTyString) true]
+    [(AstTyStr) true]
+    [(AstTyBytes) true]
+    [_ false]))
+
+(define (opt-licm-array-header-var? [types : OptSsaVarTypes] [var : i64]) : bool
+  (match (opt-ssa-var-type-lookup types var)
+    [(OptSomeAstType ty) (opt-licm-array-header-type? ty)]
+    [(OptNoAstType) false]))
+
+(define (opt-licm-data-slot? [offset : CompilerIrValue] [ty : AstType]) : bool
+  (match offset
+    [(IrValueI64 value) (and (= value 0) (opt-type-eq ty (AstTyU8)))]
+    [_ false]))
+
+(define (opt-licm-header-slot-gep?
+  [types : OptSsaVarTypes]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match base
+    [(IrValueVar base-var)
+      (and
+        (opt-licm-array-header-var? types base-var)
+        (or
+          (opt-bounds-object-length-slot? offset ty)
+          (opt-licm-data-slot? offset ty)))]
+    [_ false]))
+
+(define (opt-licm-header-slot-ptr-kind? [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmHeaderSlot _) true]
+    [(OptLicmDataSlot _) true]
+    [_ false]))
+
+(define (opt-licm-header-slot-source?
+  [ptrs : OptLicmPtrEnv]
+  [src : CompilerIrValue]) : bool
+  (match src
+    [(IrValueVar ptr-var)
+      (opt-licm-header-slot-ptr-kind? (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
+(define (opt-licm-gep-kind
+  [types : OptSsaVarTypes]
+  [ptrs : OptLicmPtrEnv]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [ty : AstType]) : OptLicmPtrKind
+  (match base
+    [(IrValueVar base-var)
+      (let
+        [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs base-var)]
+        (match base-kind
+          [(OptLicmDataBuffer object) (OptLicmDataElement object)]
+          [_
+            (if (opt-licm-array-header-var? types base-var)
+              (if (opt-bounds-object-length-slot? offset ty)
+                (OptLicmHeaderSlot base-var)
+                (if (opt-licm-data-slot? offset ty)
+                  (OptLicmDataSlot base-var)
+                  (OptLicmPtrUnknown)))
+              (OptLicmPtrUnknown))]))]
+    [_ (OptLicmPtrUnknown)]))
+
+(define (opt-licm-store-state-empty) : OptLicmStoreState
+  (OptLicmStoreState (opt-licm-store-summary-empty) (OptLicmPtrNil)))
+
+(define (opt-licm-store-state-add-summary
+  [state : OptLicmStoreState]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreState
+  (OptLicmStoreState
+    (opt-licm-store-summary-merge (struct-get state summary) summary)
+    (struct-get state ptrs)))
+
+(define (opt-licm-store-state-bind-ptr
+  [state : OptLicmStoreState]
+  [var : i64]
+  [kind : OptLicmPtrKind]) : OptLicmStoreState
+  (OptLicmStoreState
+    (struct-get state summary)
+    (opt-licm-ptr-bind (struct-get state ptrs) var kind)))
+
+(define (opt-licm-store-state-invalidate-def
+  [state : OptLicmStoreState]
+  [var : i64]) : OptLicmStoreState
+  (OptLicmStoreState
+    (struct-get state summary)
+    (opt-licm-ptr-unbind (struct-get state ptrs) var)))
+
+(define (opt-licm-store-state-invalidate-instr
+  [state : OptLicmStoreState]
+  [instr : CompilerIrInstr]) : OptLicmStoreState
+  (match (opt-instr-def-var instr)
+    [(OptSomeI64 var) (opt-licm-store-state-invalidate-def state var)]
+    [(OptNoI64) state]))
+
+(define (opt-licm-store-summary-for-storeptr
+  [ptrs : OptLicmPtrEnv]
+  [ptr : CompilerIrValue]) : OptLicmStoreSummary
+  (match ptr
+    [(IrValueVar ptr-var)
+      (match (opt-licm-ptr-lookup ptrs ptr-var)
+        [(OptLicmDataBuffer _) (opt-licm-store-summary-element-only-store)]
+        [(OptLicmDataElement _) (opt-licm-store-summary-element-only-store)]
+        [_ (opt-licm-store-summary-header-or-unknown-store)])]
+    [_ (opt-licm-store-summary-header-or-unknown-store)]))
+
+(define (opt-licm-store-state-instr
+  [types : OptSsaVarTypes]
+  [state : OptLicmStoreState]
+  [instr : CompilerIrInstr]) : OptLicmStoreState
+  (let
+    [invalid : OptLicmStoreState
+      (opt-licm-store-state-invalidate-instr state instr)]
+    (match instr
+      [(IrInstrMov dst src _)
+        (match src
+          [(IrValueVar src-var)
+            (opt-licm-store-state-bind-ptr
+              invalid
+              dst
+              (opt-licm-ptr-lookup (struct-get invalid ptrs) src-var))]
+          [_ invalid])]
+      [(IrInstrGep dst base offset ty)
+        (opt-licm-store-state-bind-ptr
+          invalid
+          dst
+          (opt-licm-gep-kind types (struct-get invalid ptrs) base offset ty))]
+      [(IrInstrLoad dst src _)
+        (match src
+          [(IrValueVar ptr-var)
+            (match (opt-licm-ptr-lookup (struct-get invalid ptrs) ptr-var)
+              [(OptLicmDataSlot object)
+                (opt-licm-store-state-bind-ptr
+                  invalid
+                  dst
+                  (OptLicmDataBuffer object))]
+              [_ invalid])]
+          [_ invalid])]
+      [(IrInstrAlloc _ _) invalid]
+      [(IrInstrCall _ _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-call-or-unknown))]
+      [(IrInstrCallIndirect _ _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-call-or-unknown))]
+      [(IrInstrCallIndirectC _ _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-call-or-unknown))]
+      [(IrInstrCallCAbiStoreResult payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
+            (opt-licm-store-state-add-summary
+              invalid
+              (opt-licm-store-summary-call-or-unknown))])]
+      [(IrInstrCallIndirectCAbiStoreResult payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+            (opt-licm-store-state-add-summary
+              invalid
+              (opt-licm-store-summary-call-or-unknown))])]
+      [(IrInstrTailCall _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-call-or-unknown))]
+      [(IrInstrTailCallIndirect _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-call-or-unknown))]
+      [(IrInstrStorePtr ptr _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-for-storeptr (struct-get invalid ptrs) ptr))]
+      [(IrInstrCopyBytes _ _ _)
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-header-or-unknown-store))]
+      [_
+        (opt-licm-store-state-add-summary
+          invalid
+          (opt-licm-store-summary-from-effect (compiler-ir-instr-effect instr)))])))
+
+(define (opt-licm-store-summary-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
+  (struct-get
+    (opt-licm-store-state-instr
+      (OptSsaVarTypesNil)
+      (opt-licm-store-state-empty)
+      instr)
+    summary))
+
+(define (opt-licm-store-state-instr-seq-from
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [state : OptLicmStoreState]) : OptLicmStoreState
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    state
+    (opt-licm-store-state-instr-seq-from
+      types
+      instrs
+      (+ index 1)
+      (opt-licm-store-state-instr
+        types
+        state
+        (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-licm-store-state-instr-seq
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [state : OptLicmStoreState]) : OptLicmStoreState
+  (opt-licm-store-state-instr-seq-from types instrs 0 state))
+
+(define (opt-licm-store-state-blocks
+  [types : OptSsaVarTypes]
+  [blocks : CompilerIrBlockList]
+  [state : OptLicmStoreState]) : OptLicmStoreState
+  (match blocks
+    [(IrBlockNil) state]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-licm-store-state-blocks
+            types
+            (box-get rest)
+            (opt-licm-store-state-instr-seq types instrs state))])]
+    [(IrBlockArray seq)
+      (opt-licm-store-state-blocks
+        types
+        (compiler-ir-block-seq-to-list seq)
+        state)]))
+
+(define (opt-licm-store-summary-blocks
+  [blocks : CompilerIrBlockList]
+  [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
+  (struct-get
+    (opt-licm-store-state-blocks
+      (OptSsaVarTypesNil)
+      blocks
+      (OptLicmStoreState summary (OptLicmPtrNil)))
+    summary))
 
 (define (opt-licm-candidate?
   [loop-defs : I64I64Map]
   [hoisted : I64I64Map]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [types : OptSsaVarTypes]
+  [store-summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrBinOp _ op lhs rhs _)
@@ -12213,17 +12592,25 @@
         (not (opt-binop-traps? op))
         (opt-licm-values-invariant? loop-defs hoisted lhs rhs))]
     [(IrInstrUnOp _ _ src _) (opt-licm-value-invariant? loop-defs hoisted src)]
-    [(IrInstrGep dst base offset _)
+    [(IrInstrGep dst base offset ty)
       (and
-        memory-safe?
         (opt-gvn-stable-var? sources dst)
-        (opt-licm-values-invariant? loop-defs hoisted base offset))]
+        (opt-licm-values-invariant? loop-defs hoisted base offset)
+        (or
+          (opt-licm-store-summary-clean? store-summary)
+          (and
+            (opt-licm-store-summary-header-load-safe? store-summary)
+            (opt-licm-header-slot-gep? types base offset ty))))]
     [(IrInstrLoad dst src _)
       (and
-        memory-safe?
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
-        (opt-licm-value-invariant? loop-defs hoisted src))]
+        (opt-licm-value-invariant? loop-defs hoisted src)
+        (or
+          (opt-licm-store-summary-clean? store-summary)
+          (and
+            (opt-licm-store-summary-header-load-safe? store-summary)
+            (opt-licm-header-slot-source? ptrs src))))]
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
@@ -12237,17 +12624,28 @@
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrList]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [types : OptSsaVarTypes]
+  [store-summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (match instrs
     [(IrInstrNil) (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)]
     [(IrInstrCons instr rest)
-      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
+      (if (opt-licm-candidate?
+        loop-defs
+        hoisted
+        sources
+        types
+        store-summary
+        ptrs
+        instr)
         (match (opt-licm-filter-instrs
           loop-defs
           (box-get rest)
           sources
-          memory-safe?
+          types
+          store-summary
+          ptrs
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -12259,7 +12657,9 @@
           loop-defs
           (box-get rest)
           sources
-          memory-safe?
+          types
+          store-summary
+          ptrs
           hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
@@ -12273,19 +12673,30 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [types : OptSsaVarTypes]
+  [store-summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult (IrInstrNil) (IrInstrNil) hoisted false)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (if (opt-licm-candidate? loop-defs hoisted sources memory-safe? instr)
+      (if (opt-licm-candidate?
+        loop-defs
+        hoisted
+        sources
+        types
+        store-summary
+        ptrs
+        instr)
         (match (opt-licm-filter-instr-seq-from
           loop-defs
           instrs
           (+ index 1)
           sources
-          memory-safe?
+          types
+          store-summary
+          ptrs
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult kept moved next-hoisted _)
             (OptLicmInstrsResult
@@ -12298,7 +12709,9 @@
           instrs
           (+ index 1)
           sources
-          memory-safe?
+          types
+          store-summary
+          ptrs
           hoisted)
           [(OptLicmInstrsResult kept moved next-hoisted changed)
             (OptLicmInstrsResult
@@ -12311,21 +12724,27 @@
   [loop-defs : I64I64Map]
   [instrs : CompilerIrInstrSeq]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [types : OptSsaVarTypes]
+  [store-summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
   [hoisted : I64I64Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     loop-defs
     instrs
     0
     sources
-    memory-safe?
+    types
+    store-summary
+    ptrs
     hoisted))
 
 (define (opt-licm-filter-body-blocks
   [loop-defs : I64I64Map]
   [blocks : CompilerIrBlockList]
   [sources : I64I64Map]
-  [memory-safe? : bool]
+  [types : OptSsaVarTypes]
+  [store-summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
   [hoisted : I64I64Map]) : OptLicmBlocksResult
   (match blocks
     [(IrBlockNil) (OptLicmBlocksResult (IrBlockNil) (IrInstrNil) hoisted false)]
@@ -12336,14 +12755,18 @@
             loop-defs
             instrs
             sources
-            memory-safe?
+            types
+            store-summary
+            ptrs
             hoisted)
             [(OptLicmInstrsResult kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
                 loop-defs
                 (box-get rest)
                 sources
-                memory-safe?
+                types
+                store-summary
+                ptrs
                 next-hoisted)
                 [(OptLicmBlocksResult
                     rest-blocks
@@ -12362,7 +12785,9 @@
         loop-defs
         (compiler-ir-block-seq-to-list seq)
         sources
-        memory-safe?
+        types
+        store-summary
+        ptrs
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -12461,6 +12886,7 @@
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : CompilerIrBlockList
   (match (opt-natural-loop-preheader loop)
@@ -12473,12 +12899,20 @@
           (opt-licm-collect-defs-blocks
             body-blocks
             (i64-i64-map-with-capacity map-capacity))]
-        [memory-safe? : bool (opt-licm-memory-safe-blocks? body-blocks)]
+        [store-state : OptLicmStoreState
+          (opt-licm-store-state-blocks
+            types
+            body-blocks
+            (opt-licm-store-state-empty))]
+        [store-summary : OptLicmStoreSummary (struct-get store-state summary)]
+        [ptrs : OptLicmPtrEnv (struct-get store-state ptrs)]
         (match (opt-licm-filter-body-blocks
           loop-defs
           body-blocks
           sources
-          memory-safe?
+          types
+          store-summary
+          ptrs
           (i64-i64-map-with-capacity map-capacity))
           [(OptLicmBlocksResult filtered-body hoisted _ changed)
             (if changed
@@ -12492,6 +12926,7 @@
 (define (opt-licm-apply-loops
   [index : OptCfgIndex]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match loops
@@ -12500,16 +12935,19 @@
       (opt-licm-apply-loops
         index
         sources
+        types
         (box-get rest)
-        (opt-licm-apply-loop index sources blocks loop))]))
+        (opt-licm-apply-loop index sources types blocks loop))]))
 
 (define (opt-licm-blocks-with-context
   [context : OptCfgContext]
   [sources : I64I64Map]
+  [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-apply-loops
     (struct-get context index)
     sources
+    types
     (opt-cfg-natural-loops-with-context blocks context)
     blocks))
 
@@ -12517,6 +12955,7 @@
   (opt-licm-blocks-with-context
     (opt-cfg-context-build blocks)
     (opt-gvn-sources-blocks blocks (i64-i64-map-with-capacity 64))
+    (OptSsaVarTypesNil)
     blocks))
 
 (define (opt-licm-function-with-context-result
@@ -12532,8 +12971,10 @@
               (opt-gvn-sources-blocks
                 blocks
                 (opt-gvn-sources-params params (i64-i64-map-with-capacity 64)))]
+            [types : OptSsaVarTypes
+              (opt-licm-type-env-from-function params blocks)]
             [hoisted-blocks : CompilerIrBlockList
-              (opt-licm-blocks-with-context context sources blocks)]
+              (opt-licm-blocks-with-context context sources types blocks)]
             [hoisted : CompilerIrFunction
               (IrFunction name params ret-ty frame hoisted-blocks)]
             ;; LICM may hoist into a synthesized preheader edge, so build one
@@ -19176,7 +19617,7 @@
                       [_t-preheaders : i64
                         (cfg compile-profile (profile-now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
-                      ;; the preheaders -> licm -> induction -> global_gvn chain.
+                      ;; the preheaders -> scratch_reset -> licm -> induction -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
                       ;; so the context the pass builds for its post-pass verify
                       ;; is exactly what the next pass needs for its entry verify
@@ -19218,13 +19659,35 @@
                             name
                             _t-preheaders)
                           unit)]
+                      [_t-scratch-reset : i64
+                        (cfg compile-profile (profile-now-ms) 0)]
+                      [scratch-reset-result : OptFunctionCtxResult
+                        (if run-heavy?
+                          (opt-scratch-reset-function-with-context-result
+                            preheaders-context
+                            preheaders)
+                          preheaders-result)]
+                      [scratch-reset : CompilerIrFunction
+                        (match scratch-reset-result
+                          [(OptFunctionCtxResult f _) f])]
+                      [scratch-reset-context : OptCfgContext
+                        (match scratch-reset-result
+                          [(OptFunctionCtxResult _ ctx) ctx])]
+                      [_p-scratch-reset : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "scratch_reset"
+                            name
+                            _t-scratch-reset)
+                          unit)]
                       [_t-licm : i64 (cfg compile-profile (profile-now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-licm-function-with-context-result
-                            preheaders-context
-                            preheaders)
-                          preheaders-result)]
+                            scratch-reset-context
+                            scratch-reset)
+                          scratch-reset-result)]
                       [licm : CompilerIrFunction
                         (match licm-result
                           [(OptFunctionCtxResult f _) f])]
@@ -20550,6 +21013,9 @@
 (define (opt-inline-max-body) : i64
   8)
 
+(define (opt-inline-bounds-leaf-max-body) : i64
+  48)
+
 (define (opt-inline-cost-block-weight) : i64
   6)
 
@@ -20674,21 +21140,28 @@
     0
     (- (compiler-ir-instr-seq-count instrs) 1)))
 
+(define (opt-inline-single-block-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
+  (let
+    [n : i64 (compiler-ir-instr-seq-count seq)]
+    (if (< n 1)
+      false
+      (if (> (- n 1) (opt-inline-max-body))
+        false
+        (opt-inline-instr-seq-ok? seq np)))))
+
 (define (opt-inline-single-block-ok? [blocks : CompilerIrBlockList] [np : i64]) : bool
   (match blocks
     [(IrBlockCons block rest)
       (match (box-get rest)
         [(IrBlockNil)
           (match block
-            [(IrBlock _ seq)
-              (let
-                [n : i64 (compiler-ir-instr-seq-count seq)]
-                (if (< n 1)
-                  false
-                  (if (> (- n 1) (opt-inline-max-body))
-                    false
-                    (opt-inline-instr-seq-ok? seq np))))])]
+            [(IrBlock _ seq) (opt-inline-single-block-seq-ok? seq np)])]
         [_ false])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs) (opt-inline-single-block-seq-ok? instrs np)])
+        false)]
     [_ false]))
 
 (define (opt-inline-single-block-cost-instrs [blocks : CompilerIrBlockList]) : i64
@@ -20696,7 +21169,79 @@
     [(IrBlockCons block _)
       (match block
         [(IrBlock _ seq) (- (compiler-ir-instr-seq-count seq) 1)])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs) (- (compiler-ir-instr-seq-count instrs) 1)])
+        0)]
     [_ 0]))
+
+(define (opt-inline-bounds-leaf-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
+  (match instr
+    [(IrInstrCall _ _ _ _) false]
+    [(IrInstrCallIndirect _ _ _ _) false]
+    [(IrInstrCallIndirectC _ _ _ _) false]
+    [_ (opt-inline-body-instr-ok? instr np)]))
+
+(define (opt-inline-bounds-leaf-instr-seq-ok-from?
+  [instrs : CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]
+  [last : i64]
+  [has-bounds : bool]) : bool
+  (if (> index last)
+    false
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (= index last)
+        (and has-bounds (opt-inline-is-return? instr))
+        (if (opt-inline-bounds-leaf-instr-ok? instr np)
+          (opt-inline-bounds-leaf-instr-seq-ok-from?
+            instrs
+            np
+            (+ index 1)
+            last
+            (or
+              has-bounds
+              (match instr
+                [(IrInstrBoundsCheck _ _ _) true]
+                [_ false])))
+          false)))))
+
+(define (opt-inline-bounds-leaf-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
+  (let
+    [n : i64 (compiler-ir-instr-seq-count seq)]
+    [body : i64 (- n 1)]
+    (and
+      (>= n 1)
+      (> body (opt-inline-max-body))
+      (<= body (opt-inline-bounds-leaf-max-body))
+      (opt-inline-bounds-leaf-instr-seq-ok-from? seq np 0 (- n 1) false))))
+
+(define (opt-inline-unit-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyUnit) true]
+    [_ false]))
+
+(define (opt-inline-bounds-leaf-ok?
+  [blocks : CompilerIrBlockList]
+  [np : i64]
+  [ret : AstType]) : bool
+  (and
+    (opt-inline-unit-type? ret)
+    (match blocks
+      [(IrBlockCons block rest)
+        (match (box-get rest)
+          [(IrBlockNil)
+            (match block
+              [(IrBlock _ seq) (opt-inline-bounds-leaf-seq-ok? seq np)])]
+          [_ false])]
+      [(IrBlockArray seq)
+        (if (= (compiler-ir-block-seq-count seq) 1)
+          (match (compiler-ir-block-seq-ref seq 0)
+            [(IrBlock _ instrs) (opt-inline-bounds-leaf-seq-ok? instrs np)])
+          false)]
+      [_ false])))
 
 (define (opt-inline-phi-input-label?
   [inputs : CompilerIrPhiInputList]
@@ -20897,14 +21442,16 @@
   [callee : CompilerIrFunction]
   [caller-name : String]) : bool
   (match callee
-    [(IrFunction cname cparams _ cvars cblocks)
+    [(IrFunction cname cparams cret cvars cblocks)
       (if (string-eq cname caller-name)
         false
         (let
           [np : i64 (opt-inline-param-count cparams)]
           (if (opt-inline-params-sequential? cparams 0)
             (if (>= cvars np)
-              (opt-inline-single-block-ok? cblocks np)
+              (or
+                (opt-inline-single-block-ok? cblocks np)
+                (opt-inline-bounds-leaf-ok? cblocks np cret))
               false)
             false)))]))
 
@@ -21515,6 +22062,12 @@
     [(IrBlockCons block _)
       (match block
         [(IrBlock _ seq) (opt-aggregate-instr-seq-append-from seq 0 IrInstrNil)])]
+    [(IrBlockArray seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(IrBlock _ instrs)
+            (opt-aggregate-instr-seq-append-from instrs 0 IrInstrNil)])
+        IrInstrNil)]
     [_ IrInstrNil]))
 
 (define (opt-inline-append [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : CompilerIrInstrList
@@ -21771,6 +22324,20 @@
     (or absorbable? (= const-args param-count))
     true))
 
+(define (opt-inline-bounds-leaf-cost-inline?
+  [callee-instrs : i64]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (and
+    (<= callee-instrs (opt-inline-bounds-leaf-max-body))
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        added-so-far
+        added-blocks))
+    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))))
+
 (define (opt-inline-try
   [instr : CompilerIrInstr]
   [index : OptFunctionIndex]
@@ -21793,7 +22360,7 @@
         caller-scc)
         [(OptSomeFunction callee)
           (match callee
-            [(IrFunction callee-name cparams _ cvars cblocks)
+            [(IrFunction callee-name cparams callee-ret cvars cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
                 (if (opt-inline-arity-ok? cargs np)
@@ -21809,19 +22376,31 @@
                         callee-name)]
                     [has-bounds? : bool
                       (opt-inline-instr-list-has-bounds-check? body-instrs)]
-                    (if (and
-                      (opt-inline-bounds-inline-ok?
-                        has-bounds?
-                        absorbable?
-                        const-args
-                        np)
-                      (opt-inline-cost-inline?
-                        (opt-inline-single-block-cost-instrs cblocks)
-                        added-blocks
-                        const-args
-                        absorbable?
-                        caller-blocks
-                        added-so-far))
+                    [bounds-leaf? : bool
+                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
+                    [callee-instrs : i64
+                      (opt-inline-single-block-cost-instrs cblocks)]
+                    (if (or
+                      (and
+                        (opt-inline-bounds-inline-ok?
+                          has-bounds?
+                          absorbable?
+                          const-args
+                          np)
+                        (opt-inline-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          absorbable?
+                          caller-blocks
+                          added-so-far))
+                      (and
+                        bounds-leaf?
+                        (opt-inline-bounds-leaf-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          caller-blocks
+                          added-so-far)))
                       (OptInlineState
                         (opt-inline-expand-instrs
                           body-instrs
@@ -21886,7 +22465,7 @@
         caller-scc)
         [(OptSomeFunction callee)
           (match callee
-            [(IrFunction callee-name cparams _ cvars cblocks)
+            [(IrFunction callee-name cparams callee-ret cvars cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
                 (if (opt-inline-arity-ok? cargs np)
@@ -21902,19 +22481,31 @@
                         callee-name)]
                     [has-bounds? : bool
                       (opt-inline-instr-list-has-bounds-check? body-instrs)]
-                    (if (and
-                      (opt-inline-bounds-inline-ok?
-                        has-bounds?
-                        absorbable?
-                        const-args
-                        np)
-                      (opt-inline-cost-inline?
-                        (opt-inline-single-block-cost-instrs cblocks)
-                        added-blocks
-                        const-args
-                        absorbable?
-                        caller-blocks
-                        added-so-far))
+                    [bounds-leaf? : bool
+                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
+                    [callee-instrs : i64
+                      (opt-inline-single-block-cost-instrs cblocks)]
+                    (if (or
+                      (and
+                        (opt-inline-bounds-inline-ok?
+                          has-bounds?
+                          absorbable?
+                          const-args
+                          np)
+                        (opt-inline-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          const-args
+                          absorbable?
+                          caller-blocks
+                          added-so-far))
+                      (and
+                        bounds-leaf?
+                        (opt-inline-bounds-leaf-cost-inline?
+                          callee-instrs
+                          added-blocks
+                          caller-blocks
+                          added-so-far)))
                       (match (opt-inline-expand-instrs-with-spans
                         body-instrs
                         dst
@@ -24671,13 +25262,18 @@
                         globals
                         optimized-functions
                         externs)]
+                    [scratch-reset-functions : CompilerIrFunctionList
+                      (opt-scratch-reset-function-list-with-level
+                        final-functions
+                        level)]
                     (begin
                       (cfg
                         compile-profile
                         (compiler-opt-profile-finish "post_prune"))
                       (IrProgram
                         globals
-                        (compiler-ir-function-list-compact final-functions)
+                        (compiler-ir-function-list-compact
+                          scratch-reset-functions)
                         externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
@@ -24961,10 +25557,15 @@
                           globals
                           optimized-functions
                           externs)]
+                      [scratch-reset-functions : CompilerIrFunctionList
+                        (opt-scratch-reset-function-list-with-level
+                          final-functions
+                          level)]
                       [optimized : CompilerIrProgram
                         (IrProgram
                           globals
-                          (compiler-ir-function-list-compact final-functions)
+                          (compiler-ir-function-list-compact
+                            scratch-reset-functions)
                           externs)]
                       (begin
                         (cfg
@@ -29879,6 +30480,59 @@
     (opt-inline-call-bounds-twice)
     (compiler-ir-function-cons (opt-inline-bounds-callee) IrFunctionNil)))
 
+(define (opt-inline-bounds-leaf-instrs [index : i64] [limit : i64]) : CompilerIrInstrList
+  (if (>= index limit)
+    (compiler-ir-instr-cons (IrInstrReturn (IrNoValue)) IrInstrNil)
+    (compiler-ir-instr-cons
+      (if (= index 0)
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_leaf.ok")
+        (IrInstrMov (+ index 1) (IrValueI64 index) (AstTyI64)))
+      (opt-inline-bounds-leaf-instrs (+ index 1) limit))))
+
+(define (opt-inline-bounds-leaf-callee [body : i64]) : CompilerIrFunction
+  (compiler-ir-function-compact-blocks
+    (IrFunction
+      "bounds_leaf_inline"
+      (compiler-ir-param-cons
+        (IrParam "idx" (AstTyI64) 0)
+        (compiler-ir-param-cons (IrParam "len" (AstTyI64) 1) IrParamNil))
+      (AstTyUnit)
+      (+ body 1)
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" (opt-inline-bounds-leaf-instrs 0 body))
+        IrBlockNil))))
+
+(define (opt-inline-call-bounds-leaf) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 1 (IrValueI64 8) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrCall
+                2
+                "bounds_leaf_inline"
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
+                (AstTyUnit))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (opt-inline-bounds-leaf-functions [body : i64]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-call-bounds-leaf)
+    (compiler-ir-function-cons
+      (opt-inline-bounds-leaf-callee body)
+      IrFunctionNil)))
+
 (define (opt-inline-multi-call-caller) : CompilerIrFunction
   (IrFunction
     "main"
@@ -30301,6 +30955,26 @@
             (opt-inline-revert-or-keep fallback duplicate)
             fallback))]
       [(OptNoFunction) false])))
+
+(define (compiler-optimize-inline-bounds-leaf-body-gate-ok?) : bool
+  (let
+    [accepted : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-bounds-leaf-functions (opt-inline-bounds-leaf-max-body))
+        2)]
+    [rejected : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-bounds-leaf-functions
+          (+ (opt-inline-bounds-leaf-max-body) 1))
+        2)]
+    [accepted-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs accepted "main")]
+    [rejected-instrs : CompilerIrInstrList
+      (opt-inline-function-instrs rejected "main")]
+    (and
+      (= (opt-count-direct-call-name accepted-instrs "bounds_leaf_inline") 0)
+      (= (opt-count-bounds-instrs accepted-instrs) 1)
+      (= (opt-count-direct-call-name rejected-instrs "bounds_leaf_inline") 1))))
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
@@ -31165,6 +31839,9 @@
                     (unless
                       (compiler-optimize-inline-bounds-label-guard-ok?)
                       (return 47))
+                    (unless
+                      (compiler-optimize-inline-bounds-leaf-body-gate-ok?)
+                      (return 48))
                     (unless
                       (compiler-optimize-inline-multi-call-ok?)
                       (return 30))
@@ -33331,6 +34008,26 @@
 (define (opt-licm-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (opt-licm-function (opt-licm-test-function blocks)))
 
+(define (opt-licm-array-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "cond" (AstTyBool) 0)
+    (compiler-ir-param-cons
+      (IrParam "array" (AstTyDynArray 0) 1)
+      (compiler-ir-param-cons (IrParam "ptr" (AstTyU64) 2) (IrParamNil)))))
+
+(define (opt-licm-array-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "licm_array" (opt-licm-array-params) (AstTyI64) 16 blocks))
+
+(define (opt-licm-array-optimized-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-licm-function (opt-licm-array-test-function blocks)))
+
+(define (opt-licm-summary-for-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
+  (opt-licm-store-summary-blocks
+    (compiler-ir-block-cons
+      (compiler-ir-block "summary" (compiler-ir-instr-cons instr (IrInstrNil)))
+      (IrBlockNil))
+    (opt-licm-store-summary-empty)))
+
 (define (opt-licm-arithmetic-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -33713,6 +34410,134 @@
               (IrInstrNil)))
           (IrBlockNil))))))
 
+(define (opt-licm-loop-blocks-with-body
+  [body : CompilerIrInstrList]
+  [ret-var : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 3 (IrValueI64 0) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            4
+            (compiler-ir-phi-input-cons
+              (IrValueVar 3)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" IrPhiInputNil))
+            (AstTyI64))
+          body))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar ret-var)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-licm-loop-finish-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBinOp 5 (IrBinAdd) (IrValueVar 4) (IrValueI64 1) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrBranch (IrValueVar 0) "body" "exit")
+      (IrInstrNil))))
+
+(define (opt-licm-header-load-element-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 9 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 10 (IrValueVar 9) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrGep 11 (IrValueVar 10) (IrValueVar 4) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrStorePtr (IrValueVar 11) (IrValueI64 100) (AstTyI64))
+                (opt-licm-loop-finish-instrs)))))))
+    8))
+
+(define (opt-licm-header-load-header-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 9 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 7) (IrValueI64 101) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrStorePtr (IrValueVar 9) (IrValueI64 102) (AstTyU64))
+              (opt-licm-loop-finish-instrs))))))
+    8))
+
+(define (opt-licm-header-load-copybytes-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrCopyBytes (IrValueVar 1) (IrValueVar 2) 8)
+          (opt-licm-loop-finish-instrs))))
+    8))
+
+(define (opt-licm-header-load-call-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 9 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 10 (IrValueVar 9) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrGep 11 (IrValueVar 10) (IrValueVar 4) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrStorePtr (IrValueVar 11) (IrValueI64 100) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrCall 12 "touch" (IrCallArgsNil) (AstTyI64))
+                  (opt-licm-loop-finish-instrs))))))))
+    8))
+
+(define (opt-licm-header-load-unknown-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 2) (IrValueI64 103) (AstTyI64))
+          (opt-licm-loop-finish-instrs))))
+    8))
+
+(define (opt-licm-element-load-element-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (IrInstrGep 7 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 8 (IrValueVar 7) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 9 (IrValueVar 8) (IrValueVar 4) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 10 (IrValueVar 9) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrStorePtr (IrValueVar 9) (IrValueI64 100) (AstTyI64))
+              (opt-licm-loop-finish-instrs))))))
+    10))
+
 (define (compiler-optimize-licm-self-test) : i64
   (let
     [arith-func : CompilerIrFunction
@@ -33742,6 +34567,46 @@
     [load-varying-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-load-varying-address-blocks))]
     [load-varying : CompilerIrBlockList (opt-function-blocks load-varying-func)]
+    [header-element-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-element-store-blocks))]
+    [header-element : CompilerIrBlockList
+      (opt-function-blocks header-element-func)]
+    [header-store-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-header-store-blocks))]
+    [header-store : CompilerIrBlockList (opt-function-blocks header-store-func)]
+    [copybytes-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-copybytes-blocks))]
+    [copybytes-blocks : CompilerIrBlockList
+      (opt-function-blocks copybytes-func)]
+    [header-call-func : CompilerIrFunction
+      (opt-licm-array-optimized-function (opt-licm-header-load-call-blocks))]
+    [header-call : CompilerIrBlockList (opt-function-blocks header-call-func)]
+    [unknown-store-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-unknown-store-blocks))]
+    [unknown-store : CompilerIrBlockList
+      (opt-function-blocks unknown-store-func)]
+    [element-load-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-element-load-element-store-blocks))]
+    [element-load : CompilerIrBlockList (opt-function-blocks element-load-func)]
+    [raw-slot-func : CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-header-load-element-store-blocks))]
+    [raw-slot : CompilerIrBlockList (opt-function-blocks raw-slot-func)]
+    [clean-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrBinOp 80 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64)))]
+    [store-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrStorePtr (IrValueVar 6) (IrValueI64 100) (AstTyI64)))]
+    [call-summary : OptLicmStoreSummary
+      (opt-licm-summary-for-instr
+        (IrInstrCall 81 "touch" (IrCallArgsNil) (AstTyI64)))]
+    [element-summary : OptLicmStoreSummary
+      (opt-licm-store-summary-element-only-store)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
       [(not (= (opt-count-arith-label-blocks arith "entry") 2)) 2]
@@ -33773,6 +34638,37 @@
           (i64-i64-map-with-capacity 4)
           (IrValueGlobal "g"))
         26]
+      [(not (opt-licm-store-summary-clean? clean-summary)) 27]
+      [(opt-licm-store-summary-clean? store-summary) 28]
+      [(not (struct-get store-summary header-or-unknown-store?)) 29]
+      [(struct-get store-summary call-or-unknown?) 30]
+      [(opt-licm-store-summary-clean? call-summary) 31]
+      [(not (struct-get call-summary call-or-unknown?)) 32]
+      [(struct-get call-summary header-or-unknown-store?) 33]
+      [(opt-licm-store-summary-clean? element-summary) 34]
+      [(not (struct-get element-summary element-only-store?)) 35]
+      [(not (opt-verify-ok? (opt-verify-function header-element-func))) 36]
+      [(not (= (opt-count-load-label-blocks header-element "entry") 2)) 37]
+      [(not (= (opt-count-load-label-blocks header-element "loop") 0)) 38]
+      [(not (= (opt-count-gep-label-blocks header-element "entry") 2)) 39]
+      [(not (opt-verify-ok? (opt-verify-function header-store-func))) 40]
+      [(not (= (opt-count-load-label-blocks header-store "loop") 1)) 41]
+      [(not (= (opt-count-load-label-blocks header-store "entry") 0)) 43]
+      [(not (opt-verify-ok? (opt-verify-function copybytes-func))) 44]
+      [(not (= (opt-count-load-label-blocks copybytes-blocks "loop") 1)) 45]
+      [(not (= (opt-count-load-label-blocks copybytes-blocks "entry") 0)) 46]
+      [(not (opt-verify-ok? (opt-verify-function header-call-func))) 47]
+      [(not (= (opt-count-load-label-blocks header-call "loop") 2)) 48]
+      [(not (= (opt-count-load-label-blocks header-call "entry") 0)) 49]
+      [(not (opt-verify-ok? (opt-verify-function unknown-store-func))) 50]
+      [(not (= (opt-count-load-label-blocks unknown-store "loop") 1)) 51]
+      [(not (= (opt-count-load-label-blocks unknown-store "entry") 0)) 52]
+      [(not (opt-verify-ok? (opt-verify-function element-load-func))) 53]
+      [(not (= (opt-count-load-label-blocks element-load "entry") 1)) 54]
+      [(not (= (opt-count-load-label-blocks element-load "loop") 1)) 55]
+      [(not (opt-verify-ok? (opt-verify-function raw-slot-func))) 56]
+      [(not (= (opt-count-load-label-blocks raw-slot "entry") 0)) 57]
+      [(not (= (opt-count-load-label-blocks raw-slot "loop") 2)) 58]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList
@@ -35243,6 +36139,44 @@
 (defenum OptScratchScopeReport
   (OptScratchScopeReport i64 i64 OptScratchBlockerReason))
 
+(define (opt-scratch-alloc-type-size [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 0]
+    [(AstTyNever) 0]
+    [(AstTyExpr) 0]
+    [(AstTyExprList) 0]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray _ _) 8]
+    [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
+    [(AstTyRegion _ inner) (opt-scratch-alloc-type-size (ty-node-get inner))]
+    [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
+    [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
+    [(AstTyString) 8]
+    [(AstTyStr) 8]
+    [(AstTyBytes) 8]
+    [(AstTyVar _) 0]
+    [(AstTyVarArgs _ _) 0]))
+
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
   [root : i64]) : bool
@@ -35258,6 +36192,8 @@
 
 (define (opt-scratch-direct-alloc [instr : CompilerIrInstr]) : OptScratchAlloc
   (match instr
+    [(IrInstrAlloc dst ty)
+      (OptScratchAlloc dst (opt-scratch-alloc-type-size ty))]
     [(IrInstrCall dst name args _)
       (if (string-eq name "tl_alloc")
         (match (opt-aggregate-tl-alloc-size args)
@@ -35792,8 +36728,524 @@
             (tl_region_reset mark)
             (tl_arena_set enclosing)))))))
 
+;; --- implicit scratch-region reset insertion (#2743) -----------------------
+;;
+;; Opt2 may wrap a proven loop-body scratch candidate with one mark before the
+;; loop and one reset in the latch. The pass deliberately handles only simple
+;; cleanup shapes. Any body return, candidate carried by a phi, allocation in
+;; the header guard, missing unique mark block, or non-header/non-latch edge out
+;; of the loop keeps the IR unchanged.
+(defenum OptScratchResetApplyResult
+  (OptScratchResetApplyResult CompilerIrBlockList i64 bool))
+
+(defenum OptScratchResetMarkBlock
+  (OptNoScratchResetMarkBlock)
+  (OptSomeScratchResetMarkBlock String))
+
+(defenum OptScratchResetMarkCandidate
+  (OptScratchResetMarkNone)
+  (OptScratchResetMarkOne String)
+  (OptScratchResetMarkMany))
+
+(define (opt-scratch-scope-state-blocks [blocks : CompilerIrBlockList]) : OptScratchScopeState
+  (opt-scratch-scope-scan-blocks (opt-scratch-state-initial) blocks))
+
+(define (opt-scratch-state-candidate? [state : OptScratchScopeState]) : bool
+  (match state
+    [(OptScratchScopeState allocs _ _ _ blocker)
+      (and (> allocs 0) (opt-scratch-blocker-none? blocker))]))
+
+(define (opt-scratch-report-alloc-count [report : OptScratchScopeReport]) : i64
+  (match report
+    [(OptScratchScopeReport allocs _ _) allocs]))
+
+(define (opt-scratch-block-alloc-count
+  [blocks : CompilerIrBlockList]
+  [label : String]) : i64
+  (match (opt-cfg-find-block blocks label)
+    [(OptNoBlock) 0]
+    [(OptSomeBlock block)
+      (opt-scratch-report-alloc-count (opt-scratch-scope-report-block block))]))
+
+(define (opt-scratch-reset-mark-candidate-add
+  [candidate : OptScratchResetMarkCandidate]
+  [pred : String]) : OptScratchResetMarkCandidate
+  (match candidate
+    [(OptScratchResetMarkNone) (OptScratchResetMarkOne pred)]
+    [(OptScratchResetMarkOne _) (OptScratchResetMarkMany)]
+    [(OptScratchResetMarkMany) (OptScratchResetMarkMany)]))
+
+(define (opt-scratch-reset-mark-candidate-scan
+  [reachable : OptLabelSet]
+  [body : OptLabelSet]
+  [preds : OptLabelSet]
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (opt-scratch-reset-mark-candidate-scan
+        reachable
+        body
+        (box-get rest)
+        (if (and
+          (opt-label-contains reachable pred)
+          (not (opt-label-contains body pred)))
+          (opt-scratch-reset-mark-candidate-add candidate pred)
+          candidate))]))
+
+(define (opt-scratch-reset-mark-candidate-scan-not-label
+  [reachable : OptLabelSet]
+  [skip : String]
+  [preds : OptLabelSet]
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (opt-scratch-reset-mark-candidate-scan-not-label
+        reachable
+        skip
+        (box-get rest)
+        (if (and
+          (opt-label-contains reachable pred)
+          (not (string-eq pred skip)))
+          (opt-scratch-reset-mark-candidate-add candidate pred)
+          candidate))]))
+
+(define (opt-scratch-reset-mark-block-from-candidate
+  [candidate : OptScratchResetMarkCandidate]) : OptScratchResetMarkBlock
+  (match candidate
+    [(OptScratchResetMarkOne label) (OptSomeScratchResetMarkBlock label)]
+    [_ (OptNoScratchResetMarkBlock)]))
+
+(define (opt-scratch-reset-loop-mark-block
+  [context : OptCfgContext]
+  [loop : OptNaturalLoop]) : OptScratchResetMarkBlock
+  (match (opt-natural-loop-preheader loop)
+    [(OptSomeLoopPreheader preheader) (OptSomeScratchResetMarkBlock preheader)]
+    [(OptNoLoopPreheader)
+      (let
+        [header : String (opt-natural-loop-header loop)]
+        [preds : OptLabelSet
+          (opt-pred-map-lookup (struct-get context pred-map) header)]
+        [reachable : OptLabelSet (struct-get context reachable)]
+        (opt-scratch-reset-mark-block-from-candidate
+          (if (string-eq header (opt-natural-loop-latch loop))
+            (opt-scratch-reset-mark-candidate-scan-not-label
+              reachable
+              header
+              preds
+              (OptScratchResetMarkNone))
+            (opt-scratch-reset-mark-candidate-scan
+              reachable
+              (opt-natural-loop-body loop)
+              preds
+              (OptScratchResetMarkNone)))))]))
+
+(define (opt-scratch-phi-input-derived?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons value _ rest)
+      (or
+        (opt-scratch-value-derived? roots facts value)
+        (opt-scratch-phi-input-derived? roots facts (box-get rest)))]))
+
+(define (opt-scratch-instr-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrPhi _ inputs _)
+      (opt-scratch-phi-input-derived? roots facts inputs)]
+    [_ false]))
+
+(define (opt-scratch-instr-seq-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-scratch-instr-loop-carried-candidate?
+        roots
+        facts
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-scratch-instr-seq-loop-carried-candidate?
+        roots
+        facts
+        instrs
+        (+ index 1)))))
+
+(define (opt-scratch-block-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (opt-scratch-instr-seq-loop-carried-candidate? roots facts instrs 0)]))
+
+(define (opt-scratch-blocks-loop-carried-candidate?
+  [roots : OptScratchRootList]
+  [facts : OptAliasFacts]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (or
+        (opt-scratch-block-loop-carried-candidate? roots facts block)
+        (opt-scratch-blocks-loop-carried-candidate? roots facts (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-scratch-blocks-loop-carried-candidate?
+        roots
+        facts
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-scratch-state-loop-carried-candidate?
+  [state : OptScratchScopeState]
+  [blocks : CompilerIrBlockList]) : bool
+  (match state
+    [(OptScratchScopeState _ _ roots facts _)
+      (opt-scratch-blocks-loop-carried-candidate? roots facts blocks)]))
+
+(define (opt-scratch-instr-return-exit? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrReturn _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [(IrInstrTailCallIndirect _ _ _) true]
+    [_ false]))
+
+(define (opt-scratch-instr-seq-return-exit?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-scratch-instr-return-exit? (compiler-ir-instr-seq-ref instrs index))
+      (opt-scratch-instr-seq-return-exit? instrs (+ index 1)))))
+
+(define (opt-scratch-successors-loop-safe?
+  [body : OptLabelSet]
+  [label : String]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [successors : OptLabelSet]) : bool
+  (match successors
+    [(OptLabelNil) true]
+    [(OptLabelCons succ rest)
+      (and
+        (or
+          (opt-label-contains body succ)
+          (string-eq label header)
+          (string-eq label latch)
+          (string-eq label mark-block))
+        (opt-scratch-successors-loop-safe?
+          body
+          label
+          header
+          latch
+          mark-block
+          (box-get rest)))]))
+
+(define (opt-scratch-loop-block-exits-safe?
+  [index : OptCfgIndex]
+  [body : OptLabelSet]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock label instrs)
+      (and
+        (not (opt-scratch-instr-seq-return-exit? instrs 0))
+        (opt-scratch-successors-loop-safe?
+          body
+          label
+          header
+          latch
+          mark-block
+          (opt-cfg-index-successors index label)))]))
+
+(define (opt-scratch-loop-blocks-exits-safe?
+  [index : OptCfgIndex]
+  [body : OptLabelSet]
+  [header : String]
+  [latch : String]
+  [mark-block : String]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (and
+        (opt-scratch-loop-block-exits-safe?
+          index
+          body
+          header
+          latch
+          mark-block
+          block)
+        (opt-scratch-loop-blocks-exits-safe?
+          index
+          body
+          header
+          latch
+          mark-block
+          (box-get rest)))]
+    [(IrBlockArray seq)
+      (opt-scratch-loop-blocks-exits-safe?
+        index
+        body
+        header
+        latch
+        mark-block
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-scratch-loop-eligible?
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]) : bool
+  (match (opt-scratch-reset-loop-mark-block context loop)
+    [(OptNoScratchResetMarkBlock) false]
+    [(OptSomeScratchResetMarkBlock mark-block)
+      (let
+        [index : OptCfgIndex (struct-get context index)]
+        [header : String (opt-natural-loop-header loop)]
+        [latch : String (opt-natural-loop-latch loop)]
+        [body : OptLabelSet (opt-natural-loop-body loop)]
+        [body-blocks : CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks index loop blocks)]
+        [state : OptScratchScopeState
+          (opt-scratch-scope-state-blocks body-blocks)]
+        (and
+          (opt-scratch-state-candidate? state)
+          (or
+            (string-eq header latch)
+            (= (opt-scratch-block-alloc-count blocks header) 0))
+          (not (opt-scratch-state-loop-carried-candidate? state body-blocks))
+          (opt-scratch-loop-blocks-exits-safe?
+            index
+            body
+            header
+            latch
+            mark-block
+            body-blocks)))]))
+
+(define (opt-scratch-reset-mark-instr [mark-var : i64]) : CompilerIrInstr
+  (IrInstrCall mark-var "tl_region_mark" (IrCallArgsNil) (AstTyI64)))
+
+(define (opt-scratch-reset-reset-instr [reset-var : i64] [mark-var : i64]) : CompilerIrInstr
+  (IrInstrCall
+    reset-var
+    "tl_region_reset"
+    (IrCallArgsOne (IrValueVar mark-var))
+    (AstTyUnit)))
+
+(define (opt-scratch-reset-mark-instrs [mark-var : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons (opt-scratch-reset-mark-instr mark-var) IrInstrNil))
+
+(define (opt-scratch-reset-reset-instrs [reset-var : i64] [mark-var : i64]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-reset-reset-instr reset-var mark-var)
+    IrInstrNil))
+
+(define (opt-scratch-reset-rewrite-block
+  [block : CompilerIrBlock]
+  [preheader : String]
+  [latch : String]
+  [mark-var : i64]
+  [reset-var : i64]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (if (string-eq label preheader)
+        (compiler-ir-block
+          label
+          (opt-licm-insert-before-terminator-seq
+            (opt-scratch-reset-mark-instrs mark-var)
+            instrs))
+        (if (string-eq label latch)
+          (compiler-ir-block
+            label
+            (opt-licm-insert-before-terminator-seq
+              (opt-scratch-reset-reset-instrs reset-var mark-var)
+              instrs))
+          block))]))
+
+(define (opt-scratch-reset-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [preheader : String]
+  [latch : String]
+  [mark-var : i64]
+  [reset-var : i64]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-cons
+        (opt-scratch-reset-rewrite-block
+          block
+          preheader
+          latch
+          mark-var
+          reset-var)
+        (opt-scratch-reset-rewrite-blocks
+          (box-get rest)
+          preheader
+          latch
+          mark-var
+          reset-var))]
+    [(IrBlockArray seq)
+      (opt-scratch-reset-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        preheader
+        latch
+        mark-var
+        reset-var)]))
+
+(define (opt-scratch-reset-apply-loop
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptScratchResetApplyResult
+  (match (opt-scratch-reset-loop-mark-block context loop)
+    [(OptNoScratchResetMarkBlock)
+      (OptScratchResetApplyResult blocks frame false)]
+    [(OptSomeScratchResetMarkBlock mark-block)
+      (OptScratchResetApplyResult
+        (opt-scratch-reset-rewrite-blocks
+          blocks
+          mark-block
+          (opt-natural-loop-latch loop)
+          frame
+          (+ frame 1))
+        (+ frame 2)
+        true)]))
+
+(define (opt-scratch-reset-apply-loops
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loops : OptNaturalLoopList]) : OptScratchResetApplyResult
+  (match loops
+    [(OptNaturalLoopNil) (OptScratchResetApplyResult blocks frame false)]
+    [(OptNaturalLoopCons loop rest)
+      (if (opt-scratch-loop-eligible? context blocks loop)
+        (opt-scratch-reset-apply-loop context blocks frame loop)
+        (opt-scratch-reset-apply-loops context blocks frame (box-get rest)))]))
+
+(define (opt-scratch-reset-function-unchecked-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (match (opt-scratch-reset-apply-loops
+        context
+        blocks
+        frame
+        (opt-cfg-natural-loops-with-context blocks context))
+        [(OptScratchResetApplyResult next-blocks next-frame changed)
+          (if changed
+            (let
+              [next : CompilerIrFunction
+                (IrFunction name params ret-ty next-frame next-blocks)]
+              [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+              (OptFunctionCtxResult next next-context))
+            (OptFunctionCtxResult func context))])]))
+
+(define (opt-scratch-reset-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match (opt-verify-function-with-context func context)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (match (opt-scratch-reset-apply-loops
+            context
+            blocks
+            frame
+            (opt-cfg-natural-loops-with-context blocks context))
+            [(OptScratchResetApplyResult next-blocks next-frame changed)
+              (if changed
+                (let
+                  [next : CompilerIrFunction
+                    (IrFunction name params ret-ty next-frame next-blocks)]
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(OkCompilerOptimizeVerify)
+                      (OptFunctionCtxResult next next-context)]
+                    [(ErrCompilerOptimizeVerify _)
+                      (OptFunctionCtxResult func context)]))
+                (OptFunctionCtxResult func context))])])]
+    [(ErrCompilerOptimizeVerify _) (OptFunctionCtxResult func context)]))
+
+(define (opt-scratch-reset-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match (opt-scratch-reset-function-with-context-result
+        (opt-cfg-context-build blocks)
+        func)
+        [(OptFunctionCtxResult next _) next])]))
+
+(define (opt-scratch-reset-function-unchecked [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (if (<=
+        (compiler-ir-block-list-count blocks)
+        (opt-heavy-pass-block-limit))
+        (match (opt-scratch-reset-function-unchecked-with-context-result
+          (opt-cfg-context-build blocks)
+          func)
+          [(OptFunctionCtxResult next _) next])
+        func)]))
+
+(define (opt-scratch-reset-function-list-unchecked
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) (IrFunctionNil)]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-cons
+        (opt-scratch-reset-function-unchecked func)
+        (opt-scratch-reset-function-list-unchecked (box-get rest)))]
+    [(IrFunctionArray seq)
+      (compiler-ir-function-list-compact
+        (opt-scratch-reset-function-list-unchecked
+          (compiler-ir-function-seq-to-list seq)))]))
+
+(define (opt-scratch-reset-function-list-with-level
+  [functions : CompilerIrFunctionList]
+  [level : i64]) : CompilerIrFunctionList
+  (if (< level 2)
+    functions
+    (opt-scratch-reset-function-list-unchecked functions)))
+
+(define (opt-scratch-reset-pre-ssa-function-with-context-result
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [context : OptCfgContext
+          (opt-cfg-context-build (compiler-ir-clone-block-list blocks))]
+        [input : CompilerIrFunction
+          (IrFunction name params ret-ty frame blocks)]
+        [preheaders-result : OptFunctionCtxResult
+          (opt-loop-preheaders-function-with-context-result context input)]
+        [preheaders : CompilerIrFunction
+          (match preheaders-result
+            [(OptFunctionCtxResult f _) f])]
+        [preheaders-context : OptCfgContext
+          (match preheaders-result
+            [(OptFunctionCtxResult _ ctx) ctx])]
+        (opt-scratch-reset-function-with-context-result
+          preheaders-context
+          preheaders))]))
+
 (define (opt-scratch-test-alloc) : CompilerIrInstr
   (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueI64 32)) (AstTyU64)))
+
+(define (opt-scratch-test-ir-alloc) : CompilerIrInstr
+  (IrInstrAlloc 1 (AstTyI64)))
 
 (define (opt-scratch-test-return-zero) : CompilerIrInstr
   (IrInstrReturn (IrSomeValue (IrValueI64 0))))
@@ -35857,6 +37309,165 @@
           32)
         (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
 
+(define (opt-scratch-reset-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction "scratch_reset_test" IrParamNil (AstTyI64) 10 blocks))
+
+(define (opt-scratch-reset-header-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrBranch (IrValueBool true) "body" "exit")
+    IrInstrNil))
+
+(define (opt-scratch-reset-body-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-test-ir-alloc)
+    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+
+(define (opt-scratch-reset-unknown-alloc) : CompilerIrInstr
+  (IrInstrCall 1 "tl_alloc" (IrCallArgsOne (IrValueVar 0)) (AstTyU64)))
+
+(define (opt-scratch-reset-unknown-body-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (opt-scratch-reset-unknown-alloc)
+    (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+
+(define (opt-scratch-reset-blocks-with-body [body-instrs : CompilerIrInstrList]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block-cons
+          (compiler-ir-block "body" body-instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))
+            IrBlockNil))))))
+
+(define (opt-scratch-reset-positive-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body (opt-scratch-reset-body-instrs)))
+
+(define (opt-scratch-reset-level-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body (opt-scratch-reset-unknown-body-instrs)))
+
+(define (opt-scratch-reset-level-function) : CompilerIrFunction
+  (IrFunction
+    "main"
+    (compiler-ir-param-cons (IrParam "n" (AstTyI64) 0) IrParamNil)
+    (AstTyI64)
+    10
+    (opt-scratch-reset-level-blocks)))
+
+(define (opt-scratch-reset-level-program) : CompilerIrProgram
+  (IrProgram
+    (IrGlobalNil)
+    (compiler-ir-function-cons
+      (opt-scratch-reset-level-function)
+      (IrFunctionNil))
+    (IrExternNil)))
+
+(define (opt-scratch-reset-call-blocked-blocks) : CompilerIrBlockList
+  (opt-scratch-reset-blocks-with-body
+    (compiler-ir-instr-cons
+      (opt-scratch-test-ir-alloc)
+      (compiler-ir-instr-cons
+        (IrInstrCall 2 "touch" (IrCallArgsNil) (AstTyUnit))
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))))
+
+(define (opt-scratch-reset-header-alloc-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (opt-scratch-test-ir-alloc)
+            (opt-scratch-reset-header-instrs)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons (opt-scratch-test-return-zero) IrInstrNil))
+            IrBlockNil))))))
+
+(define (opt-scratch-reset-early-exit-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "preheader") IrInstrNil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "preheader"
+        (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+      (compiler-ir-block-cons
+        (compiler-ir-block "loop" (opt-scratch-reset-header-instrs))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (opt-scratch-test-ir-alloc)
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueBool true) "ret" "latch")
+                IrInstrNil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "latch"
+              (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "ret"
+                (compiler-ir-instr-cons
+                  (opt-scratch-test-return-zero)
+                  IrInstrNil))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "exit"
+                  (compiler-ir-instr-cons
+                    (opt-scratch-test-return-zero)
+                    IrInstrNil))
+                IrBlockNil))))))))
+
+(define (opt-scratch-reset-rewrite [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-scratch-reset-function (opt-scratch-reset-test-function blocks)))
+
+(define (opt-scratch-reset-call-count
+  [func : CompilerIrFunction]
+  [name : String]) : i64
+  (opt-count-direct-call-name-blocks (opt-function-blocks func) name))
+
+(define (opt-scratch-reset-level-program-call-count
+  [level : i64]
+  [name : String]) : i64
+  (match (optimize-program-with-level (opt-scratch-reset-level-program) level)
+    [(IrProgram _ functions _)
+      (match (opt-function-list-find functions "main")
+        [(OptNoFunction) (- 0 1)]
+        [(OptSomeFunction func) (opt-scratch-reset-call-count func name)])]))
+
+(define (opt-scratch-reset-emitted? [func : CompilerIrFunction]) : bool
+  (and
+    (= (opt-scratch-reset-call-count func "tl_region_mark") 1)
+    (= (opt-scratch-reset-call-count func "tl_region_reset") 1)))
+
+(define (opt-scratch-reset-not-emitted? [func : CompilerIrFunction]) : bool
+  (and
+    (= (opt-scratch-reset-call-count func "tl_region_mark") 0)
+    (= (opt-scratch-reset-call-count func "tl_region_reset") 0)))
+
 (define (compiler-optimize-scratch-region-self-test) : i64
   (let
     [positive : OptScratchScopeReport
@@ -35889,6 +37500,30 @@
           (IrInstrCall 9 "tl_region_mark" (IrCallArgsNil) (AstTyI64))))]
     [return-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
+    [reset-positive : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
+    [reset-call-blocked : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-call-blocked-blocks))]
+    [reset-header-alloc : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-header-alloc-blocks))]
+    [reset-early-exit : CompilerIrFunction
+      (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
+    [reset-pre-ssa : CompilerIrFunction
+      (match (opt-scratch-reset-pre-ssa-function-with-context-result
+        (opt-scratch-reset-level-function))
+        [(OptFunctionCtxResult f _) f])]
+    [level0-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 0 "tl_region_mark")]
+    [level0-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 0 "tl_region_reset")]
+    [level1-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 1 "tl_region_mark")]
+    [level1-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 1 "tl_region_reset")]
+    [level2-mark-count : i64
+      (opt-scratch-reset-level-program-call-count 2 "tl_region_mark")]
+    [level2-reset-count : i64
+      (opt-scratch-reset-level-program-call-count 2 "tl_region_reset")]
     (cond
       [(not (opt-scratch-report-candidate? positive 1 32)) 1]
       [(not loop-positive) 2]
@@ -35899,6 +37534,18 @@
       [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper")) 7]
       [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
         8]
+      [(not (opt-scratch-reset-emitted? reset-positive)) 9]
+      [(not (= (opt-function-frame reset-positive) 12)) 10]
+      [(not (opt-scratch-reset-not-emitted? reset-call-blocked)) 11]
+      [(not (opt-scratch-reset-not-emitted? reset-header-alloc)) 12]
+      [(not (opt-scratch-reset-not-emitted? reset-early-exit)) 13]
+      [(not (opt-scratch-reset-emitted? reset-pre-ssa)) 14]
+      [(not (= level0-mark-count 0)) 15]
+      [(not (= level0-reset-count 0)) 16]
+      [(not (= level1-mark-count 0)) 17]
+      [(not (= level1-reset-count 0)) 18]
+      [(not (= level2-mark-count 1)) 19]
+      [(not (= level2-reset-count 1)) 20]
       [else 42])))
 
 ;; --- block-local redundant-load CSE (#2342) ---------------------------------

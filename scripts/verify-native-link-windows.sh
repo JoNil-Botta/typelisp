@@ -286,6 +286,27 @@ fi
 assert_empty "$WORKDIR/run-direct-object.stdout"
 assert_empty "$WORKDIR/run-direct-object.stderr"
 
+TEST_SRC="$WORKDIR/tiny-test.tl"
+cat > "$TEST_SRC" <<'EOF'
+(cfg test (test direct-object-smoke unit))
+EOF
+
+echo "[windows-native-link] test direct-object without assembler"
+set +e
+TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
+    TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
+    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/test-direct-object.stdout" 2> "$WORKDIR/test-direct-object.stderr"
+noasm_test_status=$?
+set -e
+if [ "$noasm_test_status" -ne 0 ]; then
+    sed 's/^/  /' "$WORKDIR/test-direct-object.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/test-direct-object.stderr" >&2 || true
+    fail "selfhost test direct-object without assembler failed"
+fi
+assert_empty "$WORKDIR/test-direct-object.stdout"
+assert_contains "$WORKDIR/test-direct-object.stderr" "TypeLisp tests passed: 1 test(s)"
+
 LINK_LIB_DIR="$WORKDIR/native-lib"
 mkdir -p "$LINK_LIB_DIR"
 cat > "$LINK_LIB_DIR/ffi_add7.s" <<'EOF'

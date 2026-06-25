@@ -83,13 +83,3 @@
       (assert-f64-eq 1.5 1.5 "f64 equality should pass")
       (assert-char-eq 'A' 'A' "char equality should pass")
       (assert-string-eq (& actual) (& expected) "string equality should pass"))))
-
-(export
-  (value assert-true)
-  (value assert-false)
-  (value assert-bool-eq)
-  (value assert-i64-eq)
-  (value assert-i32-eq)
-  (value assert-f64-eq)
-  (value assert-char-eq)
-  (value assert-string-eq))

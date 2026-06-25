@@ -1,4 +1,5 @@
 (import "stdlib/thread.tl")
+(import (thread-handle i64) as thread_i64)
 
 (defstruct ThreadTransferPair
   (left i64)
@@ -20,7 +21,7 @@
     [choice : ThreadTransferChoice
       (ThreadTransferSome (ThreadTransferPair 9 0))]
     [coords : (Tuple i64 i64) (tuple 3 4)]
-    (match (thread-spawn-i64
+    (match (thread_i64.spawn
       (lambda () : i64
         (+
           (struct-get pair left)
@@ -33,11 +34,11 @@
                 (+
                   (thread-transfer-choice-score choice)
                   (+ (tuple-ref coords 0) (tuple-ref coords 1)))))))))
-      [(ThreadI64SpawnErr _) 1]
-      [(ThreadI64SpawnOk worker)
-        (match (thread-join-i64 worker)
-          [(ThreadI64JoinOk value) value]
-          [(ThreadI64JoinErr _) 2])])))
+      [(thread_i64.I64SpawnErr _) 1]
+      [(thread_i64.I64SpawnOk worker)
+        (match (thread_i64.join worker)
+          [(thread_i64.I64JoinOk value) value]
+          [(thread_i64.I64JoinErr _) 2])])))
 
 (define (main) : i64
   (thread-transfer-aggregate-score))

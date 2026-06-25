@@ -10,8 +10,8 @@
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning
-;# `Done`. The final generated `(option T)` module from #3203 should replace
-;# these monomorphic `*Next` enums when it lands.
+;# `Done`. Migrating these monomorphic `*Next` enums to the generated
+;# `(option T)` module belongs with the option user-migration work (#3214).
 ;#
 ;# ```typelisp
 ;# (import stdlib.iterator as iter)
@@ -203,25 +203,3 @@
   (test
     iterator-range-api
     (test.assert-i64-eq (iterator-test-main) 42 "iterator range fixture result")))
-
-(export
-  (value range)
-  (value range-inclusive)
-  (value i64-range-iterator)
-  (value i64-range-next)
-  (value i64-range-done?)
-  (value i64-range-value-or)
-  (type I64Range)
-  (type I64RangeIter)
-  (type I64RangeNext)
-  (constructor I64Range)
-  (constructor I64RangeIter)
-  (field I64Range start)
-  (field I64Range end)
-  (field I64Range inclusive)
-  (field I64RangeIter current)
-  (field I64RangeIter end)
-  (field I64RangeIter inclusive)
-  (field I64RangeIter exhausted)
-  (variant I64RangeDone)
-  (variant I64RangeItem))

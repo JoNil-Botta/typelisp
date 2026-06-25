@@ -1047,8 +1047,7 @@
   "(defmacro (gen [key : String]) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (import (gen \"same\"))
 (import (gen (if true \"same\" \"other\")))
 (define (main) : i64 (answer))")
@@ -1059,13 +1058,11 @@
     [(ExprCall _ _)
       `(begin
       (module generated.module)
-      (define (answer) : i64 99)
-      (export (value answer)))]
+      (define (answer) : i64 99))]
     [_
       `(begin
       (module generated.module)
-      (define (answer) : i64 42)
-      (export (value answer)))]))
+      (define (answer) : i64 42))]))
 (defmacro (later) : Decls
   `(import (gen (string-append \"sa\" \"me\"))))
 (import (gen \"same\"))
@@ -1076,23 +1073,34 @@
   "(defmacro (gen-a [key : String]) : Module
   `(begin
     (module generated.a)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (defmacro (gen-b [key : String]) : Module
   `(begin
     (module generated.b)
-    (define (answer) : i64 99)
-    (export (value answer))))
+    (define (answer) : i64 99)))
 (import (gen-a \"a\"))
 (import (gen-b \"b\"))
+(define (main) : i64 (answer))")
+
+(define (compiler-typecheck-smoke-module-macro-generated-local-shadow-source) : String
+  "(defmacro (gen-a [key : String]) : Module
+  `(begin
+    (module generated.a)
+    (define (answer) : i64 42)))
+(defmacro (gen-b [key : String]) : Module
+  `(begin
+    (module generated.b)
+    (define (answer) : i64 99)))
+(import (gen-a \"a\"))
+(import (gen-b \"b\"))
+(define (answer) : i64 7)
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-local-collision-source) : String
   "(defmacro (gen [key : String]) : Module
   `(begin
     (module generated.module)
-    (define (answer) : i64 42)
-    (export (value answer))))
+    (define (answer) : i64 42)))
 (define (answer) : i64 0)
 (import (gen \"x\"))
 (define (main) : i64 (answer))")
@@ -1107,11 +1115,7 @@
       (module ,mod-name)
       (defstruct Boxed (value ,T))
       (define (make [value : ,T]) : Boxed (Boxed value))
-      (define (read [box : Boxed]) : ,T (struct-get box value))
-      (export (type Boxed))
-      (export (constructor Boxed))
-      (export (value make))
-      (export (value read)))))
+      (define (read [box : Boxed]) : ,T (struct-get box value)))))
 (import (boxmod i64) as bi)
 (import (boxmod i64) as bi2)
 (import (boxmod String) as bs)
@@ -1131,29 +1135,69 @@
   "(defmacro (vector [T : type]) : Module
   `(begin
     (module generated.vector)
-    (define (id [value : ,T]) : ,T value)
-    (export (value id))))
+    (define (id [value : ,T]) : ,T value)))
 (defmacro (uses-vector) : Module
   `(begin
     (module generated.usesvec)
     (import (vector i64) as v)
     (define (answer) : i64
-      (v.id 42))
-    (export (value answer))))
+      (v.id 42))))
 (import (uses-vector) as uv)
 (define (main) : i64 (uv.answer))")
+
+(define (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source) : String
+  "(import \"stdlib/vector.tl\")
+(defmacro (vector-user) : Module
+  `(begin
+    (module generated.local_type_vector_user)
+    (defstruct T
+      (value i64))
+    (import (vector T) as vec)
+    (define (make [value : i64]) : T
+      (T value))
+    (define (score [value : T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (struct-get (vec.get (& items) 0 (T 0)) value))))))
+(import (vector-user) as user)
+(define (main) : i64
+  (user.score (user.make 42)))")
+
+(define (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source) : String
+  "(import \"stdlib/vector.tl\")
+(defmacro (type-provider) : Module
+  `(begin
+    (module generated.qualified_type_vector_provider)
+    (defstruct T
+      (value i64))))
+(defmacro (vector-user) : Module
+  `(begin
+    (module generated.qualified_type_vector_user)
+    (import (type-provider) as provider)
+    (import (vector provider.T) as vec)
+    (define (make [value : i64]) : provider.T
+      (provider.T value))
+    (define (score [value : provider.T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (struct-get (vec.get (& items) 0 (provider.T 0)) value))))))
+(import (vector-user) as user)
+(define (main) : i64
+  (user.score (user.make 42)))")
 
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
   `(begin
     (module generated.shared)
-    (define (answer) : i64 40)
-    (export (value answer))))
+    (define (answer) : i64 40)))
 (defmacro (extra [key : String]) : Module
   `(begin
     (module generated.shared)
-    (define (bonus) : i64 1)
-    (export (value bonus))))
+    (define (bonus) : i64 1)))
 (import (base \"same\") as base)
 (import (extra \"same\") as extra)
 (import (extra \"same\") as extra2)
@@ -1164,20 +1208,17 @@
   "(defmacro (base [key : String]) : Module
   `(begin
     (module generated.shared)
-    (define (answer) : i64 40)
-    (export (value answer))))
+    (define (answer) : i64 40)))
 (defmacro (extra [key : Expr]) : Module
   (match key
     [(ExprCall _ _)
       `(begin
         (module generated.shared)
-        (define (bonus) : i64 2)
-        (export (value bonus)))]
+        (define (bonus) : i64 2))]
     [_
       `(begin
         (module generated.shared)
-        (define (bonus) : i64 1)
-        (export (value bonus)))]))
+        (define (bonus) : i64 1))]))
 (import (base \"same\") as base)
 (import (extra \"same\") as extra)
 (import (extra (string-append \"sa\" \"me\")) as extra2)
@@ -1193,14 +1234,19 @@
       "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-generated-collision-source)
-      "typecheck: generated import collision for value answer between generated identities :gen-a(string_1_97) and :gen-b(string_1_98); use an explicit alias or full generated-module access")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-local-collision-source)
-      "typecheck: generated import collision for value answer from generated identity :gen(string_1_120) with ordinary binding local declaration; use an explicit alias or full generated-module access")
+      "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-generated-local-shadow-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-local-collision-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-type-key-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?
@@ -1257,11 +1303,7 @@
     (define (make [value : i64]) : Box1
       (Box1 value))
     (define (bumped [b : Box1]) : i64
-      (let [doubled : i64 (* (struct-get b value) 2)] (+ doubled 1)))
-    (export (type Box1))
-    (export (constructor Box1))
-    (export (value make))
-    (export (value bumped))))
+      (let [doubled : i64 (* (struct-get b value) 2)] (+ doubled 1)))))
 (import (int-box) as ib)
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
@@ -1277,10 +1319,7 @@
       (define (new) : Vec
         (Vec 1))
       (define (len [v : (& v Vec)]) : i64
-        (struct-get v len))
-      (export (type Vec))
-      (export (value new))
-      (export (value len)))))
+        (struct-get v len)))))
 (defmacro (sliceish [T : type]) : Module
   (let
     [module-name : Expr
@@ -1289,8 +1328,7 @@
       (module ,module-name)
       (import (vector ,T) as vec)
       (define (len-of [v : vec.Vec]) : i64
-        (vec.len (& v)))
-      (export (value len-of)))))
+        (vec.len (& v))))))
 (import (vector i64) as vec)
 (import (sliceish i64) as sliceish)
 (import (vector Pair) as pvec)
@@ -1323,6 +1361,73 @@
 
 (define (compiler-typecheck-smoke-type-macro-param-tests-ok?) : bool
   (compiler-typecheck-ok? (compiler-typecheck-smoke-type-macro-param-source)))
+
+(define (compiler-typecheck-smoke-decls-macro-generated-reuse-source) : String
+  "(defmacro (bundle [T : type] [version : String]) : Decls
+  `(begin
+    (defstruct BundleBox (value ,T))
+    (defenum BundleMaybe (BundleNone) (BundleSome ,T))
+    (define (bundle-score [value : BundleMaybe]) : i64 1)))
+(bundle String \"v1\")
+(bundle String \"v1\")
+(define (main) : i64 (bundle-score (BundleSome \"x\")))")
+
+(define (compiler-typecheck-smoke-decls-macro-generated-incompatible-source) : String
+  "(defmacro (bundle [key : Expr]) : Decls
+  (match key
+    [(ExprCall _ _)
+      `(defstruct BundleBox (value i64))]
+    [_
+      `(defstruct BundleBox (value String))]))
+(bundle \"same\")
+(bundle (string-append \"sa\" \"me\"))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String
+  "(module bundle.family)
+(defmacro (bundle [version : String]) : Decls
+  `(begin
+    (defstruct BundleBox (value String))
+    (defenum BundleMaybe (BundleNone) (BundleSome String))))
+(bundle \"v1\")
+(module app)
+(module bundle.family)
+(bundle \"v1\")")
+
+(define (compiler-typecheck-smoke-decls-macro-expr-name-key-source) : String
+  "(defmacro (box-family [T : type] [box-name : Expr] [ctor-name : Expr]) : Decls
+  `(begin
+    (defstruct ,box-name (value ,T))
+    (define (,ctor-name [value : ,T]) : ,box-name
+      (,box-name value))))
+(box-family i64 IntBox int-box)
+(box-family i64 IntBox int-box)
+(define (main) : i64
+  (struct-get (int-box 42) value))")
+
+(define (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source) : String
+  "(module bundle.left)
+(defmacro (bundle [version : String]) : Decls
+  `(defstruct BundleBox (value String)))
+(bundle \"v1\")
+(module bundle.right)
+(defmacro (bundle [version : String]) : Decls
+  `(defstruct BundleBox (value String)))
+(bundle \"v1\")")
+
+(define (compiler-typecheck-smoke-decls-macro-generated-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-generated-reuse-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-decls-macro-generated-incompatible-source)
+      "generated-decl: duplicate generated key for BundleBox has incompatible payload")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-expr-name-key-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-decls-macro-cross-module-distinct-source))))
 
 (define (compiler-typecheck-smoke-decl-macro-body-tests-ok?) : bool
   (and
@@ -1508,8 +1613,7 @@
       (write-file
         dep
         "(module tc.prefix.local.dep)
-(define (value [x : i64]) : i64 (+ x 1))
-(export (value value))")
+(define (value [x : i64]) : i64 (+ x 1))")
       (write-file
         entry-a
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
@@ -1616,15 +1720,13 @@
 
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
   "(module tc.macro.context.helper)
-(define (bump [value : i64]) : i64 (+ value 1))
-(export (value bump))")
+(define (bump [value : i64]) : i64 (+ value 1))")
 
 (define (compiler-typecheck-smoke-macro-dependency-provider-source) : String
   "(module tc.macro.context.provider)
 (import \"tc_macro_context_helper.tl\" module tc.macro.context.helper as helper)
 (defmacro (bumped [value : i64]) : i64
-  `(helper.bump ,value))
-(export (macro bumped))")
+  `(helper.bump ,value))")
 
 (define (compiler-typecheck-smoke-macro-dependency-entry-source) : String
   "(import \"tc_macro_context_provider.tl\" module tc.macro.context.provider as provider)
@@ -1675,6 +1777,9 @@
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (panic "typecheck: declaration macro body smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-decls-macro-generated-tests-ok?)
+      (panic "typecheck: declaration macro generated identity smoke failed"))
     (unless
       (compiler-typecheck-smoke-type-macro-param-tests-ok?)
       (panic "typecheck: type macro param smoke failed"))

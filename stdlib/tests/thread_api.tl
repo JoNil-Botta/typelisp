@@ -1,4 +1,5 @@
 (import stdlib.thread)
+(import (thread.thread-handle i64) as thread_i64)
 (import stdlib.string)
 
 (define (test-array-i64-addr [items : (Array i64)]) : i64
@@ -37,8 +38,8 @@
     (thread.thread-spawn-result-clear-tid-addr-or spawn 0)
     (thread.thread-spawn-result-result-addr-or spawn 0)))
 
-(define (thread-api-join-i64-code [result : thread.ThreadI64JoinResult]) : i64
-  (thread.thread-i64-join-result-value-or result -1))
+(define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
+  (thread_i64.join-value-or result -1))
 
 (define (thread-api-safe-string-run) : i64
   42)
@@ -67,10 +68,10 @@
     [base : i64 40]
     [delta : i64 2]
     (begin
-      (thread.thread-spawn-i64
+      (thread_i64.spawn
         (lambda () : i64
           17))
-      (thread.thread-spawn-i64
+      (thread_i64.spawn
         (lambda () : i64
           (+ base delta)))
       (thread.thread-spawn-string

@@ -2471,27 +2471,27 @@
 (cfg
   test
   (define io-file : String
-    "target/io_edges_file.txt"))
+    "tests/scratch/io_edges_file.txt"))
 (cfg
   test
   (define io-empty-file : String
-    "target/io_edges_empty.txt"))
+    "tests/scratch/io_edges_empty.txt"))
 (cfg
   test
   (define io-created-file : String
-    "target/io_edges_created_"))
+    "tests/scratch/io_edges_created_"))
 (cfg
   test
   (define io-missing-file : String
-    "target/io_edges_missing.txt"))
+    "tests/scratch/io_edges_missing.txt"))
 (cfg
   test
   (define io-missing-parent-file : String
-    "target/stdlib-inline-missing-parent/io_edges.txt"))
+    "tests/scratch/stdlib-inline-missing-parent/io_edges.txt"))
 (cfg
   test
   (define io-directory-path : String
-    "target"))
+    "tests/scratch"))
 
 (cfg
   test

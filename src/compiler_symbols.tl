@@ -3058,7 +3058,7 @@
     [(ErrAstTypeList _) 0]))
 
 (define (compiler-symbols-smoke-source) : String
-  "(import \"stdlib/test.tl\")
+  "(import stdlib.test)
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
 (extern (io.print-string [arg0 : String]) : unit)

@@ -1396,7 +1396,7 @@
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-names : LowerNameEnv names]
-    [cur-module : String module]
+    [cur-module-id : i64 (intern module)]
     (begin
       (while (match cur-decls
         [(AstDeclNil) false]
@@ -1422,7 +1422,7 @@
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
-                    (set! cur-module (intern-str next-module)))]
+                    (set! cur-module-id next-module))]
                 [_
                   (begin
                     (set!
@@ -1431,7 +1431,7 @@
                         cur-names
                         entry-path
                         decl-path
-                        cur-module
+                        (intern-str cur-module-id)
                         decl))
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]))]))
@@ -1484,7 +1484,7 @@
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-names : LowerNameEnv names]
-    [cur-module : String module]
+    [cur-module-id : i64 (intern module)]
     (begin
       (while (match cur-decls
         [(AstDeclNil) false]
@@ -1510,7 +1510,7 @@
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
-                    (set! cur-module (intern-str next-module)))]
+                    (set! cur-module-id next-module))]
                 [_
                   (begin
                     (set!
@@ -1519,7 +1519,7 @@
                         cur-names
                         entry-path
                         decl-path
-                        cur-module
+                        (intern-str cur-module-id)
                         decl))
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]))]))
@@ -1755,95 +1755,71 @@
   [alias : String]
   [module : String]
   [path-aware : bool]) : LowerNameEnv
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              (intern-str next-module)
-              path-aware)]
-          [(AstDeclImport _)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              module
-              path-aware)]
-          [(AstDeclIncludeStr _ _)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              module
-              path-aware)]
-          [(AstDeclIncludeBin _ _)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              module
-              path-aware)]
-          [(AstDeclTest _ _ _)
-            (lower-name-env-add-module-aliases
-              rest
-              rest-paths
-              entry-path
-              names
-              target-module
-              alias
-              module
-              path-aware)]
-          [_
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-names : LowerNameEnv names]
+    [target-module-id : i64 (intern target-module)]
+    [cur-module-id : i64 (intern module)]
+    (begin
+      (while (match cur-decls
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur-decls
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
             (let
-              [next-names : LowerNameEnv
-                (if (string-eq module target-module)
-                  (lower-name-env-add-decl-alias-in-module
-                    names
-                    entry-path
-                    decl-path
-                    alias
-                    module
-                    decl
-                    path-aware)
-                  names)]
-              (lower-name-env-add-module-aliases
-                rest
-                rest-paths
-                entry-path
-                next-names
-                target-module
-                alias
-                module
-                path-aware))]))]))
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) entry-path])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclImport _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclIncludeStr _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclIncludeBin _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDeclTest _ _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [_
+                  (begin
+                    (if (= cur-module-id target-module-id)
+                      (set!
+                        cur-names
+                        (lower-name-env-add-decl-alias-in-module
+                          cur-names
+                          entry-path
+                          decl-path
+                          alias
+                          (intern-str cur-module-id)
+                          decl
+                          path-aware))
+                      unit)
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]))]))
+      cur-names)))
 
 (define (lower-name-env-add-module-aliases-cache
   [decls : AstDeclList]
@@ -1853,76 +1829,42 @@
   [target-module-id : i64]
   [alias : String]
   [module-id : i64]) : LowerNameEnv
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              next-module)]
-          [(AstDeclImport _)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              module-id)]
-          [(AstDeclIncludeStr _ _)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              module-id)]
-          [(AstDeclIncludeBin _ _)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              module-id)]
-          [(AstDeclTest _ _ _)
-            (lower-name-env-add-module-aliases-cache
-              rest
-              base-cache
-              names
-              target-module
-              target-module-id
-              alias
-              module-id)]
-          [_
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-names : LowerNameEnv names]
+    [cur-module-id : i64 module-id]
+    (begin
+      (while (match cur-decls
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur-decls
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
             (let
-              [next-names : LowerNameEnv
-                (if (= module-id target-module-id)
-                  (lower-name-env-add-decl-alias-in-module-cache
-                    names
-                    base-cache
-                    alias
-                    target-module
-                    decl)
-                  names)]
-              (lower-name-env-add-module-aliases-cache
-                rest
-                base-cache
-                next-names
-                target-module
-                target-module-id
-                alias
-                module-id))]))]))
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur-decls rest))]
+                [(AstDeclImport _) (set! cur-decls rest)]
+                [(AstDeclIncludeStr _ _) (set! cur-decls rest)]
+                [(AstDeclIncludeBin _ _) (set! cur-decls rest)]
+                [(AstDeclTest _ _ _) (set! cur-decls rest)]
+                [_
+                  (begin
+                    (if (= cur-module-id target-module-id)
+                      (set!
+                        cur-names
+                        (lower-name-env-add-decl-alias-in-module-cache
+                          cur-names
+                          base-cache
+                          alias
+                          target-module
+                          decl))
+                      unit)
+                    (set! cur-decls rest))]))]))
+      cur-names)))
 
 (define (lower-name-env-from-import-aliases
   [all-decls : AstDeclList]
@@ -1933,59 +1875,56 @@
   [names : LowerNameEnv]
   [module : String]
   [path-aware : bool]) : LowerNameEnv
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        [next-names : LowerNameEnv
-          (match decl
-            [(AstDeclModule _) names]
-            [(AstDeclImport
-                (AstImportSpec
-                  _
-                  _
-                  (AstSomeModuleName target-module)
-                  (AstSomeImportAlias alias)
-                  _))
-              (lower-name-env-add-module-aliases
-                all-decls
-                all-paths
-                entry-path
-                names
-                target-module
-                (lower-import-alias-key module alias)
-                ""
-                path-aware)]
-            [_ names])]
-        (match decl
-          [(AstDeclModule next-module)
-            (lower-name-env-from-import-aliases
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              entry-path
-              next-names
-              (intern-str next-module)
-              path-aware)]
-          [_
-            (lower-name-env-from-import-aliases
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              entry-path
-              next-names
-              module
-              path-aware)]))]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-names : LowerNameEnv names]
+    [cur-module-id : i64 (intern module)]
+    (begin
+      (while (match cur-decls
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur-decls
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (begin
+                (match decl
+                  [(AstDeclImport
+                      (AstImportSpec
+                        _
+                        _
+                        (AstSomeModuleName target-module)
+                        (AstSomeImportAlias alias)
+                        _))
+                    (set!
+                      cur-names
+                      (lower-name-env-add-module-aliases
+                        all-decls
+                        all-paths
+                        entry-path
+                        cur-names
+                        target-module
+                        (lower-import-alias-key
+                          (intern-str cur-module-id)
+                          alias)
+                        ""
+                        path-aware))]
+                  [_ unit])
+                (match decl
+                  [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                  [_ unit])
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)))]))
+      cur-names)))
 
 (define (lower-name-env-with-import-aliases
   [decls : AstDeclList]
@@ -2013,68 +1952,57 @@
   [target-current-module : String]
   [current-module : String]
   [path-aware : bool]) : LowerNameEnv
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (lower-name-env-from-import-aliases-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              entry-path
-              names
-              target-current-module
-              (intern-str next-module)
-              path-aware)]
-          [(AstDeclImport
-              (AstImportSpec
-                _
-                _
-                (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)
-                _))
-            (lower-name-env-from-import-aliases-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              entry-path
-              (if (string-eq current-module target-current-module)
-                (lower-name-env-add-module-aliases
-                  all-decls
-                  all-paths
-                  entry-path
-                  names
-                  target-module
-                  alias
-                  ""
-                  path-aware)
-                names)
-              target-current-module
-              current-module
-              path-aware)]
-          [_
-            (lower-name-env-from-import-aliases-in-module
-              all-decls
-              all-paths
-              rest
-              rest-paths
-              entry-path
-              names
-              target-current-module
-              current-module
-              path-aware)]))]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-names : LowerNameEnv names]
+    [target-module-id : i64 (intern target-current-module)]
+    [cur-module-id : i64 (intern current-module)]
+    (begin
+      (while (match cur-decls
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur-decls
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (begin
+                (match decl
+                  [(AstDeclImport
+                      (AstImportSpec
+                        _
+                        _
+                        (AstSomeModuleName target-module)
+                        (AstSomeImportAlias alias)
+                        _))
+                    (if (= cur-module-id target-module-id)
+                      (set!
+                        cur-names
+                        (lower-name-env-add-module-aliases
+                          all-decls
+                          all-paths
+                          entry-path
+                          cur-names
+                          target-module
+                          alias
+                          ""
+                          path-aware))
+                      unit)]
+                  [_ unit])
+                (match decl
+                  [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                  [_ unit])
+                (set! cur-decls rest)
+                (set! cur-paths rest-paths)))]))
+      cur-names)))
 
 (define (lower-name-env-with-import-aliases-in-module
   [decls : AstDeclList]
@@ -2101,51 +2029,46 @@
   [base-cache : LowerNameCache]
   [target-current-module-id : i64]
   [current-module-id : i64]) : LowerNameEnv
-  (match decls
-    [(AstDeclNil) names]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (lower-name-env-from-import-aliases-in-module-cache
-              all-decls
-              rest
-              names
-              base-cache
-              target-current-module-id
-              next-module)]
-          [(AstDeclImport
-              (AstImportSpec
-                _
-                _
-                (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)
-                _))
-            (lower-name-env-from-import-aliases-in-module-cache
-              all-decls
-              rest
-              (if (= current-module-id target-current-module-id)
-                (lower-name-env-add-module-aliases-cache
-                  all-decls
-                  base-cache
-                  names
-                  target-module
-                  (intern target-module)
-                  alias
-                  (intern ""))
-                names)
-              base-cache
-              target-current-module-id
-              current-module-id)]
-          [_
-            (lower-name-env-from-import-aliases-in-module-cache
-              all-decls
-              rest
-              names
-              base-cache
-              target-current-module-id
-              current-module-id)]))]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-names : LowerNameEnv names]
+    [cur-module-id : i64 current-module-id]
+    (begin
+      (while (match cur-decls
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur-decls
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (begin
+                (match decl
+                  [(AstDeclImport
+                      (AstImportSpec
+                        _
+                        _
+                        (AstSomeModuleName target-module)
+                        (AstSomeImportAlias alias)
+                        _))
+                    (if (= cur-module-id target-current-module-id)
+                      (set!
+                        cur-names
+                        (lower-name-env-add-module-aliases-cache
+                          all-decls
+                          base-cache
+                          cur-names
+                          target-module
+                          (intern target-module)
+                          alias
+                          (intern "")))
+                      unit)]
+                  [_ unit])
+                (match decl
+                  [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                  [_ unit])
+                (set! cur-decls rest)))]))
+      cur-names)))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
   [decls : AstDeclList]

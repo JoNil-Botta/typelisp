@@ -11370,92 +11370,51 @@
   [importer-module : String]
   [import-unqualified : bool]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              (intern-str next-module))]
-          [(AstDeclImport _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclTest _ _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [_
-            (if (string-eq module target-module)
-              (match (tc-bind-import-alias-decl-in-module
-                ctx
-                env
-                alias
-                importer-module
-                import-unqualified
-                module
-                decl)
-                [(OkTcEnv next-env)
-                  (tc-bind-import-alias-module-list
-                    ctx
-                    rest
-                    next-env
-                    target-module
-                    alias
-                    importer-module
-                    import-unqualified
-                    module)]
-                [(ErrTcEnv message) (ErrTcEnv message)])
-              (tc-bind-import-alias-module-list
-                ctx
-                rest
-                env
-                target-module
-                alias
-                importer-module
-                import-unqualified
-                module))]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [target-module-id : i64 (intern target-module)]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport _) (set! cur rest)]
+                [(AstDeclIncludeStr _ _) (set! cur rest)]
+                [(AstDeclIncludeBin _ _) (set! cur rest)]
+                [(AstDeclTest _ _ _) (set! cur rest)]
+                [_
+                  (if (= cur-module-id target-module-id)
+                    (match (tc-bind-import-alias-decl-in-module
+                      ctx
+                      cur-env
+                      alias
+                      importer-module
+                      import-unqualified
+                      (intern-str cur-module-id)
+                      decl)
+                      [(OkTcEnv next-env)
+                        (begin
+                          (set! cur-env next-env)
+                          (set! cur rest))]
+                      [(ErrTcEnv step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])
+                    (set! cur rest))]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-bind-import-alias-module
   [ctx : TcContext]
@@ -11481,43 +11440,53 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-build-top-env-aliases-list
-              ctx
-              all-decls
-              rest
-              env
-              (intern-str next-module))]
-          [(AstDeclImport
-              (AstImportSpec
-                _
-                _
-                (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)
-                _))
-            (match (tc-bind-import-alias-module
-              ctx
-              all-decls
-              env
-              target-module
-              (compiler-symbols-import-alias-key module alias)
-              module
-              (string-eq alias ""))
-              [(OkTcEnv next-env)
-                (tc-build-top-env-aliases-list
-                  ctx
-                  all-decls
-                  rest
-                  next-env
-                  module)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]
-          [_ (tc-build-top-env-aliases-list ctx all-decls rest env module)]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport
+                    (AstImportSpec
+                      _
+                      _
+                      (AstSomeModuleName target-module)
+                      (AstSomeImportAlias alias)
+                      _))
+                  (match (tc-bind-import-alias-module
+                    ctx
+                    all-decls
+                    cur-env
+                    target-module
+                    (compiler-symbols-import-alias-key
+                      (intern-str cur-module-id)
+                      alias)
+                    (intern-str cur-module-id)
+                    (string-eq alias ""))
+                    [(OkTcEnv next-env)
+                      (begin
+                        (set! cur-env next-env)
+                        (set! cur rest))]
+                    [(ErrTcEnv step-message)
+                      (begin
+                        (set! message step-message)
+                        (set! ok false))])]
+                [_ (set! cur rest)]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
@@ -35787,12 +35756,20 @@
     [_ acc]))
 
 (define (macro-collect-macro-names [decls : AstDeclList] [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (macro-collect-macro-names
-        (box-get rest)
-        (macro-collect-decl-name decl acc))]))
+  (let
+    [cur : AstDeclList decls]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (set! out (macro-collect-decl-name decl out))
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
@@ -35826,20 +35803,29 @@
   [decls : AstDeclList]
   [module : String]
   [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            (intern-str next-module)
-            acc)]
-        [_
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            module
-            (macro-collect-expr-type-decl-name decl module acc))])]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-module-id : i64 (intern module)]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (match decl
+                [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                [_
+                  (set!
+                    out
+                    (macro-collect-expr-type-decl-name
+                      decl
+                      (intern-str cur-module-id)
+                      out))])
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
   (macro-collect-expr-type-macro-names-in decls "" TcStringNil))

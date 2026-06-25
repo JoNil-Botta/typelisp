@@ -6513,14 +6513,18 @@
       [(= size 4) (- 0 2147483648)]
       [else (- (- 0 9223372036854775807) 1)])))
 
-(define (compiler-backend-div-zero-guard-asm [ty : AstType] [divisor-reg : String]) : String
+(define (compiler-backend-div-zero-guard-asm
+  [ty : AstType]
+  [divisor-reg : String]) : String
   (let
     [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
     (string-append
       (compiler-backend-binop-reg-asm "test" ty rhs rhs)
       "    jne 1f\n    call tl_div_abort\n1:\n")))
 
-(define (compiler-backend-div-overflow-guard-asm [ty : AstType] [divisor-reg : String]) : String
+(define (compiler-backend-div-overflow-guard-asm
+  [ty : AstType]
+  [divisor-reg : String]) : String
   (if (compiler-backend-type-signed? ty)
     (let
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
@@ -6542,7 +6546,9 @@
                 "    jne 1f\n    call tl_div_abort\n1:\n"))))))
     ""))
 
-(define (compiler-backend-divmod-guard-asm [ty : AstType] [divisor-reg : String]) : String
+(define (compiler-backend-divmod-guard-asm
+  [ty : AstType]
+  [divisor-reg : String]) : String
   (str-cat
     (compiler-backend-div-zero-guard-asm ty divisor-reg)
     (compiler-backend-div-overflow-guard-asm ty divisor-reg)))
@@ -7103,11 +7109,18 @@
 
 (define (compiler-backend-shift-guard-asm [ty : AstType] [count-reg : String]) : String
   (string-append
-    (str-cat "    testq " count-reg ", " count-reg "\n    jge 1f\n    call tl_shift_abort\n1:\n")
+    (str-cat
+      "    testq "
+      count-reg
+      ", "
+      count-reg
+      "\n    jge 1f\n    call tl_shift_abort\n1:\n")
     (str-cat
       "    cmpq $"
       (int->string (compiler-backend-shift-count-width ty))
-      ", " count-reg "\n    jb 1f\n    call tl_shift_abort\n1:\n"
+      ", "
+      count-reg
+      "\n    jb 1f\n    call tl_shift_abort\n1:\n"
       ""
       "")))
 
@@ -7128,7 +7141,10 @@
         lhs
         "\n"))))
 
-(define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType] [rhs-reg : String]) : String
+(define (compiler-backend-binop-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]
+  [rhs-reg : String]) : String
   (let
     [lhs : String (compiler-backend-sized-reg "%rax" ty)]
     [rhs : String (compiler-backend-sized-reg rhs-reg ty)]
@@ -7838,25 +7854,35 @@
                                 "%rax"
                                 ty))))]
                       [(CompilerBackendNoAsm)
-                        (match (compiler-backend-emit-load-value-with-plan
-                          assignments
-                          rhs
-                          "%r8")
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
-                              (string-append
-                                lhs-asm
+                        (let
+                          [scav-rhs : String
+                            (compiler-backend-scavenge-reg
+                              dst
+                              (compiler-backend-binop-scavenge-exclude-build)
+                              5
+                              "%r8")]
+                          (match (compiler-backend-emit-load-value-with-plan
+                            assignments
+                            rhs
+                            scav-rhs)
+                            [(OkCompilerBackend rhs-asm)
+                              (OkCompilerBackend
                                 (string-append
-                                  rhs-asm
+                                  lhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm op operand-ty "%r8")
-                                    (compiler-backend-emit-store-typed-var-with-plan
-                                      assignments
-                                      dst
-                                      "%rax"
-                                      ty)))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])])]
+                                    rhs-asm
+                                    (string-append
+                                      (compiler-backend-binop-asm
+                                        op
+                                        operand-ty
+                                        scav-rhs)
+                                      (compiler-backend-emit-store-typed-var-with-plan
+                                        assignments
+                                        dst
+                                        "%rax"
+                                        ty)))))]
+                            [(ErrCompilerBackend message)
+                              (ErrCompilerBackend message)]))])]
                   [(CompilerBackendNoImmediate)
                     (let
                       [rhs-address : String
@@ -7878,28 +7904,35 @@
                                     "%rax"
                                     ty))))]
                           [(CompilerBackendNoAsm)
-                            (match (compiler-backend-emit-load-value-with-plan
-                              assignments
-                              rhs
-                              "%r8")
-                              [(OkCompilerBackend rhs-asm)
-                                (OkCompilerBackend
-                                  (string-append
-                                    lhs-asm
+                            (let
+                              [scav-rhs : String
+                                (compiler-backend-scavenge-reg
+                                  dst
+                                  (compiler-backend-binop-scavenge-exclude-build)
+                                  5
+                                  "%r8")]
+                              (match (compiler-backend-emit-load-value-with-plan
+                                assignments
+                                rhs
+                                scav-rhs)
+                                [(OkCompilerBackend rhs-asm)
+                                  (OkCompilerBackend
                                     (string-append
-                                      rhs-asm
+                                      lhs-asm
                                       (string-append
-                                        (compiler-backend-binop-asm
-                                          op
-                                          operand-ty
-                                          "%r8")
-                                        (compiler-backend-emit-store-typed-var-with-plan
-                                          assignments
-                                          dst
-                                          "%rax"
-                                          ty)))))]
-                              [(ErrCompilerBackend message)
-                                (ErrCompilerBackend message)])])
+                                        rhs-asm
+                                        (string-append
+                                          (compiler-backend-binop-asm
+                                            op
+                                            operand-ty
+                                            scav-rhs)
+                                          (compiler-backend-emit-store-typed-var-with-plan
+                                            assignments
+                                            dst
+                                            "%rax"
+                                            ty)))))]
+                                [(ErrCompilerBackend message)
+                                  (ErrCompilerBackend message)]))])
                         ;; #perf: rhs has no stack address, so it is register-
                         ;; homed (or a non-addressable value). When it lives in a
                         ;; register distinct from %rax (the temp holding lhs),
@@ -8013,6 +8046,12 @@
         dst
         result-ty
         store-result)]
+    [scav-rhs : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r8")]
     (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
       [(CompilerBackendSomeAsm op-asm)
         (OkCompilerBackend (string-append op-asm store))]
@@ -8026,26 +8065,26 @@
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   rhs
-                  "%r8")
+                  scav-rhs)
                   [(OkCompilerBackend rhs-asm)
                     (OkCompilerBackend
                       (string-append
                         rhs-asm
                         (string-append
-                          (compiler-backend-binop-asm op operand-ty "%r8")
+                          (compiler-backend-binop-asm op operand-ty scav-rhs)
                           store)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
           [(CompilerBackendNoImmediate)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               rhs
-              "%r8")
+              scav-rhs)
               [(OkCompilerBackend rhs-asm)
                 (OkCompilerBackend
                   (string-append
                     rhs-asm
                     (string-append
-                      (compiler-backend-binop-asm op operand-ty "%r8")
+                      (compiler-backend-binop-asm op operand-ty scav-rhs)
                       store)))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])))
 
@@ -8232,7 +8271,10 @@
                                 (string-append
                                   rhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm op operand-ty "%r8")
+                                    (compiler-backend-binop-asm
+                                      op
+                                      operand-ty
+                                      "%r8")
                                     return-tail))))]
                           [(ErrCompilerBackend message)
                             (ErrCompilerBackend message)])])]
@@ -22192,6 +22234,132 @@
           (set! v (+ v 1))))
       free)))
 
+;; Register scavenger context (step 15b). Holds the FINAL-IR per-var live
+;; intervals + assignments for the function currently being emitted, so the
+;; backend can ask which physical register is free at an instruction's point
+;; instead of hardcoding scratch. Installed once per function (read-only).
+(define compiler-backend-scavenge-ctx-starts : (Array i64)
+  (make-array i64 1))
+(define compiler-backend-scavenge-ctx-ends : (Array i64)
+  (make-array i64 1))
+
+(define (compiler-backend-scavenge-empty-assignments) : CompilerRegAssignmentList
+  CompilerRegAssignmentNil)
+
+(define compiler-backend-scavenge-ctx-assignments : CompilerRegAssignmentList
+  (compiler-backend-scavenge-empty-assignments))
+(define compiler-backend-scavenge-ctx-vars : i64
+  0)
+
+(define (compiler-backend-set-scavenge-ctx!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : unit
+  (begin
+    (set! compiler-backend-scavenge-ctx-starts starts)
+    (set! compiler-backend-scavenge-ctx-ends ends)
+    (set! compiler-backend-scavenge-ctx-assignments assignments)
+    (set! compiler-backend-scavenge-ctx-vars vars)))
+
+;; Same interval build as scavenge-self-check, installed UNCONDITIONALLY so the
+;; scavenge hook can read it during emission. Read-only -> no codegen change.
+(define (compiler-backend-scavenge-install-ctx!
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [slot-vars : i64]
+  [emit-blocks : CompilerIrBlockList]
+  [assignments : CompilerRegAssignmentList]) : unit
+  (if (< slot-vars 1)
+    (compiler-backend-set-scavenge-ctx!
+      (make-array i64 1)
+      (make-array i64 1)
+      assignments
+      0)
+    (let
+      [func : CompilerIrFunction
+        (IrFunction name params ret-ty slot-vars emit-blocks)]
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      [starts : (Array i64) (make-array i64 slot-vars)]
+      [ends : (Array i64) (make-array i64 slot-vars)]
+      (begin
+        (compiler-reg-fill-i64-array starts -1)
+        (compiler-reg-fill-i64-array ends -1)
+        (compiler-reg-live-intervals-blocks-with-live
+          emit-blocks
+          liveness
+          0
+          starts
+          ends)
+        (compiler-backend-set-scavenge-ctx! starts ends assignments slot-vars)))))
+
+(define (compiler-backend-scavenge-excluded?
+  [exclude : (Array String)]
+  [n : i64]
+  [reg : String]) : bool
+  (let
+    [i : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (< i n) (not hit))
+        (begin
+          (if (string-eq (array-ref exclude i) reg)
+            (set! hit true)
+            unit)
+          (set! i (+ i 1))))
+      hit)))
+
+;; Exclude set for binop scavenging: a safe superset of every binop op's fixed
+;; registers (div: rax/rdx + guard r10/r11; shift: rcx; all: rax=lhs).
+(define (compiler-backend-binop-scavenge-exclude-build) : (Array String)
+  (let
+    [a : (Array String) (make-array String 5)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      a)))
+
+;; Return a register free at dst-var's def point (via the proven query),
+;; excluding `exclude`, preferring `fallback`. While the fallback is a reserved
+;; scratch it is always free here -> wiring a hardcoded scratch through this is
+;; byte-identical. The "pick a different free register" branch lands when the
+;; fallback register is pooled (step 15d); until then this returns `fallback`,
+;; which also keeps it from being dead code (the binop sites call it).
+(define (compiler-backend-scavenge-reg
+  [dst-var : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (let
+    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [vars : i64 compiler-backend-scavenge-ctx-vars]
+    (if (or (< dst-var 0) (>= dst-var vars))
+      fallback
+      (let
+        [point : i64 (array-ref starts dst-var)]
+        (if (< point 0)
+          fallback
+          (if (and
+            (not
+              (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+            (compiler-backend-scavenge-free-at-point?
+              starts
+              ends
+              assignments
+              vars
+              point
+              fallback))
+            fallback
+            fallback))))))
+
 ;; Self-check one instruction at `point` (= 2*global-index): every var it USES
 ;; must (a) have a live interval covering `point` -- which validates the walk
 ;; counter matches the interval point space -- and (b) be reported OCCUPIED by
@@ -22560,6 +22728,14 @@
             params
             emit-blocks-list
             program-index)]
+        [_scavenge-install-ctx : unit
+          (compiler-backend-scavenge-install-ctx!
+            name
+            params
+            ret-ty
+            slot-vars
+            emit-blocks-list
+            assignments)]
         [_scavenge-self-check : unit
           (cfg
             scavenge-self-check

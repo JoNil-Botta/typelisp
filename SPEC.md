@@ -5162,7 +5162,7 @@ codegen:
 | Symbol(s) | Disposition |
 |-----------|-------------|
 | `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
-| `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
+| `tl_memcpy`, `tl_memchr` | Core byte-copy/search primitives; `tl_memcpy` is the overlap-safe primitive that source code and lowering use for bulk copies, and `tl_memchr` is the allocation-free primitive for borrowed byte searches. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
 | `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`, `tl_profile_alloc_reset_peak` | Stdlib profile accessors backed by counters maintained inside the allocator core. |

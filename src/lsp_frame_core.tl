@@ -1241,22 +1241,46 @@
       i)))
 
 ;; 1-based line/column of a byte offset.
+(define lsp-line-col-cache-offset : i64
+  -1)
+(define lsp-line-col-cache-line : i64
+  1)
+(define lsp-line-col-cache-col : i64
+  1)
+
 (define (lsp-line-col-at-offset [text : String] [off : i64]) : LspLineCol
-  (let
-    [n : i64 (string-length text)]
-    [i : i64 0]
-    [line : i64 1]
-    [col : i64 1]
-    (begin
-      (while (and (< i n) (< i off))
-        (begin
-          (if (= (string-ref text i) '\n')
-            (begin
-              (set! line (+ line 1))
-              (set! col 1))
-            (set! col (+ col 1)))
-          (set! i (+ i 1))))
-      (LspLineCol line col))))
+  (if (= off lsp-line-col-cache-offset)
+    (LspLineCol lsp-line-col-cache-line lsp-line-col-cache-col)
+    (let
+      [n : i64 (string-length text)]
+      [resume : bool
+        (and (>= lsp-line-col-cache-offset 0) (< lsp-line-col-cache-offset off))]
+      [start : i64
+        (if resume
+          lsp-line-col-cache-offset
+          0)]
+      [line : i64
+        (if resume
+          lsp-line-col-cache-line
+          1)]
+      [col : i64
+        (if resume
+          lsp-line-col-cache-col
+          1)]
+      [i : i64 start]
+      (begin
+        (while (and (< i n) (< i off))
+          (begin
+            (if (= (string-ref text i) '\n')
+              (begin
+                (set! line (+ line 1))
+                (set! col 1))
+              (set! col (+ col 1)))
+            (set! i (+ i 1))))
+        (set! lsp-line-col-cache-offset off)
+        (set! lsp-line-col-cache-line line)
+        (set! lsp-line-col-cache-col col)
+        (LspLineCol line col)))))
 
 (define (lsp-def-keyword? [kw : String]) : bool
   (or
@@ -3252,10 +3276,10 @@
                           [name : String (lsp-symbol-at-offset text name-off)]
                           [kind : String (lsp-decl-kind-at text i n)]
                           [form-end : i64 (lsp-skip-paren-group text i n)]
-                          [name-lc : LspLineCol
-                            (lsp-line-col-at-offset text name-off)]
                           [form-start-lc : LspLineCol
                             (lsp-line-col-at-offset text i)]
+                          [name-lc : LspLineCol
+                            (lsp-line-col-at-offset text name-off)]
                           [form-end-lc : LspLineCol
                             (lsp-line-col-at-offset text form-end)]
                           (set!
@@ -3857,8 +3881,14 @@
                       (let
                         [hint-line : i64 (tc-inlay-hint-line-at i)]
                         [hint-col : i64 (tc-inlay-hint-col-at i)]
-                        [d-line : i64 (if (< hint-line line1) (- line1 hint-line) (- hint-line line1))]
-                        [d-col : i64 (if (< hint-col col1) (- col1 hint-col) (- hint-col col1))]
+                        [d-line : i64
+                          (if (< hint-line line1)
+                            (- line1 hint-line)
+                            (- hint-line line1))]
+                        [d-col : i64
+                          (if (< hint-col col1)
+                            (- col1 hint-col)
+                            (- hint-col col1))]
                         [dist : i64 (+ (* d-line 1000) d-col)]
                         (begin
                           (if (< dist best-dist)

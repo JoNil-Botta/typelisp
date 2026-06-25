@@ -25,9 +25,30 @@
   (ids StringI64Map)
   (values (Array String)))
 
+;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
+;; is a complete cache (a miss = unbound). `LowerTypeParentGlobal` marks a small
+;; per-module overlay that, on a miss, falls through to the process-global
+;; decl-lowering type cache `lower-decls-global-type-cache` (set once per
+;; lower-decls run). This lets each module's type cache be a small overlay of
+;; just the module-local type bindings over the shared global cache, instead of
+;; rebuilding the whole global type set into a fresh cache at every module
+;; boundary (was O(modules x global-types)). A global marker (rather than an
+;; owned parent value) is used because the single global cache must be shared by
+;; every module's overlay, which move semantics forbid for an owned field; the
+;; compiler already keeps per-file process-global caches in this style.
+(defenum LowerTypeParent
+  (LowerTypeParentNone)
+  (LowerTypeParentGlobal))
+
 (defenum LowerTypeCache
   (LowerNoTypeCache)
-  (LowerSomeTypeCache StringI64Map (Array AstType) i64))
+  (LowerSomeTypeCache StringI64Map (Array AstType) i64 LowerTypeParent))
+
+;; #3759: the shared global decl-lowering type cache (built once per lower-decls
+;; from top-env). Per-module overlay caches (LowerTypeParentGlobal) fall through
+;; here on a miss. Set by lower-decls before the per-module loop runs.
+(define lower-decls-global-type-cache : LowerTypeCache
+  (LowerNoTypeCache))
 
 (defenum LowerStringSet
   (LowerStringNil)
@@ -273,8 +294,13 @@
   (OkLowerEnv LowerState SymI64Env TcTypeEnv)
   (ErrLowerEnv CompilerDiagnostic))
 
+;; #3759: OkLowerModuleLocalEnv carries, in order, the full module-local type
+;; env (top-env + module-local type decls), the full module-local name env, and
+;; the module-local-ONLY type env (just the module's own type bindings, on an
+;; empty base). The last is used to build a small per-module type-cache overlay
+;; over the shared global type cache instead of re-walking the global env.
 (defenum ResultLowerModuleLocalEnv
-  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv)
+  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv TcTypeEnv)
   (ErrLowerModuleLocalEnv String))
 
 (defenum ResultLowerValue
@@ -714,7 +740,7 @@
   [ty : AstType]) : LowerTypeCache
   (match cache
     [(LowerNoTypeCache) cache]
-    [(LowerSomeTypeCache ids values next)
+    [(LowerSomeTypeCache ids values next parent)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound _) cache]
         [(StringI64MapMissing)
@@ -723,7 +749,8 @@
             (LowerSomeTypeCache
               (string-i64-map-put ids name next)
               values
-              (+ next 1)))])]))
+              (+ next 1)
+              parent))])]))
 
 (define (lower-type-cache-from-env-into
   [env : TcTypeEnv]
@@ -745,17 +772,36 @@
       (LowerSomeTypeCache
         (string-i64-map-with-capacity (lower-type-cache-capacity count))
         (make-array AstType count)
-        0))))
+        0
+        (LowerTypeParentNone)))))
+
+;; #3759: build a small overlay type cache from `env` (the module-local type
+;; bindings only). On a miss it falls through to the shared global cache
+;; `lower-decls-global-type-cache` (see lower-type-cache-lookup).
+(define (lower-type-cache-overlay [env : TcTypeEnv]) : LowerTypeCache
+  (let
+    [count : i64 (lower-type-env-count env)]
+    (lower-type-cache-from-env-into
+      env
+      (LowerSomeTypeCache
+        (string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (make-array AstType count)
+        0
+        (LowerTypeParentGlobal)))))
 
 (define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
   (match cache
     [(LowerNoTypeCache)
       (ErrTcType (string-append "typecheck: unbound name " name))]
-    [(LowerSomeTypeCache ids values _)
+    [(LowerSomeTypeCache ids values _ parent)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index) (OkTcType (array-ref values index))]
         [(StringI64MapMissing)
-          (ErrTcType (string-append "typecheck: unbound name " name))])]))
+          (match parent
+            [(LowerTypeParentNone)
+              (ErrTcType (string-append "typecheck: unbound name " name))]
+            [(LowerTypeParentGlobal)
+              (lower-type-cache-lookup lower-decls-global-type-cache name)])])]))
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
@@ -2328,13 +2374,14 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [type-env : TcTypeEnv]
+  [local-type-env : TcTypeEnv]
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
   [module-id : i64]) : ResultLowerModuleLocalEnv
   (match decls
-    [(AstDeclNil) (OkLowerModuleLocalEnv type-env names)]
+    [(AstDeclNil) (OkLowerModuleLocalEnv type-env names local-type-env)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -2344,6 +2391,7 @@
               top-env
               rest
               type-env
+              local-type-env
               names
               name-cache
               target-module
@@ -2357,24 +2405,39 @@
                 target-module
                 decl)
                 [(OkTcEnv next-type-env)
-                  (lower-module-local-envs-list
+                  ;; #3759: rebind the same decl onto a fresh local-only base.
+                  ;; lower-module-local-type-env-add-decl resolves every type
+                  ;; against top-env (passed separately), so the bindings are
+                  ;; identical to next-type-env's local additions -- only the base
+                  ;; env differs. This isolates the module-local type bindings for
+                  ;; the per-module type-cache overlay.
+                  (match (lower-module-local-type-env-add-decl
                     top-env
-                    rest
-                    next-type-env
-                    (lower-name-env-add-local-decl
-                      names
-                      name-cache
-                      target-module
-                      decl)
-                    name-cache
+                    local-type-env
                     target-module
-                    target-module-id
-                    module-id)]
+                    decl)
+                    [(OkTcEnv next-local-type-env)
+                      (lower-module-local-envs-list
+                        top-env
+                        rest
+                        next-type-env
+                        next-local-type-env
+                        (lower-name-env-add-local-decl
+                          names
+                          name-cache
+                          target-module
+                          decl)
+                        name-cache
+                        target-module
+                        target-module-id
+                        module-id)]
+                    [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])]
                 [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
               (lower-module-local-envs-list
                 top-env
                 rest
                 type-env
+                local-type-env
                 names
                 name-cache
                 target-module
@@ -2388,7 +2451,7 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string-eq module "")
-    (OkLowerModuleLocalEnv top-env names)
+    (OkLowerModuleLocalEnv top-env names (TcTypeNil))
     (match (tc-context-program ctx)
       [(AstProgram decls-box)
         (let
@@ -2403,6 +2466,7 @@
             top-env
             decls
             top-env
+            (TcTypeNil)
             module-names
             name-cache
             module
@@ -4416,7 +4480,7 @@
                 names
                 name-cache
                 next-module-str)
-                [(OkLowerModuleLocalEnv next-local-env _)
+                [(OkLowerModuleLocalEnv next-local-env _ _)
                   (lower-clone-roots-decls-in-module
                     ctx
                     top-env
@@ -35932,21 +35996,27 @@
         AstDeclPathNil
         "<source>"
         dispatch-name-cache)]
-    (lower-decls-in-module
-      ctx
-      top-env
-      top-env
-      decls
-      globals
-      functions
-      externs
-      spans
-      names
-      decl-name-cache
-      (lower-type-cache-from-env top-env)
-      dispatch-variants
-      mode
-      "")))
+    (begin
+      ;; #3759: build the shared global type cache once; per-module caches are
+      ;; small overlays that fall through to it. The initial cur-type-cache is an
+      ;; empty overlay (everything resolves via the global cache) for decls in
+      ;; the leading "" module before the first (module ...) marker.
+      (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
+      (lower-decls-in-module
+        ctx
+        top-env
+        top-env
+        decls
+        globals
+        functions
+        externs
+        spans
+        names
+        decl-name-cache
+        (lower-type-cache-overlay (TcTypeNil))
+        dispatch-variants
+        mode
+        ""))))
 
 ;; #2598: lower every top-level decl of the expanded program. This used to be
 ;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
@@ -36239,15 +36309,22 @@
                       names
                       cur-name-cache
                       next-module-str)
-                      [(OkLowerModuleLocalEnv next-local-top-env local-names)
+                      [(OkLowerModuleLocalEnv
+                          next-local-top-env
+                          local-names
+                          local-type-env)
                         (begin
                           (set! cur-local-top-env next-local-top-env)
                           (set!
                             cur-name-cache
                             (lower-name-cache-from-env local-names))
+                          ;; #3759: overlay just this module's local type
+                          ;; bindings; misses fall through to the shared global
+                          ;; type cache (set once from top-env) instead of
+                          ;; rebuilding the whole global type set per module.
                           (set!
                             cur-type-cache
-                            (lower-type-cache-from-env cur-local-top-env))
+                            (lower-type-cache-overlay local-type-env))
                           (set! cur-module next-module-str)
                           (set!
                             cur-decls

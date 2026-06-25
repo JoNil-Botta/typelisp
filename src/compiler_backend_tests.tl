@@ -3242,10 +3242,23 @@
               (compiler-backend-string-contains?
                 asm
                 "    call _tl_side_effect\n")
+              ;; The unified greedy keeps the call-spanning value in a
+              ;; callee-saved register and rematerialises the cold immediates
+              ;; after the call, so there should be no caller-saved %r9
+              ;; save/restore wrapper around the call.
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %r9, %rax\n    movq %rax, -"))
+              (not (compiler-backend-string-contains? asm "(%rbp), %r9\n"))
               (compiler-backend-string-contains?
                 asm
-                "    movq %r9, %rax\n    movq %rax, -")
-              (compiler-backend-string-contains? asm "(%rbp), %r9\n"))]
+                "    movq %r12, _tl_g5(%rip)\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movq %r12, _tl_g5b(%rip)\n")
+              (compiler-backend-string-contains? asm "    movl $4, %r9d\n")
+              (compiler-backend-string-contains? asm "    movl $6, %r9d\n"))]
           (begin
             (compiler-backend-set-scalar-registers! false)
             ok))]

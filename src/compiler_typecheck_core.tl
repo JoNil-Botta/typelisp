@@ -1961,9 +1961,71 @@
     (compiler-builtin-refresh!)
     (tc-name-id name)))
 
+;; --- top-env build membership side table (#3792) ----------------------------
+;; The whole-program top-level env is an UNCACHED spine of ~46K binds. The
+;; threshold-compaction machinery (tc-env-compact-local-if-threshold) is for
+;; single-bind function scopes and does not fire here: unsafe/c-abi decls
+;; prepend two binds at once, breaking the exact-"32 binds above a cache"
+;; alignment it needs, so the top env stays a plain list. The enum-variant
+;; binder uses `tc-bind-alias-id-if-free`, whose guard `tc-name-bound-id?`
+;; rescans that whole spine per variant -> O(decls^2) (measured: 46.4M node
+;; visits, ~120ms of the top-env build of a self-compile, with the guard never
+;; once finding a name already bound).
+;;
+;; This is a membership bloom keyed by name-id: every name bound during the
+;; build (plus the seeded base env) is stamped with the current generation. An
+;; UNMARKED id is provably absent from the env, so the guard binds directly
+;; with no scan. A MARKED id (a real prior binding, or a transient local bind
+;; from an un-annotated top-level `define` initializer) falls back to the exact
+;; spine scan -- the bloom only ever SKIPS the scan when the name is definitely
+;; unbound, so the bound env, lookups, and diagnostics are identical to the
+;; unconditional scan. Generation stamps avoid clearing the array between
+;; builds; the array never grows, so out-of-range ids (>= capacity)
+;; conservatively report "maybe" and take the exact scan.
+(define tc-topenv-membership-slots : (Array i64)
+  (make-array i64 262144))
+(define tc-topenv-membership-gen : i64
+  0)
+(define tc-topenv-membership-active : bool
+  false)
+
+(define (tc-topenv-membership-mark! [name-id : i64]) : unit
+  (if (and (>= name-id 0) (< name-id 262144))
+    (array-set! tc-topenv-membership-slots name-id tc-topenv-membership-gen)
+    unit))
+
+;; True when the id MIGHT be in the env (marked this generation, or out of
+;; range); false only when it is provably absent.
+(define (tc-topenv-membership-maybe? [name-id : i64]) : bool
+  (if (and (>= name-id 0) (< name-id 262144))
+    (= (array-ref tc-topenv-membership-slots name-id) tc-topenv-membership-gen)
+    true))
+
+(define (tc-topenv-membership-seed! [env : TcTypeEnv]) : unit
+  (match env
+    [(TcTypeNil) unit]
+    [(TcTypeBind key _ rest)
+      (begin
+        (tc-topenv-membership-mark! key)
+        (tc-topenv-membership-seed! (box-get rest)))]
+    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+      (tc-topenv-membership-seed! (box-get rest))]))
+
+(define (tc-topenv-membership-begin! [env : TcTypeEnv]) : unit
+  (begin
+    (set! tc-topenv-membership-gen (+ tc-topenv-membership-gen 1))
+    (set! tc-topenv-membership-active true)
+    (tc-topenv-membership-seed! env)))
+
+(define (tc-topenv-membership-end!) : unit
+  (set! tc-topenv-membership-active false))
+
 (define (tc-bind-raw-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-bind))
+    (if tc-topenv-membership-active
+      (tc-topenv-membership-mark! name-id)
+      unit)
     (TcTypeBind name-id ty (box env))))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
@@ -2411,9 +2473,14 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnv
-  (if (tc-name-bound-id? env name-id)
-    env
-    (tc-bind-id env name-id ty)))
+  (if (and
+    tc-topenv-membership-active
+    (not (tc-topenv-membership-maybe? name-id)))
+    ;; Provably unbound in the top-env spine: bind without the O(spine) scan.
+    (tc-bind-id env name-id ty)
+    (if (tc-name-bound-id? env name-id)
+      env
+      (tc-bind-id env name-id ty))))
 
 (define (tc-module-name-id [module : String] [name-id : i64]) : i64
   (if (= (string-length module) 0)
@@ -11624,9 +11691,15 @@
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          (match (tc-build-top-env-list ctx decls (tc-default-env))
+          [base-env : TcTypeEnv (tc-default-env)]
+          ;; #3792: activate the membership bloom across the bind-list so the
+          ;; enum-variant alias-if-free guard is O(1) instead of rescanning the
+          ;; whole top-env spine per variant.
+          [_membership-begin : unit (tc-topenv-membership-begin! base-env)]
+          (match (tc-build-top-env-list ctx decls base-env)
             [(OkTcEnv env)
               (let
+                [_membership-end : unit (tc-topenv-membership-end!)]
                 [cached-env : TcTypeEnv (tc-env-with-cache env)]
                 ;; Alias fanout copies canonical entries by lookup; cache the
                 ;; source env before adding aliases so that copy is O(1).
@@ -11638,7 +11711,10 @@
                   "")
                   [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
                   [(ErrTcEnv message) (ErrTcEnv message)]))]
-            [(ErrTcEnv message) (ErrTcEnv message)]))])))
+            [(ErrTcEnv message)
+              (begin
+                (tc-topenv-membership-end!)
+                (ErrTcEnv message))]))])))
 
 (define (tc-bind-enum-variants-local
   [ctx : TcContext]

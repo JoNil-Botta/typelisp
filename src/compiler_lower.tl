@@ -4656,15 +4656,16 @@
   ;; arena. The only escaping value is the CloneNameList (interned clone-helper
   ;; names), copied by lower-clone-roots-result-escape; the only global cache
   ;; clone-root discovery can leave pointing at the scratch arena is the
-  ;; nominal-owner cache, reset after the rewind (mirrors lower-function-escaping
-  ;; and the real typecheck, which also resets it before reuse). Persistent
-  ;; intern storage is enabled across the region so names interned during
-  ;; discovery never dangle the global intern table.
+  ;; nominal-owner cache, reset on entry and after the rewind (mirrors
+  ;; lower-function-escaping and the real typecheck, which also resets it before
+  ;; reuse). Persistent intern storage is enabled across the region so names
+  ;; interned during discovery never dangle the global intern table.
   (let
     [prev-arena : i64 (tl_arena_current)]
     [prev-persist : bool (intern-persistent-storage-on?)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
+      (tc-nominal-owner-cache-reset!)
       (intern-persistent-storage-enable!)
       (unsafe
         (tl_arena_set scratch))

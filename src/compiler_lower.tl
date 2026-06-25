@@ -7,6 +7,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector)
+(import stdlib.fs)
 (import "compiler_typecheck.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
@@ -1155,7 +1156,7 @@
         (string.substring path 0 (+ last 1))))))
 
 (define (lower-normalize-path [path : String]) : String
-  (fs-path-normalize (& path)))
+  (fs.fs-path-normalize (& path)))
 
 (define (lower-string-prefix-at?
   [text : String]

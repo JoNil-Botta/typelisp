@@ -1,5 +1,4 @@
 (import stdlib.json)
-(import stdlib.str_cat)
 (import stdlib.string)
 
 (defstruct Address

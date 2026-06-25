@@ -3850,19 +3850,25 @@
                 (let
                   [size : i64 (tc-inlay-hints-size)]
                   [i : i64 0]
-                  [found-idx : i64 -1]
+                  [best-idx : i64 -1]
+                  [best-dist : i64 999999999]
                   (begin
-                    (while (and (< i size) (= found-idx -1))
+                    (while (< i size)
                       (let
                         [hint-line : i64 (tc-inlay-hint-line-at i)]
                         [hint-col : i64 (tc-inlay-hint-col-at i)]
+                        [d-line : i64 (if (< hint-line line1) (- line1 hint-line) (- hint-line line1))]
+                        [d-col : i64 (if (< hint-col col1) (- col1 hint-col) (- hint-col col1))]
+                        [dist : i64 (+ (* d-line 1000) d-col)]
                         (begin
-                          (if (and (= hint-line line1) (= hint-col col1))
-                            (set! found-idx i)
+                          (if (< dist best-dist)
+                            (begin
+                              (set! best-dist dist)
+                              (set! best-idx i))
                             unit)
                           (set! i (+ i 1)))))
                     (tc-inlay-hints-disable!)
-                    (if (= found-idx -1)
+                    (if (= best-idx -1)
                       (begin
                         (lsp-write-response
                           id
@@ -3874,7 +3880,7 @@
                               "No type information at this position")))
                         (LspContinue docs))
                       (let
-                        [found-type : String (tc-inlay-hint-type-at found-idx)]
+                        [found-type : String (tc-inlay-hint-type-at best-idx)]
                         (begin
                           (lsp-write-response
                             id

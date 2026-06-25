@@ -52,7 +52,6 @@
 (include-str compiler-embedded-stdlib-tests-io-stdio-bytes "stdlib/tests/io_stdio_bytes.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-lines "stdlib/tests/io_stdio_lines.tl")
 (include-str compiler-embedded-stdlib-tests-io-stdio-pipe-short-read "stdlib/tests/io_stdio_pipe_short_read.tl")
-(include-str compiler-embedded-stdlib-tests-list-api "stdlib/tests/list_api.tl")
 (include-str compiler-embedded-stdlib-tests-msvc-api "stdlib/tests/msvc_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-api "stdlib/tests/process_api.tl")
 (include-str compiler-embedded-stdlib-tests-process-borrowed-escape "stdlib/tests/process_borrowed_escape.tl")
@@ -250,12 +249,6 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-io-stdio-pipe-short-read))
-        unit)
-      (if (string-eq suffix "tests/list_api.tl")
-        (set!
-          source
-          (CompilerEmbeddedStdlibSomeSource
-            compiler-embedded-stdlib-tests-list-api))
         unit)
       (if (string-eq suffix "tests/msvc_api.tl")
         (set!

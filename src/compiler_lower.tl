@@ -162,6 +162,13 @@
   (LowerNoMaskedVectorMap)
   (LowerSomeMaskedVectorMap i64))
 
+(defenum LowerMaskedMatchMasks
+  (LowerMaskedMatchMasks LowerState CompilerIrValue CompilerIrValue))
+
+(defenum ResultLowerMaskedMatchMasks
+  (OkLowerMaskedMatchMasks LowerMaskedMatchMasks)
+  (ErrLowerMaskedMatchMasks CompilerDiagnostic))
+
 (defenum LowerMaybeVectorReduce
   (LowerNoVectorReduce)
   (LowerSomeVectorReduce i64 CompilerIrVectorReduceOp AstType i64)
@@ -25991,6 +25998,9 @@
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
+(define (lower-avx2-varying-match-diagnostic) : String
+  "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512")
+
 (define (lower-spmd-bool-lane-diagnostic) : String
   "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512")
 
@@ -26532,6 +26542,83 @@
                   next-locals
                   rest)))]))]))
 
+(define (lower-masked-vector-pattern-locals
+  [pattern : AstPattern]
+  [scrut-lanes : i64]
+  [lane-locals : StringI64Map]) : StringI64Map
+  (if (> scrut-lanes 0)
+    (match pattern
+      [(AstPatVar name _)
+        (string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+      [(AstPatTuple patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (box-get patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [(AstPatBinding name)
+        (string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+      [(AstPatVariant _ patterns-box)
+        (lower-masked-vector-pattern-list-locals
+          (box-get patterns-box)
+          scrut-lanes
+          lane-locals)]
+      [_ lane-locals])
+    lane-locals))
+
+(define (lower-masked-vector-pattern-list-locals
+  [patterns : AstPatternList]
+  [scrut-lanes : i64]
+  [lane-locals : StringI64Map]) : StringI64Map
+  (match patterns
+    [(AstPatternNil) lane-locals]
+    [(AstPatternCons pattern rest)
+      (let
+        [pattern : AstPattern (box-get pattern)]
+        [rest : AstPatternList (box-get rest)]
+        (lower-masked-vector-pattern-list-locals
+          rest
+          scrut-lanes
+          (lower-masked-vector-pattern-locals pattern scrut-lanes lane-locals)))]))
+
+(define (lower-masked-vector-match-arms-lanes-with-locals
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [scrut-lanes : i64]
+  [arms : AstMatchArmList]) : i64
+  (match arms
+    [(AstMatchArmNil) 0]
+    [(AstMatchArmCons arm rest)
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              [body-locals : StringI64Map
+                (lower-masked-vector-pattern-locals
+                  pattern
+                  scrut-lanes
+                  lane-locals)]
+              (lower-masked-vector-lanes-merge
+                (lower-masked-vector-expr-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  body-locals
+                  body)
+                (lower-masked-vector-match-arms-lanes-with-locals
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  scrut-lanes
+                  rest)))]))]))
+
 (define (lower-masked-vector-expr-lanes-with-locals
   [mode : CompilerLowerMode]
   [env : SymI64Env]
@@ -26669,6 +26756,29 @@
               index
               lane-locals
               else-branch))))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrut-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrutinee)]
+            (lower-masked-vector-lanes-merge
+              scrut-lanes
+              (lower-masked-vector-match-arms-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrut-lanes
+                arms)))])]
     [(AstExprBegin exprs)
       (lower-masked-vector-expr-list-lanes-with-locals
         mode
@@ -27101,6 +27211,312 @@
     (lower-masked-vector-empty-lane-locals)
     bindings))
 
+(define (lower-masked-vector-body-has-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprUnary _ inner-box)
+      (lower-masked-vector-body-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get left-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get right-box)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              bindings)
+            (lower-masked-vector-body-has-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              (lower-masked-vector-let-bindings-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                bindings)
+              (ast-node-get body-box)))])]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get cond-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get then-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get else-box)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            [scrut-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrutinee)]
+            (or
+              (> scrut-lanes 0)
+              (lower-masked-vector-match-arms-have-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                scrut-lanes
+                arms)))])]
+    [(AstExprBegin exprs)
+      (lower-masked-vector-expr-list-has-varying-match-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs)]
+    [(AstExprArrayRef arr-box idx-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get receiver-box))
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
+    [_ false]))
+
+(define (lower-masked-vector-expr-list-has-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (lower-masked-vector-body-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get expr))
+        (lower-masked-vector-expr-list-has-varying-match-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (box-get rest)))]))
+
+(define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ init-box)
+          (let
+            [init : AstExpr (ast-node-get init-box)]
+            [init-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)]
+            [next-locals : StringI64Map
+              (if (> init-lanes 0)
+                (string-i64-map-put lane-locals (intern-str name) init-lanes)
+                lane-locals)]
+            (or
+              (lower-masked-vector-body-has-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)
+              (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+                mode
+                env
+                type-env
+                index
+                next-locals
+                (box-get rest))))])]))
+
+(define (lower-masked-vector-match-arms-have-varying-match-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : StringI64Map]
+  [scrut-lanes : i64]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (or
+            (lower-masked-vector-body-has-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              (lower-masked-vector-pattern-locals
+                pattern
+                scrut-lanes
+                lane-locals)
+              (ast-node-get body-box))
+            (lower-masked-vector-match-arms-have-varying-match-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              scrut-lanes
+              (box-get rest)))])]))
+
+(define (lower-masked-vector-body-has-varying-match?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (lower-masked-vector-body-has-varying-match-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    expr))
+
 (define (lower-masked-vector-bool-array-lane?
   [env : SymI64Env]
   [type-env : TcTypeEnv]
@@ -27286,6 +27702,7 @@
     (lower-mode-avx512? mode)
     (or
       (lower-masked-vector-body-has-varying-if? mode env type-env index body)
+      (lower-masked-vector-body-has-varying-match? mode env type-env index body)
       (lower-masked-vector-body-has-bool-array-lane? env type-env index body)))
     (let
       [lanes : i64
@@ -27346,6 +27763,16 @@
           (lower-array-var-set-merge
             (lower-masked-vector-array-vars env type-env index then-branch)
             (lower-masked-vector-array-vars env type-env index else-branch))))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (lower-array-var-set-merge
+            (lower-masked-vector-array-vars
+              env
+              type-env
+              index
+              (ast-node-get scrutinee-box))
+            (lower-masked-vector-match-arms-array-vars env type-env index arms))])]
     [(AstExprBegin exprs)
       (lower-masked-vector-expr-list-array-vars env type-env index exprs)]
     [(AstExprArrayRef arr-box idx-box)
@@ -27402,6 +27829,28 @@
         (lower-array-var-set-merge
           (lower-masked-vector-array-vars env type-env index expr)
           (lower-masked-vector-expr-list-array-vars env type-env index rest)))]))
+
+(define (lower-masked-vector-match-arms-array-vars
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [arms : AstMatchArmList]) : LowerArrayVarSet
+  (match arms
+    [(AstMatchArmNil) (lower-array-var-set-empty)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (lower-array-var-set-merge
+            (lower-masked-vector-array-vars
+              env
+              type-env
+              index
+              (ast-node-get body-box))
+            (lower-masked-vector-match-arms-array-vars
+              env
+              type-env
+              index
+              (box-get rest)))])]))
 
 (define (lower-masked-vector-let-binding-array-vars
   [env : SymI64Env]
@@ -27474,6 +27923,12 @@
           (lower-vector-body-has-array-read? cond)
           (lower-vector-body-has-array-read? then-branch)
           (lower-vector-body-has-array-read? else-branch)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (or
+            (lower-vector-body-has-array-read? (ast-node-get scrutinee-box))
+            (lower-match-arms-have-array-read? arms))])]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
@@ -27506,6 +27961,16 @@
           (lower-vector-body-has-array-read? receiver)
           (lower-vector-body-has-array-read? value)))]
     [_ false]))
+
+(define (lower-match-arms-have-array-read? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (or
+            (lower-vector-body-has-array-read? (ast-node-get body-box))
+            (lower-match-arms-have-array-read? (box-get rest)))])]))
 
 (define (lower-vector-expr-list-has-array-read? [exprs : AstExprList]) : bool
   (match exprs
@@ -30691,6 +31156,400 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-avx512-masked-match-literal-mask
+  [state : LowerState]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [lanes : i64]
+  [lit : AstLiteral]) : ResultLowerExpr
+  (match (tc-type-without-regions scrut-ty)
+    [(AstTyBool)
+      (match lit
+        [(AstLitBool value)
+          (if value
+            (OkLowerExpr (LowerExpr state scrut-value (AstTyBool)))
+            (OkLowerExpr (lower-emit-mask-not state scrut-value lanes)))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic "lower: unsupported bool literal match pattern"))])]
+    [_
+      (match (lower-emit-splat
+        state
+        (lower-literal-value-with-type lit (tc-type-without-regions scrut-ty))
+        lanes
+        (tc-type-without-regions scrut-ty))
+        [(LowerExpr lit-state lit-value _)
+          (OkLowerExpr
+            (lower-emit-vector-compare
+              lit-state
+              (IrBinEq)
+              scrut-value
+              lit-value
+              lanes
+              (tc-type-without-regions scrut-ty)))])]))
+
+(define (lower-avx512-masked-match-literal-arm-masks
+  [state : LowerState]
+  [active-mask : CompilerIrValue]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [lanes : i64]
+  [lit : AstLiteral]) : ResultLowerMaskedMatchMasks
+  (match (lower-avx512-masked-match-literal-mask
+    state
+    scrut-value
+    scrut-ty
+    lanes
+    lit)
+    [(OkLowerExpr cond-lowered)
+      (match cond-lowered
+        [(LowerExpr cond-state cond-mask _)
+          (match (lower-emit-mask-binop
+            cond-state
+            (IrMaskAnd)
+            active-mask
+            cond-mask
+            lanes)
+            [(LowerExpr arm-mask-state arm-mask _)
+              (match (lower-emit-mask-not arm-mask-state cond-mask lanes)
+                [(LowerExpr not-state not-mask _)
+                  (match (lower-emit-mask-binop
+                    not-state
+                    (IrMaskAnd)
+                    active-mask
+                    not-mask
+                    lanes)
+                    [(LowerExpr rest-mask-state rest-mask _)
+                      (OkLowerMaskedMatchMasks
+                        (LowerMaskedMatchMasks
+                          rest-mask-state
+                          arm-mask
+                          rest-mask))])])])])]
+    [(ErrLowerExpr message) (ErrLowerMaskedMatchMasks message)]))
+
+(define (lower-avx512-masked-match-select
+  [state : LowerState]
+  [arm-mask : CompilerIrValue]
+  [arm-value : CompilerIrValue]
+  [rest-mask : CompilerIrValue]
+  [rest-value : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]
+  [expr : AstExpr]) : ResultLowerExpr
+  (if (lower-type-bool? ty)
+    (OkLowerExpr
+      (lower-emit-mask-select
+        state
+        arm-mask
+        arm-value
+        rest-mask
+        rest-value
+        lanes))
+    (if (lower-avx512-masked-select-result-supported? state lanes ty)
+      (OkLowerExpr
+        (lower-emit-select
+          state
+          arm-mask
+          arm-value
+          rest-value
+          lanes
+          (tc-type-without-regions ty)))
+      (lower-avx512-masked-unsupported
+        expr
+        "this value-producing varying match result type"))))
+
+(define (lower-avx512-masked-match-after-body
+  [ctx : TcContext]
+  [body-state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [arm-mask : CompilerIrValue]
+  [rest-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [body-value : CompilerIrValue]
+  [body-ty : AstType]
+  [rest : AstMatchArmList]) : ResultLowerExpr
+  (match body-ty
+    [(AstTyUnit)
+      (lower-avx512-masked-match-arms
+        ctx
+        body-state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        rest-mask
+        lanes
+        result-ty
+        expr
+        scrut-value
+        scrut-ty
+        rest)]
+    [_
+      (match (lower-avx512-masked-match-arms
+        ctx
+        body-state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        rest-mask
+        lanes
+        result-ty
+        expr
+        scrut-value
+        scrut-ty
+        rest)
+        [(OkLowerExpr rest-lowered)
+          (match rest-lowered
+            [(LowerExpr rest-state rest-value rest-ty)
+              (if (ast-type-eq?
+                (tc-type-without-regions body-ty)
+                (tc-type-without-regions rest-ty))
+                (lower-avx512-masked-match-select
+                  rest-state
+                  arm-mask
+                  body-value
+                  rest-mask
+                  rest-value
+                  lanes
+                  body-ty
+                  expr)
+                (lower-avx512-masked-unsupported
+                  expr
+                  "mixed varying match arm result types"))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
+
+(define (lower-avx512-masked-match-arm
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]
+  [body : AstExpr]
+  [rest : AstMatchArmList]) : ResultLowerExpr
+  (match pattern
+    [(AstPatLiteral lit)
+      (match rest
+        [(AstMatchArmNil)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (match (lower-avx512-masked-match-literal-arm-masks
+            state
+            active-mask
+            scrut-value
+            scrut-ty
+            lanes
+            lit)
+            [(OkLowerMaskedMatchMasks masks)
+              (match masks
+                [(LowerMaskedMatchMasks mask-state arm-mask rest-mask)
+                  (match (lower-avx512-masked-expr-expected
+                    ctx
+                    mask-state
+                    env
+                    type-env
+                    lane-locals
+                    index
+                    index-var
+                    arm-mask
+                    lanes
+                    body
+                    result-ty)
+                    [(OkLowerExpr body-lowered)
+                      (match body-lowered
+                        [(LowerExpr body-state body-value body-ty)
+                          (lower-avx512-masked-match-after-body
+                            ctx
+                            body-state
+                            env
+                            type-env
+                            lane-locals
+                            index
+                            index-var
+                            arm-mask
+                            rest-mask
+                            lanes
+                            result-ty
+                            expr
+                            scrut-value
+                            scrut-ty
+                            body-value
+                            body-ty
+                            rest)])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerMaskedMatchMasks message) (ErrLowerExpr message)])])]
+    [(AstPatWildcard)
+      (lower-avx512-masked-expr-expected
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        body
+        result-ty)]
+    [(AstPatVar name _)
+      (match scrut-value
+        [(IrValueVar scrut-var)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            (sym-i64-bind-id env name scrut-var)
+            (tc-bind-id type-env name scrut-ty)
+            (lower-string-set-insert lane-locals (intern-str name))
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (lower-avx512-masked-unsupported
+            expr
+            "non-variable match binding values in this AVX-512 slice")])]
+    [(AstPatBinding name)
+      (match scrut-value
+        [(IrValueVar scrut-var)
+          (lower-avx512-masked-expr-expected
+            ctx
+            state
+            (sym-i64-bind-id env name scrut-var)
+            (tc-bind-id type-env name scrut-ty)
+            (lower-string-set-insert lane-locals (intern-str name))
+            index
+            index-var
+            active-mask
+            lanes
+            body
+            result-ty)]
+        [_
+          (lower-avx512-masked-unsupported
+            expr
+            "non-variable match binding values in this AVX-512 slice")])]
+    [_
+      (lower-avx512-masked-unsupported
+        expr
+        "this varying match pattern in the AVX-512 slice")]))
+
+(define (lower-avx512-masked-match-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (match arms
+    [(AstMatchArmNil)
+      (lower-avx512-masked-unsupported
+        expr
+        "match with no arms in this AVX-512 slice")]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (lower-avx512-masked-match-arm
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            result-ty
+            expr
+            scrut-value
+            scrut-ty
+            pattern
+            (ast-node-get body-box)
+            (box-get rest))])]))
+
+(define (lower-avx512-masked-match
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (match (lower-avx512-masked-expr
+    ctx
+    state
+    env
+    type-env
+    lane-locals
+    index
+    index-var
+    active-mask
+    lanes
+    scrutinee)
+    [(OkLowerExpr scrut-lowered)
+      (match scrut-lowered
+        [(LowerExpr scrut-state scrut-value scrut-ty)
+          (lower-avx512-masked-match-arms
+            ctx
+            scrut-state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            result-ty
+            expr
+            scrut-value
+            scrut-ty
+            arms)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-avx512-masked-expr
   [ctx : TcContext]
   [state : LowerState]
@@ -30871,6 +31730,32 @@
               else-branch)]
           [(ErrTcType message)
             (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (match (lower-expr-result-type-or-check
+            ctx
+            env
+            type-env
+            (lower-state-type-cache state)
+            expr)
+            [(OkTcType result-ty)
+              (lower-avx512-masked-match
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                result-ty
+                expr
+                (ast-node-get scrutinee-box)
+                arms)]
+            [(ErrTcType message)
+              (ErrLowerExpr (lower-diagnostic-at-expr expr message))])])]
     [(AstExprBegin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -30977,6 +31862,23 @@
           cond
           then-branch
           else-branch))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (lower-avx512-masked-match
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expected-ty
+            expr
+            (ast-node-get scrutinee-box)
+            arms)])]
     [_
       (lower-avx512-masked-expr
         ctx
@@ -31684,6 +32586,18 @@
                       (if (lower-mode-avx2? (lower-state-mode state))
                         (lower-avx2-masked-if-diagnostic)
                         "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape")))]
+                [(lower-masked-vector-body-has-varying-match?
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    body)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      body
+                      (if (lower-mode-avx2? (lower-state-mode state))
+                        (lower-avx2-varying-match-diagnostic)
+                        "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape")))]
                 [(and
                     (lower-mode-avx2? (lower-state-mode state))
                     (lower-masked-vector-body-has-bool-array-lane?

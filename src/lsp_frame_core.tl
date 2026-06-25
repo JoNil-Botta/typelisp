@@ -398,7 +398,7 @@
       (json.JsonString "selfhost"))))
 
 (define (lsp-document-fallback) : LspDocument
-  (LspDocument "" "" "" ""))
+  (LspDocument "" "" "" "" (lsp-decl-list-new)))
 
 (define (lsp-documents-find-index-from
   [docs : LspDocuments]
@@ -436,16 +436,30 @@
   [text : String]
   [diagnostic-uri : String]) : LspDocuments
   (let
-    [doc : LspDocument (LspDocument uri path text diagnostic-uri)]
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
-      (lsp-documents-set! docs index doc)
-      (if (>= (lsp-documents-len docs) lsp-documents-max-capacity)
-        (begin
-          (lsp-documents-shift-left! docs 0)
-          (lsp-documents-set! docs (- (lsp-documents-len docs) 1) doc)
-          docs)
-        (lsp-documents-push docs doc)))))
+      (let
+        [old-doc : LspDocument
+          (lsp-documents-get docs index (lsp-document-fallback))]
+        [old-text : String (struct-get old-doc text)]
+        [old-decls : LspDeclList (struct-get old-doc decls)]
+        [new-decls : LspDeclList
+          (if (string-eq old-text text)
+            old-decls
+            (lsp-decl-list-new))]
+        (lsp-documents-set!
+          docs
+          index
+          (LspDocument uri path text diagnostic-uri new-decls)))
+      (let
+        [doc : LspDocument
+          (LspDocument uri path text diagnostic-uri (lsp-decl-list-new))]
+        (if (>= (lsp-documents-len docs) lsp-documents-max-capacity)
+          (begin
+            (lsp-documents-shift-left! docs 0)
+            (lsp-documents-set! docs (- (lsp-documents-len docs) 1) doc)
+            docs)
+          (lsp-documents-push docs doc))))))
 
 (define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
   (let
@@ -3316,6 +3330,33 @@
           [(OkLspJsonText uri) (lsp-documents-lookup docs uri)]
           [(MissingLspJsonText) MissingLspDocument])]
       [(json.JsonMissing) MissingLspDocument])))
+
+;; Helper: get cached decls or scan and cache them
+(define (lsp-document-decls [doc : LspDocument] [docs : LspDocuments]) : LspDeclList
+  (let
+    [cached : LspDeclList (struct-get doc decls)]
+    (if (> (lsp-decl-list-len cached) 0)
+      cached
+      (let
+        [text : String (struct-get doc text)]
+        [uri : String (struct-get doc uri)]
+        [scanned : LspDeclList (lsp-scan-decls text)]
+        [idx : i64 (lsp-documents-find-index docs uri)]
+        (begin
+          (if (>= idx 0)
+            (begin
+              (lsp-documents-set!
+                docs
+                idx
+                (LspDocument
+                  uri
+                  (struct-get doc path)
+                  text
+                  (struct-get doc diagnostic-uri)
+                  scanned))
+              unit)
+            unit)
+          scanned)))))
 
 ;; Helper: build json.Json array of declaration names from LspDeclList
 (define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : json.JsonList

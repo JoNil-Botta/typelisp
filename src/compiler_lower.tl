@@ -4629,7 +4629,10 @@
         [(OkCompilerRegistries registries)
           (let
             [ctx : TcContext (TcContext program symbols registries "" pools)]
-            (match (tc-build-top-env ctx program)
+            ;; #3795: publish this base program's list-env so the subsequent
+            ;; lower.typecheck (on `base ++ clones`) can extend it instead of
+            ;; rebuilding the whole base top-env.
+            (match (tc-build-top-env-publishing ctx program)
               [(OkTcEnv top-env)
                 (begin
                   (tc-context-capture-active-pools! ctx)

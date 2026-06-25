@@ -11492,6 +11492,49 @@
         (OkTcEnv cur-env)
         (ErrTcEnv message)))))
 
+;; #3795: cross-phase top-env sharing. The clone-roots pass and lower.typecheck
+;; both build the whole-program top-env; clone-augment only APPENDS clone decls
+;; to the base program (clone-decl-list-append), so the augmented program is
+;; `base ++ clones`. lower.typecheck can therefore extend the base list-env that
+;; clone-roots already built (binding only the appended clone decls) instead of
+;; rebinding the entire base. The phases run sequentially
+;; (clone_roots -> clone_augment -> lower.typecheck) with no overlap, so a
+;; process global carries the base list-env without threading it through the
+;; typecheck wrapper chain. The result is byte-identical: list bindings are
+;; produced in the same order (base then clones then aliases) as a fresh build.
+(define tc-shared-base-list-env : TcTypeEnv
+  (tc-empty-type-env))
+(define tc-shared-base-list-ready : bool
+  false)
+(define tc-shared-base-decl-count : i64
+  0)
+
+(define (tc-shared-topenv-publish! [list-env : TcTypeEnv] [count : i64]) : unit
+  (begin
+    (set! tc-shared-base-list-env list-env)
+    (set! tc-shared-base-decl-count count)
+    (set! tc-shared-base-list-ready true)))
+
+(define (tc-shared-topenv-clear!) : unit
+  (set! tc-shared-base-list-ready false))
+
+;; Build the whole-program list bindings (no import aliases yet), cached.
+(define (tc-build-top-env-list-cached [ctx : TcContext] [decls : AstDeclList]) : ResultTcEnv
+  (match (tc-build-top-env-list ctx decls (tc-default-env))
+    [(OkTcEnv env) (OkTcEnv (tc-env-with-cache env))]
+    [(ErrTcEnv message) (ErrTcEnv message)]))
+
+;; Add the import aliases on top of a (cached) list-env, producing the full env.
+;; Alias fanout copies canonical entries by lookup; the list-env is cached so
+;; that copy is O(1).
+(define (tc-build-top-env-finalize-aliases
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [list-env : TcTypeEnv]) : ResultTcEnv
+  (match (tc-build-top-env-aliases-list ctx decls decls list-env "")
+    [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
+    [(ErrTcEnv message) (ErrTcEnv message)]))
+
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
     (tc-nominal-owner-cache-reset!)
@@ -11500,21 +11543,58 @@
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          (match (tc-build-top-env-list ctx decls (tc-default-env))
-            [(OkTcEnv env)
-              (let
-                [cached-env : TcTypeEnv (tc-env-with-cache env)]
-                ;; Alias fanout copies canonical entries by lookup; cache the
-                ;; source env before adding aliases so that copy is O(1).
-                (match (tc-build-top-env-aliases-list
-                  ctx
-                  decls
-                  decls
-                  cached-env
-                  "")
-                  [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
-                  [(ErrTcEnv message) (ErrTcEnv message)]))]
+          (match (tc-build-top-env-list-cached ctx decls)
+            [(OkTcEnv list-env)
+              (tc-build-top-env-finalize-aliases ctx decls list-env)]
             [(ErrTcEnv message) (ErrTcEnv message)]))])))
+
+;; #3795: like tc-build-top-env but publishes the base list-env (pre-aliases) for
+;; lower.typecheck to extend. Used by the clone-roots pass.
+(define (tc-build-top-env-publishing [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (match (tc-build-top-env-list-cached ctx decls)
+            [(OkTcEnv list-env)
+              (begin
+                (tc-shared-topenv-publish! list-env (ast-decl-list-count decls))
+                (tc-build-top-env-finalize-aliases ctx decls list-env))]
+            [(ErrTcEnv message) (ErrTcEnv message)]))])))
+
+;; #3795: build the top-env for `program`, reusing a published base list-env when
+;; `program` is that base with clone decls appended. Otherwise build fresh.
+(define (tc-build-top-env-shared [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
+  (if tc-shared-base-list-ready
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          [base-count : i64 tc-shared-base-decl-count]
+          [base-list : TcTypeEnv tc-shared-base-list-env]
+          (begin
+            (tc-shared-topenv-clear!)
+            ;; nominal-owner cache is a memo (type -> owner fact); keep the base
+            ;; facts clone-roots populated so the appended clone decls bind
+            ;; against the same state a fresh `base ++ clones` build would have.
+            (match (tc-build-top-env-list
+              ctx
+              (tc-decl-list-drop decls base-count)
+              base-list)
+              [(OkTcEnv ext-env)
+                (begin
+                  ;; aliases re-detect ambiguity from a clean slate, as a fresh
+                  ;; build does on entering the alias pass.
+                  (tc-unqualified-import-ambiguity-reset!)
+                  (tc-build-top-env-finalize-aliases
+                    ctx
+                    decls
+                    (tc-env-with-cache ext-env)))]
+              [(ErrTcEnv message) (ErrTcEnv message)])))])
+    (tc-build-top-env ctx program)))
 
 (define (tc-bind-enum-variants-local
   [ctx : TcContext]
@@ -41789,7 +41869,11 @@
                 [(OkTcUnit)
                   (match (tc-program-source-types-policy-ok ctx program)
                     [(OkTcUnit)
-                      (match (tc-build-top-env ctx program)
+                      ;; #3795: reuse the base list-env published by the
+                      ;; clone-roots pass (this program is `base ++ clones`),
+                      ;; extending it with the appended clone decls instead of
+                      ;; rebinding the whole base. Builds fresh if none published.
+                      (match (tc-build-top-env-shared ctx program)
                         [(OkTcEnv top-env)
                           (match program
                             [(AstProgram decls-box)

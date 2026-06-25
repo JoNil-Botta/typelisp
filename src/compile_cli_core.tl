@@ -18,7 +18,6 @@
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
 (import stdlib.io)
-(import stdlib.arena)
 (import stdlib.vector)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")

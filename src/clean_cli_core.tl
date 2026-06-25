@@ -3,7 +3,6 @@
 ;; Removes deterministic TypeLisp build artifacts without walking arbitrary
 ;; directories. Source-file cleanup targets default source-adjacent outputs;
 ;; package cleanup targets the manifest's package output directory.
-(import stdlib.fs)
 (import stdlib.io)
 (import "build_cli_core.tl")
 (import stdlib.string)

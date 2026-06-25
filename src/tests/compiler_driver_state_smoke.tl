@@ -488,7 +488,9 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDefFn name _ _ body _)
-          (if (string.string-eq (intern-str name) "__tl_specialized_scale_i64_7_none")
+          (if (string.string-eq
+            (intern-str name)
+            "__tl_specialized_scale_i64_7_none")
             (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
             (compiler-driver-state-smoke-specialized-scale-decls-ok?
               pools
@@ -938,7 +940,8 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (begin
       (compiler-load-session-cache-disable-for-test!)
       (compiler-driver-state-reset-file-state! state-a)
@@ -1013,7 +1016,8 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : vector.StringVec (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -1053,7 +1057,8 @@
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : vector.StringVec (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
     [needle : String "score"]

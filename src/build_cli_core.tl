@@ -9,7 +9,6 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
-(import stdlib.core_macros)
 (import stdlib.str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)

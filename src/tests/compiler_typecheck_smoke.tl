@@ -733,7 +733,8 @@
   [diag : CompilerDiagnostic]
   [needle : String]) : bool
   (match (compiler-diagnostic-help diag)
-    [(CompilerDiagnosticSomeString text) (string.string-contains (& text) (& needle))]
+    [(CompilerDiagnosticSomeString text)
+      (string.string-contains (& text) (& needle))]
     [CompilerDiagnosticNoString false]))
 
 (define (compiler-typecheck-labeled-borrow-error-ok?
@@ -1478,8 +1479,10 @@
     [root-b : String "target/tc_prefix_root_b"]
     [entry-a : String "target/tc_prefix_root_entry_a.tl"]
     [entry-b : String "target/tc_prefix_root_entry_b.tl"]
-    [roots-a : vector.StringVec (compiler-typecheck-smoke-prefix-cache-roots root-a)]
-    [roots-b : vector.StringVec (compiler-typecheck-smoke-prefix-cache-roots root-b)]
+    [roots-a : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root-a)]
+    [roots-b : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root-b)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)
@@ -1532,7 +1535,8 @@
     [root : String "target/tc_prefix_cfg_root"]
     [entry-empty : String "target/tc_prefix_cfg_entry_empty.tl"]
     [entry-feature : String "target/tc_prefix_cfg_entry_feature.tl"]
-    [roots : vector.StringVec (compiler-typecheck-smoke-prefix-cache-roots root)]
+    [roots : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)

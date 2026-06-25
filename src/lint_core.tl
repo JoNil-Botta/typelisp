@@ -783,10 +783,15 @@
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
   (or
     (string.string-eq name "string-append")
+    (string.string-eq name "string.string-append")
     (string.string-eq name "string-concat")
+    (string.string-eq name "string.string-concat")
     (string.string-eq name "string-concat3")
+    (string.string-eq name "string.string-concat3")
     (string.string-eq name "string-concat4")
-    (string.string-eq name "string-concat5")))
+    (string.string-eq name "string.string-concat4")
+    (string.string-eq name "string-concat5")
+    (string.string-eq name "string.string-concat5")))
 
 (define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
   (or
@@ -823,9 +828,17 @@
     span))
 
 (define (lint-and-or-op-name [name : String]) : String
-  (if (or (string.string-eq name "and") (string.string-eq name "core/and"))
+  (if (or
+    (string.string-eq name "and")
+    (string.string-eq name "core/and")
+    (string.string-eq name "core.and")
+    (string.string-eq name "stdlib.core_macros.and"))
     "and"
-    (if (or (string.string-eq name "or") (string.string-eq name "core/or"))
+    (if (or
+      (string.string-eq name "or")
+      (string.string-eq name "core/or")
+      (string.string-eq name "core.or")
+      (string.string-eq name "stdlib.core_macros.or"))
       "or"
       "")))
 

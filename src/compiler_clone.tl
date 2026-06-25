@@ -12,7 +12,6 @@
 ;; clone-able named type. Function, reference, raw-pointer, str, and
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
-(import stdlib.io)
 (import "compiler_ast_types.tl")
 (import stdlib.hashmap)
 (import stdlib.string)

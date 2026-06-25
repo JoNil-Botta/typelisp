@@ -428,7 +428,7 @@
     [(OkReplString body)
       (OkReplString
         (string.string-append
-          "(import \"stdlib/tl\")\n(import stdlib.string)\n"
+          "(import stdlib.io)\n(import stdlib.string)\n"
           (string.string-append
             session-source
             (string.string-append
@@ -852,3 +852,24 @@
       (io.print-error "Error: repl does not accept arguments\n")
       1)
     (repl-run)))
+
+(define (repl-scratch-source-stdlib-imports-ok?) : bool
+  (let
+    [io-import : String "(import stdlib.io)\n"]
+    [string-import : String "(import stdlib.string)\n"]
+    [legacy-tl-import : String "stdlib/tl"]
+    [legacy-io-import : String "stdlib/io.tl"]
+    (match (repl-scratch-source "" "1" (AstTyI64))
+      [(OkReplString source)
+        (and
+          (string.string-contains (& source) (& io-import))
+          (string.string-contains (& source) (& string-import))
+          (not (string.string-contains (& source) (& legacy-tl-import)))
+          (not (string.string-contains (& source) (& legacy-io-import))))]
+      [(ErrReplString _) false])))
+
+(test
+  repl-scratch-source-stdlib-imports
+  (if (repl-scratch-source-stdlib-imports-ok?)
+    unit
+    (io.panic "repl: scratch source stdlib imports mismatch")))

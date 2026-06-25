@@ -1,6 +1,5 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
-(import stdlib.io)
-(import stdlib.arena)
+(cfg compile-profile (import stdlib.io))
 (import "compiler_lower.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")

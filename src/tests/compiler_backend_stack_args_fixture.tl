@@ -18,7 +18,8 @@
 (define (main) : i64
   (if (< (arg-count) 2)
     (begin
-      (io.print-error "compiler-backend-stack-args-fixture: expected output path")
+      (io.print-error
+        "compiler-backend-stack-args-fixture: expected output path")
       1)
     (let
       [target-name : String

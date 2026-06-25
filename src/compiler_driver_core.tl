@@ -1,6 +1,5 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import stdlib.io)
-(import stdlib.arena)
 (import stdlib.string)
 (import stdlib.vector)
 (cfg compile-profile (import stdlib.profile))

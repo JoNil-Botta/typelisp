@@ -4,7 +4,9 @@
 (import stdlib.vector)
 (import "../lsp_frame_core.tl")
 
-(define (lsp-smoke-string-vec-contains? [items : vector.StringVec] [needle : String]) : bool
+(define (lsp-smoke-string-vec-contains?
+  [items : vector.StringVec]
+  [needle : String]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
@@ -21,7 +23,8 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : vector.StringVec (lsp-collect-def-names src (vector.string-vec-new))]
+    [names : vector.StringVec
+      (lsp-collect-def-names src (vector.string-vec-new))]
     [keywords : vector.StringVec (lsp-split-spaces (lsp-completion-keywords))]
     [builtins : vector.StringVec (lsp-split-spaces (lsp-completion-builtins))]
     [types : vector.StringVec (lsp-split-spaces (lsp-completion-types))]
@@ -40,7 +43,9 @@
     [found : i64 -1]
     (begin
       (while (and (< i n) (< found 0))
-        (if (and (<= (+ i m) n) (string.is-string-prefix-at (& haystack) (& needle) i))
+        (if (and
+          (<= (+ i m) n)
+          (string.is-string-prefix-at (& haystack) (& needle) i))
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -95,7 +100,10 @@
     [ok-src : String "(define (main) : i64 42)"]
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
-      (match (compiler-check-source-with-roots "ok.tl" ok-src (vector.string-vec-new))
+      (match (compiler-check-source-with-roots
+        "ok.tl"
+        ok-src
+        (vector.string-vec-new))
         [(OkCompilerCheck _) true]
         [(ErrCompilerCheck _) false])]
     [bad-result : bool
@@ -116,7 +124,10 @@
       false
       (begin
         (tc-inlay-hints-enable!)
-        (match (compiler-check-source-with-roots "test.tl" src (vector.string-vec-new))
+        (match (compiler-check-source-with-roots
+          "test.tl"
+          src
+          (vector.string-vec-new))
           [(OkCompilerCheck _) unit]
           [(ErrCompilerCheck _) unit])
         (let
@@ -133,7 +144,9 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set! found-ok (string.string-eq (tc-inlay-hint-type-at i) "i32"))
+                    (set!
+                      found-ok
+                      (string.string-eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let

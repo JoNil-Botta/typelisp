@@ -19,8 +19,7 @@
 ;;   control-flow edge.
 ;;
 ;; Out of scope: broad aggregate/String/array IR optimization.
-(import stdlib.io)
-(import stdlib.arena)
+(cfg compile-profile (import stdlib.io))
 (import "compiler_ir_types.tl")
 (import "compiler_float.tl")
 (import stdlib.hash)

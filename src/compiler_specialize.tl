@@ -1,5 +1,4 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
-(import stdlib.io)
 (import stdlib.text_buf)
 (import "compiler_ctfe.tl")
 (import "compiler_diagnostic.tl")

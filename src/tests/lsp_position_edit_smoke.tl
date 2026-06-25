@@ -17,8 +17,12 @@
     (and
       (= foo-start 0)
       (= bar-start 23)
-      (string.string-eq (string.substring text foo-start 22) "(define (foo) : i64 1)")
-      (string.string-eq (string.substring text bar-start 22) "(define (bar) : i64 2)"))))
+      (string.string-eq
+        (string.substring text foo-start 22)
+        "(define (foo) : i64 1)")
+      (string.string-eq
+        (string.substring text bar-start 22)
+        "(define (bar) : i64 2)"))))
 
 (define (lsp-find-form-end-at-offset-ok?) : bool
   (= (lsp-find-form-end-at-offset "(define (foo) : i64 1)" 0) 22))
@@ -73,10 +77,14 @@
 ;; lsp-extract-define-name
 ;; --------------------------------------------------------------------------
 (define (lsp-extract-define-name-fun-ok?) : bool
-  (string.string-eq (lsp-extract-define-name "(define (foo (x i64)) : i64 1)") "foo"))
+  (string.string-eq
+    (lsp-extract-define-name "(define (foo (x i64)) : i64 1)")
+    "foo"))
 
 (define (lsp-extract-define-name-var-ok?) : bool
-  (string.string-eq (lsp-extract-define-name "(define answer : i64 42)") "answer"))
+  (string.string-eq
+    (lsp-extract-define-name "(define answer : i64 42)")
+    "answer"))
 
 (define (lsp-extract-define-name-nondefine-ok?) : bool
   (string.string-eq (lsp-extract-define-name "(let [x : i64 1] x)") ""))

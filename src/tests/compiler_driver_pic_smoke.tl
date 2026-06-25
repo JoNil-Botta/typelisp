@@ -4,7 +4,9 @@
 (import "../compiler_driver_core.tl")
 
 (define (compiler-driver-pic-smoke-roots) : vector.StringVec
-  (vector.string-vec-push (vector.string-vec-push (vector.string-vec-new) "stdlib") "../stdlib"))
+  (vector.string-vec-push
+    (vector.string-vec-push (vector.string-vec-new) "stdlib")
+    "../stdlib"))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool
   (string.string-contains (& text) (& needle)))

@@ -3242,10 +3242,23 @@
               (compiler-backend-string-contains?
                 asm
                 "    call _tl_side_effect\n")
+              ;; The unified greedy keeps the call-spanning value in a
+              ;; callee-saved register and rematerialises the cold immediates
+              ;; after the call, so there should be no caller-saved %r9
+              ;; save/restore wrapper around the call.
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %r9, %rax\n    movq %rax, -"))
+              (not (compiler-backend-string-contains? asm "(%rbp), %r9\n"))
               (compiler-backend-string-contains?
                 asm
-                "    movq %r9, %rax\n    movq %rax, -")
-              (compiler-backend-string-contains? asm "(%rbp), %r9\n"))]
+                "    movq %r12, _tl_g5(%rip)\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movq %r12, _tl_g5b(%rip)\n")
+              (compiler-backend-string-contains? asm "    movl $4, %r9d\n")
+              (compiler-backend-string-contains? asm "    movl $6, %r9d\n"))]
           (begin
             (compiler-backend-set-scalar-registers! false)
             ok))]
@@ -6196,6 +6209,131 @@
     (compiler-backend-avx512-stack-splat-f64-spill-ok?)
     (compiler-backend-register-splat-fallback-ok?)))
 
+(define (compiler-backend-simd-address-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%rdi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%rax"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 3 (CompilerRegRegister "%vec6"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 4 (CompilerRegRegister "%vec7"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 5 (CompilerRegRegister "%k1"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment 6 (CompilerRegRegister "%rcx"))
+                CompilerRegAssignmentNil))))))))
+
+(define (compiler-backend-simd-indexed-address-with-base-emits?
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [elem-ty : AstType]
+  [want-asm : String]
+  [want-addr : String]) : bool
+  (match (compiler-backend-emit-simd-indexed-address
+    (compiler-backend-simd-address-assignments)
+    base
+    index
+    elem-ty)
+    [(OkCompilerBackendSimdIndexedAddress addr-plan)
+      (and
+        (string-eq (struct-get addr-plan asm) want-asm)
+        (string-eq (struct-get addr-plan addr) want-addr))]
+    [(ErrCompilerBackendSimdIndexedAddress _) false]))
+
+(define (compiler-backend-simd-indexed-address-emits?
+  [index : CompilerIrValue]
+  [elem-ty : AstType]
+  [want-asm : String]
+  [want-addr : String]) : bool
+  (compiler-backend-simd-indexed-address-with-base-emits?
+    (IrValueVar 0)
+    index
+    elem-ty
+    want-asm
+    want-addr))
+
+(define (compiler-backend-simd-indexed-address-ok?) : bool
+  (and
+    (compiler-backend-simd-indexed-address-emits?
+      (IrValueI64 0)
+      (AstTyI64)
+      "    movq 0(%rdi), %rax\n"
+      "(%rax)")
+    (compiler-backend-simd-indexed-address-emits?
+      (IrValueI64 4)
+      (AstTyI64)
+      "    movq 0(%rdi), %rax\n"
+      "32(%rax)")
+    (compiler-backend-simd-indexed-address-emits?
+      (IrValueVar 1)
+      (AstTyI32)
+      "    movq 0(%rdi), %rax\n"
+      "(%rax,%r12,4)")
+    (compiler-backend-simd-indexed-address-emits?
+      (IrValueVar 2)
+      (AstTyI64)
+      "    movq %rax, %rcx\n    movq 0(%rdi), %rax\n"
+      "(%rax,%rcx,8)")
+    (compiler-backend-simd-indexed-address-with-base-emits?
+      (IrValueVar 6)
+      (IrValueVar 2)
+      (AstTyI64)
+      "    movq %rax, %r11\n    movq 0(%rcx), %rax\n"
+      "(%rax,%r11,8)")))
+
+(define (compiler-backend-avx2-vector-load-address-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-load
+    (compiler-backend-simd-address-assignments)
+    3
+    (IrValueVar 0)
+    (IrValueI64 4)
+    4
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (string-eq asm "    movq 0(%rdi), %rax\n    vmovdqu 32(%rax), %ymm6\n")]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx2-vector-store-address-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-store
+    (compiler-backend-simd-address-assignments)
+    (IrValueVar 0)
+    (IrValueVar 1)
+    (IrValueVar 4)
+    4
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (string-eq
+        asm
+        "    movq 0(%rdi), %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-predicated-load-address-ok?) : bool
+  (match (compiler-backend-emit-avx512-predicated-load
+    (compiler-backend-simd-address-assignments)
+    3
+    (IrValueVar 0)
+    (IrValueI64 4)
+    (IrValueVar 5)
+    8
+    (AstTyI64)
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (string-eq
+        asm
+        "    movq 0(%rdi), %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-simd-indexed-address-users-ok?) : bool
+  (and
+    (compiler-backend-avx2-vector-load-address-ok?)
+    (compiler-backend-avx2-vector-store-address-ok?)
+    (compiler-backend-avx512-predicated-load-address-ok?)))
+
 (define (compiler-backend-avx512-masked-if-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -6905,7 +7043,7 @@
         (compiler-backend-string-contains? asm "    vmovdqu ")
         (compiler-backend-string-contains?
           asm
-          "    vpaddq (%rax,%rcx,8), %ymm6, %ymm7\n")
+          "    vpaddq 32(%rax), %ymm6, %ymm7\n")
         (compiler-backend-string-contains?
           asm
           "    vpaddq %ymm7, %ymm6, %ymm6\n")
@@ -7197,9 +7335,8 @@
       (and
         (compiler-backend-string-contains?
           asm
-          (str-cat "    " mnemonic " (%rax,%rcx,8), "))
-        (not
-          (compiler-backend-string-contains? asm "    vmovdqu (%rax,%rcx,8), ")))]
+          (str-cat "    " mnemonic " (%rax), "))
+        (not (compiler-backend-string-contains? asm "    vmovdqu (%rax), ")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-vector-load-binop-does-not-fold?
@@ -7214,11 +7351,11 @@
     true)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    vmovdqu (%rax,%rcx,8), ")
+        (compiler-backend-string-contains? asm "    vmovdqu (%rax), ")
         (not
           (compiler-backend-string-contains?
             asm
-            (str-cat "    " mnemonic " (%rax,%rcx,8), "))))]
+            (str-cat "    " mnemonic " (%rax), "))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-vector-load-binop-folding-ok?) : bool
@@ -7409,6 +7546,8 @@
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
+    (compiler-backend-simd-indexed-address-ok?)
+    (compiler-backend-simd-indexed-address-users-ok?)
     (compiler-backend-stack-splat-broadcast-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
     (compiler-backend-vector-call-lifetime-rejects-ok?)))

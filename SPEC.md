@@ -4321,7 +4321,11 @@ sequence evaluated with that arena as the active allocation target; the previous
 active arena is restored on normal exit and function-local early exit. The form
 does not mark, rewind, destroy, or clone. Its result type is the body result type
 unchanged, so owned values allocated in the target arena remain owned by that
-arena.
+arena. When `arena-expr` is a direct local binding initialized by `arena-make`
+or `arena-make-atomic`, owner-carrying aggregate results are checker-tagged with
+that first-class arena owner identity. Ordinary `arena-make` owners still do not
+prove thread-spanning lifetime; only `arena-make-atomic` owner tags can satisfy
+the task-thread transfer/share owner proof in section 6.5.
 
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 

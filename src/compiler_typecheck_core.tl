@@ -14261,9 +14261,17 @@
     [resolved : AstType (tc-resolve-type ctx ty)]
     (match resolved
       [(AstTyRegion region inner)
-        (if (tc-atomic-arena-owner-active? env region)
-          (tc-thread-transfer-type-class ctx env (ty-node-get inner) stack true)
-          (tc-thread-transfer-region-reject))]
+        (cond
+          [(tc-atomic-arena-owner-active? env region)
+            (tc-thread-transfer-type-class
+              ctx
+              env
+              (ty-node-get inner)
+              stack
+              true)]
+          [(tc-ordinary-arena-owner-active? env region)
+            (tc-thread-transfer-owned-heap-reject)]
+          [else (tc-thread-transfer-region-reject)])]
       [(AstTyRef _ _) (tc-thread-transfer-reference-reject)]
       [(AstTyMutRef _ _) (tc-thread-transfer-mut-reference-reject)]
       [(AstTyPtr _) (tc-thread-transfer-raw-pointer-reject)]
@@ -26205,16 +26213,18 @@
         (ErrTcType (tc-with-scratch-unsupported-message ctx body-ty)))]
     [(ErrTcType message) (ErrTcType message)]))
 
-(define (tc-in-arena-atomic-owner [env : TcTypeEnv] [arena : AstExpr]) : TcMaybeString
+(define (tc-in-arena-owner [env : TcTypeEnv] [arena : AstExpr]) : TcMaybeString
   (match (tc-expr-var-name arena)
     [(TcSomeString name)
-      (if (tc-atomic-arena-owner-active? env name)
+      (if (or
+        (tc-ordinary-arena-owner-active? env name)
+        (tc-atomic-arena-owner-active? env name))
         (TcSomeString name)
         (TcNoString))]
     [(TcNoString) (TcNoString)]))
 
 (define (tc-in-arena-body-env [env : TcTypeEnv] [arena : AstExpr]) : TcTypeEnv
-  (match (tc-in-arena-atomic-owner env arena)
+  (match (tc-in-arena-owner env arena)
     [(TcSomeString owner) (tc-push-region env owner)]
     [(TcNoString) env]))
 

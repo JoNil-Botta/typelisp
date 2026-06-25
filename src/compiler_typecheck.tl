@@ -60,10 +60,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
@@ -159,10 +161,12 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(OkGenProgramWithPaths generated generated-paths)
-              (match (macro-expand-program-with-paths-and-pools
+              (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
-                pools)
+                pools
+                stdlib-roots
+                (typecheck-compiler-source-language-cfgs))
                 [(OkMacroExpand expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)

@@ -34833,11 +34833,9 @@
   [key : String]) : AstDecl
   (match decl
     [(AstDeclModule _) decl]
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
-      (if (macro-import-placeholder-kind? kind)
-        (ast-decl-comptime-decl-with-meta
-          (macro-generated-meta generator "import" key)
-          decl)
+    [(AstDeclImport _)
+      (ast-decl-comptime-decl-with-meta
+        (macro-generated-meta generator "import" key)
         decl)]
     [_
       (match (gen-decl-visible-name decl)
@@ -34959,6 +34957,14 @@
       (macro-decl-generated-import-placeholder? (box-get inner-box) key)]
     [_ false]))
 
+(define (macro-decl-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport _) true]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-import? (box-get template-box))]
+    [(AstDeclUnsafe inner-box) (macro-decl-import? (box-get inner-box))]
+    [_ false]))
+
 (define (macro-decls-contain-generated-key?
   [decls : AstDeclList]
   [key : String]) : bool
@@ -34978,7 +34984,7 @@
           (macro-decls-filter-generated-key (box-get rest) key)]
         (if (and
           (macro-decl-generated-key? decl key)
-          (not (macro-decl-generated-import-placeholder? decl key)))
+          (not (macro-decl-import? decl)))
           (ast-decl-cons decl filtered-rest)
           filtered-rest))]))
 
@@ -40499,10 +40505,279 @@
           (macro-expand-fixed-point-limit)
           (macro-program-module-placeholder-count (box-get decls-box))))]))
 
+(defenum MacroMaybeGeneratedNormalImport
+  (MacroNoGeneratedNormalImport)
+  (MacroSomeGeneratedNormalImport
+    AstImportKind
+    String
+    AstMaybeModuleName
+    AstMaybeImportAlias
+    AstSourceSpan
+    AstDecl))
+
+(defenum ResultMacroMaterializeImport
+  (OkMacroMaterializeImport AstDeclList AstDeclPathList SymI64Env bool)
+  (ErrMacroMaterializeImport CompilerDiagnostic))
+
+(define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstSomeGeneratedDeclMeta _ _ _ _)
+            (match template
+              [(AstDeclImport
+                  (AstImportSpec kind import-path expected alias span))
+                (if (macro-import-placeholder-kind? kind)
+                  (MacroNoGeneratedNormalImport)
+                  (MacroSomeGeneratedNormalImport
+                    kind
+                    import-path
+                    expected
+                    alias
+                    span
+                    template))]
+              [_ (MacroNoGeneratedNormalImport)])]
+          [(AstNoGeneratedDeclMeta) (macro-generated-normal-import template)]))]
+    [(AstDeclUnsafe inner-box)
+      (macro-generated-normal-import (box-get inner-box))]
+    [_ (MacroNoGeneratedNormalImport)]))
+
+(define (macro-materialize-seen-from
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [seen : SymI64Env]) : SymI64Env
+  (match decls
+    [(AstDeclNil) seen]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        [seen-path : SymI64Env
+          (if (> (string-length decl-path) 0)
+            (sym-i64-bind seen (compiler-load-seen-path-key decl-path) 1)
+            seen)]
+        [seen-decl : SymI64Env
+          (match decl
+            [(AstDeclModule name)
+              (let
+                [module-name : String (intern-str name)]
+                (if (> (string-length module-name) 0)
+                  (sym-i64-bind seen-path module-name 1)
+                  seen-path))]
+            [_ seen-path])]
+        (macro-materialize-seen-from rest rest-paths seen-decl))]))
+
+(define (macro-materialize-import-diagnostic
+  [path : String]
+  [span : AstSourceSpan]
+  [message : String]) : CompilerDiagnostic
+  (tc-canonical-diagnostic
+    (compiler-diagnostic-from-ast-span path span message)))
+
+(define (macro-materialize-generated-import
+  [decl : AstDecl]
+  [decl-path : String]
+  [module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (match (macro-generated-normal-import decl)
+    [(MacroNoGeneratedNormalImport)
+      (OkMacroMaterializeImport
+        (ast-decl-cons decl AstDeclNil)
+        (ast-decl-path-cons decl-path AstDeclPathNil)
+        seen
+        false)]
+    [(MacroSomeGeneratedNormalImport kind import-path expected alias span _)
+      (let
+        [import-root : String (compiler-load-dirname decl-path)]
+        (match (compiler-load-resolve-import-spec-with-roots
+          decl-path
+          import-root
+          kind
+          import-path
+          stdlib-roots)
+          [(OkPkgResolve resolved)
+            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+              resolved
+              seen
+              stdlib-roots
+              expected
+              import-root
+              cfgs
+              pools)
+              [(OkCompilerLoadWithPaths
+                  imported-decls
+                  imported-paths
+                  _
+                  next-seen)
+                (let
+                  [after-import-expected : AstMaybeModuleName
+                    (compiler-load-after-import-expected-module
+                      kind
+                      expected
+                      alias
+                      imported-decls)]
+                  [after-import-alias : AstMaybeImportAlias
+                    (compiler-load-after-import-alias
+                      kind
+                      expected
+                      alias
+                      imported-decls)]
+                  [tail-decls : AstDeclList
+                    (compiler-load-decls-after-import
+                      kind
+                      resolved
+                      after-import-expected
+                      after-import-alias
+                      module
+                      imported-decls
+                      AstDeclNil)]
+                  [tail-paths : AstDeclPathList
+                    (compiler-load-paths-after-import
+                      decl-path
+                      after-import-alias
+                      imported-decls
+                      AstDeclPathNil)]
+                  (OkMacroMaterializeImport
+                    (macro-decl-list-append imported-decls tail-decls)
+                    (macro-decl-path-list-append imported-paths tail-paths)
+                    next-seen
+                    true))]
+              [(ErrCompilerLoadWithPaths diag) (ErrMacroMaterializeImport diag)])]
+          [(ErrPkgResolve message)
+            (ErrMacroMaterializeImport
+              (macro-materialize-import-diagnostic decl-path span message))]))]))
+
+(define (macro-materialize-generated-imports-in
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (let
+    [seen : SymI64Env (macro-materialize-seen-from decls paths (sym-i64-empty))]
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-module : String ""]
+    [out-rev : AstDeclList AstDeclNil]
+    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [changed : bool false]
+    [result : ResultMacroMaterializeImport
+      (ErrMacroMaterializeImport
+        (tc-diag-at-start "macro: internal generated import materialization"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set!
+                result
+                (OkMacroMaterializeImport
+                  (macro-decl-list-reverse out-rev)
+                  (macro-decl-path-list-reverse out-paths-rev)
+                  seen
+                  changed))
+              (set! done true))]
+          [(AstDeclCons decl rest-box)
+            (let
+              [rest : AstDeclList (box-get rest-box)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! out-rev (ast-decl-cons decl out-rev))
+                    (set!
+                      out-paths-rev
+                      (ast-decl-path-cons decl-path out-paths-rev))
+                    (set! cur-module (intern-str next-module))
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [_
+                  (match (macro-materialize-generated-import
+                    decl
+                    decl-path
+                    cur-module
+                    seen
+                    stdlib-roots
+                    cfgs
+                    pools)
+                    [(OkMacroMaterializeImport
+                        materialized-decls
+                        materialized-paths
+                        next-seen
+                        materialized?)
+                      (begin
+                        (set!
+                          out-rev
+                          (macro-decl-list-reverse-into
+                            materialized-decls
+                            out-rev))
+                        (set!
+                          out-paths-rev
+                          (macro-decl-path-list-reverse-into
+                            materialized-paths
+                            out-paths-rev))
+                        (set! seen next-seen)
+                        (set! changed (or changed materialized?))
+                        (set!
+                          cur-module
+                          (macro-decls-final-module
+                            materialized-decls
+                            cur-module))
+                        (set! cur-decls rest)
+                        (set! cur-paths rest-paths))]
+                    [(ErrMacroMaterializeImport diag)
+                      (begin
+                        (set! result (ErrMacroMaterializeImport diag))
+                        (set! done true))])]))]))
+      result)))
+
+(define (macro-materialize-generated-imports
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
+  [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
+  (match program
+    [(AstProgram decls-box)
+      (macro-materialize-generated-imports-in
+        (box-get decls-box)
+        paths
+        stdlib-roots
+        cfgs
+        pools)]))
+
 (define (macro-expand-program-with-paths-loop-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ErrMacroExpand
@@ -40518,31 +40793,47 @@
         paths
         pools)
         [(OkMacroExpand expanded expanded-paths)
-          (let
-            [normalized-result : ResultGenProgramWithPaths
-              (if (compiler-specialize-needed? expanded)
-                (gen-normalize-program-with-paths-and-pools
-                  expanded
-                  expanded-paths
-                  (tc-decl-path-list-last expanded-paths "")
-                  pools)
-                (OkGenProgramWithPaths expanded expanded-paths))]
-            (match normalized-result
-              [(OkGenProgramWithPaths normalized normalized-paths)
-                (match normalized
-                  [(AstProgram decls-box)
-                    (let
-                      [decls : AstDeclList (box-get decls-box)]
-                      (if (or
-                        had-placeholders
-                        (macro-program-has-module-placeholder? decls))
-                        (macro-expand-program-with-paths-loop-and-pools
-                          normalized
-                          normalized-paths
-                          pools
-                          (- fuel 1))
-                        (OkMacroExpand normalized normalized-paths)))])]
-              [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+          (match (macro-materialize-generated-imports
+            expanded
+            expanded-paths
+            stdlib-roots
+            cfgs
+            pools)
+            [(OkMacroMaterializeImport
+                materialized-decls
+                materialized-paths
+                _
+                materialized-imports?)
+              (let
+                [materialized : AstProgram (ast-program materialized-decls)]
+                [normalized-result : ResultGenProgramWithPaths
+                  (if (compiler-specialize-needed? materialized)
+                    (gen-normalize-program-with-paths-and-pools
+                      materialized
+                      materialized-paths
+                      (tc-decl-path-list-last materialized-paths "")
+                      pools)
+                    (OkGenProgramWithPaths materialized materialized-paths))]
+                (match normalized-result
+                  [(OkGenProgramWithPaths normalized normalized-paths)
+                    (match normalized
+                      [(AstProgram decls-box)
+                        (let
+                          [decls : AstDeclList (box-get decls-box)]
+                          (if (or
+                            had-placeholders
+                            materialized-imports?
+                            (macro-program-has-module-placeholder? decls))
+                            (macro-expand-program-with-paths-loop-and-pools
+                              normalized
+                              normalized-paths
+                              pools
+                              stdlib-roots
+                              cfgs
+                              (- fuel 1))
+                            (OkMacroExpand normalized normalized-paths)))])]
+                  [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+            [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
         [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
 
 (define (macro-expand-program-with-paths-loop
@@ -40553,17 +40844,34 @@
     program
     paths
     (ast-node-pool-context-capture-active)
+    (string-vec-new)
+    (compiler-cfg-empty)
     fuel))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : StringVec]
+  [cfgs : SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-loop-and-pools
+    program
+    paths
+    pools
+    stdlib-roots
+    cfgs
+    (macro-expand-fixed-point-limit-for-program program)))
 
 (define (macro-expand-program-with-paths-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop-and-pools
+  (macro-expand-program-with-paths-and-pools-roots-cfg
     program
     paths
     pools
-    (macro-expand-fixed-point-limit-for-program program)))
+    (string-vec-new)
+    (compiler-cfg-empty)))
 
 (define (macro-expand-program-with-paths
   [program : AstProgram]

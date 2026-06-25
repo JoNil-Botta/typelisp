@@ -1427,15 +1427,66 @@
         (compiler-symbols-remove-decl-macro-alias symbols inner index))]
     [_ symbols]))
 
+(define (compiler-symbols-macro-module-set-add-decl
+  [modules : SymI64Env]
+  [module-id : i64]
+  [decl : AstDecl]) : SymI64Env
+  (match decl
+    [(AstDeclDefMacro _ _ _ _)
+      (if (sym-i64-contains-id modules module-id)
+        modules
+        (sym-i64-bind-id modules module-id 1))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (compiler-symbols-macro-module-set-add-decl modules module-id template))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (compiler-symbols-macro-module-set-add-decl modules module-id inner))]
+    [_ modules]))
+
+(define (compiler-symbols-macro-module-set-list
+  [decls : AstDeclList]
+  [module-id : i64]
+  [modules : SymI64Env]) : SymI64Env
+  (match decls
+    [(AstDeclNil) modules]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (compiler-symbols-macro-module-set-list rest next-module modules)]
+          [(AstDeclImport _)
+            (compiler-symbols-macro-module-set-list rest module-id modules)]
+          [(AstDeclIncludeStr _ _)
+            (compiler-symbols-macro-module-set-list rest module-id modules)]
+          [(AstDeclIncludeBin _ _)
+            (compiler-symbols-macro-module-set-list rest module-id modules)]
+          [(AstDeclTest _ _ _)
+            (compiler-symbols-macro-module-set-list rest module-id modules)]
+          [_
+            (compiler-symbols-macro-module-set-list
+              rest
+              module-id
+              (compiler-symbols-macro-module-set-add-decl
+                modules
+                module-id
+                decl))]))]))
+
+(define (compiler-symbols-macro-module-set [decls : AstDeclList]) : SymI64Env
+  (compiler-symbols-macro-module-set-list decls (intern "") (sym-i64-empty)))
+
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
 ;; alias in the importer.
 (define (compiler-symbols-remove-module-macro-aliases-list
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
-  [target-module : String]
+  [target-module-id : i64]
   [index : i64]
-  [module : String]) : CompilerSymbols
+  [module-id : i64]) : CompilerSymbols
   (match decls
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
@@ -1446,40 +1497,40 @@
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               index
-              module)]
+              module-id)]
           [(AstDeclIncludeStr _ _)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               index
-              module)]
+              module-id)]
           [(AstDeclIncludeBin _ _)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               index
-              module)]
+              module-id)]
           [(AstDeclModule next-module)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               index
-              (intern-str next-module))]
+              next-module)]
           [(AstDeclTest _ _ _)
             (compiler-symbols-remove-module-macro-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               index
-              module)]
+              module-id)]
           [_
             (let
-              [in-target : bool (string-eq module target-module)]
+              [in-target : bool (= module-id target-module-id)]
               [next-symbols : CompilerSymbols
                 (if in-target
                   (compiler-symbols-remove-decl-macro-alias symbols decl index)
@@ -1487,9 +1538,9 @@
               (compiler-symbols-remove-module-macro-aliases-list
                 next-symbols
                 rest
-                target-module
+                target-module-id
                 (+ index 1)
-                module))]))]))
+                module-id))]))]))
 
 (define (compiler-symbols-remove-module-macro-aliases
   [symbols : CompilerSymbols]
@@ -1498,17 +1549,17 @@
   (compiler-symbols-remove-module-macro-aliases-list
     symbols
     decls
-    target-module
+    (intern target-module)
     0
-    ""))
+    (intern "")))
 
 (define (compiler-symbols-add-module-aliases-list
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
-  [target-module : String]
+  [target-module-id : i64]
   [alias : String]
   [index : i64]
-  [module : String]) : CompilerSymbols
+  [module-id : i64]) : CompilerSymbols
   (match decls
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
@@ -1519,45 +1570,45 @@
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               alias
               index
-              module)]
+              module-id)]
           [(AstDeclIncludeStr _ _)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               alias
               index
-              module)]
+              module-id)]
           [(AstDeclIncludeBin _ _)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               alias
               index
-              module)]
+              module-id)]
           [(AstDeclModule next-module)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               alias
               index
-              (intern-str next-module))]
+              next-module)]
           [(AstDeclTest _ _ _)
             (compiler-symbols-add-module-aliases-list
               symbols
               rest
-              target-module
+              target-module-id
               alias
               index
-              module)]
+              module-id)]
           [_
             (let
-              [in-target : bool (string-eq module target-module)]
+              [in-target : bool (= module-id target-module-id)]
               [next-symbols : CompilerSymbols
                 (if in-target
                   (compiler-symbols-add-decl-alias-in-module
@@ -1569,10 +1620,10 @@
               (compiler-symbols-add-module-aliases-list
                 next-symbols
                 rest
-                target-module
+                target-module-id
                 alias
                 (+ index 1)
-                module))]))]))
+                module-id))]))]))
 
 (define (compiler-symbols-add-module-aliases
   [symbols : CompilerSymbols]
@@ -1582,10 +1633,10 @@
   (compiler-symbols-add-module-aliases-list
     symbols
     decls
-    target-module
+    (intern target-module)
     alias
     0
-    ""))
+    (intern "")))
 
 (define (compiler-symbols-import-alias-key
   [importer-module : String]
@@ -1598,7 +1649,8 @@
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
-  [module : String]) : CompilerSymbols
+  [module : String]
+  [macro-modules : SymI64Env]) : CompilerSymbols
   (match decls
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
@@ -1615,10 +1667,12 @@
                   _))
               (let
                 [without-bare-macros : CompilerSymbols
-                  (compiler-symbols-remove-module-macro-aliases
-                    symbols
-                    all-decls
-                    target-module)]
+                  (if (sym-i64-contains-id macro-modules (intern target-module))
+                    (compiler-symbols-remove-module-macro-aliases
+                      symbols
+                      all-decls
+                      target-module)
+                    symbols)]
                 (if (string-eq alias "")
                   (compiler-symbols-add-module-aliases
                     without-bare-macros
@@ -1633,13 +1687,15 @@
               all-decls
               rest
               next-symbols
-              (intern-str next-module))]
+              (intern-str next-module)
+              macro-modules)]
           [_
             (build-compiler-symbol-aliases-list
               all-decls
               rest
               next-symbols
-              module)]))]))
+              module
+              macro-modules)]))]))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
@@ -2031,7 +2087,12 @@
           0)
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
-              (build-compiler-symbol-aliases-list decls decls symbols ""))]
+              (build-compiler-symbol-aliases-list
+                decls
+                decls
+                symbols
+                ""
+                (compiler-symbols-macro-module-set decls)))]
           [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))
 
 (define (build-compiler-symbols-with-paths
@@ -2052,7 +2113,12 @@
           "")
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
-              (build-compiler-symbol-aliases-list decls decls symbols ""))]
+              (build-compiler-symbol-aliases-list
+                decls
+                decls
+                symbols
+                ""
+                (compiler-symbols-macro-module-set decls)))]
           [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols

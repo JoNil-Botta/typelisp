@@ -17,8 +17,7 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
-(import "../stdlib/io.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.io)
 (import "build_cli_core.tl")
 (import "run_cli_core.tl")
 (import "check_cli_core.tl")
@@ -32,7 +31,22 @@
 (import "repl_cli_core.tl")
 (import "scaffold_cli_core.tl")
 (import "lsp_frame_core.tl")
-(import "../stdlib/string.tl")
+(import stdlib.string)
+
+(define (cli-argc) : i64
+  (io.arg-count))
+
+(define (cli-arg [index : i64]) : String
+  (io.arg index))
+
+(define (cli-err [text : String]) : unit
+  (io.print-error text))
+
+(define (cli-eq? [left : String] [right : String]) : bool
+  (string.string-eq left right))
+
+(define (cli-cat [left : String] [right : String]) : String
+  (string.string-append left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same
@@ -281,14 +295,14 @@ Options:
 ")
 
 (define (cli-help-flag? [value : String]) : bool
-  (or (string-eq value "--help") (string-eq value "-h")))
+  (or (cli-eq? value "--help") (cli-eq? value "-h")))
 
 (define (cli-subcommand-help-request? [count : i64]) : bool
-  (and (= count 3) (cli-help-flag? (arg 2))))
+  (and (= count 3) (cli-help-flag? (cli-arg 2))))
 
 (define (cli-print-help-text [text : String] [code : i64]) : i64
   (begin
-    (print-error text)
+    (cli-err text)
     code))
 
 (define (cli-print-help [code : i64]) : i64
@@ -297,86 +311,86 @@ Options:
 ;; A stage0 command listed in the help but not yet wired into the selfhost CLI.
 (define (cli-pending [command : String] [issue : String]) : i64
   (begin
-    (print-error
-      (string-append
+    (cli-err
+      (cli-cat
         "typelisp: '"
-        (string-append
+        (cli-cat
           command
-          (string-append
+          (cli-cat
             "' is not yet available in the selfhost CLI (tracked in "
-            (string-append issue ")\n")))))
+            (cli-cat issue ")\n")))))
     1))
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
   (cond
     [(or
-        (string-eq command "help")
-        (string-eq command "--help")
-        (string-eq command "-h"))
+        (cli-eq? command "help")
+        (cli-eq? command "--help")
+        (cli-eq? command "-h"))
       (cli-print-help 0)]
-    [(string-eq command "build")
+    [(cli-eq? command "build")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-build-help-text) 0)
         (build-run-from 2 count))]
-    [(string-eq command "clean")
+    [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
         (clean-run-from 2 count))]
-    [(string-eq command "run")
+    [(cli-eq? command "run")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-run-help-text) 0)
         (run-run-from 2 count))]
-    [(string-eq command "check")
+    [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)
         (selfhost-check-run-from 2 count))]
-    [(string-eq command "fmt")
+    [(cli-eq? command "fmt")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-fmt-help-text) 0)
         (fmt-run-from 2 count))]
-    [(string-eq command "lint")
+    [(cli-eq? command "lint")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-lint-help-text) 0)
         (selfhost-lint-run-from 2 count))]
-    [(string-eq command "test")
+    [(cli-eq? command "test")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-test-help-text) 0)
         (tltest-run-from 2 count))]
-    [(string-eq command "doc")
+    [(cli-eq? command "doc")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-doc-help-text) 0)
         (doc-run-from 2 count))]
-    [(string-eq command "compile")
+    [(cli-eq? command "compile")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-compile-help-text) 0)
         (compile-cli-run count))]
-    [(string-eq command "inspect")
+    [(cli-eq? command "inspect")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-inspect-help-text) 0)
         (tlci-inspect-run-from 2 count))]
-    [(string-eq command "lsp")
+    [(cli-eq? command "lsp")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-lsp-help-text) 0)
         (lsp-frame-run-from 2 count))]
-    [(string-eq command "repl")
+    [(cli-eq? command "repl")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-repl-help-text) 0)
         (repl-run-from 2 count))]
-    [(string-eq command "new")
+    [(cli-eq? command "new")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-new-help-text) 0)
         (scaffold-new-run-from 2 count))]
-    [(string-eq command "init")
+    [(cli-eq? command "init")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-init-help-text) 0)
         (scaffold-init-run-from 2 count))]
     [else
       (begin
-        (print-error (string-append "typelisp: unknown subcommand " command))
-        (print-error "\n\n")
+        (cli-err (cli-cat "typelisp: unknown subcommand " command))
+        (cli-err "\n\n")
         (cli-print-help 1))]))
 
 (define (main) : i64
-  (if (< (arg-count) 2)
+  (if (< (cli-argc) 2)
     (cli-print-help 1)
-    (cli-dispatch (arg 1) (arg-count))))
+    (cli-dispatch (cli-arg 1) (cli-argc))))

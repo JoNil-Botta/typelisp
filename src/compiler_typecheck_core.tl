@@ -370,6 +370,10 @@
   64)
 (define tc-prefix-snapshot-cache : (Array TcPrefixSnapshotSlot)
   (make-array TcPrefixSnapshotSlot 64))
+(define tc-prefix-snapshot-cache-arena : i64
+  0)
+(define tc-prefix-snapshot-cache-enabled : bool
+  false)
 (define tc-prefix-snapshot-cache-ready : bool
   false)
 (define tc-prefix-snapshot-cache-hit-count : i64
@@ -392,11 +396,36 @@
     (set! tc-prefix-snapshot-cache-miss-count 0)
     (set! tc-prefix-snapshot-cache-store-count 0)))
 
+(define (tc-prefix-snapshot-cache-arena-handle) : i64
+  (begin
+    (if (= tc-prefix-snapshot-cache-arena 0)
+      (set! tc-prefix-snapshot-cache-arena (tl_arena_make))
+      unit)
+    tc-prefix-snapshot-cache-arena))
+
+(define (tc-prefix-snapshot-cache-arena-reset!) : unit
+  (if (= tc-prefix-snapshot-cache-arena 0)
+    unit
+    (begin
+      (unsafe
+        (tl_arena_destroy tc-prefix-snapshot-cache-arena))
+      (set! tc-prefix-snapshot-cache-arena 0))))
+
 (define (tc-prefix-snapshot-cache-clear!) : unit
   (begin
     (tc-prefix-snapshot-cache-fill! 0)
+    (tc-prefix-snapshot-cache-arena-reset!)
     (set! tc-prefix-snapshot-cache-ready true)
     (tc-prefix-snapshot-cache-stats-reset!)))
+
+(define (tc-prefix-snapshot-cache-enable!) : unit
+  (set! tc-prefix-snapshot-cache-enabled true))
+
+(define (tc-prefix-snapshot-cache-disable!) : unit
+  (set! tc-prefix-snapshot-cache-enabled false))
+
+(define (tc-prefix-snapshot-cache-active?) : bool
+  (or tc-prefix-snapshot-cache-enabled (compiler-load-session-cache-enabled?)))
 
 (define (tc-prefix-snapshot-cache-ensure!) : unit
   (if tc-prefix-snapshot-cache-ready
@@ -513,7 +542,7 @@
     [stored : bool
       (begin
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
         (let
           [persistent-key : String (string-copy (& key))]
           [persistent-module : String (string-copy (& module))]
@@ -42325,7 +42354,7 @@
   [summary : CompilerTypecheckSummary]
   [stdlib-roots : StringVec]
   [cache-scope : String]) : ResultCompilerTypecheck
-  (if (compiler-load-session-cache-enabled?)
+  (if (tc-prefix-snapshot-cache-active?)
     (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
       [(TcSomePrefixCandidate key count module)
         (match (tc-prefix-snapshot-cache-lookup key)

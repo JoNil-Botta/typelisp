@@ -667,6 +667,19 @@
     [(AstExprSpanned _ span) span]
     [_ (lint-no-span)]))
 
+(define (lint-terminal-callee-name? [text : String]) : bool
+  (or
+    (string.string-eq text "panic")
+    (or
+      (string.string-eq text "error")
+      (or
+        (string.string-eq text "io.panic")
+        (or
+          (string.string-eq text "io.error")
+          (or
+            (string.string-eq text "stdlib.io.panic")
+            (string.string-eq text "stdlib.io.error")))))))
+
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr
     [(AstExprSpanned inner-box _)
@@ -676,7 +689,7 @@
     [(AstExprVar name)
       (let
         [text : String (intern-str name)]
-        (or (string.string-eq text "panic") (string.string-eq text "error")))]
+        (lint-terminal-callee-name? text))]
     [_ false]))
 
 (define (lint-terminal-expr? [expr : AstExpr]) : bool

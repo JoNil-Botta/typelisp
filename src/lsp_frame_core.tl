@@ -5386,39 +5386,48 @@
 
 ;; tl/patch - Find and replace text anywhere in the file, then validate
 (define (lsp-patch-text [text : String] [old-text : String] [new-text : String]) : LspEditResult
-  (if (string-eq old-text "")
-    (ErrLspEdit "oldText cannot be empty")
-    (let
-      [n : i64 (string-length text)]
-      [old-len : i64 (string-length old-text)]
-      [limit : i64 (- n old-len)]
-      [i : i64 0]
-      [found-at : i64 -1]
-      [matches : i64 0]
-      (begin
-        (while (<= i limit)
-          (begin
-            (when
-              (is-string-prefix-at (& text) (& old-text) i)
-              (begin
-                (when (= found-at -1) (set! found-at i))
-                (set! matches (+ matches 1))))
-            (set! i (+ i 1))))
-        (if (= matches 0)
-          (ErrLspEdit "oldText not found in document")
-          (if (> matches 1)
-            (ErrLspEdit "oldText occurs more than once in document")
+  (let
+    [n : i64 (string-length text)]
+    [old-len : i64 (string-length old-text)]
+    (if (string-eq old-text "")
+      (ErrLspEdit "oldText cannot be empty")
+      (let
+        [first-byte : char (string-ref old-text 0)]
+        [i : i64 0]
+        [found-at : i64 -1]
+        [matches : i64 0]
+        [limit : i64 (- n old-len)]
+        (begin
+          ;; Fast path: find matches using memchr for first byte, then check prefix
+          (while (and (<= i limit) (<= matches 1))
             (let
-              [before : String (substring text 0 found-at)]
-              [after-start : i64 (+ found-at old-len)]
-              [after : String (substring text after-start (- n after-start))]
-              [replaced : String (str-cat before new-text after)]
-              (if (not (lsp-text-is-valid-forms replaced))
-                (ErrLspEdit
-                  (str-cat
-                    "Patch produces invalid form(s): "
-                    (lsp-validate-forms-error replaced)))
-                (OkLspEdit replaced)))))))))
+              [idx : i64
+                (string-index-of-byte (& text) i (cast first-byte : u8))]
+              (if (= idx -1)
+                (set! i (+ limit 1))
+                (if (<= idx limit)
+                  (if (is-string-prefix-at (& text) (& old-text) idx)
+                    (begin
+                      (when (= found-at -1) (set! found-at idx))
+                      (set! matches (+ matches 1))
+                      (set! i (+ idx 1)))
+                    (set! i (+ idx 1)))
+                  (set! i (+ limit 1))))))
+          (if (= matches 0)
+            (ErrLspEdit "oldText not found in document")
+            (if (> matches 1)
+              (ErrLspEdit "oldText occurs more than once in document")
+              (let
+                [before : String (substring text 0 found-at)]
+                [after-start : i64 (+ found-at old-len)]
+                [after : String (substring text after-start (- n after-start))]
+                [replaced : String (str-cat before new-text after)]
+                (if (not (lsp-text-is-valid-forms replaced))
+                  (ErrLspEdit
+                    (str-cat
+                      "Patch produces invalid form(s): "
+                      (lsp-validate-forms-error replaced)))
+                  (OkLspEdit replaced))))))))))
 
 ;; tl/patch - Handler for find-and-replace patch
 (define (lsp-handle-tl-patch

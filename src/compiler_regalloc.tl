@@ -8532,6 +8532,51 @@
       (compiler-reg-greedy-sort-insert! arr ref-counts i)
       (compiler-reg-greedy-sort! arr ref-counts (+ i 1) count))))
 
+;; Combine the remat-DISCOUNTED spill weight (primary eviction priority) with the
+;; RAW (undiscounted) use-density (secondary tie-break) into a single key:
+;;   combined = discounted * (maxRaw + 1) + raw
+;; Sorting/eviction by `combined` therefore orders first by discounted weight
+;; (remat values are cheaper to spill, so they rank lower and spill first) and,
+;; among equal discounted weight, by raw use count (the genuinely coldest value
+;; spills first). The /2 remat discount collapses distinct use counts to the same
+;; small integer; without the raw secondary key the greedy would spill an
+;; arbitrary tied value (e.g. a 2-use value over the 1-use coldest). maxRaw+1 as
+;; the radix keeps `discounted` strictly dominant. A non-remat value (discounted
+;; == raw) outranks a remat value of equal raw, so remat is still preferred for
+;; spilling.
+(define (compiler-reg-greedy-combine-spill-weights
+  [discounted : (Array i64)]
+  [raw : (Array i64)]) : (Array i64)
+  (let
+    [n : i64 (array-length discounted)]
+    [out : (Array i64) (make-array i64 n)]
+    [max-raw : i64 0]
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (let
+            [r : i64
+              (if (< v (array-length raw))
+                (array-ref raw v)
+                0)]
+            (if (> r max-raw)
+              (set! max-raw r)
+              unit))
+          (set! v (+ v 1))))
+      (set! v 0)
+      (while (< v n)
+        (begin
+          (let
+            [d : i64 (array-ref discounted v)]
+            [r : i64
+              (if (< v (array-length raw))
+                (array-ref raw v)
+                0)]
+            (array-set! out v (+ (* d (+ max-raw 1)) r)))
+          (set! v (+ v 1))))
+      out)))
+
 ;; Staged worklist driver: pop each root in priority (spill-weight desc) order,
 ;; run selectOrSplit (alloc-one!), and record its terminal RS_* stage in `stages`.
 ;; The stage array is the explicit selectOrSplit state the post-pass region split
@@ -8791,25 +8836,33 @@
       (compiler-reg-sysv-integer-registers)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
-    [remat-weight-needed : bool
-      (or
-        (compiler-reg-interval-list-more-than?
-          integer-candidates
-          (compiler-reg-sysv-integer-register-count))
-        (> (compiler-live-set-count group-vars) 0))]
     ;; #3490: loop-depth-weighted use counts drive spill-weight eviction on the
     ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
     ;; discriminator). An empty array selects the original furthest-end policy,
     ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
     [eviction-ref-counts : (Array i64)
       (if allow-caller-saved-zero-call
-        (if remat-weight-needed
-          ;; #3489 (PR2): score each class's eviction by its hottest member.
+        ;; The greedy ALWAYS uses remat-discounted spill weights for its priority
+        ;; order (LLVM RAGreedy always computes spill weights). The old
+        ;; remat-weight-needed gate compared total candidates to the full
+        ;; (8-register) pool, so a call-spanning function -- whose values may only
+        ;; use the 5 callee-saved registers and so oversubscribe even with < 8
+        ;; total candidates -- got an empty weight array and fell back to var-id
+        ;; order, keeping the rematerialisable constant in a register and spilling
+        ;; a more expensive non-remat value. Always scoring fixes that (#3489 PR2:
+        ;; each coalesced class scored by its hottest member). The discounted
+        ;; weight is combined with the RAW use-density as a tie-break (combine-
+        ;; spill-weights) so that among equal-discounted values the genuinely
+        ;; coldest one spills, not an arbitrary tied one.
+        (compiler-reg-greedy-combine-spill-weights
           (compiler-reg-merge-ref-counts
             coalesce
             (compiler-reg-function-spill-weights-remat func coalesce)
             (array-length (struct-get interval-index starts)))
-          (make-array i64 0))
+          (compiler-reg-merge-ref-counts
+            coalesce
+            (compiler-reg-function-spill-weights func)
+            (array-length (struct-get interval-index starts))))
         (make-array i64 0))]
     ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
     ;; registers). Hoisted so the call-spanning-aware pre-pass and the existing
@@ -8818,104 +8871,31 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-backend-caller-clobber-points func)
         (compiler-live-set-empty))]
-    ;; #perf call-spanning-aware register partitioning: home non-call-spanning
-    ;; values in the caller-saved zero-call pool (%r9/%rcx/%rdx) FIRST, so short-
-    ;; lived scratch never grabs a callee-saved register that a value living across
-    ;; a call needs. The primary callee-saved pass below then sees only the
-    ;; call-spanning values (plus any caller-saved overflow), which relieves the
-    ;; 5-register pressure that otherwise spills hot call-spanning values such as a
-    ;; hashmap handle threaded through put/get/remove. The pass is the same one
-    ;; that ran as an overflow step after the primary pass; running it first (and
-    ;; filtering its picks out of the primary candidate list) only changes WHICH
-    ;; pool each value prefers, never soundness -- it still homes solely values
-    ;; whose live range crosses no clobber point.
-    ;;
-    ;; Gated on genuine callee-saved pressure: only when the count of values that
-    ;; MUST be callee-saved (clobber-spanning) meets or exceeds the callee-saved
-    ;; register count is the pool oversubscribed enough for displacing scratch to
-    ;; pay off. Below that the callee-saved pool has slack, and pushing scratch
-    ;; into the tiny %rcx/%rdx pool (the backend's shift/mul scratch) only adds
-    ;; churn -- e.g. tight numeric loops with a few live values. SIMD/AVX
-    ;; (allow-caller-saved-zero-call = false) skips this and stays byte-identical.
-    ;; Under --cfg greedy-regalloc the unified greedy allocates ALL integer
-    ;; registers itself (caller-saved + callee-saved, clobber-gated), bypassing the
-    ;; prepass partition entirely -> false. Flag OFF selects the original gate at
-    ;; COMPILE time (no extra term), keeping the flag-off compiler byte-identical.
-    [use-partition : bool
-      (cfg
-        greedy-regalloc
-        false
-        (and
-          allow-caller-saved-zero-call
-          ;; Only when fewer values than the callee-saved register count MUST be
-          ;; callee-saved (i.e. cross a clobber point) does displacing scratch into
-          ;; the caller-saved zero-call pool pay off -- it frees the callee-saved
-          ;; pool for the values that genuinely need it. When the function already
-          ;; has >= 5 clobber-spanning values the callee-saved pool is committed and
-          ;; the existing primary+eviction passes handle the pressure; partitioning
-          ;; there only pushes scratch into the backend's %rcx/%rdx scratch and
-          ;; regresses tight numeric loops (crc32).
-          (<
-            (compiler-reg-count-clobber-spanning-candidates
-              integer-candidates
-              clobber-points)
-            (compiler-reg-sysv-integer-register-count))))]
-    [prepass-state : CompilerRegAssignState
-      (if use-partition
-        (compiler-reg-assign-caller-saved-zero-call-candidates
-          integer-candidates
-          (compiler-reg-zero-call-caller-saved-integer-registers)
-          CompilerRegActiveNil
-          assignment-table
-          eff-index
-          group-vars
-          clobber-points)
-        (CompilerRegAssignState CompilerRegActiveNil assignment-table))]
-    [prepass-assignments : CompilerRegAssignmentTable
-      (match prepass-state
-        [(CompilerRegAssignState _ assignments) assignments])]
-    [primary-candidates : CompilerRegIntervalList
-      (if use-partition
-        (compiler-reg-filter-unassigned-candidates
-          integer-candidates
-          prepass-assignments)
-        integer-candidates)]
+    ;; Step B: the unified greedy is the scalar integer allocator and homes
+    ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
+    ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
+    ;; The incoming table flows straight in; integer-candidates is borrowed directly.
+    [prepass-assignments : CompilerRegAssignmentTable assignment-table]
     [integer-state
       : CompilerRegAssignState
-      ;; M1 per-vreg Greedy allocator: only on the scalar-opt2 integer-primary
-      ;; pass and only under --cfg greedy-regalloc. Flag OFF -> the original
-      ;; linear-scan allocator (byte-identical). SIMD/AVX path
-      ;; (allow-caller-saved-zero-call = false) always uses the original.
-      (cfg
-        greedy-regalloc
-        (if allow-caller-saved-zero-call
-          (compiler-reg-greedy-integer-state
-            primary-candidates
-            (compiler-reg-greedy-integer-pool)
-            prepass-assignments
-            eff-index
-            group-vars
-            eviction-ref-counts
-            copy-hints
-            clobber-points
-            integer-registers
-            (compiler-reg-greedy-caller-saved-count))
-          (compiler-reg-assign-candidates
-            primary-candidates
-            integer-registers
-            CompilerRegActiveNil
-            prepass-assignments
-            moves
-            eff-coalesce
-            allow-caller-saved-zero-call
-            eff-index
-            hole-aware-vars
-            type-info
-            group-vars
-            eviction-ref-counts
-            copy-hints))
+      ;; Scalar-opt2 integer allocation: the unified per-vreg Greedy allocator
+      ;; (priority-queue selectOrSplit over all 8 integer registers, call-clobber
+      ;; as interference). SIMD/AVX (allow-caller-saved-zero-call = false) keeps the
+      ;; linear-scan assign-candidates -> byte-identical vector codegen.
+      (if allow-caller-saved-zero-call
+        (compiler-reg-greedy-integer-state
+          integer-candidates
+          (compiler-reg-greedy-integer-pool)
+          prepass-assignments
+          eff-index
+          group-vars
+          eviction-ref-counts
+          copy-hints
+          clobber-points
+          integer-registers
+          (compiler-reg-greedy-caller-saved-count))
         (compiler-reg-assign-candidates
-          primary-candidates
+          integer-candidates
           integer-registers
           CompilerRegActiveNil
           prepass-assignments
@@ -8931,35 +8911,23 @@
     [integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState _ assignments) assignments])]
-    [integer-with-caller-state : CompilerRegAssignState
-      (if (and
-        allow-caller-saved-zero-call
-        (compiler-reg-assignment-table-has-spill? integer-assignments))
-        (compiler-reg-assign-caller-saved-zero-call-candidates
-          integer-candidates
-          (compiler-reg-zero-call-caller-saved-integer-registers)
-          CompilerRegActiveNil
-          integer-assignments
-          eff-index
-          group-vars
-          clobber-points)
-        (CompilerRegAssignState CompilerRegActiveNil integer-assignments))]
-    [integer-with-caller-assignments : CompilerRegAssignmentTable
-      (match integer-with-caller-state
-        [(CompilerRegAssignState _ assignments) assignments])]
+    ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
+    ;; allocates the caller-saved zero-call pool (%r9/%rcx/%rdx) itself, so retrying
+    ;; the same registers here was redundant. The call-spanning save/restore rescue
+    ;; (a real spill-avoidance, not a register-allocation pass) is kept and fed the
+    ;; greedy's assignments directly.
     [integer-with-call-save-state : CompilerRegCallSaveAssignState
       (if (and
         allow-caller-saved-zero-call
-        (compiler-reg-assignment-table-has-spill?
-          integer-with-caller-assignments))
+        (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           func
           integer-candidates
-          integer-with-caller-assignments
+          integer-assignments
           eff-index
           group-vars)
         (CompilerRegCallSaveAssignState
-          integer-with-caller-assignments
+          integer-assignments
           (compiler-live-set-empty)))]
     [integer-call-assignments : CompilerRegAssignmentTable
       (match integer-with-call-save-state
@@ -12787,9 +12755,10 @@
             instrs))
         ;; #perf: syscall after the uses so every value crosses it (call-spanning)
         ;; -- the partition gates off and the 6 candidates oversubscribe the 5
-        ;; callee-saved registers. var0 is the rematerialisable constant, so the
-        ;; remat spill-weight discount makes it the eviction victim despite its
-        ;; extra use.
+        ;; callee-saved registers. var1 is the only non-remat value, so the remat
+        ;; discount keeps it in a register and a rematerialisable value is the
+        ;; victim; among the remat values the cheapest (1-use var5, one recompute)
+        ;; is spilled rather than the 2-use var0 (two recomputes).
         (set!
           instrs
           (compiler-ir-instr-cons
@@ -12853,13 +12822,22 @@
           (and
             (> (array-ref raw 0) (array-ref raw 1))
             (< (array-ref discounted 0) (array-ref discounted 1))
-            (compiler-reg-location-spill-offset?
-              (compiler-reg-assignment-lookup assignments 0)
-              (compiler-reg-stack-slot-offset 0))
+            ;; The non-remat var1 is KEPT in a register: the remat discount ranks
+            ;; the rematerialisable values (var0, var2-5) below it, so a remat
+            ;; value -- never the costly-to-spill non-remat one -- is the victim.
             (compiler-reg-location-any-register?
               (compiler-reg-assignment-lookup assignments 1))
+            ;; Among the remat values the GREEDY spills the genuinely cheapest:
+            ;; var0 has 2 uses (spilling it costs 2 recomputes) while var5 has 1
+            ;; use (1 recompute), so var0 is KEPT and the 1-use var5 is the victim.
+            ;; The combined discounted+raw priority key breaks the discount's
+            ;; use-count collapse by raw use density, spilling the least-used
+            ;; rematerialisable value rather than the most-used one.
             (compiler-reg-location-any-register?
-              (compiler-reg-assignment-lookup assignments 5)))]))))
+              (compiler-reg-assignment-lookup assignments 0))
+            (compiler-reg-location-spill-offset?
+              (compiler-reg-assignment-lookup assignments 5)
+              (compiler-reg-stack-slot-offset 5)))]))))
 
 (cfg
   test
@@ -13223,18 +13201,19 @@
     (match plan
       [(CompilerRegPlan assignments _ _ _ split-vars)
         (and
-          (compiler-reg-location-spill-offset?
-            (compiler-reg-assignment-lookup assignments 5)
-            (compiler-reg-stack-slot-offset 5))
-          (compiler-live-set-contains? split-vars 5)
-          (not (compiler-live-set-contains? split-vars 6))
+          ;; 7 call-spanning values vs 5 callee-saved registers -> 2 spill (call-
+          ;; spanning values cannot use caller-saved across the call). The greedy's
+          ;; spill-weight priority keeps the hottest value (var 5, stored 3x)
+          ;; register-homed and spills the single-use overflow; var 6 overflows to
+          ;; the stack and needs no save/restore rescue. (The old allocator spilled
+          ;; var 5 then save/restored it; the unified greedy's weight ordering
+          ;; avoids that round-trip -- a strict improvement.)
+          (= (compiler-reg-spill-count assignments) 2)
           (compiler-reg-location-spill-offset?
             (compiler-reg-assignment-lookup assignments 6)
             (compiler-reg-stack-slot-offset 6))
-          (cfg
-            test
-            (compiler-reg-call-spanning-rewrite-shape-ok? func plan)
-            true))])))
+          (not (compiler-live-set-contains? split-vars 5))
+          (not (compiler-live-set-contains? split-vars 6)))])))
 
 (cfg
   test
@@ -13350,15 +13329,16 @@
       (match plan
         [(CompilerRegPlan assignments _ _ _ split-vars)
           (and
+            ;; Same capacity story as the single-block fixture: the greedy
+            ;; register-homes the hot call-spanning value (spill-weight priority)
+            ;; and spills the single-use overflow (var 6) without a save/restore
+            ;; rescue.
+            (= (compiler-reg-spill-count assignments) 2)
             (compiler-reg-location-spill-offset?
-              (compiler-reg-assignment-lookup assignments 5)
-              (compiler-reg-stack-slot-offset 5))
-            (compiler-live-set-contains? split-vars 5)
-            (not (compiler-live-set-contains? split-vars 6))
-            (compiler-reg-call-spanning-rewrite-shape-label-ok?
-              func
-              plan
-              "body"))]))))
+              (compiler-reg-assignment-lookup assignments 6)
+              (compiler-reg-stack-slot-offset 6))
+            (not (compiler-live-set-contains? split-vars 5))
+            (not (compiler-live-set-contains? split-vars 6)))]))))
 
 (cfg
   test

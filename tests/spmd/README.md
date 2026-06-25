@@ -128,7 +128,10 @@ Coverage map:
   staged diagnostics for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
-  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified
+  v1 private out-of-line SPMD call ABI is feature-pending under #2852; the
+  current corpus keeps function-value/indirect varying calls rejected by the
+  safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`.
@@ -147,8 +150,8 @@ Coverage map:
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
   including outer mutation, unsupported `f64` min reduction, unsupported
-  floating-point scans, nested scan bodies, and indirect calls with varying
-  arguments.
+  floating-point scans, nested scan bodies, and function-value/indirect varying
+  calls that are outside the v1 private out-of-line call ABI.
 ## Running
 
 ```sh

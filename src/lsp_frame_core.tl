@@ -49,6 +49,11 @@
   (line i64)
   (col i64))
 
+(defstruct LspLineColCache
+  (offset i64)
+  (line i64)
+  (col i64))
+
 (defenum LspDefLocation
   (FoundDefLoc String i64 i64 i64)
   (MissingDefLoc))
@@ -1315,6 +1320,43 @@
             (set! col (+ col 1)))
           (set! i (+ i 1))))
       (LspLineCol line col))))
+
+(define (lsp-line-col-cache-at-offset!
+  [cache : LspLineColCache]
+  [text : String]
+  [off : i64]) : LspLineCol
+  (if (= off (struct-get cache offset))
+    (LspLineCol (struct-get cache line) (struct-get cache col))
+    (let
+      [n : i64 (string-length text)]
+      [resume : bool
+        (and (>= (struct-get cache offset) 0) (< (struct-get cache offset) off))]
+      [start : i64
+        (if resume
+          (struct-get cache offset)
+          0)]
+      [line : i64
+        (if resume
+          (struct-get cache line)
+          1)]
+      [col : i64
+        (if resume
+          (struct-get cache col)
+          1)]
+      [i : i64 start]
+      (begin
+        (while (and (< i n) (< i off))
+          (begin
+            (if (= (string-ref text i) '\n')
+              (begin
+                (set! line (+ line 1))
+                (set! col 1))
+              (set! col (+ col 1)))
+            (set! i (+ i 1))))
+        (set! (struct-get cache offset) off)
+        (set! (struct-get cache line) line)
+        (set! (struct-get cache col) col)
+        (LspLineCol line col)))))
 
 (define (lsp-def-keyword? [kw : String]) : bool
   (or
@@ -3290,6 +3332,7 @@
     [i : i64 0]
     [depth : i64 0]
     [result : LspDeclList (lsp-decl-list-with-capacity 16)]
+    [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
     (begin
       (while (< i n)
         (let
@@ -3309,12 +3352,12 @@
                         [name : String (lsp-symbol-at-offset text name-off)]
                         [kind : String (lsp-decl-kind-at text i n)]
                         [form-end : i64 (lsp-skip-paren-group text i n)]
-                        [name-lc : LspLineCol
-                          (lsp-line-col-at-offset text name-off)]
                         [form-start-lc : LspLineCol
-                          (lsp-line-col-at-offset text i)]
+                          (lsp-line-col-cache-at-offset! lc-cache text i)]
+                        [name-lc : LspLineCol
+                          (lsp-line-col-cache-at-offset! lc-cache text name-off)]
                         [form-end-lc : LspLineCol
-                          (lsp-line-col-at-offset text form-end)]
+                          (lsp-line-col-cache-at-offset! lc-cache text form-end)]
                         (set!
                           result
                           (lsp-decl-list-push

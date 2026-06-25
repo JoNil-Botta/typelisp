@@ -1,7 +1,10 @@
 ;; compiler_liveness.tl - Self-hosted CompilerIrFunction liveness analysis (#553).
 ;;
 ;; This module keeps the selfhost liveness pass deterministic while storing
-;; integer live sets as compact bitsets keyed by dense IR variable ids.
+;; integer live sets as compact bitsets keyed by dense IR variable ids. Do not
+;; replace CompilerLiveI64Set with the general `(set i64)` family without a
+;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
+;; iteration and copy costs.
 (import "../stdlib/io.tl")
 (import "../stdlib/string.tl")
 (import "compiler_ir_types.tl")

@@ -3284,6 +3284,8 @@
         "reduce source")
         [(OkBackendReg src-reg)
           (let
+            [src-reg-copy : String (string-copy (& src-reg))]
+            [mask-gpr-copy : String (string-copy (& mask-gpr))]
             [reduce-asm : String
               (match op
                 [(IrMaskReduceAny)
@@ -3309,9 +3311,9 @@
                       "    "
                       mask-move
                       " "
-                      (string-copy src-reg)
+                      src-reg-copy
                       ", "
-                      (string-copy mask-gpr)
+                      mask-gpr-copy
                       "\n    "
                       cmp-op
                       " $"

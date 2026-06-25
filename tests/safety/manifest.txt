@@ -100,6 +100,9 @@ float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|u
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
 in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
+in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
+in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
+in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
 arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: argument type mismatch
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
@@ -172,13 +175,14 @@ sync_channel_i64_pair_use_after_send_reject|check-fail|tests/safety/sync_channel
 sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
 sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-
 sync_channel_string_default_arena_reject|check-fail|tests/safety/sync_channel_string_default_arena_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+sync_channel_string_ordinary_arena_reject|check-fail|tests/safety/sync_channel_string_ordinary_arena_reject.tl|-|cannot pass region-tagged value to function parameter
 sync_channel_string_use_after_send_reject|check-fail|tests/safety/sync_channel_string_use_after_send_reject.tl|-|use of moved value `message`
 thread_spawn_i64_aggregate_capture_ok|check-ok|tests/safety/thread_spawn_i64_aggregate_capture_ok.tl|-|-
 thread_spawn_i64_atomic_string_capture_ok|check-ok|tests/safety/thread_spawn_i64_atomic_string_capture_ok.tl|-|-
 thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_string_capture_reject.tl|-|thread_i64.spawn cannot capture `text` of type String
 thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
-thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
 thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof

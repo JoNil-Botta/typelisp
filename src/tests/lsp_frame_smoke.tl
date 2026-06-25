@@ -162,6 +162,31 @@
     [line0-ok : bool (string-contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
+(define (lsp-scan-decls-cache-local-smoke-ok?) : bool
+  (let
+    [first : String "(define (alpha) : i64 1)"]
+    [second : String
+      ";; one\n;; two\n;; three\n\n(define (wide) : i64 2)\n(define (next) : i64 3)"]
+    [first-decls : LspDeclList (lsp-scan-decls first)]
+    [second-decls : LspDeclList (lsp-scan-decls second)]
+    [wide : LspDeclEntry
+      (lsp-decl-list-get second-decls 0 (lsp-decl-entry-fallback))]
+    [next : LspDeclEntry
+      (lsp-decl-list-get second-decls 1 (lsp-decl-entry-fallback))]
+    (and
+      (= (lsp-decl-list-len first-decls) 1)
+      (= (lsp-decl-list-len second-decls) 2)
+      (string-eq (struct-get wide name) "wide")
+      (= (struct-get wide form-start-line) 5)
+      (= (struct-get wide form-start-col) 1)
+      (= (struct-get wide name-line) 5)
+      (= (struct-get wide name-col) 10)
+      (string-eq (struct-get next name) "next")
+      (= (struct-get next form-start-line) 6)
+      (= (struct-get next form-start-col) 1)
+      (= (struct-get next name-line) 6)
+      (= (struct-get next name-col) 10))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -174,4 +199,5 @@
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))
+        (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 12))
         42))))

@@ -8748,7 +8748,10 @@
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     rhs
-                    "%r8")
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-binop-scavenge-exclude-build)
+                      5
+                      "%r8"))
                     [(OkCompilerBackend rhs-asm)
                       (OkCompilerBackend
                         (string-append
@@ -8758,7 +8761,12 @@
                             (string-append
                               (compiler-backend-emit-compare-flags
                                 op
-                                (compiler-backend-sized-reg "%r8" ty)
+                                (compiler-backend-sized-reg
+                                  (compiler-backend-scavenge-reg-here
+                                    (compiler-backend-binop-scavenge-exclude-build)
+                                    5
+                                    "%r8")
+                                  ty)
                                 ty)
                               (compiler-backend-emit-compare-branch-jumps
                                 function

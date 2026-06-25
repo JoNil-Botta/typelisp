@@ -11370,92 +11370,51 @@
   [importer-module : String]
   [import-unqualified : bool]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              (intern-str next-module))]
-          [(AstDeclImport _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclIncludeStr _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclIncludeBin _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [(AstDeclTest _ _ _)
-            (tc-bind-import-alias-module-list
-              ctx
-              rest
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified
-              module)]
-          [_
-            (if (string-eq module target-module)
-              (match (tc-bind-import-alias-decl-in-module
-                ctx
-                env
-                alias
-                importer-module
-                import-unqualified
-                module
-                decl)
-                [(OkTcEnv next-env)
-                  (tc-bind-import-alias-module-list
-                    ctx
-                    rest
-                    next-env
-                    target-module
-                    alias
-                    importer-module
-                    import-unqualified
-                    module)]
-                [(ErrTcEnv message) (ErrTcEnv message)])
-              (tc-bind-import-alias-module-list
-                ctx
-                rest
-                env
-                target-module
-                alias
-                importer-module
-                import-unqualified
-                module))]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [target-module-id : i64 (intern target-module)]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport _) (set! cur rest)]
+                [(AstDeclIncludeStr _ _) (set! cur rest)]
+                [(AstDeclIncludeBin _ _) (set! cur rest)]
+                [(AstDeclTest _ _ _) (set! cur rest)]
+                [_
+                  (if (= cur-module-id target-module-id)
+                    (match (tc-bind-import-alias-decl-in-module
+                      ctx
+                      cur-env
+                      alias
+                      importer-module
+                      import-unqualified
+                      (intern-str cur-module-id)
+                      decl)
+                      [(OkTcEnv next-env)
+                        (begin
+                          (set! cur-env next-env)
+                          (set! cur rest))]
+                      [(ErrTcEnv step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))])
+                    (set! cur rest))]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-bind-import-alias-module
   [ctx : TcContext]
@@ -11481,43 +11440,53 @@
   [decls : AstDeclList]
   [env : TcTypeEnv]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclNil) (OkTcEnv env)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-build-top-env-aliases-list
-              ctx
-              all-decls
-              rest
-              env
-              (intern-str next-module))]
-          [(AstDeclImport
-              (AstImportSpec
-                _
-                _
-                (AstSomeModuleName target-module)
-                (AstSomeImportAlias alias)
-                _))
-            (match (tc-bind-import-alias-module
-              ctx
-              all-decls
-              env
-              target-module
-              (compiler-symbols-import-alias-key module alias)
-              module
-              (string-eq alias ""))
-              [(OkTcEnv next-env)
-                (tc-build-top-env-aliases-list
-                  ctx
-                  all-decls
-                  rest
-                  next-env
-                  module)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]
-          [_ (tc-build-top-env-aliases-list ctx all-decls rest env module)]))]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-env : TcTypeEnv env]
+    [cur-module-id : i64 (intern module)]
+    [message : String ""]
+    [ok : bool true]
+    (begin
+      (while ok
+        (match cur
+          [(AstDeclNil) (set! ok false)]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! cur-module-id next-module)
+                    (set! cur rest))]
+                [(AstDeclImport
+                    (AstImportSpec
+                      _
+                      _
+                      (AstSomeModuleName target-module)
+                      (AstSomeImportAlias alias)
+                      _))
+                  (match (tc-bind-import-alias-module
+                    ctx
+                    all-decls
+                    cur-env
+                    target-module
+                    (compiler-symbols-import-alias-key
+                      (intern-str cur-module-id)
+                      alias)
+                    (intern-str cur-module-id)
+                    (string-eq alias ""))
+                    [(OkTcEnv next-env)
+                      (begin
+                        (set! cur-env next-env)
+                        (set! cur rest))]
+                    [(ErrTcEnv step-message)
+                      (begin
+                        (set! message step-message)
+                        (set! ok false))])]
+                [_ (set! cur rest)]))]))
+      (if (string-eq message "")
+        (OkTcEnv cur-env)
+        (ErrTcEnv message)))))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (begin
@@ -34376,21 +34345,51 @@
     (tc-hygiene-template-base name)
     name))
 
+(define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
+  (let
+    [cursor : AstDeclList items]
+    [result : AstDeclList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons head rest)
+            (begin
+              (set! result (ast-decl-cons head result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
+  (macro-decl-list-reverse-into items AstDeclNil))
+
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
-  (match left
-    [(AstDeclNil) right]
-    [(AstDeclCons head rest)
-      (ast-decl-cons head (macro-decl-list-append (box-get rest) right))]))
+  (macro-decl-list-reverse-into (macro-decl-list-reverse left) right))
+
+(define (macro-decl-path-list-reverse-into
+  [items : AstDeclPathList]
+  [out : AstDeclPathList]) : AstDeclPathList
+  (let
+    [cursor : AstDeclPathList items]
+    [result : AstDeclPathList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclPathNil) (set! done true)]
+          [(AstDeclPathCons head rest)
+            (begin
+              (set! result (ast-decl-path-cons head result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
+  (macro-decl-path-list-reverse-into items AstDeclPathNil))
 
 (define (macro-decl-path-list-append
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
-  (match left
-    [(AstDeclPathNil) right]
-    [(AstDeclPathCons head rest)
-      (ast-decl-path-cons
-        head
-        (macro-decl-path-list-append (box-get rest) right))]))
+  (macro-decl-path-list-reverse-into (macro-decl-path-list-reverse left) right))
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
   (match decls
@@ -35750,12 +35749,20 @@
     [_ acc]))
 
 (define (macro-collect-macro-names [decls : AstDeclList] [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (macro-collect-macro-names
-        (box-get rest)
-        (macro-collect-decl-name decl acc))]))
+  (let
+    [cur : AstDeclList decls]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (set! out (macro-collect-decl-name decl out))
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
@@ -35789,20 +35796,29 @@
   [decls : AstDeclList]
   [module : String]
   [acc : TcStringList]) : TcStringList
-  (match decls
-    [(AstDeclNil) acc]
-    [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule next-module)
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            (intern-str next-module)
-            acc)]
-        [_
-          (macro-collect-expr-type-macro-names-in
-            (box-get rest)
-            module
-            (macro-collect-expr-type-decl-name decl module acc))])]))
+  (let
+    [cur : AstDeclList decls]
+    [cur-module-id : i64 (intern module)]
+    [out : TcStringList acc]
+    (begin
+      (while (match cur
+        [(AstDeclNil) false]
+        [_ true])
+        (match cur
+          [(AstDeclNil) unit]
+          [(AstDeclCons decl rest)
+            (begin
+              (match decl
+                [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                [_
+                  (set!
+                    out
+                    (macro-collect-expr-type-decl-name
+                      decl
+                      (intern-str cur-module-id)
+                      out))])
+              (set! cur (box-get rest)))]))
+      out)))
 
 (define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
   (macro-collect-expr-type-macro-names-in decls "" TcStringNil))
@@ -39957,81 +39973,106 @@
   [orig-decls : AstDeclList]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [module : String]
-  [compat-only : bool]) : ResultMacroDeclsWithPaths
-  (match decls
-    [(AstDeclNil) (OkMacroDeclsWithPaths AstDeclNil AstDeclPathNil)]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (match (macro-expand-decls
-              ctx
-              top-env
-              orig-decls
-              rest
-              rest-paths
-              (intern-str next-module)
-              compat-only)
-              [(OkMacroDeclsWithPaths nrest nrest-paths)
+  [module : String]) : ResultMacroDeclsWithPaths
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-module : String module]
+    [out-rev : AstDeclList AstDeclNil]
+    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [result : ResultMacroDeclsWithPaths
+      (ErrMacroDeclsWithPaths
+        (tc-diag-at-start "macro: internal decl expansion walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
+            (begin
+              (set!
+                result
                 (OkMacroDeclsWithPaths
-                  (ast-decl-cons decl nrest)
-                  (ast-decl-path-cons decl-path nrest-paths))]
-              [(ErrMacroDeclsWithPaths diag) (ErrMacroDeclsWithPaths diag)])]
-          [_
-            (if (macro-decl-import-placeholder? decl)
-              (match (macro-expand-decl-with-path
-                ctx
-                top-env
-                orig-decls
-                module
-                decl
-                decl-path)
-                [(OkMacroDeclExpansion expanded expanded-paths)
-                  (OkMacroDeclsWithPaths
-                    (macro-decl-list-append expanded rest)
-                    (macro-decl-path-list-append expanded-paths rest-paths))]
-                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)])
-              (match (macro-expand-decl-with-path
-                ctx
-                top-env
-                orig-decls
-                module
-                decl
-                decl-path)
-                [(OkMacroDeclExpansion expanded expanded-paths)
-                  (let
-                    [next-module : String
-                      (macro-decls-final-module expanded module)]
-                    (match (macro-expand-decls
+                  (macro-decl-list-reverse out-rev)
+                  (macro-decl-path-list-reverse out-paths-rev)))
+              (set! done true))]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! out-rev (ast-decl-cons decl out-rev))
+                    (set!
+                      out-paths-rev
+                      (ast-decl-path-cons decl-path out-paths-rev))
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths)
+                    (set! cur-module (intern-str next-module)))]
+                [_
+                  (if (macro-decl-import-placeholder? decl)
+                    (match (macro-expand-decl-with-path
                       ctx
                       top-env
                       orig-decls
-                      rest
-                      rest-paths
-                      next-module
-                      compat-only)
-                      [(OkMacroDeclsWithPaths nrest nrest-paths)
-                        (OkMacroDeclsWithPaths
-                          (macro-decl-list-append expanded nrest)
-                          (macro-decl-path-list-append
-                            expanded-paths
-                            nrest-paths))]
-                      [(ErrMacroDeclsWithPaths diag)
-                        (ErrMacroDeclsWithPaths diag)]))]
-                [(ErrMacroDeclExpansion diag) (ErrMacroDeclsWithPaths diag)]))]))]))
+                      cur-module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (begin
+                          (set!
+                            result
+                            (OkMacroDeclsWithPaths
+                              (macro-decl-list-append
+                                (macro-decl-list-reverse out-rev)
+                                (macro-decl-list-append expanded rest))
+                              (macro-decl-path-list-append
+                                (macro-decl-path-list-reverse out-paths-rev)
+                                (macro-decl-path-list-append
+                                  expanded-paths
+                                  rest-paths))))
+                          (set! done true))]
+                      [(ErrMacroDeclExpansion diag)
+                        (begin
+                          (set! result (ErrMacroDeclsWithPaths diag))
+                          (set! done true))])
+                    (match (macro-expand-decl-with-path
+                      ctx
+                      top-env
+                      orig-decls
+                      cur-module
+                      decl
+                      decl-path)
+                      [(OkMacroDeclExpansion expanded expanded-paths)
+                        (begin
+                          (set!
+                            out-rev
+                            (macro-decl-list-reverse-into expanded out-rev))
+                          (set!
+                            out-paths-rev
+                            (macro-decl-path-list-reverse-into
+                              expanded-paths
+                              out-paths-rev))
+                          (set!
+                            cur-module
+                            (macro-decls-final-module expanded cur-module))
+                          (set! cur-decls rest)
+                          (set! cur-paths rest-paths))]
+                      [(ErrMacroDeclExpansion diag)
+                        (begin
+                          (set! result (ErrMacroDeclsWithPaths diag))
+                          (set! done true))]))]))]))
+      result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -40229,8 +40270,7 @@
                                         decls
                                         decls
                                         paths
-                                        ""
-                                        (not has-defmacro))
+                                        "")
                                         [(OkMacroDeclsWithPaths ndecls npaths)
                                           (begin
                                             (tc-context-capture-active-pools!
@@ -41466,102 +41506,143 @@
   [cache : TcModuleLocalEnvCache]
   [local-env : TcTypeEnv]
   [global-env : TcTypeEnv]) : ResultCompilerTypecheck
-  (match decls
-    [(AstDeclNil)
-      (begin
-        (cfg compile-profile (compiler-tc-decl-profile-finish))
-        (OkCompilerTypecheck summary))]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
+  ;; #2599: this walks every expanded top-level declaration during self-compile.
+  ;; Keep it iterative so a large program does not consume one native stack frame
+  ;; per declaration on Windows selfhost binaries.
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-paths : AstDeclPathList paths]
+    [cur-summary : CompilerTypecheckSummary summary]
+    [cur-module : String module]
+    [cur-cache : TcModuleLocalEnvCache cache]
+    [cur-local-env : TcTypeEnv local-env]
+    [cur-global-env : TcTypeEnv global-env]
+    [result : ResultCompilerTypecheck
+      (ErrCompilerTypecheck (tc-diag-at-start "typecheck: internal decls walk"))]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclNil)
             (begin
-              (cfg compile-profile (compiler-tc-decl-profile-start-section))
-              (tc-context-capture-active-pools! ctx)
-              (match (tc-module-local-env-cached
-                ctx
-                top-env
-                (intern-str next-module)
-                cache)
-                [(OkTcModuleLocalEnv next-local-env next-cache)
+              (cfg compile-profile (compiler-tc-decl-profile-finish))
+              (set! result (OkCompilerTypecheck cur-summary))
+              (set! done true))]
+          [(AstDeclCons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [decl-path : String
+                (match cur-paths
+                  [(AstDeclPathCons path _) path]
+                  [(AstDeclPathNil) ""])]
+              [rest-paths : AstDeclPathList
+                (match cur-paths
+                  [(AstDeclPathCons _ path-rest)
+                    (let
+                      [path-rest : AstDeclPathList (box-get path-rest)]
+                      path-rest)]
+                  [(AstDeclPathNil) AstDeclPathNil])]
+              (match decl
+                [(AstDeclModule next-module)
                   (begin
                     (cfg
                       compile-profile
-                      (compiler-tc-decl-profile-add-local-env))
-                    (tc-check-decls-with-paths-in-module-env
+                      (compiler-tc-decl-profile-start-section))
+                    (tc-context-capture-active-pools! ctx)
+                    (match (tc-module-local-env-cached
                       ctx
                       top-env
-                      rest
-                      rest-paths
-                      summary
                       (intern-str next-module)
-                      next-cache
-                      next-local-env
-                      (tc-hygiene-global-env next-local-env)))]
-                [(ErrTcModuleLocalEnv message)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-tc-decl-profile-add-local-env))
-                    (ErrCompilerTypecheck
-                      (tc-typecheck-diag-with-path decl decl-path message)))]))]
-          [_
-            (if (tc-generated-clone-decl-with-path? decl decl-path)
-              (tc-check-decls-with-paths-in-module-env
-                ctx
-                top-env
-                rest
-                rest-paths
-                (tc-summary-add-decl summary decl)
-                module
-                cache
-                local-env
-                global-env)
-              (let
-                [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                [prev-path : String
-                  (tc-unused-unsafe-set-current-path! decl-path)]
-                (begin
-                  (cfg compile-profile (compiler-tc-decl-profile-start-section))
-                  (tc-context-capture-active-pools! decl-ctx)
-                  (match (tc-check-decl-with-global-env
-                    decl-ctx
-                    local-env
-                    global-env
-                    decl)
-                    [(OkTcUnit)
-                      (begin
-                        (tc-unused-unsafe-restore-current-path! prev-path)
-                        (cfg
-                          compile-profile
-                          (compiler-tc-decl-profile-record decl))
-                        (tc-check-decls-with-paths-in-module-env
+                      cur-cache)
+                      [(OkTcModuleLocalEnv next-local-env next-cache)
+                        (match (tc-module-local-env-cached
                           ctx
                           top-env
-                          rest
-                          rest-paths
-                          (tc-summary-add-decl summary decl)
-                          module
-                          cache
-                          local-env
-                          global-env))]
-                    [(ErrTcUnit message)
+                          (intern-str next-module)
+                          cur-cache)
+                          [(OkTcModuleLocalEnv next-local-env-copy _)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-add-local-env))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths)
+                              (set! cur-module (intern-str next-module))
+                              (set! cur-cache next-cache)
+                              (set!
+                                cur-global-env
+                                (tc-hygiene-global-env next-local-env))
+                              (set! cur-local-env next-local-env-copy))]
+                          [(ErrTcModuleLocalEnv message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-add-local-env))
+                              (set!
+                                result
+                                (ErrCompilerTypecheck
+                                  (tc-typecheck-diag-with-path
+                                    decl
+                                    decl-path
+                                    message)))
+                              (set! done true))])]
+                      [(ErrTcModuleLocalEnv message)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-decl-profile-add-local-env))
+                          (set!
+                            result
+                            (ErrCompilerTypecheck
+                              (tc-typecheck-diag-with-path
+                                decl
+                                decl-path
+                                message)))
+                          (set! done true))]))]
+                [_
+                  (if (tc-generated-clone-decl-with-path? decl decl-path)
+                    (begin
+                      (set! cur-decls rest)
+                      (set! cur-paths rest-paths)
+                      (set! cur-summary (tc-summary-add-decl cur-summary decl)))
+                    (let
+                      [decl-ctx : TcContext
+                        (tc-context-with-module ctx cur-module)]
+                      [prev-path : String
+                        (tc-unused-unsafe-set-current-path! decl-path)]
                       (begin
-                        (tc-unused-unsafe-restore-current-path! prev-path)
-                        (ErrCompilerTypecheck
-                          (tc-typecheck-diag-with-path decl decl-path message)))]))))]))]))
+                        (cfg
+                          compile-profile
+                          (compiler-tc-decl-profile-start-section))
+                        (tc-context-capture-active-pools! decl-ctx)
+                        (match (tc-check-decl-with-global-env
+                          decl-ctx
+                          cur-local-env
+                          cur-global-env
+                          decl)
+                          [(OkTcUnit)
+                            (begin
+                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (cfg
+                                compile-profile
+                                (compiler-tc-decl-profile-record decl))
+                              (set! cur-decls rest)
+                              (set! cur-paths rest-paths)
+                              (set!
+                                cur-summary
+                                (tc-summary-add-decl cur-summary decl)))]
+                          [(ErrTcUnit message)
+                            (begin
+                              (tc-unused-unsafe-restore-current-path! prev-path)
+                              (set!
+                                result
+                                (ErrCompilerTypecheck
+                                  (tc-typecheck-diag-with-path
+                                    decl
+                                    decl-path
+                                    message)))
+                              (set! done true))]))))]))]))
+      result)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
   [program : AstProgram]

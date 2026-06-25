@@ -319,7 +319,7 @@
 (define (__tl_repl_print_char [c : char]) : unit
   (begin
     (io.print-string (__tl_repl_char_string c))
-    (print-newline)))
+    (io.print-newline)))
 
 ")
 
@@ -359,7 +359,7 @@
           (begin
             (io.print-string \".\")
             (__tl_repl_print_fraction_digits trimmed divisor))))
-      (print-newline))))
+      (io.print-newline))))
 
 (define (__tl_repl_print_f64 [x : f64]) : unit
   (if (< x 0.0)
@@ -407,7 +407,7 @@
       (OkReplString
         (string.string-append
           "(begin\n  (io.print-string\n"
-          (string.string-append expr-source "\n  )\n  (print-newline))")))]
+          (string.string-append expr-source "\n  )\n  (io.print-newline))")))]
     [(AstTyUnit) (OkReplString expr-source)]
     [_
       (ErrReplString
@@ -853,6 +853,16 @@
       1)
     (repl-run)))
 
+(define (repl-scratch-source-no-unqualified-print-newline?
+  [expr-source : String]
+  [ty : AstType]) : bool
+  (let
+    [legacy-newline-call : String "(print-newline"]
+    (match (repl-scratch-source "" expr-source ty)
+      [(OkReplString source)
+        (not (string.string-contains (& source) (& legacy-newline-call)))]
+      [(ErrReplString _) false])))
+
 (define (repl-scratch-source-stdlib-imports-ok?) : bool
   (let
     [io-import : String "(import stdlib.io)\n"]
@@ -865,7 +875,12 @@
           (string.string-contains (& source) (& io-import))
           (string.string-contains (& source) (& string-import))
           (not (string.string-contains (& source) (& legacy-tl-import)))
-          (not (string.string-contains (& source) (& legacy-io-import))))]
+          (not (string.string-contains (& source) (& legacy-io-import)))
+          (repl-scratch-source-no-unqualified-print-newline? "3.5" (AstTyF64))
+          (repl-scratch-source-no-unqualified-print-newline? "'Z'" (AstTyChar))
+          (repl-scratch-source-no-unqualified-print-newline?
+            "\"hi\""
+            (AstTyString)))]
       [(ErrReplString _) false])))
 
 (test

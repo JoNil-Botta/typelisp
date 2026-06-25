@@ -22,6 +22,7 @@
 (module stdlib.fs)
 
 (import stdlib.env)
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -349,9 +350,9 @@
           false)))))
 
 ;: Append one non-dot entry name plus a newline to `out`.
-(define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
+(define (fs-read-dir-append-entry [out : byte_buf.ByteBuf] [name : (Ptr u8)]) : byte_buf.ByteBuf
   (if (stdlib.fs.fs-read-dir-dot-entry? name)
-    unit
+    out
     (let
       [i : i64 0]
       [done : bool false]
@@ -364,14 +365,13 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array-push! out byte)
+                (set! out (byte_buf.byte-buf-push out byte))
                 (set! i (+ i 1))))))
-        (array-push! out (cast '\n' : u8))))))
+        (byte_buf.byte-buf-push out (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
-(define (fs-read-dir-bytes-string [out : (Array u8)]) : String
-  (unsafe
-    (string-from-bytes (io.io-array-const-ptr out) (array-length out))))
+(define (fs-read-dir-bytes-string [out : byte_buf.ByteBuf]) : String
+  (byte_buf.byte-buf-to-string out))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -417,23 +417,27 @@
   (define (fs-linux-read-dir-append-page!
     [buf : (Array u8)]
     [read-count : i64]
-    [out : (Array u8)]) : unit
+    [out : byte_buf.ByteBuf]) : byte_buf.ByteBuf
     (let
       [base : (Ptr u8) (io.io-array-const-ptr buf)]
       [offset : i64 0]
       [done : bool false]
-      (while (not done)
-        (if (>= offset read-count)
-          (set! done true)
-          (let
-            [reclen : i64 (fs-linux-dirent-reclen base offset)]
-            (if (<= reclen 0)
-              (set! done true)
-              (begin
-                (fs-read-dir-append-entry!
-                  out
-                  (fs-linux-dirent-name base offset))
-                (set! offset (+ offset reclen))))))))))
+      (begin
+        (while (not done)
+          (if (>= offset read-count)
+            (set! done true)
+            (let
+              [reclen : i64 (fs-linux-dirent-reclen base offset)]
+              (if (<= reclen 0)
+                (set! done true)
+                (begin
+                  (set!
+                    out
+                    (fs-read-dir-append-entry
+                      out
+                      (fs-linux-dirent-name base offset)))
+                  (set! offset (+ offset reclen)))))))
+        out))))
 
 ;: Return the newline-delimited Linux directory listing payload.
 (cfg
@@ -445,7 +449,7 @@
         ""
         (let
           [buf : (Array u8) (make-array u8 fs-read-dir-buffer-size)]
-          [out : (Array u8) (make-array u8 0)]
+          [out : byte_buf.ByteBuf (byte_buf.byte-buf-new)]
           [ok : bool true]
           [done : bool false]
           (begin
@@ -462,7 +466,9 @@
                     (set! done true))
                   (if (= read-count 0)
                     (set! done true)
-                    (fs-linux-read-dir-append-page! buf read-count out)))))
+                    (set!
+                      out
+                      (fs-linux-read-dir-append-page! buf read-count out))))))
             (io.io-linux-syscall-close fd)
             (if ok
               (fs-read-dir-bytes-string out)
@@ -541,7 +547,7 @@
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (Array u8) (io.io-c-string pattern)]
       [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
-      [out : (Array u8) (make-array u8 0)]
+      [out : byte_buf.ByteBuf (byte_buf.byte-buf-new)]
       [handle : i64
         (fs-win-find-first-file
           (io.io-array-const-ptr pattern-bytes)
@@ -553,7 +559,11 @@
           (begin
             (while (not done)
               (begin
-                (fs-read-dir-append-entry! out (fs-windows-find-data-name data))
+                (set!
+                  out
+                  (fs-read-dir-append-entry
+                    out
+                    (fs-windows-find-data-name data)))
                 (if (=
                   (fs-win-find-next-file handle (io.io-array-ptr data))
                   (cast 0 : i32))

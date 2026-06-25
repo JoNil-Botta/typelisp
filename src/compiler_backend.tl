@@ -1,6 +1,7 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
 (import "../stdlib/io.tl")
 (import "../stdlib/arena.tl")
+(import "../stdlib/byte_buf.tl")
 (import "compiler_lower.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
@@ -28254,21 +28255,19 @@ tl_memcpy:
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
-(define (compiler-backend-object-push-u8! [out : (Array u8)] [value : i64]) : unit
-  (array-push! out (compiler-backend-object-byte value)))
+(define (compiler-backend-object-push-u8! [out : ByteBuf] [value : i64]) : ByteBuf
+  (byte-buf-push out (compiler-backend-object-byte value)))
 
-(define (compiler-backend-object-push-u32! [out : (Array u8)] [value : i64]) : unit
+(define (compiler-backend-object-push-u32! [out : ByteBuf] [value : i64]) : ByteBuf
   (begin
-    (compiler-backend-object-push-u8! out value)
-    (compiler-backend-object-push-u8! out (shr value 8))
-    (compiler-backend-object-push-u8! out (shr value 16))
-    (compiler-backend-object-push-u8! out (shr value 24))))
+    (set! out (compiler-backend-object-push-u8! out value))
+    (set! out (compiler-backend-object-push-u8! out (shr value 8)))
+    (set! out (compiler-backend-object-push-u8! out (shr value 16)))
+    (set! out (compiler-backend-object-push-u8! out (shr value 24)))
+    out))
 
-(define (compiler-backend-object-bytes-finish [out : (Array u8)]) : String
-  (unsafe
-    (string-from-bytes
-      (ptr-cast (array-data out) : (Ptr u8))
-      (array-length out))))
+(define (compiler-backend-object-bytes-finish [out : ByteBuf]) : String
+  (byte-buf-to-string out))
 
 (define (compiler-backend-object-add-nonempty-bytes
   [parts : CompilerBackendObjectParts]
@@ -28309,7 +28308,7 @@ tl_memcpy:
   [disp : i64]
   [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -28318,20 +28317,24 @@ tl_memcpy:
           4
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0x8b)
+      (set! out (compiler-backend-object-push-u8! out rex))
+      (set! out (compiler-backend-object-push-u8! out 0x8b))
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
-          (compiler-backend-object-push-u8! out disp))
+          (set!
+            out
+            (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8))))
+          (set! out (compiler-backend-object-push-u8! out disp)))
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
-          (compiler-backend-object-push-u32! out disp)))
+          (set!
+            out
+            (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8))))
+          (set! out (compiler-backend-object-push-u32! out disp))))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-store-slot-bytes [var-id : i64] [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     [disp : i64 (compiler-backend-object-slot-disp var-id)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
@@ -28341,22 +28344,26 @@ tl_memcpy:
           4
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0x89)
+      (set! out (compiler-backend-object-push-u8! out rex))
+      (set! out (compiler-backend-object-push-u8! out 0x89))
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
-          (compiler-backend-object-push-u8! out disp))
+          (set!
+            out
+            (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8))))
+          (set! out (compiler-backend-object-push-u8! out disp)))
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
-          (compiler-backend-object-push-u32! out disp)))
+          (set!
+            out
+            (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8))))
+          (set! out (compiler-backend-object-push-u32! out disp))))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-mov-imm32-reg-bytes
   [value : i64]
   [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -28365,10 +28372,10 @@ tl_memcpy:
           1
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0xc7)
-      (compiler-backend-object-push-u8! out (+ 0xc0 reg-code))
-      (compiler-backend-object-push-u32! out value)
+      (set! out (compiler-backend-object-push-u8! out rex))
+      (set! out (compiler-backend-object-push-u8! out 0xc7))
+      (set! out (compiler-backend-object-push-u8! out (+ 0xc0 reg-code)))
+      (set! out (compiler-backend-object-push-u32! out value))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-mov-reg-reg-bytes
@@ -28377,7 +28384,7 @@ tl_memcpy:
   (if (string-eq src dst)
     ""
     (let
-      [out : (Array u8) (make-array u8 0)]
+      [out : ByteBuf (byte-buf-new)]
       [src-code : i64 (compiler-backend-object-reg-low-code src)]
       [dst-code : i64 (compiler-backend-object-reg-low-code dst)]
       [rex : i64
@@ -28391,34 +28398,36 @@ tl_memcpy:
               1
               0)))]
       (begin
-        (compiler-backend-object-push-u8! out rex)
-        (compiler-backend-object-push-u8! out 0x89)
-        (compiler-backend-object-push-u8!
+        (set! out (compiler-backend-object-push-u8! out rex))
+        (set! out (compiler-backend-object-push-u8! out 0x89))
+        (set!
           out
-          (+ 0xc0 (+ (* src-code 8) dst-code)))
+          (compiler-backend-object-push-u8!
+            out
+            (+ 0xc0 (+ (* src-code 8) dst-code))))
         (compiler-backend-object-bytes-finish out)))))
 
 (define (compiler-backend-object-prologue-bytes [frame-size : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x55)
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x89)
-      (compiler-backend-object-push-u8! out 0xe5)
+      (set! out (compiler-backend-object-push-u8! out 0x55))
+      (set! out (compiler-backend-object-push-u8! out 0x48))
+      (set! out (compiler-backend-object-push-u8! out 0x89))
+      (set! out (compiler-backend-object-push-u8! out 0xe5))
       (if (= frame-size 0)
         unit
         (if (<= frame-size 127)
           (begin
-            (compiler-backend-object-push-u8! out 0x48)
-            (compiler-backend-object-push-u8! out 0x83)
-            (compiler-backend-object-push-u8! out 0xec)
-            (compiler-backend-object-push-u8! out frame-size))
+            (set! out (compiler-backend-object-push-u8! out 0x48))
+            (set! out (compiler-backend-object-push-u8! out 0x83))
+            (set! out (compiler-backend-object-push-u8! out 0xec))
+            (set! out (compiler-backend-object-push-u8! out frame-size)))
           (begin
-            (compiler-backend-object-push-u8! out 0x48)
-            (compiler-backend-object-push-u8! out 0x81)
-            (compiler-backend-object-push-u8! out 0xec)
-            (compiler-backend-object-push-u32! out frame-size))))
+            (set! out (compiler-backend-object-push-u8! out 0x48))
+            (set! out (compiler-backend-object-push-u8! out 0x81))
+            (set! out (compiler-backend-object-push-u8! out 0xec))
+            (set! out (compiler-backend-object-push-u32! out frame-size)))))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-leave-ret-bytes) : String
@@ -28429,19 +28438,19 @@ tl_memcpy:
 
 (define (compiler-backend-object-rsp-imm-bytes [opcode : i64] [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
       (if (<= value 127)
         (begin
-          (compiler-backend-object-push-u8! out 0x48)
-          (compiler-backend-object-push-u8! out 0x83)
-          (compiler-backend-object-push-u8! out opcode)
-          (compiler-backend-object-push-u8! out value))
+          (set! out (compiler-backend-object-push-u8! out 0x48))
+          (set! out (compiler-backend-object-push-u8! out 0x83))
+          (set! out (compiler-backend-object-push-u8! out opcode))
+          (set! out (compiler-backend-object-push-u8! out value)))
         (begin
-          (compiler-backend-object-push-u8! out 0x48)
-          (compiler-backend-object-push-u8! out 0x81)
-          (compiler-backend-object-push-u8! out opcode)
-          (compiler-backend-object-push-u32! out value)))
+          (set! out (compiler-backend-object-push-u8! out 0x48))
+          (set! out (compiler-backend-object-push-u8! out 0x81))
+          (set! out (compiler-backend-object-push-u8! out opcode))
+          (set! out (compiler-backend-object-push-u32! out value))))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-sub-rsp-bytes [value : i64]) : String
@@ -28456,19 +28465,19 @@ tl_memcpy:
 
 (define (compiler-backend-object-store-rax-rsp-bytes [disp : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x89)
+      (set! out (compiler-backend-object-push-u8! out 0x48))
+      (set! out (compiler-backend-object-push-u8! out 0x89))
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out 0x44)
-          (compiler-backend-object-push-u8! out 0x24)
-          (compiler-backend-object-push-u8! out disp))
+          (set! out (compiler-backend-object-push-u8! out 0x44))
+          (set! out (compiler-backend-object-push-u8! out 0x24))
+          (set! out (compiler-backend-object-push-u8! out disp)))
         (begin
-          (compiler-backend-object-push-u8! out 0x84)
-          (compiler-backend-object-push-u8! out 0x24)
-          (compiler-backend-object-push-u32! out disp)))
+          (set! out (compiler-backend-object-push-u8! out 0x84))
+          (set! out (compiler-backend-object-push-u8! out 0x24))
+          (set! out (compiler-backend-object-push-u32! out disp))))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-load-rax-pointee-bytes [ty : AstType]) : String
@@ -28605,30 +28614,30 @@ tl_memcpy:
 
 (define (compiler-backend-object-sub-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x2d)
-      (compiler-backend-object-push-u32! out value)
+      (set! out (compiler-backend-object-push-u8! out 0x48))
+      (set! out (compiler-backend-object-push-u8! out 0x2d))
+      (set! out (compiler-backend-object-push-u32! out value))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-add-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x05)
-      (compiler-backend-object-push-u32! out value)
+      (set! out (compiler-backend-object-push-u8! out 0x48))
+      (set! out (compiler-backend-object-push-u8! out 0x05))
+      (set! out (compiler-backend-object-push-u32! out value))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-imul-imm32-r8-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x4d)
-      (compiler-backend-object-push-u8! out 0x69)
-      (compiler-backend-object-push-u8! out 0xc0)
-      (compiler-backend-object-push-u32! out value)
+      (set! out (compiler-backend-object-push-u8! out 0x4d))
+      (set! out (compiler-backend-object-push-u8! out 0x69))
+      (set! out (compiler-backend-object-push-u8! out 0xc0))
+      (set! out (compiler-backend-object-push-u32! out value))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-add-r8-rax-bytes) : String
@@ -28675,11 +28684,11 @@ tl_memcpy:
 
 (define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x3d)
-      (compiler-backend-object-push-u32! out value)
+      (set! out (compiler-backend-object-push-u8! out 0x48))
+      (set! out (compiler-backend-object-push-u8! out 0x3d))
+      (set! out (compiler-backend-object-push-u32! out value))
       (compiler-backend-object-bytes-finish out))))
 
 (define (compiler-backend-object-switch-indirect-jump-bytes) : String
@@ -29814,7 +29823,7 @@ tl_memcpy:
 
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     [i : i64 0]
     [n : i64 (string-length hex)]
     (begin
@@ -29824,12 +29833,9 @@ tl_memcpy:
           [lo : i64
             (compiler-backend-object-hex-value (string-ref hex (+ i 1)))]
           (begin
-            (array-push! out (cast (+ (* hi 16) lo) : u8))
+            (set! out (byte-buf-push out (cast (+ (* hi 16) lo) : u8)))
             (set! i (+ i 2)))))
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data out) : (Ptr u8))
-          (array-length out))))))
+      (byte-buf-to-string out))))
 
 (define (compiler-backend-object-windows-chkstk-bytes) : String
   (compiler-backend-object-bytes-from-hex
@@ -29864,19 +29870,18 @@ tl_memcpy:
 
 (define (compiler-backend-object-windows-entry-xdata-bytes) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : ByteBuf (byte-buf-new)]
     (begin
       ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
-      (array-push! out (cast 0x01 : u8))
-      (array-push! out (cast 0x04 : u8))
-      (array-push! out (cast 0x01 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (array-push! out (cast 0x04 : u8))
-      (array-push! out (cast 0x42 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) 8)))))
+      (set! out (byte-buf-push out (cast 0x01 : u8)))
+      (set! out (byte-buf-push out (cast 0x04 : u8)))
+      (set! out (byte-buf-push out (cast 0x01 : u8)))
+      (set! out (byte-buf-push out (cast 0x00 : u8)))
+      (set! out (byte-buf-push out (cast 0x04 : u8)))
+      (set! out (byte-buf-push out (cast 0x42 : u8)))
+      (set! out (byte-buf-push out (cast 0x00 : u8)))
+      (set! out (byte-buf-push out (cast 0x00 : u8)))
+      (byte-buf-to-string out))))
 
 (define compiler-backend-object-windows-manifest-label : String
   ".L_tl_manifest")

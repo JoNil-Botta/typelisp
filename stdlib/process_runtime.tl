@@ -411,6 +411,7 @@
         [(ProcessRuntimeUnsupported message)
           (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
 
+(import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -523,6 +524,12 @@
 (define (process-array-u8-addr [buf : (Array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+
+;: Return the integer address of a `ByteBuf` snapshot backing buffer.
+(define (process-byte-buf-addr [buf : byte_buf.ByteBuf]) : i64
+  (let
+    [bytes : (Array u8) (byte_buf.byte-buf-to-array buf)]
+    (process-array-u8-addr bytes)))
 
 ;: Return the integer address of an `Array u64` backing buffer.
 (define (process-array-u64-addr [buf : (Array u64)]) : i64
@@ -1399,7 +1406,7 @@
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.
 (cfg
   windows
-  (define (process-windows-push-cstr [block : (Array u8)] [addr : i64]) : unit
+  (define (process-windows-push-cstr [block : byte_buf.ByteBuf] [addr : i64]) : byte_buf.ByteBuf
     (let
       [ptr : (Ptr u8) (stdlib.process_runtime.process-addr->ptr addr)]
       [i : i64 0]
@@ -1409,11 +1416,11 @@
           (let
             [byte : i64 (stdlib.process_runtime.process-byte-at ptr i)]
             (begin
-              (array-push! block (cast byte : u8))
+              (set! block (byte_buf.byte-buf-push block (cast byte : u8)))
               (if (= byte 0)
                 (set! done true)
                 (set! i (+ i 1))))))
-        unit))))
+        block))))
 
 ;: Build the double-NUL-terminated CreateProcessA environment block from the
 ;: inherited environment minus overrides plus the override entries; an empty
@@ -1428,7 +1435,7 @@
       (if (= ovc 0)
         0
         (let
-          [block : (Array u8) (make-array u8 0)]
+          [block : byte_buf.ByteBuf (byte_buf.byte-buf-new)]
           [base : (Ptr u8)
             (stdlib.process_runtime.process-win-get-environment-strings)]
           [i : i64 0]
@@ -1451,20 +1458,24 @@
                       (stdlib.process_runtime.process-inherited-overridden?
                         entry
                         ov))
-                      (stdlib.process_runtime.process-windows-push-cstr
+                      (set!
                         block
-                        (unsafe
-                          (cast (ptr->int entry) : i64)))
+                        (stdlib.process_runtime.process-windows-push-cstr
+                          block
+                          (unsafe
+                            (cast (ptr->int entry) : i64))))
                       unit)
                     (set! i (+ j 1))))))
             (while (< k ovc)
               (begin
-                (stdlib.process_runtime.process-windows-push-cstr
+                (set!
                   block
-                  (cast (array-ref ov k) : i64))
+                  (stdlib.process_runtime.process-windows-push-cstr
+                    block
+                    (cast (array-ref ov k) : i64)))
                 (set! k (+ k 1))))
-            (array-push! block (cast 0 : u8))
-            (stdlib.process_runtime.process-array-u8-addr block)))))))
+            (set! block (byte_buf.byte-buf-push block (cast 0 : u8)))
+            (stdlib.process_runtime.process-byte-buf-addr block)))))))
 
 ;: Close a Windows handle when it is not INVALID_HANDLE_VALUE.
 (cfg

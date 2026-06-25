@@ -2068,8 +2068,10 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
+  ;; Emit-IR needs the macro prelude but must remain runtime-free so
+  ;; target parity checks compare user IR rather than OS-specific runtime IR.
   (compiler-driver-emit-ir-summary-lowered-result-with-level
-    (compiler-driver-load-and-lower-escaping
+    (compiler-driver-load-and-lower-pic-image
       input-path
       target
       stdlib-roots
@@ -2086,7 +2088,7 @@
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-lowered-result-with-level
-    (compiler-driver-load-and-lower-escaping-with-state
+    (compiler-driver-load-and-lower-pic-image-with-state
       state
       input-path
       target

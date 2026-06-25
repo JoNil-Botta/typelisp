@@ -6811,22 +6811,31 @@
 
 (define (compiler-backend-divmod-remainder-from-quotient-reg
   [divisor : u64]
-  [quotient-reg : String]) : String
+  [quotient-reg : String]
+  [scratch-reg : String]) : String
   (string-append
-    (compiler-backend-emit-load-u64-absolute divisor "%r8")
+    (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
     (str-cat
       "    imulq "
       quotient-reg
-      ", %r8\n"
-      "    movq %r10, %rax\n    subq %r8, %rax\n"
-      "")))
+      ", "
+      scratch-reg
+      "\n    movq %r10, %rax\n    subq "
+      scratch-reg
+      ", %rax\n")))
 
-(define (compiler-backend-divmod-remainder-from-quotient [divisor : u64]) : String
-  (compiler-backend-divmod-remainder-from-quotient-reg divisor "%rax"))
+(define (compiler-backend-divmod-remainder-from-quotient
+  [divisor : u64]
+  [scratch-reg : String]) : String
+  (compiler-backend-divmod-remainder-from-quotient-reg
+    divisor
+    "%rax"
+    scratch-reg))
 
 (define (compiler-backend-unsigned-power-divmod-asm
   [divisor : u64]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [scratch-reg : String]) : String
   (let
     [shift : i64 (compiler-backend-u64-log2 divisor)]
     [mask : u64 (- divisor (cast 1 : u64))]
@@ -6834,26 +6843,36 @@
       (if (= mask (cast 0 : u64))
         "    xorq %rax, %rax\n"
         (string-append
-          (compiler-backend-emit-load-u64-absolute mask "%r8")
-          "    andq %r8, %rax\n"))
+          (compiler-backend-emit-load-u64-absolute mask scratch-reg)
+          (str-cat "    andq " scratch-reg ", %rax\n")))
       (compiler-backend-divmod-shift-rax "shr" shift))))
 
 (define (compiler-backend-unsigned-high-bit-divmod-asm
   [divisor : u64]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [scratch-reg : String]) : String
   (if want-remainder
     (string-append
       "    movq %rax, %r10\n"
       (string-append
-        (compiler-backend-emit-load-u64-absolute divisor "%r8")
-        "    cmpq %r8, %rax\n    jb 1f\n    subq %r8, %r10\n1:\n    movq %r10, %rax\n"))
+        (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
+        (str-cat
+          "    cmpq "
+          scratch-reg
+          ", %rax\n    jb 1f\n    subq "
+          scratch-reg
+          ", %r10\n1:\n    movq %r10, %rax\n")))
     (string-append
-      (compiler-backend-emit-load-u64-absolute divisor "%r8")
-      "    cmpq %r8, %rax\n    setae %al\n    movzbq %al, %rax\n")))
+      (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
+      (str-cat
+        "    cmpq "
+        scratch-reg
+        ", %rax\n    setae %al\n    movzbq %al, %rax\n"))))
 
 (define (compiler-backend-unsigned-magic-divmod-asm
   [divisor : u64]
-  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  [want-remainder : bool]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
   (match (compiler-backend-unsigned-divisor-magic divisor)
     [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
       (let
@@ -6862,14 +6881,14 @@
             (string-append
               "    movq %rax, %r10\n"
               (string-append
-                (compiler-backend-emit-load-u64-absolute magic "%r8")
+                (compiler-backend-emit-load-u64-absolute magic scratch-reg)
                 (string-append
-                  "    mulq %r8\n"
+                  (str-cat "    mulq " scratch-reg "\n")
                   (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
             (string-append
-              (compiler-backend-emit-load-u64-absolute magic "%r8")
+              (compiler-backend-emit-load-u64-absolute magic scratch-reg)
               (string-append
-                "    mulq %r8\n    movq %rdx, %rax\n"
+                (str-cat "    mulq " scratch-reg "\n    movq %rdx, %rax\n")
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
         (CompilerBackendSomeAsm
           (if want-remainder
@@ -6877,7 +6896,8 @@
               quotient-asm
               (compiler-backend-divmod-remainder-from-quotient-reg
                 divisor
-                "%rdx"))
+                "%rdx"
+                scratch-reg))
             quotient-asm)))]
     [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
       (let
@@ -6886,14 +6906,24 @@
             (string-append
               "    movq %rax, %r10\n"
               (string-append
-                (compiler-backend-emit-load-u64-absolute magic "%r8")
+                (compiler-backend-emit-load-u64-absolute magic scratch-reg)
                 (string-append
-                  "    mulq %r8\n    addq %r8, %rax\n    adcq $0, %rdx\n"
+                  (str-cat
+                    "    mulq "
+                    scratch-reg
+                    "\n    addq "
+                    scratch-reg
+                    ", %rax\n    adcq $0, %rdx\n")
                   (compiler-backend-divmod-shift-reg "shr" shift "%rdx"))))
             (string-append
-              (compiler-backend-emit-load-u64-absolute magic "%r8")
+              (compiler-backend-emit-load-u64-absolute magic scratch-reg)
               (string-append
-                "    mulq %r8\n    addq %r8, %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n"
+                (str-cat
+                  "    mulq "
+                  scratch-reg
+                  "\n    addq "
+                  scratch-reg
+                  ", %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n")
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
         (CompilerBackendSomeAsm
           (if want-remainder
@@ -6901,14 +6931,16 @@
               quotient-asm
               (compiler-backend-divmod-remainder-from-quotient-reg
                 divisor
-                "%rdx"))
+                "%rdx"
+                scratch-reg))
             quotient-asm)))]
     [(CompilerBackendNoUnsignedDivMagic) (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-signed-power-divmod-asm
   [divisor : u64]
   [negative-divisor : bool]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [scratch-reg : String]) : String
   (let
     [shift : i64 (compiler-backend-u64-log2 divisor)]
     [mask : u64 (- divisor (cast 1 : u64))]
@@ -6916,14 +6948,14 @@
       (string-append
         "    movq %rax, %r10\n    movq %rax, %r11\n    sarq $63, %r11\n"
         (string-append
-          (compiler-backend-emit-load-u64-absolute mask "%r8")
+          (compiler-backend-emit-load-u64-absolute mask scratch-reg)
           (string-append
-            "    andq %r8, %r11\n    addq %r11, %rax\n"
+            (str-cat "    andq " scratch-reg ", %r11\n    addq %r11, %rax\n")
             (compiler-backend-divmod-shift-rax "sar" shift))))]
     (if want-remainder
       (string-append
         quotient-asm
-        (compiler-backend-divmod-remainder-from-quotient divisor))
+        (compiler-backend-divmod-remainder-from-quotient divisor scratch-reg))
       (if negative-divisor
         (string-append quotient-asm "    negq %rax\n")
         quotient-asm))))
@@ -6931,7 +6963,8 @@
 (define (compiler-backend-signed-magic-divmod-asm
   [divisor : i64]
   [negative-divisor : bool]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [scratch-reg : String]) : String
   (let
     [plan : CompilerBackendSignedDivMagic
       (compiler-backend-signed-divisor-magic divisor)]
@@ -6941,8 +6974,10 @@
       (if want-remainder
         (str-cat
           "    movq %rax, %r10\n"
-          (compiler-backend-emit-load-u64-absolute magic "%r8")
-          "    imulq %r8\n"
+          (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+          "    imulq "
+          scratch-reg
+          "\n"
           (if (compiler-backend-u64-high-bit? magic)
             "    addq %r10, %rdx\n"
             "")
@@ -6950,8 +6985,10 @@
           "    movq %r10, %r11\n    sarq $63, %r11\n    subq %r11, %rdx\n")
         (str-cat
           "    movq %rax, %r10\n"
-          (compiler-backend-emit-load-u64-absolute magic "%r8")
-          "    imulq %r8\n    movq %rdx, %rax\n"
+          (compiler-backend-emit-load-u64-absolute magic scratch-reg)
+          "    imulq "
+          scratch-reg
+          "\n    movq %rdx, %rax\n"
           (if (compiler-backend-u64-high-bit? magic)
             "    addq %r10, %rax\n"
             "")
@@ -6962,14 +6999,16 @@
         quotient-asm
         (compiler-backend-divmod-remainder-from-quotient-reg
           (cast divisor : u64)
-          "%rdx"))
+          "%rdx"
+          scratch-reg))
       (if negative-divisor
         (str-cat quotient-asm "    negq %rax\n")
         quotient-asm))))
 
 (define (compiler-backend-signed-constant-divmod-strength-asm
   [divisor : i64]
-  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  [want-remainder : bool]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
   (if (= divisor 1)
     (CompilerBackendSomeAsm
       (if want-remainder
@@ -6989,55 +7028,72 @@
             (compiler-backend-signed-power-divmod-asm
               abs-u64
               negative-divisor
-              want-remainder)
+              want-remainder
+              scratch-reg)
             (compiler-backend-signed-magic-divmod-asm
               abs-divisor
               negative-divisor
-              want-remainder)))))))
+              want-remainder
+              scratch-reg)))))))
 
 (define (compiler-backend-unsigned-constant-divmod-strength-asm
   [divisor : u64]
-  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  [want-remainder : bool]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
   (if (compiler-backend-u64-power-of-two? divisor)
     (CompilerBackendSomeAsm
-      (compiler-backend-unsigned-power-divmod-asm divisor want-remainder))
-    (compiler-backend-unsigned-magic-divmod-asm divisor want-remainder)))
+      (compiler-backend-unsigned-power-divmod-asm
+        divisor
+        want-remainder
+        scratch-reg))
+    (compiler-backend-unsigned-magic-divmod-asm
+      divisor
+      want-remainder
+      scratch-reg)))
 
 (define (compiler-backend-constant-divmod-unguarded-asm
   [n : i64]
   [ty : AstType]
-  [want-remainder : bool]) : String
+  [want-remainder : bool]
+  [scratch-reg : String]) : String
   (string-append
     (compiler-backend-emit-load-i64-absolute
       (if (compiler-backend-type-signed? ty)
         (compiler-backend-normalized-signed-immediate n ty)
         (cast (compiler-backend-normalized-unsigned-immediate n ty) : i64))
-      "%r8")
-    (compiler-backend-binop-divmod-core-asm ty want-remainder "%r8")))
+      scratch-reg)
+    (compiler-backend-binop-divmod-core-asm ty want-remainder scratch-reg)))
 
 (define (compiler-backend-constant-divmod-asm
   [n : i64]
   [ty : AstType]
-  [want-remainder : bool]) : CompilerBackendMaybeAsm
+  [want-remainder : bool]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
   (cond
     [(not (compiler-backend-divmod-safe-literal-i64? n ty))
       (CompilerBackendNoAsm)]
     [(not (= (compiler-backend-type-size ty) 8))
       (CompilerBackendSomeAsm
-        (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))]
+        (compiler-backend-constant-divmod-unguarded-asm
+          n
+          ty
+          want-remainder
+          scratch-reg))]
     [(compiler-backend-type-signed? ty)
       (let
         [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
         (match (compiler-backend-signed-constant-divmod-strength-asm
           divisor
-          want-remainder)
+          want-remainder
+          scratch-reg)
           [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
           [(CompilerBackendNoAsm)
             (CompilerBackendSomeAsm
               (compiler-backend-constant-divmod-unguarded-asm
                 n
                 ty
-                want-remainder))]))]
+                want-remainder
+                scratch-reg))]))]
     [else
       (let
         [divisor : u64 (compiler-backend-normalized-unsigned-immediate n ty)]
@@ -7048,56 +7104,65 @@
           (CompilerBackendSomeAsm
             (compiler-backend-unsigned-high-bit-divmod-asm
               divisor
-              want-remainder))
+              want-remainder
+              scratch-reg))
           (match (compiler-backend-unsigned-constant-divmod-strength-asm
             divisor
-            want-remainder)
+            want-remainder
+            scratch-reg)
             [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
             [(CompilerBackendNoAsm)
               (CompilerBackendSomeAsm
                 (compiler-backend-constant-divmod-unguarded-asm
                   n
                   ty
-                  want-remainder))])))]))
+                  want-remainder
+                  scratch-reg))])))]))
 
 (define (compiler-backend-constant-safe-divmod-asm
   [n : i64]
   [ty : AstType]
-  [want-remainder : bool]) : CompilerBackendMaybeAsm
-  (match (compiler-backend-constant-divmod-asm n ty want-remainder)
+  [want-remainder : bool]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-constant-divmod-asm n ty want-remainder scratch-reg)
     [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
     [(CompilerBackendNoAsm)
       (if (and
         (compiler-backend-type-signed? ty)
         (= (compiler-backend-normalized-signed-immediate n ty) (- 0 1)))
         (CompilerBackendSomeAsm
-          (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))
+          (compiler-backend-constant-divmod-unguarded-asm
+            n
+            ty
+            want-remainder
+            scratch-reg))
         (CompilerBackendNoAsm))]))
 
 (define (compiler-backend-binop-literal-divmod-asm
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
-  [ty : AstType]) : CompilerBackendMaybeAsm
+  [ty : AstType]
+  [scratch-reg : String]) : CompilerBackendMaybeAsm
   (match op
     [(IrBinDiv)
       (match (compiler-backend-value-as-i64 rhs)
         [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-divmod-asm n ty false)]
+          (compiler-backend-constant-divmod-asm n ty false scratch-reg)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinMod)
       (match (compiler-backend-value-as-i64 rhs)
         [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-divmod-asm n ty true)]
+          (compiler-backend-constant-divmod-asm n ty true scratch-reg)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinSafeDiv)
       (match (compiler-backend-value-as-i64 rhs)
         [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-safe-divmod-asm n ty false)]
+          (compiler-backend-constant-safe-divmod-asm n ty false scratch-reg)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [(IrBinSafeMod)
       (match (compiler-backend-value-as-i64 rhs)
         [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-safe-divmod-asm n ty true)]
+          (compiler-backend-constant-safe-divmod-asm n ty true scratch-reg)]
         [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
     [_ (CompilerBackendNoAsm)]))
 
@@ -7823,7 +7888,15 @@
           lhs
           "%rax")
           [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+            (match (compiler-backend-binop-literal-divmod-asm
+              op
+              rhs
+              operand-ty
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-binop-scavenge-exclude-build)
+                5
+                "%r8"))
               [(CompilerBackendSomeAsm op-asm)
                 (OkCompilerBackend
                   (string-append
@@ -8052,7 +8125,11 @@
         (compiler-backend-binop-scavenge-exclude-build)
         5
         "%r8")]
-    (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+    (match (compiler-backend-binop-literal-divmod-asm
+      op
+      rhs
+      operand-ty
+      scav-rhs)
       [(CompilerBackendSomeAsm op-asm)
         (OkCompilerBackend (string-append op-asm store))]
       [(CompilerBackendNoAsm)
@@ -8243,7 +8320,11 @@
           lhs
           "%rax")
           [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
+            (match (compiler-backend-binop-literal-divmod-asm
+              op
+              rhs
+              operand-ty
+              "%r8")
               [(CompilerBackendSomeAsm op-asm)
                 (OkCompilerBackend
                   (string-append lhs-asm (string-append op-asm return-tail)))]

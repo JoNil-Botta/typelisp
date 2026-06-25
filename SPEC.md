@@ -3657,6 +3657,10 @@ Semantics:
 - `start` and `end` are uniform `i64` expressions evaluated once before the
   loop. If `end <= start`, the loop has zero logical iterations.
 - `body` must have type `unit`; the `foreach` expression has type `unit`.
+- Function-local early exits are not part of the current SPMD control-flow
+  surface: `(return expr)` and recoverable `(try expr)` propagation are rejected
+  inside `foreach` bodies. Future `break`/`continue` forms are also outside this
+  surface until a separate SPMD ordering, mask, and cleanup policy is specified.
 - Programs that do not evaluate public lane identity forms must produce the
   same observable result as an ordinary scalar loop over the same range. SIMD
   lowering may group iterations into lanes, but those programs must not depend
@@ -3849,10 +3853,11 @@ Masked varying `if` (v2):
 - Varying `match` is not part of this slice. `match` on a varying scrutinee is
   rejected; a `match` whose scrutinee is uniform follows ordinary scalar
   control-flow rules.
-- Varying `while`, early exits, `return` from inside `foreach`, `break`,
-  `continue`, public mask values, gather reads and scatter writes through index
-  arrays inside masked branches, overlapping ordinary writes, general atomics,
-  and user-defined SPMD calls remain deferred.
+- Varying `while`, function-local early exits (`return` and `try`
+  propagation), future `break`/`continue` forms, public mask values, gather
+  reads and scatter writes through index arrays inside masked branches,
+  overlapping ordinary writes, general atomics, and user-defined SPMD calls
+  remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
@@ -6181,6 +6186,10 @@ than generic traits or implicit conversions.
   later stdlib/comptime work.
 - `(try expr)` is valid only inside an enclosing function whose return type is
   a compatible generated family or convention-compatible concrete family.
+- `(try expr)` is rejected inside `foreach`/SPMD bodies because its
+  error/absence path exits the enclosing function. Mask-aware recoverable
+  propagation from SPMD regions requires a separate design before it can be
+  accepted.
 - `(try expr)` is rejected when `expr` is not a result/option family, when the
   enclosing function is not result/option-producing, when the error/absence
   family is incompatible, or when manual matches over these enums are

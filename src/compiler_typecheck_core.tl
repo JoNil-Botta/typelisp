@@ -38475,6 +38475,189 @@
           [(ErrMacroEnv diag) (ErrMacroValue diag)]))]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
 
+;; The core prelude macros below are deterministic syntax rewrites. Expanding
+;; them in the compiler avoids running the CTFE evaluator for thousands of hot
+;; self-compile calls while preserving normal CTFE for user-defined macros.
+(define (macro-core-prelude-module? [definition-module : String]) : bool
+  (or
+    (string-eq definition-module "stdlib.core_macros")
+    (string-eq definition-module "stdlib.core-macros")))
+
+(define (macro-core-fast-path-base [macro-name : String]) : String
+  (if (tc-name-qualified? macro-name)
+    (tc-qualified-name-base macro-name)
+    macro-name))
+
+(define (macro-core-fast-path-base-known? [base : String]) : bool
+  (or
+    (string-eq base "and")
+    (string-eq base "or")
+    (string-eq base "when")
+    (string-eq base "unless")
+    (string-eq base "cond")))
+
+(define (macro-core-fast-bool [value : bool]) : i64
+  (ast-node-push (AstExprLiteral (AstLitBool value))))
+
+(define (macro-core-fast-unit) : i64
+  (ast-node-push (AstExprLiteral AstLitUnit)))
+
+(define (macro-core-fast-var [name : String]) : i64
+  (ast-node-push (AstExprVar (intern name))))
+
+(define (macro-core-fast-and [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) (macro-core-fast-bool true)]
+    [(AstExprCons head rest)
+      (ast-expr-if
+        head
+        (macro-core-fast-and (box-get rest))
+        (macro-core-fast-bool false))]))
+
+(define (macro-core-fast-or [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) (macro-core-fast-bool false)]
+    [(AstExprCons head rest)
+      (ast-expr-if
+        head
+        (macro-core-fast-bool true)
+        (macro-core-fast-or (box-get rest)))]))
+
+(define (macro-core-fast-arity-error [call-expr : AstExpr] [message : String]) : ResultMacroCompatCall
+  (ErrMacroCompatCall (ctfe-diagnostic-at-expr call-expr message)))
+
+(define (macro-core-fast-guard
+  [args : AstExprList]
+  [is-unless : bool]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons cond rest)
+      (match (box-get rest)
+        [(AstExprCons body tail)
+          (match (box-get tail)
+            [(AstExprNil)
+              (let
+                [unit-expr : i64 (macro-core-fast-unit)]
+                (if is-unless
+                  (OkMacroCompatCall (ast-expr-if cond unit-expr body))
+                  (OkMacroCompatCall (ast-expr-if cond body unit-expr))))]
+            [_
+              (macro-core-fast-arity-error
+                call-expr
+                "macro call has too many arguments")])]
+        [(AstExprNil)
+          (macro-core-fast-arity-error
+            call-expr
+            "macro call has too few arguments")])]
+    [(AstExprNil)
+      (macro-core-fast-arity-error call-expr "macro call has too few arguments")]))
+
+(define (macro-core-fast-cond-else? [test : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get test))
+    [(AstExprVar name) (string-eq (intern-str name) "else")]
+    [_ false]))
+
+(define (macro-core-fast-cond [clauses : AstExprClauseList]) : i64
+  (match clauses
+    [(AstExprClauseNil) (macro-core-fast-var "core-cond-missing-else")]
+    [(AstExprClauseCons clause rest)
+      (let
+        [test : i64 (struct-get clause first)]
+        [result : i64 (struct-get clause second)]
+        [rest : AstExprClauseList (box-get rest)]
+        (if (macro-core-fast-cond-else? test)
+          (match rest
+            [(AstExprClauseNil) result]
+            [_ (macro-core-fast-var "core-cond-else-must-be-final")])
+          (match rest
+            [(AstExprClauseNil) (macro-core-fast-var "core-cond-missing-else")]
+            [_ (ast-expr-if test result (macro-core-fast-cond rest))])))]))
+
+(define (macro-core-fast-cond-call [args : AstExprList]) : ResultMacroCompatCall
+  (match (macro-expr-clause-list-from-args args)
+    [(OkMacroClauseList clauses)
+      (OkMacroCompatCall (macro-core-fast-cond clauses))]
+    [(ErrMacroClauseList diag) (ErrMacroCompatCall diag)]))
+
+(define (macro-core-fast-profile-ok
+  [_macro-name : String]
+  [_args : AstExprList]
+  [expanded : i64]) : ResultMacroCompatCall
+  (begin
+    (cfg compile-profile (compiler-tc-macro-profile-start))
+    (cfg compile-profile (compiler-tc-macro-profile-finish _macro-name _args))
+    (OkMacroCompatCall expanded)))
+
+(define (macro-core-fast-profile-result
+  [macro-name : String]
+  [args : AstExprList]
+  [result : ResultMacroCompatCall]) : ResultMacroCompatCall
+  (match result
+    [(OkMacroCompatCall expanded)
+      (macro-core-fast-profile-ok macro-name args expanded)]
+    [(ErrMacroCompatCall diag) (ErrMacroCompatCall diag)]
+    [(NoMacroCompatCall) (NoMacroCompatCall)]))
+
+(define (macro-core-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [definition-module : String]
+  [params : AstMacroParamList]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (if (macro-core-prelude-module? definition-module)
+    (let
+      [base : String (macro-core-fast-path-base macro-name)]
+      (if (macro-core-fast-path-base-known? base)
+        (match (macro-expand-exprs ctx type-env decls depth args)
+          [(OkMacroExprList expanded-args)
+            (begin
+              (tc-context-capture-active-pools! ctx)
+              (match (macro-bind-params
+                ctx
+                type-env
+                params
+                expanded-args
+                (tc-ctfe-env ctx)
+                (tc-string-list-contains
+                  macro-expand-expr-type-macro-names
+                  macro-name)
+                call-expr)
+                [(OkMacroEnv _)
+                  (cond
+                    [(string-eq base "and")
+                      (macro-core-fast-profile-ok
+                        macro-name
+                        expanded-args
+                        (macro-core-fast-and expanded-args))]
+                    [(string-eq base "or")
+                      (macro-core-fast-profile-ok
+                        macro-name
+                        expanded-args
+                        (macro-core-fast-or expanded-args))]
+                    [(string-eq base "when")
+                      (macro-core-fast-profile-result
+                        macro-name
+                        expanded-args
+                        (macro-core-fast-guard expanded-args false call-expr))]
+                    [(string-eq base "unless")
+                      (macro-core-fast-profile-result
+                        macro-name
+                        expanded-args
+                        (macro-core-fast-guard expanded-args true call-expr))]
+                    [else
+                      (macro-core-fast-profile-result
+                        macro-name
+                        expanded-args
+                        (macro-core-fast-cond-call expanded-args))])]
+                [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
+          [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
+        (NoMacroCompatCall)))
+    (NoMacroCompatCall)))
+
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -38499,43 +38682,56 @@
         (ctfe-diagnostic-at-expr
           call-expr
           "typecheck: Decls macro can only be used at module scope"))
-      (match (macro-eval-transformer
+      (match (macro-core-fast-expand
         ctx
         type-env
         decls
         macro-name
+        definition-module
         params
-        body
         args
         depth
         call-expr)
-        [(OkMacroValue value)
-          (match value
-            [(CtfeExpr expanded produced)
-              (if (tc-macro-produced-type-compatible? ctx ret produced)
-                (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  (+ depth 1)
-                  (ast-node-get
-                    (macro-hygiene-expr
-                      (ast-node-get expanded)
-                      MacroHygieneNil
-                      (macro-hygiene-context-macro-name
-                        macro-name
-                        definition-module)
-                      (+ depth 1))))
-                (ErrMacroExpr
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "typecheck: macro expansion produced type does not match declaration")))]
-            [_
-              (ErrMacroExpr
-                (ctfe-diagnostic-at-expr
-                  call-expr
-                  "macro transformer did not produce an Expr"))])]
-        [(ErrMacroValue diag) (ErrMacroExpr diag)]))))
+        [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
+        [(ErrMacroCompatCall diag) (ErrMacroExpr diag)]
+        [(NoMacroCompatCall)
+          (match (macro-eval-transformer
+            ctx
+            type-env
+            decls
+            macro-name
+            params
+            body
+            args
+            depth
+            call-expr)
+            [(OkMacroValue value)
+              (match value
+                [(CtfeExpr expanded produced)
+                  (if (tc-macro-produced-type-compatible? ctx ret produced)
+                    (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      (+ depth 1)
+                      (ast-node-get
+                        (macro-hygiene-expr
+                          (ast-node-get expanded)
+                          MacroHygieneNil
+                          (macro-hygiene-context-macro-name
+                            macro-name
+                            definition-module)
+                          (+ depth 1))))
+                    (ErrMacroExpr
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: macro expansion produced type does not match declaration")))]
+                [_
+                  (ErrMacroExpr
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "macro transformer did not produce an Expr"))])]
+            [(ErrMacroValue diag) (ErrMacroExpr diag)])]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]

@@ -11562,6 +11562,38 @@
         head
         (compiler-reg-remat-instr-list-onto (box-get rest) acc))]))
 
+;; Reset the entries of a shared, function-scoped identity remap array that a
+;; single instruction touched. Only the vars in `uses` (the instruction's
+;; operands) could have been overwritten, so restoring identity for those bits
+;; returns the array to "no-remap" for the next instruction without an
+;; O(vars) rescan/zero. Set bits at ids >= vars are skipped, matching the old
+;; ascending `(while (< var vars) ...)` loop which never visited them.
+(define (compiler-reg-remat-reset-remap-uses!
+  [remap : (Array i64)]
+  [uses : CompilerLiveI64Set]
+  [vars : i64]) : unit
+  (let
+    [word-index : i64 0]
+    [word-count : i64 (compiler-live-set-word-count uses)]
+    (while (< word-index word-count)
+      (let
+        [bits : i64 (compiler-live-set-word-at uses word-index)]
+        [base : i64 (* word-index (compiler-live-set-word-bits))]
+        [bit : i64 0]
+        (begin
+          (while (not (= bits 0))
+            (begin
+              (if (not (= (bit-and bits 1) 0))
+                (let
+                  [var : i64 (+ base bit)]
+                  (if (< var vars)
+                    (array-set! remap var var)
+                    unit))
+                unit)
+              (set! bits (shr bits 1))
+              (set! bit (+ bit 1))))
+          (set! word-index (+ word-index 1)))))))
+
 (define (compiler-reg-remat-rewrite-one-instr
   [instr : CompilerIrInstr]
   [point : i64]
@@ -11574,60 +11606,86 @@
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
   [extra-types : CompilerRegVarTypeList]
+  [remap : (Array i64)]
   [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
   (if (compiler-reg-remat-use-site-ok? instr)
     (let
+      ;; `uses` is the (1-3 var) operand bitset for THIS instruction. Iterate
+      ;; only its set bits in ascending order instead of scanning all `vars`,
+      ;; which is byte-identical to the old loop (which also only ran the body
+      ;; for set bits in ascending order) but avoids the per-instruction
+      ;; O(vars) scan + array zero. `remap` is a function-scoped identity array
+      ;; reused across instructions; we restore the bits we set afterwards.
       [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-      [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
       [types : (Array AstType) (struct-get table types)]
       [prefix : CompilerIrInstrList IrInstrNil]
       [chosen : CompilerRegStringList CompilerRegStringNil]
       [out-next-var : i64 next-var]
       [out-extra-assignments : CompilerRegAssignmentList extra-assignments]
       [out-extra-types : CompilerRegVarTypeList extra-types]
-      [var : i64 0]
+      [word-index : i64 0]
+      [word-count : i64 (compiler-live-set-word-count uses)]
       (begin
-        (while (< var vars)
-          (begin
-            (if (and
-              (compiler-live-set-contains? uses var)
-              (compiler-reg-remat-table-eligible?
-                table
-                assignments
-                parents
-                merged-roots
-                var))
-              (match (compiler-reg-remat-selected-register
-                table
-                assignments
-                intervals
-                point
-                chosen
-                var)
-                [(CompilerRegSomeString reg)
-                  (let
-                    [temp : i64 out-next-var]
-                    [ty : AstType (array-ref types var)]
-                    (begin
-                      (array-set! remap var temp)
-                      (set!
-                        prefix
-                        (compiler-ir-instr-cons
-                          (compiler-reg-remat-instr table temp var)
-                          prefix))
-                      (set! chosen (compiler-reg-string-cons reg chosen))
-                      (set!
-                        out-extra-assignments
-                        (compiler-reg-assignment-cons
-                          (CompilerRegAssignment temp (CompilerRegRegister reg))
-                          out-extra-assignments))
-                      (set!
-                        out-extra-types
-                        (compiler-reg-var-type-insert out-extra-types temp ty))
-                      (set! out-next-var (+ out-next-var 1))))]
-                [(CompilerRegNoString) unit])
-              unit)
-            (set! var (+ var 1))))
+        (while (< word-index word-count)
+          (let
+            [bits : i64 (compiler-live-set-word-at uses word-index)]
+            [base : i64 (* word-index (compiler-live-set-word-bits))]
+            [bit : i64 0]
+            (begin
+              (while (not (= bits 0))
+                (begin
+                  (if (not (= (bit-and bits 1) 0))
+                    (let
+                      [var : i64 (+ base bit)]
+                      (if (and
+                        (< var vars)
+                        (compiler-reg-remat-table-eligible?
+                          table
+                          assignments
+                          parents
+                          merged-roots
+                          var))
+                        (match (compiler-reg-remat-selected-register
+                          table
+                          assignments
+                          intervals
+                          point
+                          chosen
+                          var)
+                          [(CompilerRegSomeString reg)
+                            (let
+                              [temp : i64 out-next-var]
+                              [ty : AstType (array-ref types var)]
+                              (begin
+                                (array-set! remap var temp)
+                                (set!
+                                  prefix
+                                  (compiler-ir-instr-cons
+                                    (compiler-reg-remat-instr table temp var)
+                                    prefix))
+                                (set!
+                                  chosen
+                                  (compiler-reg-string-cons reg chosen))
+                                (set!
+                                  out-extra-assignments
+                                  (compiler-reg-assignment-cons
+                                    (CompilerRegAssignment
+                                      temp
+                                      (CompilerRegRegister reg))
+                                    out-extra-assignments))
+                                (set!
+                                  out-extra-types
+                                  (compiler-reg-var-type-insert
+                                    out-extra-types
+                                    temp
+                                    ty))
+                                (set! out-next-var (+ out-next-var 1))))]
+                          [(CompilerRegNoString) unit])
+                        unit))
+                    unit)
+                  (set! bits (shr bits 1))
+                  (set! bit (+ bit 1))))
+              (set! word-index (+ word-index 1)))))
         (if (= out-next-var next-var)
           (CompilerRegCallSaveInstrRewrite
             (compiler-ir-instr-cons instr acc)
@@ -11635,14 +11693,19 @@
             out-next-var
             out-extra-assignments
             out-extra-types)
-          (CompilerRegCallSaveInstrRewrite
-            (compiler-ir-instr-cons
-              (compiler-reg-remap-instr remap instr)
-              (compiler-reg-remat-instr-list-onto prefix acc))
-            (+ point 2)
-            out-next-var
-            out-extra-assignments
-            out-extra-types))))
+          (let
+            [rewritten : CompilerIrInstr (compiler-reg-remap-instr remap instr)]
+            (begin
+              ;; Restore the shared remap array to identity for the next instr.
+              (compiler-reg-remat-reset-remap-uses! remap uses vars)
+              (CompilerRegCallSaveInstrRewrite
+                (compiler-ir-instr-cons
+                  rewritten
+                  (compiler-reg-remat-instr-list-onto prefix acc))
+                (+ point 2)
+                out-next-var
+                out-extra-assignments
+                out-extra-types))))))
     (CompilerRegCallSaveInstrRewrite
       (compiler-ir-instr-cons instr acc)
       (+ point 2)
@@ -11662,6 +11725,7 @@
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
   [extra-types : CompilerRegVarTypeList]
+  [remap : (Array i64)]
   [acc : CompilerIrInstrList]) : CompilerRegCallSaveInstrRewrite
   (match instrs
     [(IrInstrNil)
@@ -11684,6 +11748,7 @@
         merged-roots
         extra-assignments
         extra-types
+        remap
         acc)
         [(CompilerRegCallSaveInstrRewrite
             acc2
@@ -11703,6 +11768,7 @@
             merged-roots
             extra-assignments2
             extra-types2
+            remap
             acc2)])]))
 
 (define (compiler-reg-remat-rewrite-instrs
@@ -11716,7 +11782,8 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
-  [extra-types : CompilerRegVarTypeList]) : CompilerRegCallSaveInstrRewrite
+  [extra-types : CompilerRegVarTypeList]
+  [remap : (Array i64)]) : CompilerRegCallSaveInstrRewrite
   (match (compiler-reg-remat-rewrite-instrs-rev
     (compiler-ir-instr-seq-to-list instrs)
     point
@@ -11729,6 +11796,7 @@
     merged-roots
     extra-assignments
     extra-types
+    remap
     IrInstrNil)
     [(CompilerRegCallSaveInstrRewrite
         rev
@@ -11755,6 +11823,7 @@
   [merged-roots : CompilerLiveI64Set]
   [extra-assignments : CompilerRegAssignmentList]
   [extra-types : CompilerRegVarTypeList]
+  [remap : (Array i64)]
   [acc : CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (match blocks
     [(IrBlockNil)
@@ -11778,7 +11847,8 @@
             parents
             merged-roots
             extra-assignments
-            extra-types)
+            extra-types
+            remap)
             [(CompilerRegCallSaveInstrRewrite
                 rewritten
                 next-point
@@ -11797,6 +11867,7 @@
                 merged-roots
                 extra-assignments2
                 extra-types2
+                remap
                 (compiler-ir-block-cons
                   (IrBlock label (compiler-ir-instr-seq-from-list rewritten))
                   acc))])])]
@@ -11813,6 +11884,7 @@
         merged-roots
         extra-assignments
         extra-types
+        remap
         acc)]))
 
 (define (compiler-reg-remat-rewrite-blocks
@@ -11841,6 +11913,11 @@
           [parents : (Array i64) (struct-get coalesce parents)]
           [merged-roots : CompilerLiveI64Set
             (compiler-reg-coalesce-merged-root-set coalesce)]
+          ;; One function-scoped identity remap array, reused across every
+          ;; instruction. Each rewritten instruction restores the few bits it
+          ;; touches (see compiler-reg-remat-reset-remap-uses!), replacing the
+          ;; old per-instruction O(vars) allocation + zero + identity fill.
+          [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
           (match (compiler-reg-remat-rewrite-blocks-rev
             blocks
             0
@@ -11853,6 +11930,7 @@
             merged-roots
             CompilerRegAssignmentNil
             CompilerRegVarTypeNil
+            remap
             IrBlockNil)
             [(CompilerRegCallSaveRewrite
                 rev

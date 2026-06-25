@@ -24426,9 +24426,10 @@
 (define (tc-qualified-variant-name [enum-name : String] [variant-name : String]) : String
   (let
     [module : String (tc-qualified-name-module enum-name)]
-    (if (string-eq module "")
-      variant-name
-      (compiler-symbol-module-key module variant-name))))
+    [enum-base : String (tc-qualified-name-base enum-name)]
+    [qualified-variant : String
+      (compiler-enum-qualified-variant-name enum-base variant-name)]
+    (compiler-symbol-module-key module qualified-variant)))
 
 (define (tc-variant-name-for-enum [enum-name : String] [variant-name : String]) : String
   (if (tc-name-qualified? variant-name)
@@ -24441,37 +24442,51 @@
   [variant-name : String]) : String
   (if (tc-name-qualified? variant-name)
     variant-name
-    (match (tc-dotted-type-name-lookup-key ctx variant-name)
-      [(OkTcString lookup-name)
-        (if (tc-name-qualified? lookup-name)
-          lookup-name
-          (tc-qualified-variant-name enum-name lookup-name))]
-      [(ErrTcString _) (tc-qualified-variant-name enum-name variant-name)])))
+    (if (>= (tc-name-first-dot variant-name) 0)
+      (match (tc-dotted-type-name-lookup-key ctx variant-name)
+        [(OkTcString lookup-name) lookup-name]
+        [(ErrTcString _)
+          (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
+            [(OkTcString lookup-name) lookup-name]
+            [(ErrTcString _) variant-name])])
+      (match (compiler-registries-lookup-variant
+        (tc-context-registries ctx)
+        variant-name)
+        [(SomeI64 handle)
+          (match (tc-variant-owner-name ctx handle)
+            [(OkTcString owner)
+              (if (string-eq owner enum-name)
+                variant-name
+                (tc-qualified-variant-name enum-name variant-name))]
+            [(ErrTcString _) (tc-qualified-variant-name enum-name variant-name)])]
+        [(NoneI64) (tc-qualified-variant-name enum-name variant-name)]))))
 
 (define (tc-variant-name-matches?
   [ctx : TcContext]
   [enum-name : String]
   [pattern-name : String]
   [variant-name : String]) : bool
-  (if (or
-    (string-eq pattern-name variant-name)
-    (string-eq pattern-name (tc-qualified-variant-name enum-name variant-name)))
+  (if (string-eq pattern-name variant-name)
     true
-    (let
-      [pattern-key : String
-        (tc-source-variant-name-for-enum ctx enum-name pattern-name)]
-      [candidate-key : String
-        (tc-qualified-variant-name enum-name variant-name)]
-      (match (compiler-registries-lookup-variant
-        (tc-context-registries ctx)
-        pattern-key)
-        [(SomeI64 pattern-handle)
-          (match (compiler-registries-lookup-variant
-            (tc-context-registries ctx)
-            candidate-key)
-            [(SomeI64 candidate-handle) (= pattern-handle candidate-handle)]
-            [(NoneI64) false])]
-        [(NoneI64) false]))))
+    (if (and
+      (< (tc-name-first-dot pattern-name) 0)
+      (not (tc-name-qualified? pattern-name)))
+      false
+      (let
+        [pattern-key : String
+          (tc-source-variant-name-for-enum ctx enum-name pattern-name)]
+        [candidate-key : String
+          (tc-source-variant-name-for-enum ctx enum-name variant-name)]
+        (match (compiler-registries-lookup-variant
+          (tc-context-registries ctx)
+          pattern-key)
+          [(SomeI64 pattern-handle)
+            (match (compiler-registries-lookup-variant
+              (tc-context-registries ctx)
+              candidate-key)
+              [(SomeI64 candidate-handle) (= pattern-handle candidate-handle)]
+              [(NoneI64) false])]
+          [(NoneI64) false])))))
 
 (define (tc-expr-pattern-enum-name) : String
   (tc-stdlib-comptime-type-key "Expr"))
@@ -24597,6 +24612,31 @@
           [_ false]))]
     [_ false]))
 
+(define (tc-enum-single-matching-variant-name
+  [ctx : TcContext]
+  [variants : AstVariantDefList]
+  [enum-name : String]
+  [pattern-name : String]) : TcMaybeString
+  (match variants
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match rest
+          [(AstVariantDefNil)
+            (match variant
+              [(AstVariantDef name _ _)
+                (let
+                  [variant-name : String (intern-str name)]
+                  (if (tc-variant-name-matches?
+                    ctx
+                    enum-name
+                    pattern-name
+                    variant-name)
+                    (TcSomeString variant-name)
+                    (TcNoString)))])]
+          [_ (TcNoString)]))]
+    [_ (TcNoString)]))
+
 (define (tc-variant-pattern-irrefutable?
   [ctx : TcContext]
   [enum-name : String]
@@ -24657,17 +24697,18 @@
               [enum-name-str : String (intern-str enum-name)]
               (match (tc-context-enum-variants ctx enum-name-str)
                 [(OkAstVariantDefList variants)
-                  (if (tc-enum-has-single-variant?
+                  (match (tc-enum-single-matching-variant-name
                     ctx
                     variants
                     enum-name-str
                     (intern-str name))
-                    (tc-variant-pattern-irrefutable?
-                      ctx
-                      enum-name-str
-                      (intern-str name)
-                      args)
-                    false)]
+                    [(TcSomeString variant-name)
+                      (tc-variant-pattern-irrefutable?
+                        ctx
+                        enum-name-str
+                        variant-name
+                        args)]
+                    [(TcNoString) false])]
                 [(ErrAstVariantDefList _) false]))]
           [(AstTyEnumArgs enum-name _)
             (let
@@ -24676,17 +24717,18 @@
                 (tc-context-program ctx)
                 enum-name-str)
                 [(OkAstVariantDefList variants)
-                  (if (tc-enum-has-single-variant?
+                  (match (tc-enum-single-matching-variant-name
                     ctx
                     variants
                     enum-name-str
                     (intern-str name))
-                    (tc-variant-pattern-irrefutable?
-                      ctx
-                      enum-name-str
-                      (intern-str name)
-                      args)
-                    false)]
+                    [(TcSomeString variant-name)
+                      (tc-variant-pattern-irrefutable?
+                        ctx
+                        enum-name-str
+                        variant-name
+                        args)]
+                    [(TcNoString) false])]
                 [(ErrAstVariantDefList _) false]))]
           [(AstTyStruct struct-name)
             (tc-struct-pattern-irrefutable?
@@ -24750,7 +24792,7 @@
             enum-name
             (intern-str name)
             variant-name)
-          (tc-variant-pattern-irrefutable? ctx enum-name (intern-str name) args)))]
+          (tc-variant-pattern-irrefutable? ctx enum-name variant-name args)))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?

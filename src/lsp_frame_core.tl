@@ -3879,6 +3879,35 @@
                     (json.JsonString message)))
                 (LspContinue docs))])]))))
 
+(define (lsp-nearest-inlay-hint-index [line1 : i64] [col1 : i64]) : i64
+  (let
+    [size : i64 (tc-inlay-hints-size)]
+    [i : i64 0]
+    [best-idx : i64 -1]
+    [best-dist : i64 999999999]
+    (begin
+      (while (< i size)
+        (let
+          [hint-line : i64 (tc-inlay-hint-line-at i)]
+          [hint-col : i64 (tc-inlay-hint-col-at i)]
+          [d-line : i64
+            (if (< hint-line line1)
+              (- line1 hint-line)
+              (- hint-line line1))]
+          [d-col : i64
+            (if (< hint-col col1)
+              (- col1 hint-col)
+              (- hint-col col1))]
+          [dist : i64 (+ (* d-line 1000) d-col)]
+          (begin
+            (if (< dist best-dist)
+              (begin
+                (set! best-dist dist)
+                (set! best-idx i))
+              unit)
+            (set! i (+ i 1)))))
+      best-idx)))
+
 ;; tl/getType - Type of expression at cursor
 (define (lsp-handle-tl-get-type-at
   [id : json.Json]
@@ -3902,19 +3931,8 @@
                   [(OkCompilerCheck _) unit]
                   [(ErrCompilerCheck _) unit])
                 (let
-                  [size : i64 (tc-inlay-hints-size)]
-                  [i : i64 0]
-                  [found-idx : i64 -1]
+                  [found-idx : i64 (lsp-nearest-inlay-hint-index line1 col1)]
                   (begin
-                    (while (and (< i size) (= found-idx -1))
-                      (let
-                        [hint-line : i64 (tc-inlay-hint-line-at i)]
-                        [hint-col : i64 (tc-inlay-hint-col-at i)]
-                        (begin
-                          (if (and (= hint-line line1) (= hint-col col1))
-                            (set! found-idx i)
-                            unit)
-                          (set! i (+ i 1)))))
                     (tc-inlay-hints-disable!)
                     (if (= found-idx -1)
                       (begin

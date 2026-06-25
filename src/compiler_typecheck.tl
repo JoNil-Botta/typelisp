@@ -251,11 +251,13 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
-      "array-helper-intrinsics")
+            (compiler-cfg-enable
+              (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+              "feature-str-view")
+            "feature-private-string-intrinsics")
+          "feature-compiler-private-string-intrinsics")
+        "array-helper-intrinsics")
+      "feature-tl-memchr")
     "feature-plain-comptime-well-known"))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
@@ -1316,6 +1318,20 @@
 (define (main) : i64
   (+ (match left [Left.Same 1] [_ 0])
      (match right [Right.Same 2] [_ 0])))")
+
+(define (compiler-typecheck-cross-enum-qualified-payload-source) : String
+  "(defenum Left (Ok i64) (Err i64))
+(defenum Right (Ok i64) (Err i64))
+(define (left-score [item : Left]) : i64
+  (match item
+    [(Left.Ok value) value]
+    [(Left.Err error) error]))
+(define (right-score [item : Right]) : i64
+  (match item
+    [(Right.Ok value) value]
+    [(Right.Err error) error]))
+(define (main) : i64
+  (+ (left-score (Left.Ok 1)) (right-score (Right.Err 2))))")
 
 (define (compiler-typecheck-module-local-variant-shadows-prior-flat-source) : String
   "(module prior)
@@ -2392,6 +2408,10 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-cross-enum-qualified-variant-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cross-enum-qualified-payload-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

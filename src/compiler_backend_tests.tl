@@ -1160,7 +1160,7 @@
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff obj)
+        [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
               (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -1172,7 +1172,7 @@
               (> text-size 0)
               (> reloc-count 0)
               (compiler-object-coff-contains? obj "foreign_exact")))]
-        [(ErrCompilerObjectCoff _) false])]
+        [(ResultCompilerObjectCoff.Err _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-elf-renders-real-text-ok?) : bool
@@ -1222,7 +1222,7 @@
         (ObjectSectionRsrc)
         rsrc-data-label)]
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj)
+      [(ResultCompilerObjectCoff.Ok obj)
         (let
           [rsrc-header : i64
             (compiler-object-coff-section-header-offset (ObjectSectionRsrc))]
@@ -1303,7 +1303,7 @@
               (compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
               (compiler-object-coff-contains? obj ".rsrc")
               true)))]
-      [(ErrCompilerObjectCoff _) false])))
+      [(ResultCompilerObjectCoff.Err _) false])))
 
 (define (compiler-backend-windows-object-entry-unwind-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
@@ -1469,7 +1469,7 @@
           shape-ok
           (compiler-backend-windows-object-manifest-resource-ok? image))
           (match (compiler-object-coff-render image)
-            [(OkCompilerObjectCoff obj)
+            [(ResultCompilerObjectCoff.Ok obj)
               (let
                 [pdata-header : i64
                   (compiler-object-coff-section-header-offset
@@ -1512,7 +1512,7 @@
                   (=
                     (compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
                     0xc7)))]
-            [(ErrCompilerObjectCoff _) false])
+            [(ResultCompilerObjectCoff.Err _) false])
           false))]
     [(ErrCompilerBackendObject _) false]))
 
@@ -1522,7 +1522,7 @@
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff obj)
+        [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
               (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -1545,7 +1545,7 @@
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
-        [(ErrCompilerObjectCoff _) false])]
+        [(ResultCompilerObjectCoff.Err _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
@@ -6260,28 +6260,28 @@
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 0)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "(%rax)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 4)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "32(%rax)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 1)
       (AstTyI32)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "(%rax,%r12,4)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %rcx\n    movq 0(%rdi), %rax\n"
+      "    movq %rax, %rcx\n    movq %rdi, %rax\n"
       "(%rax,%rcx,8)")
     (compiler-backend-simd-indexed-address-with-base-emits?
       (IrValueVar 6)
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %r11\n    movq 0(%rcx), %rax\n"
+      "    movq %rax, %r11\n    movq %rcx, %rax\n"
       "(%rax,%r11,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
@@ -6294,7 +6294,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq asm "    movq 0(%rdi), %rax\n    vmovdqu 32(%rax), %ymm6\n")]
+      (string-eq asm "    movq %rdi, %rax\n    vmovdqu 32(%rax), %ymm6\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
@@ -6307,9 +6307,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq
-        asm
-        "    movq 0(%rdi), %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
+      (string-eq asm "    movq %rdi, %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -6325,7 +6323,7 @@
     [(OkCompilerBackend asm)
       (string-eq
         asm
-        "    movq 0(%rdi), %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
+        "    movq %rdi, %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
@@ -7528,6 +7526,61 @@
         8
         "backend: unsupported AVX-512 vector binary op"))))
 
+(define (compiler-backend-avx2-data-pointer-cse-source) : String
+  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref a i)))))")
+
+(define (compiler-backend-avx2-loop-body [body : String]) : String
+  (let
+    [start : i64 (compiler-backend-string-find-from body "foreach_avx2_body" 0)]
+    (if (< start 0)
+      ""
+      (let
+        [tail : i64
+          (compiler-backend-string-find-from body "foreach_tail" start)]
+        (if (< tail 0)
+          (substring body start (- (string-length body) start))
+          (substring body start (- tail start)))))))
+
+(define (compiler-backend-avx2-data-pointer-cse-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx2-data-pointer-cse-source)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (optimize-program-with-spans program spans)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (match (compiler-backend-emit-program-target-with-mode
+            optimized
+            (BackendTargetLinux)
+            (BackendModeAvx2)
+            optimized-spans
+            true)
+            [(OkCompilerBackend asm)
+              (let
+                [body : String
+                  (compiler-backend-asm-function-body asm "_tl_fill")]
+                [loop : String (compiler-backend-avx2-loop-body body)]
+                (and
+                  (backend-and8
+                    (= (compiler-backend-string-count loop "    movq 0(") 0)
+                    (= (compiler-backend-string-count loop "    movq (%") 2)
+                    (= (compiler-backend-string-count loop "    vmovdqu (") 1)
+                    (= (compiler-backend-string-count loop "    vpaddq (") 1)
+                    (=
+                      (compiler-backend-string-count loop "    vmovdqu %ymm6")
+                      1)
+                    (compiler-backend-string-contains? body "foreach_avx2_body")
+                    (compiler-backend-string-contains? body "foreach_tail")
+                    true)
+                  (not
+                    (compiler-backend-string-contains?
+                      loop
+                      "vector/mask IR emission is not implemented"))))]
+            [(ErrCompilerBackend _) false])])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -7546,6 +7599,7 @@
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
+    (compiler-backend-avx2-data-pointer-cse-ok?)
     (compiler-backend-simd-indexed-address-ok?)
     (compiler-backend-simd-indexed-address-users-ok?)
     (compiler-backend-stack-splat-broadcast-ok?)
@@ -7841,6 +7895,7 @@
       plan
       "tl_thread_entry_ptr")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memcpy")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_memchr")
     (compiler-backend-runtime-helper-owner-core-ok? "__chkstk")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_setup_argv")
     (compiler-backend-runtime-helper-owner-core-ok? "_tl_start")))
@@ -8177,6 +8232,26 @@
       (compiler-backend-runtime-atomic-functions (BackendTargetWindows))
       "")))
 
+(define (compiler-backend-runtime-memchr-functions-ok?) : bool
+  (let
+    [linux : String
+      (compiler-backend-runtime-memchr-functions (BackendTargetLinux))]
+    [windows : String
+      (compiler-backend-runtime-memchr-functions (BackendTargetWindows))]
+    (and
+      (backend-and4
+        (compiler-backend-string-contains? linux "    .globl tl_memchr\n")
+        (compiler-backend-string-contains? linux "tl_memchr:\n")
+        (compiler-backend-string-contains? linux "    cmpb %dl, (%rdi,%rax)\n")
+        (compiler-backend-string-contains? linux "    movq $-1, %rax\n"))
+      (backend-and4
+        (compiler-backend-string-contains? windows "    .globl tl_memchr\n")
+        (compiler-backend-string-contains? windows "tl_memchr:\n")
+        (compiler-backend-string-contains?
+          windows
+          "    cmpb %r8b, (%rcx,%rax)\n")
+        (compiler-backend-string-contains? windows "    movq $-1, %rax\n")))))
+
 (define (compiler-backend-runtime-global-symbol-ok?
   [asm : String]
   [name : String]) : bool
@@ -8186,14 +8261,15 @@
   (and
     (backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_memcpy")
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_memchr")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_current")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_set")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_poison_enable")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
-      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total"))
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy"))
     (backend-and8
+      (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_live")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_peak")
       (compiler-backend-runtime-global-symbol-ok?
@@ -8202,12 +8278,11 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_alloc")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset")
-      true
       true)))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 15)
+    (= (compiler-backend-string-count asm "    .globl ") 16)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -8216,7 +8291,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 18)
+    (= (compiler-backend-string-count asm "    .globl ") 19)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -9735,8 +9810,8 @@
         [(ErrCompilerObjectElf _) false])]
     [(BackendTargetWindows)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff _) true]
-        [(ErrCompilerObjectCoff _) false])]))
+        [(ResultCompilerObjectCoff.Ok _) true]
+        [(ResultCompilerObjectCoff.Err _) false])]))
 
 (define (compiler-backend-f64-neg-sign-mask-object-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -12166,6 +12241,7 @@
         (compiler-backend-unused-str-view-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
         (compiler-backend-runtime-atomic-functions-removed-ok?)
+        (compiler-backend-runtime-memchr-functions-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)
         (compiler-backend-runtime-tls-wrapper-asm-ok?)
         (compiler-backend-runtime-global-inventory-ok?)

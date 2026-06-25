@@ -217,6 +217,14 @@
   (OkCompilerBackendAddressBase CompilerBackendAddressBase)
   (ErrCompilerBackendAddressBase CompilerDiagnostic))
 
+(defstruct CompilerBackendSimdIndexedAddress
+  (asm String)
+  (addr String))
+
+(defenum ResultCompilerBackendSimdIndexedAddress
+  (OkCompilerBackendSimdIndexedAddress CompilerBackendSimdIndexedAddress)
+  (ErrCompilerBackendSimdIndexedAddress CompilerDiagnostic))
+
 (defstruct CompilerBackendU64DivPow2
   (quot u64)
   (rem u64)
@@ -1163,26 +1171,152 @@
         [(AstTyI32) "vpmaxsd"]
         [_ ""])]))
 
-(define (compiler-backend-avx2-indexed-addr [elem-ty : AstType]) : String
-  (str-cat "(%rax,%rcx," (int->string (compiler-backend-type-size elem-ty)) ")"))
+(define (compiler-backend-simd-rax-offset-address [disp : i64]) : String
+  (if (= disp 0)
+    "(%rax)"
+    (str-cat (int->string disp) "(%rax)")))
 
-(define (compiler-backend-emit-avx2-base-index
+(define (compiler-backend-simd-index-register-address
+  [index-reg : String]
+  [elem-ty : AstType]) : String
+  (str-cat
+    "(%rax,"
+    index-reg
+    ","
+    (int->string (compiler-backend-type-size elem-ty))
+    ")"))
+
+(define (compiler-backend-simd-base-home
   [assignments : CompilerRegAssignmentList]
-  [base : CompilerIrValue]
-  [index : CompilerIrValue]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
-    [(OkCompilerBackend base-asm)
+  [base : CompilerIrValue]) : String
+  (match base
+    [(IrValueVar id)
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister home) home]
+              [_ ""])]
+          [(CompilerRegNoLocation) ""]))]
+    [_ ""]))
+
+(define (compiler-backend-simd-index-home
+  [assignments : CompilerRegAssignmentList]
+  [index : CompilerIrValue]) : String
+  (match index
+    [(IrValueVar id)
+      (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+        ""
+        (match (compiler-reg-assignment-lookup assignments id)
+          [(CompilerRegSomeLocation location)
+            (match location
+              [(CompilerRegRegister home)
+                (if (string-eq home "%rsp")
+                  ""
+                  home)]
+              [_ ""])]
+          [(CompilerRegNoLocation) ""]))]
+    [_ ""]))
+
+(define (compiler-backend-simd-index-scratch
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]) : String
+  (if (string-eq (compiler-backend-simd-base-home assignments base) "%rcx")
+    "%r11"
+    "%rcx"))
+
+(define (compiler-backend-emit-simd-base-data-pointer
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]) : ResultCompilerBackend
+  (let
+    [home : String (compiler-backend-simd-base-home assignments base)]
+    (if (string-eq home "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
-        index
-        "%rcx")
-        [(OkCompilerBackend index-asm)
+        base
+        "%rax")
+        [(OkCompilerBackend base-asm)
           (OkCompilerBackend
-            (string-append
+            (string-append base-asm "    movq 0(%rax), %rax\n"))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (OkCompilerBackend (str-cat "    movq 0(" home "), %rax\n")))))
+
+(define (compiler-backend-emit-simd-indexed-address
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
+  (match (compiler-backend-value-as-i64 index)
+    [(CompilerBackendSomeI64 n)
+      (match (compiler-backend-emit-simd-base-data-pointer assignments base)
+        [(OkCompilerBackend base-asm)
+          (OkCompilerBackendSimdIndexedAddress
+            (CompilerBackendSimdIndexedAddress
               base-asm
-              (string-append "    movq 0(%rax), %rax\n" index-asm)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+              (compiler-backend-simd-rax-offset-address
+                (* n (compiler-backend-type-size elem-ty)))))]
+        [(ErrCompilerBackend message)
+          (ErrCompilerBackendSimdIndexedAddress message)])]
+    [(CompilerBackendNoI64)
+      (let
+        [index-home : String
+          (compiler-backend-simd-index-home assignments index)]
+        (if (and
+          (not (string-eq index-home ""))
+          (not (string-eq index-home "%rax")))
+          (match (compiler-backend-emit-simd-base-data-pointer assignments base)
+            [(OkCompilerBackend base-asm)
+              (OkCompilerBackendSimdIndexedAddress
+                (CompilerBackendSimdIndexedAddress
+                  base-asm
+                  (compiler-backend-simd-index-register-address
+                    index-home
+                    elem-ty)))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackendSimdIndexedAddress message)])
+          (if (string-eq index-home "%rax")
+            (let
+              [scratch : String
+                (compiler-backend-simd-index-scratch assignments base)]
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                index
+                scratch)
+                [(OkCompilerBackend index-asm)
+                  (match (compiler-backend-emit-simd-base-data-pointer
+                    assignments
+                    base)
+                    [(OkCompilerBackend base-asm)
+                      (OkCompilerBackendSimdIndexedAddress
+                        (CompilerBackendSimdIndexedAddress
+                          (string-append index-asm base-asm)
+                          (compiler-backend-simd-index-register-address
+                            scratch
+                            elem-ty)))]
+                    [(ErrCompilerBackend message)
+                      (ErrCompilerBackendSimdIndexedAddress message)])]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackendSimdIndexedAddress message)]))
+            (match (compiler-backend-emit-simd-base-data-pointer
+              assignments
+              base)
+              [(OkCompilerBackend base-asm)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  index
+                  "%rcx")
+                  [(OkCompilerBackend index-asm)
+                    (OkCompilerBackendSimdIndexedAddress
+                      (CompilerBackendSimdIndexedAddress
+                        (string-append base-asm index-asm)
+                        (compiler-backend-simd-index-register-address
+                          "%rcx"
+                          elem-ty)))]
+                  [(ErrCompilerBackend message)
+                    (ErrCompilerBackendSimdIndexedAddress message)])]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackendSimdIndexedAddress message)]))))]))
 
 (define (compiler-backend-emit-avx2-vector-load
   [assignments : CompilerRegAssignmentList]
@@ -1195,20 +1329,27 @@
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "load dst" "ymm")
       [(OkBackendReg dst-reg)
-        (match (compiler-backend-emit-avx2-base-index assignments base index)
-          [(OkCompilerBackend addr-asm)
-            (OkCompilerBackend
-              (string-append
-                addr-asm
+        (match (compiler-backend-emit-simd-indexed-address
+          assignments
+          base
+          index
+          elem-ty)
+          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+            (let
+              [addr-asm : String (struct-get addr-plan asm)]
+              [addr : String (struct-get addr-plan addr)]
+              (OkCompilerBackend
                 (string-append
-                  (str-cat
-                    "    "
-                    (compiler-backend-avx2-vector-move elem-ty)
-                    " "
-                    (compiler-backend-avx2-indexed-addr elem-ty)
-                    ", ")
-                  (str-cat dst-reg "\n"))))]
-          [(ErrCompilerBackend message)
+                  addr-asm
+                  (string-append
+                    (str-cat
+                      "    "
+                      (compiler-backend-avx2-vector-move elem-ty)
+                      " "
+                      addr
+                      ", ")
+                    (str-cat dst-reg "\n")))))]
+          [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(ErrBackendReg message)
@@ -1515,25 +1656,29 @@
               "binop dst"
               "ymm")
               [(OkBackendReg dst-reg)
-                (match (compiler-backend-emit-avx2-base-index
+                (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
-                  index)
-                  [(OkCompilerBackend addr-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        addr-asm
-                        (str-cat
-                          "    "
-                          mnemonic
-                          " "
-                          (compiler-backend-avx2-indexed-addr elem-ty)
-                          ", "
-                          reg
-                          ", "
-                          dst-reg
-                          "\n")))]
-                  [(ErrCompilerBackend message)
+                  index
+                  elem-ty)
+                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                    (let
+                      [addr-asm : String (struct-get addr-plan asm)]
+                      [addr : String (struct-get addr-plan addr)]
+                      (OkCompilerBackend
+                        (string-append
+                          addr-asm
+                          (str-cat
+                            "    "
+                            mnemonic
+                            " "
+                            addr
+                            ", "
+                            reg
+                            ", "
+                            dst-reg
+                            "\n"))))]
+                  [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
                         message
@@ -1560,20 +1705,27 @@
       value
       "store value")
       [(OkBackendReg value-reg)
-        (match (compiler-backend-emit-avx2-base-index assignments base index)
-          [(OkCompilerBackend addr-asm)
-            (OkCompilerBackend
-              (string-append
-                addr-asm
+        (match (compiler-backend-emit-simd-indexed-address
+          assignments
+          base
+          index
+          elem-ty)
+          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+            (let
+              [addr-asm : String (struct-get addr-plan asm)]
+              [addr : String (struct-get addr-plan addr)]
+              (OkCompilerBackend
                 (string-append
-                  (str-cat
-                    "    "
-                    (compiler-backend-avx2-vector-move elem-ty)
-                    " "
-                    value-reg
-                    ", ")
-                  (str-cat (compiler-backend-avx2-indexed-addr elem-ty) "\n"))))]
-          [(ErrCompilerBackend message)
+                  addr-asm
+                  (string-append
+                    (str-cat
+                      "    "
+                      (compiler-backend-avx2-vector-move elem-ty)
+                      " "
+                      value-reg
+                      ", ")
+                    (str-cat addr "\n")))))]
+          [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(ErrBackendReg message)
@@ -2029,20 +2181,27 @@
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "load dst" "zmm")
       [(OkBackendReg dst-reg)
-        (match (compiler-backend-emit-avx2-base-index assignments base index)
-          [(OkCompilerBackend addr-asm)
-            (OkCompilerBackend
-              (string-append
-                addr-asm
+        (match (compiler-backend-emit-simd-indexed-address
+          assignments
+          base
+          index
+          elem-ty)
+          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+            (let
+              [addr-asm : String (struct-get addr-plan asm)]
+              [addr : String (struct-get addr-plan addr)]
+              (OkCompilerBackend
                 (string-append
-                  (str-cat
-                    "    "
-                    (compiler-backend-avx512-vector-move elem-ty)
-                    " "
-                    (compiler-backend-avx2-indexed-addr elem-ty)
-                    ", ")
-                  (str-cat dst-reg "\n"))))]
-          [(ErrCompilerBackend message)
+                  addr-asm
+                  (string-append
+                    (str-cat
+                      "    "
+                      (compiler-backend-avx512-vector-move elem-ty)
+                      " "
+                      addr
+                      ", ")
+                    (str-cat dst-reg "\n")))))]
+          [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(ErrBackendReg message)
@@ -2170,25 +2329,29 @@
               "binop dst"
               "zmm")
               [(OkBackendReg dst-reg)
-                (match (compiler-backend-emit-avx2-base-index
+                (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
-                  index)
-                  [(OkCompilerBackend addr-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        addr-asm
-                        (str-cat
-                          "    "
-                          mnemonic
-                          " "
-                          (compiler-backend-avx2-indexed-addr elem-ty)
-                          ", "
-                          reg
-                          ", "
-                          dst-reg
-                          "\n")))]
-                  [(ErrCompilerBackend message)
+                  index
+                  elem-ty)
+                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                    (let
+                      [addr-asm : String (struct-get addr-plan asm)]
+                      [addr : String (struct-get addr-plan addr)]
+                      (OkCompilerBackend
+                        (string-append
+                          addr-asm
+                          (str-cat
+                            "    "
+                            mnemonic
+                            " "
+                            addr
+                            ", "
+                            reg
+                            ", "
+                            dst-reg
+                            "\n"))))]
+                  [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
                         message
@@ -2271,20 +2434,27 @@
       value
       "store value")
       [(OkBackendReg value-reg)
-        (match (compiler-backend-emit-avx2-base-index assignments base index)
-          [(OkCompilerBackend addr-asm)
-            (OkCompilerBackend
-              (string-append
-                addr-asm
+        (match (compiler-backend-emit-simd-indexed-address
+          assignments
+          base
+          index
+          elem-ty)
+          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+            (let
+              [addr-asm : String (struct-get addr-plan asm)]
+              [addr : String (struct-get addr-plan addr)]
+              (OkCompilerBackend
                 (string-append
-                  (str-cat
-                    "    "
-                    (compiler-backend-avx512-vector-move elem-ty)
-                    " "
-                    value-reg
-                    ", ")
-                  (str-cat (compiler-backend-avx2-indexed-addr elem-ty) "\n"))))]
-          [(ErrCompilerBackend message)
+                  addr-asm
+                  (string-append
+                    (str-cat
+                      "    "
+                      (compiler-backend-avx512-vector-move elem-ty)
+                      " "
+                      value-reg
+                      ", ")
+                    (str-cat addr "\n")))))]
+          [(ErrCompilerBackendSimdIndexedAddress message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(ErrBackendReg message)
@@ -2719,25 +2889,29 @@
               "load dst"
               "zmm")
               [(OkBackendReg dst-reg)
-                (match (compiler-backend-emit-avx2-base-index
+                (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
-                  index)
-                  [(OkCompilerBackend addr-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        addr-asm
-                        (str-cat
-                          "    "
-                          (compiler-backend-avx512-vector-move elem-ty)
-                          " "
-                          (compiler-backend-avx2-indexed-addr elem-ty)
-                          ", "
-                          dst-reg
-                          "{"
-                          mask-reg
-                          "}{z}\n")))]
-                  [(ErrCompilerBackend message)
+                  index
+                  elem-ty)
+                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                    (let
+                      [addr-asm : String (struct-get addr-plan asm)]
+                      [addr : String (struct-get addr-plan addr)]
+                      (OkCompilerBackend
+                        (string-append
+                          addr-asm
+                          (str-cat
+                            "    "
+                            (compiler-backend-avx512-vector-move elem-ty)
+                            " "
+                            addr
+                            ", "
+                            dst-reg
+                            "{"
+                            mask-reg
+                            "}{z}\n"))))]
+                  [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
                         message
@@ -2781,25 +2955,29 @@
               mask
               "store mask")
               [(OkBackendReg mask-reg)
-                (match (compiler-backend-emit-avx2-base-index
+                (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
-                  index)
-                  [(OkCompilerBackend addr-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        addr-asm
-                        (str-cat
-                          "    "
-                          (compiler-backend-avx512-vector-move elem-ty)
-                          " "
-                          value-reg
-                          ", "
-                          (compiler-backend-avx2-indexed-addr elem-ty)
-                          "{"
-                          mask-reg
-                          "}\n")))]
-                  [(ErrCompilerBackend message)
+                  index
+                  elem-ty)
+                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                    (let
+                      [addr-asm : String (struct-get addr-plan asm)]
+                      [addr : String (struct-get addr-plan addr)]
+                      (OkCompilerBackend
+                        (string-append
+                          addr-asm
+                          (str-cat
+                            "    "
+                            (compiler-backend-avx512-vector-move elem-ty)
+                            " "
+                            value-reg
+                            ", "
+                            addr
+                            "{"
+                            mask-reg
+                            "}\n"))))]
+                  [(ErrCompilerBackendSimdIndexedAddress message)
                     (ErrCompilerBackend
                       (compiler-backend-apply-instr-diagnostic
                         message
@@ -2829,25 +3007,29 @@
           mask
           "mask load active mask")
           [(OkBackendReg mask-reg)
-            (match (compiler-backend-emit-avx2-base-index
+            (match (compiler-backend-emit-simd-indexed-address
               assignments
               base
-              index)
-              [(OkCompilerBackend addr-asm)
-                (OkCompilerBackend
-                  (string-append
-                    addr-asm
-                    (str-cat
-                      "    vmovdqu8 "
-                      (compiler-backend-avx2-indexed-addr (AstTyBool))
-                      ", %zmm15{"
-                      mask-reg
-                      "}{z}\n"
-                      "    vpxord %zmm14, %zmm14, %zmm14\n"
-                      "    vpcmpub $4, %zmm14, %zmm15, "
-                      dst-reg
-                      "\n")))]
-              [(ErrCompilerBackend message)
+              index
+              (AstTyBool))
+              [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                (let
+                  [addr-asm : String (struct-get addr-plan asm)]
+                  [addr : String (struct-get addr-plan addr)]
+                  (OkCompilerBackend
+                    (string-append
+                      addr-asm
+                      (str-cat
+                        "    vmovdqu8 "
+                        addr
+                        ", %zmm15{"
+                        mask-reg
+                        "}{z}\n"
+                        "    vpxord %zmm14, %zmm14, %zmm14\n"
+                        "    vpcmpub $4, %zmm14, %zmm15, "
+                        dst-reg
+                        "\n"))))]
+              [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]
           [(ErrBackendReg message)
@@ -2877,25 +3059,29 @@
           mask
           "mask store active mask")
           [(OkBackendReg mask-reg)
-            (match (compiler-backend-emit-avx2-base-index
+            (match (compiler-backend-emit-simd-indexed-address
               assignments
               base
-              index)
-              [(OkCompilerBackend addr-asm)
-                (OkCompilerBackend
-                  (string-append
-                    addr-asm
-                    (str-cat
-                      "    vpxord %zmm15, %zmm15, %zmm15\n"
-                      "    movl $1, %edx\n    vmovd %edx, %xmm14\n"
-                      "    vpbroadcastb %xmm14, %zmm14\n    vmovdqu8 %zmm14, %zmm15{"
-                      value-reg
-                      "}\n    vmovdqu8 %zmm15, "
-                      (compiler-backend-avx2-indexed-addr (AstTyBool))
-                      "{"
-                      mask-reg
-                      "}\n")))]
-              [(ErrCompilerBackend message)
+              index
+              (AstTyBool))
+              [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                (let
+                  [addr-asm : String (struct-get addr-plan asm)]
+                  [addr : String (struct-get addr-plan addr)]
+                  (OkCompilerBackend
+                    (string-append
+                      addr-asm
+                      (str-cat
+                        "    vpxord %zmm15, %zmm15, %zmm15\n"
+                        "    movl $1, %edx\n    vmovd %edx, %xmm14\n"
+                        "    vpbroadcastb %xmm14, %zmm14\n    vmovdqu8 %zmm14, %zmm15{"
+                        value-reg
+                        "}\n    vmovdqu8 %zmm15, "
+                        addr
+                        "{"
+                        mask-reg
+                        "}\n"))))]
+              [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]
           [(ErrBackendReg message)

@@ -4,7 +4,8 @@
   (path String)
   (text String)
   (diagnostic-uri String)
-  (decls LspDeclList))
+  (decls LspDeclList)
+  (decls-valid bool))
 
 (defstruct LspDocuments
   (slots (Array LspDocument))

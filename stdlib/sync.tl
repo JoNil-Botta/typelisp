@@ -1,12 +1,12 @@
 ;# stdlib/sync.tl - Safe synchronization helpers over the raw thread substrate.
 ;#
 ;# Provides first concrete synchronization surfaces for native threads:
-;# `ChannelI64` for copyable scalar ownership transfer, `ChannelI64PairChannel`
-;# for a move-based two-field aggregate channel, `ChannelString` for atomic
-;# arena-owned text messages, and `MutexI64` for shared scalar mutation through a
-;# lexical cleanup guard. Handles are small copyable values; shared state lives
-;# in runtime-owned OS memory and is serialized with semaphore-backed
-;# synchronization.
+;# `(channel i64)` for copyable scalar ownership transfer,
+;# `ChannelI64PairChannel` for a move-based two-field aggregate channel,
+;# `ChannelString` for atomic arena-owned text messages, and `MutexI64` for
+;# shared scalar mutation through a lexical cleanup guard. Handles are small
+;# copyable values; shared state lives in runtime-owned OS memory and is
+;# serialized with semaphore-backed synchronization.
 ;#
 ;# `ChannelString` accepts heap-backed messages only when their storage is owned
 ;# by a spanning atomic arena. `MutexI64` makes the protected scalar race-free
@@ -14,21 +14,135 @@
 ;# alone does not protect ordinary mutable storage.
 ;#
 ;# Usage: `(import stdlib.sync)`
+;# Generated `max-capacity` and `raw-field-count` are zero-argument accessors.
 ;#
 ;# ```typelisp
 ;# (import stdlib.sync)
+;# (import (sync.channel i64) as channel_i64)
 ;#
 ;# (define ok : bool
-;#   (match (sync.channel-i64-create 2)
-;#     [(sync.ChannelI64CreateErr _) false]
-;#     [(sync.ChannelI64CreateOk ch)
+;#   (match (channel_i64.create 2)
+;#     [(channel_i64.CreateErr _) false]
+;#     [(channel_i64.CreateOk ch)
 ;#       (begin
-;#         (sync.channel-i64-close ch)
+;#         (channel_i64.close ch)
 ;#         true)]))
 ;# ```
 (module stdlib.sync)
 
 (import stdlib.thread)
+
+;: Emit a generated bounded channel module for copyable scalar messages.
+;:
+;: The first generated surface supports `i64` and uses the same seven-field
+;: runtime handle, allocation, semaphore, and ring-buffer protocol as the legacy
+;: flat `ChannelI64` substrate.
+(defmacro (channel [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.sync.channel.generated." (type-key T)))]
+    (match (type-key T)
+      ["i64"
+        `(begin
+          (module ,module-name)
+          (import stdlib.sync as sync)
+          (defstruct Channel
+            (slots-addr i64)
+            (state-addr i64)
+            (capacity i64)
+            (slots-bytes i64)
+            (mutex-handle i64)
+            (items-handle i64)
+            (spaces-handle i64))
+          (defenum CreateResult
+            (CreateOk Channel)
+            (CreateErr i64))
+          (defenum SendResult
+            (SendOk)
+            (SendErr i64))
+          (defenum RecvResult
+            (RecvOk i64)
+            (RecvErr i64))
+          (define (max-capacity) : i64
+            1048576)
+          (define (raw-field-count) : i64
+            7)
+          (define (empty-legacy) : sync.ChannelI64
+            (sync.ChannelI64 0 0 0 0 0 0 0))
+          (define (to-legacy [channel : Channel]) : sync.ChannelI64
+            (sync.ChannelI64
+              (struct-get channel slots-addr)
+              (struct-get channel state-addr)
+              (struct-get channel capacity)
+              (struct-get channel slots-bytes)
+              (struct-get channel mutex-handle)
+              (struct-get channel items-handle)
+              (struct-get channel spaces-handle)))
+          (define (create-capacity-ok? [capacity : i64]) : bool
+            (sync.channel-i64-create-capacity-ok? capacity))
+          (define (create [capacity : i64]) : CreateResult
+            (if (not (create-capacity-ok? capacity))
+              (CreateErr 1)
+              (let
+                [raw : sync.ChannelI64
+                  (sync.channel-i64-create-capacity-or capacity (empty-legacy))]
+                (if (= (struct-get raw spaces-handle) 0)
+                  (CreateErr 1)
+                  (CreateOk
+                    (Channel
+                      (struct-get raw slots-addr)
+                      (struct-get raw state-addr)
+                      (struct-get raw capacity)
+                      (struct-get raw slots-bytes)
+                      (struct-get raw mutex-handle)
+                      (struct-get raw items-handle)
+                      (struct-get raw spaces-handle)))))))
+          (define (create-capacity-or [capacity : i64] [fallback : Channel]) : Channel
+            (match (create capacity)
+              [(CreateOk channel) channel]
+              [(CreateErr _) fallback]))
+          (define (send [channel : Channel] [value : i64]) : SendResult
+            (match (sync.channel-i64-send (to-legacy channel) value)
+              [(sync.ChannelI64SendOk) (SendOk)]
+              [(sync.ChannelI64SendErr code) (SendErr code)]))
+          (define (send-value-ok? [channel : Channel] [value : i64]) : bool
+            (match (send channel value)
+              [(SendOk) true]
+              [(SendErr _) false]))
+          (define (recv [channel : Channel]) : RecvResult
+            (match (sync.channel-i64-recv (to-legacy channel))
+              [(sync.ChannelI64RecvOk value) (RecvOk value)]
+              [(sync.ChannelI64RecvErr code) (RecvErr code)]))
+          (define (recv-or [channel : Channel] [fallback : i64]) : i64
+            (match (recv channel)
+              [(RecvOk value) value]
+              [(RecvErr _) fallback]))
+          (define (close [channel : Channel]) : bool
+            (sync.channel-i64-close (to-legacy channel)))
+          (define (store-raw!
+            [channel : Channel]
+            [dst : (Array i64)]
+            [offset : i64]) : unit
+            (begin
+              (array-set! dst offset (struct-get channel slots-addr))
+              (array-set! dst (+ offset 1) (struct-get channel state-addr))
+              (array-set! dst (+ offset 2) (struct-get channel capacity))
+              (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+              (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+              (array-set! dst (+ offset 5) (struct-get channel items-handle))
+              (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+          (define (load-raw [src : (Array i64)] [offset : i64]) : Channel
+            (Channel
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2))
+              (array-ref src (+ offset 3))
+              (array-ref src (+ offset 4))
+              (array-ref src (+ offset 5))
+              (array-ref src (+ offset 6)))))]
+      [_
+        `(begin
+          (module ,module-name))])))
 
 ;: Maximum supported channel capacity for this first concrete channel surface.
 (define channel-i64-max-capacity : i64

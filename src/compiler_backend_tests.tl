@@ -6260,28 +6260,28 @@
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 0)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "(%rax)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 4)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "32(%rax)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 1)
       (AstTyI32)
-      "    movq 0(%rdi), %rax\n"
+      "    movq %rdi, %rax\n"
       "(%rax,%r12,4)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %rcx\n    movq 0(%rdi), %rax\n"
+      "    movq %rax, %rcx\n    movq %rdi, %rax\n"
       "(%rax,%rcx,8)")
     (compiler-backend-simd-indexed-address-with-base-emits?
       (IrValueVar 6)
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %r11\n    movq 0(%rcx), %rax\n"
+      "    movq %rax, %r11\n    movq %rcx, %rax\n"
       "(%rax,%r11,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
@@ -6294,7 +6294,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq asm "    movq 0(%rdi), %rax\n    vmovdqu 32(%rax), %ymm6\n")]
+      (string-eq asm "    movq %rdi, %rax\n    vmovdqu 32(%rax), %ymm6\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
@@ -6307,9 +6307,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq
-        asm
-        "    movq 0(%rdi), %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
+      (string-eq asm "    movq %rdi, %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -6325,7 +6323,7 @@
     [(OkCompilerBackend asm)
       (string-eq
         asm
-        "    movq 0(%rdi), %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
+        "    movq %rdi, %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
@@ -7528,6 +7526,61 @@
         8
         "backend: unsupported AVX-512 vector binary op"))))
 
+(define (compiler-backend-avx2-data-pointer-cse-source) : String
+  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref a i)))))")
+
+(define (compiler-backend-avx2-loop-body [body : String]) : String
+  (let
+    [start : i64 (compiler-backend-string-find-from body "foreach_avx2_body" 0)]
+    (if (< start 0)
+      ""
+      (let
+        [tail : i64
+          (compiler-backend-string-find-from body "foreach_tail" start)]
+        (if (< tail 0)
+          (substring body start (- (string-length body) start))
+          (substring body start (- tail start)))))))
+
+(define (compiler-backend-avx2-data-pointer-cse-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx2-data-pointer-cse-source)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (optimize-program-with-spans program spans)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (match (compiler-backend-emit-program-target-with-mode
+            optimized
+            (BackendTargetLinux)
+            (BackendModeAvx2)
+            optimized-spans
+            true)
+            [(OkCompilerBackend asm)
+              (let
+                [body : String
+                  (compiler-backend-asm-function-body asm "_tl_fill")]
+                [loop : String (compiler-backend-avx2-loop-body body)]
+                (and
+                  (backend-and8
+                    (= (compiler-backend-string-count loop "    movq 0(") 0)
+                    (= (compiler-backend-string-count loop "    movq (%") 2)
+                    (= (compiler-backend-string-count loop "    vmovdqu (") 1)
+                    (= (compiler-backend-string-count loop "    vpaddq (") 1)
+                    (=
+                      (compiler-backend-string-count loop "    vmovdqu %ymm6")
+                      1)
+                    (compiler-backend-string-contains? body "foreach_avx2_body")
+                    (compiler-backend-string-contains? body "foreach_tail")
+                    true)
+                  (not
+                    (compiler-backend-string-contains?
+                      loop
+                      "vector/mask IR emission is not implemented"))))]
+            [(ErrCompilerBackend _) false])])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -7546,6 +7599,7 @@
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
+    (compiler-backend-avx2-data-pointer-cse-ok?)
     (compiler-backend-simd-indexed-address-ok?)
     (compiler-backend-simd-indexed-address-users-ok?)
     (compiler-backend-stack-splat-broadcast-ok?)

@@ -38223,6 +38223,17 @@
             (IrInstrLoad 3 (IrValueVar 4) (AstTyI64))
             (IrInstrNil)))))))
 
+(define (opt-load-cse-vector-data-pointer-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (IrInstrLoad 2 (IrValueVar 0) (AstTyU64))
+    (compiler-ir-instr-cons
+      (IrInstrVectorLoad 4 (IrValueVar 2) (IrValueVar 1) 4 (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 0) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrVectorLoad 5 (IrValueVar 3) (IrValueVar 1) 4 (AstTyI64))
+          (IrInstrNil))))))
+
 (define (opt-load-cse-barrier-blocked? [barrier : CompilerIrInstr]) : bool
   (let
     [optimized : CompilerIrInstrList
@@ -38281,6 +38292,8 @@
       (opt-load-cse-run (opt-load-cse-type-mismatch-instrs))]
     [different-address : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-different-address-instrs))]
+    [vector-data-pointer : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-vector-data-pointer-instrs))]
     [pipeline : CompilerIrBlock
       (optimize-block
         (compiler-ir-block "entry" (opt-load-cse-positive-instrs)))]
@@ -38304,6 +38317,8 @@
       [(not (= (opt-count-mov-dst-instrs result-redef 3) 0)) 14]
       [(not (= (opt-count-load-instrs type-mismatch) 2)) 15]
       [(not (= (opt-count-load-instrs different-address) 2)) 16]
-      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 17]
-      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 18]
+      [(not (= (opt-count-load-instrs vector-data-pointer) 1)) 17]
+      [(not (= (opt-count-mov-dst-instrs vector-data-pointer 3) 1)) 18]
+      [(not (= (opt-count-load-instrs pipeline-instrs) 1)) 19]
+      [(not (= (opt-count-mov-dst-instrs pipeline-instrs 3) 1)) 20]
       [else 42])))

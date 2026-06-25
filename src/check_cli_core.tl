@@ -8,6 +8,7 @@
 (import "compiler_check_core.tl")
 (import "doc_test.tl")
 (import "package_source_core.tl")
+(import "test_cli_core.tl")
 (import "../stdlib/string.tl")
 
 (defenum SelfhostCheckConfig
@@ -130,13 +131,22 @@
   (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(OkCompilerCheck _)
       (let
-        [doctest-status : i64
-          (selfhost-check-file-doctests input-path stdlib-roots)]
-        (if (= doctest-status 0)
-          (begin
-            (print-string "Type checking passed!\n")
-            0)
-          doctest-status))]
+        [inline-test-status : i64
+          (tltest-inline-typecheck-file-with-cfg
+            input-path
+            stdlib-roots
+            (compiler-check-language-cfgs)
+            "typecheck-prefix-inline-check")]
+        (if (= inline-test-status 0)
+          (let
+            [doctest-status : i64
+              (selfhost-check-file-doctests input-path stdlib-roots)]
+            (if (= doctest-status 0)
+              (begin
+                (print-string "Type checking passed!\n")
+                0)
+              doctest-status))
+          inline-test-status))]
     [(ErrCompilerCheck diag)
       (begin
         (print-error (compiler-diagnostic-render diag))
@@ -157,7 +167,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [stdlib-roots : StringVec]) : i64
-  (match (package-source-resolve-manifest "check" manifest-path has-manifest)
+  (match (package-source-discover-for "check" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
         (print-error message)
@@ -166,27 +176,42 @@
       (let
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [manifest-dir : String (struct-get source-set manifest-dir)]
+        [name : String (struct-get manifest name)]
         [entry-path : String
           (selfhost-check-package-entry-path manifest-dir manifest)]
+        [emit-entry : bool
+          (selfhost-check-package-kind-entry? (struct-get manifest kind))]
         (match (compiler-check-package-entry-file-with-roots
           entry-path
           stdlib-roots
           manifest-dir
           (struct-get manifest deps)
-          (selfhost-check-package-kind-entry? (struct-get manifest kind)))
+          emit-entry)
           [(OkCompilerCheckWithPaths _ paths)
             (let
-              [doctest-status : i64
-                (selfhost-check-package-doctests
-                  paths
+              [inline-test-status : i64
+                (tltest-inline-typecheck-package-sources-with-cfg
+                  (struct-get source-set sources)
                   stdlib-roots
                   manifest-dir
-                  (struct-get manifest deps))]
-              (if (= doctest-status 0)
-                (begin
-                  (print-string "Type checking passed!\n")
-                  0)
-                doctest-status))]
+                  name
+                  (struct-get manifest deps)
+                  (compiler-check-language-cfgs)
+                  "typecheck-prefix-inline-check-package")]
+              (if (= inline-test-status 0)
+                (let
+                  [doctest-status : i64
+                    (selfhost-check-package-doctests
+                      paths
+                      stdlib-roots
+                      manifest-dir
+                      (struct-get manifest deps))]
+                  (if (= doctest-status 0)
+                    (begin
+                      (print-string "Type checking passed!\n")
+                      0)
+                    doctest-status))
+                inline-test-status))]
           [(ErrCompilerCheckWithPaths diag)
             (begin
               (print-error (compiler-diagnostic-render diag))

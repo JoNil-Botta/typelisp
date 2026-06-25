@@ -6688,6 +6688,81 @@
       (tc-stdlib-string-helper-symbol-wrapper? ctx base))
     (tc-stdlib-string-qualified-helper-id? lookup-id base)))
 
+(define tc-source-dotted-alias-key-cache-capacity : i64
+  8192)
+(define tc-source-dotted-alias-key-cache-module-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-source-dotted-alias-key-cache-name-keys : (Array i64)
+  (make-array i64 8192))
+(define tc-source-dotted-alias-key-cache-values : (Array i64)
+  (make-array i64 8192))
+(define tc-source-dotted-alias-key-cache-generation : i64
+  -1)
+(define tc-source-dotted-alias-key-cache-ready : bool
+  false)
+
+(define (tc-source-dotted-alias-key-cache-reset!) : unit
+  (set! tc-source-dotted-alias-key-cache-ready false))
+
+(define (tc-source-dotted-alias-key-cache-ensure!) : unit
+  (if (if tc-source-dotted-alias-key-cache-ready
+    (= tc-source-dotted-alias-key-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-source-dotted-alias-key-cache-capacity)
+          (begin
+            (array-set! tc-source-dotted-alias-key-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! tc-source-dotted-alias-key-cache-generation (intern-generation))
+        (set! tc-source-dotted-alias-key-cache-ready true)))))
+
+(define (tc-source-dotted-alias-key-cache-bucket
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) (* name-id 40503))
+    (- tc-source-dotted-alias-key-cache-capacity 1)))
+
+;; Returns the cached lookup-name id, -1 for no alias import, or -2 when absent.
+(define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
+  (begin
+    (tc-source-dotted-alias-key-cache-ensure!)
+    (let
+      [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref tc-source-dotted-alias-key-cache-module-keys cursor)
+          module-key)
+        (=
+          (array-ref tc-source-dotted-alias-key-cache-name-keys cursor)
+          name-key))
+        (array-ref tc-source-dotted-alias-key-cache-values cursor)
+        -2))))
+
+(define (tc-source-dotted-alias-key-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (begin
+    (tc-source-dotted-alias-key-cache-ensure!)
+    (let
+      [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
+      (begin
+        (array-set!
+          tc-source-dotted-alias-key-cache-module-keys
+          cursor
+          (+ module-id 1))
+        (array-set!
+          tc-source-dotted-alias-key-cache-name-keys
+          cursor
+          (+ name-id 1))
+        (array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
+
 (define (tc-call-builtin-lookup-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -6718,27 +6793,47 @@
 (define (tc-source-dotted-alias-key
   [ctx : TcContext]
   [name : String]
+  [name-id : i64]
   [first-dot : i64]) : TcMaybeString
   (let
     [n : i64 (string-length name)]
     (if (or (<= first-dot 0) (>= first-dot (- n 1)))
       (TcNoString)
       (let
-        [alias : String (substring name 0 first-dot)]
-        [base-start : i64 (+ first-dot 1)]
-        [base : String (substring name base-start (- n base-start))]
-        (match ctx
-          [(TcContext program _ _ current-module _)
-            (match program
+        [current-module-id : i64 (intern (tc-context-module ctx))]
+        [cached : i64
+          (tc-source-dotted-alias-key-cache-get current-module-id name-id)]
+        (if (= cached -2)
+          (let
+            [alias : String (substring name 0 first-dot)]
+            [base-start : i64 (+ first-dot 1)]
+            [base : String (substring name base-start (- n base-start))]
+            (match (tc-context-program ctx)
               [(AstProgram decls-box)
                 (match (macro-import-alias-target-cached
                   (box-get decls-box)
-                  (intern current-module)
+                  current-module-id
                   alias)
                   [(TcSomeString target-module)
-                    (TcSomeString
-                      (compiler-symbol-module-key target-module base))]
-                  [(TcNoString) (TcNoString)])])])))))
+                    (let
+                      [lookup-name : String
+                        (compiler-symbol-module-key target-module base)]
+                      (begin
+                        (tc-source-dotted-alias-key-cache-put!
+                          current-module-id
+                          name-id
+                          (intern lookup-name))
+                        (TcSomeString lookup-name)))]
+                  [(TcNoString)
+                    (begin
+                      (tc-source-dotted-alias-key-cache-put!
+                        current-module-id
+                        name-id
+                        -1)
+                      (TcNoString))])]))
+          (if (< cached 0)
+            (TcNoString)
+            (TcSomeString (intern-str cached))))))))
 
 (define (tc-source-alias-display-key [ctx : TcContext] [name : String]) : TcMaybeString
   (let
@@ -6860,7 +6955,7 @@
     [first-dot : i64 (intern-first-dot name-id)]
     (if (< first-dot 0)
       (OkTcString name)
-      (match (tc-source-dotted-alias-key ctx name first-dot)
+      (match (tc-source-dotted-alias-key ctx name name-id first-dot)
         [(TcSomeString key) (OkTcString key)]
         [(TcNoString)
           (match (tc-source-dotted-full-path-key ctx name)
@@ -6928,7 +7023,7 @@
             (match (tc-comptime-helper-qualified-lookup-key env name)
               [(TcSomeString key) (OkTcString key)]
               [(TcNoString)
-                (match (tc-source-dotted-alias-key ctx name first-dot)
+                (match (tc-source-dotted-alias-key ctx name name-id first-dot)
                   [(TcSomeString key) (OkTcString key)]
                   [(TcNoString)
                     (match (tc-source-dotted-full-path-key ctx name)
@@ -11469,24 +11564,24 @@
                       (AstSomeModuleName target-module)
                       (AstSomeImportAlias alias)
                       _))
-                  (match (tc-bind-import-alias-module
-                    ctx
-                    all-decls
-                    cur-env
-                    target-module
-                    (compiler-symbols-import-alias-key
-                      (intern-str cur-module-id)
-                      alias)
-                    (intern-str cur-module-id)
-                    (string-eq alias ""))
-                    [(OkTcEnv next-env)
-                      (begin
-                        (set! cur-env next-env)
-                        (set! cur rest))]
-                    [(ErrTcEnv step-message)
-                      (begin
-                        (set! message step-message)
-                        (set! ok false))])]
+                  (let
+                    [importer-module : String (intern-str cur-module-id)]
+                    (match (tc-bind-import-alias-module
+                      ctx
+                      all-decls
+                      cur-env
+                      target-module
+                      (compiler-symbols-import-alias-key importer-module alias)
+                      importer-module
+                      (string-eq alias ""))
+                      [(OkTcEnv next-env)
+                        (begin
+                          (set! cur-env next-env)
+                          (set! cur rest))]
+                      [(ErrTcEnv step-message)
+                        (begin
+                          (set! message step-message)
+                          (set! ok false))]))]
                 [_ (set! cur rest)]))]))
       (if (string-eq message "")
         (OkTcEnv cur-env)
@@ -36898,6 +36993,7 @@
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
+    (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
 (define (macro-unqualified-import-cache-ensure!) : unit

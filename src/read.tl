@@ -34,6 +34,7 @@
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
 (import stdlib.io)
+(import stdlib.string)
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------
@@ -245,7 +246,9 @@
       "?")))
 
 (define (read-quoted-close-delimiter [tag : i64]) : String
-  (string-append "'" (string-append (read-close-delimiter-text tag) "'")))
+  (string.string-append
+    "'"
+    (string.string-append (read-close-delimiter-text tag) "'")))
 
 (define (read-opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
   (if (= expected (tag-rparen))
@@ -255,12 +258,12 @@
       false)))
 
 (define (read-span-location [span : SourceSpan]) : String
-  (string-append
-    (int->string (span-start-line span))
-    (string-append ":" (int->string (span-start-col span)))))
+  (string.string-append
+    (string.int->string (span-start-line span))
+    (string.string-append ":" (string.int->string (span-start-col span)))))
 
 (define (read-unterminated-list-message [expected : i64]) : String
-  (string-append
+  (string.string-append
     "reader: unterminated list: reached end of input before "
     (read-quoted-close-delimiter expected)))
 
@@ -268,15 +271,15 @@
   [expected : i64]
   [actual : i64]
   [actual-span : SourceSpan]) : String
-  (string-append
+  (string.string-append
     "reader: mismatched delimiter: expected "
-    (string-append
+    (string.string-append
       (read-quoted-close-delimiter expected)
-      (string-append
+      (string.string-append
         " but found "
-        (string-append
+        (string.string-append
           (read-quoted-close-delimiter actual)
-          (string-append " at " (read-span-location actual-span)))))))
+          (string.string-append " at " (read-span-location actual-span)))))))
 
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.

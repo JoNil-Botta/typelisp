@@ -210,6 +210,14 @@
   (OkAstDeclList AstDeclList)
   (ErrAstDeclList String))
 
+(defenum ResultParseAstDeclVec
+  (OkParseAstDeclVec)
+  (ErrParseAstDeclVec String))
+
+(defenum ResultParseAstDeclVecDiagnostic
+  (OkParseAstDeclVecDiagnostic)
+  (ErrParseAstDeclVecDiagnostic CompilerDiagnostic))
+
 (defenum ResultAstMaybeExpr
   (OkAstNoExpr)
   (OkAstSomeExpr i64)
@@ -6509,19 +6517,112 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (parse-ast-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
-  (match front
-    [(AstDeclNil) back]
-    [(AstDeclCons head rest)
-      (ast-decl-cons head (parse-ast-decl-list-append (box-get rest) back))]))
+(defstruct ParseAstDeclVec
+  (slots (Array AstDecl))
+  (len i64))
 
-(define (parse-ast-program-forms
+(define (parse-ast-decl-vec-fallback) : AstDecl
+  (AstDeclModule (intern "<parse-ast-decl-vec-fallback>")))
+
+(define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (ParseAstDeclVec (make-array AstDecl cap) 0)))
+
+(define (parse-ast-decl-vec-new) : ParseAstDeclVec
+  (parse-ast-decl-vec-with-capacity 16))
+
+(define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
+  (struct-get v len))
+
+(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
+  (array-length (struct-get v slots)))
+
+(define (parse-ast-decl-vec-get
+  [v : (& v ParseAstDeclVec)]
+  [index : i64]
+  [fallback : AstDecl]) : AstDecl
+  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
+    (array-ref (struct-get v slots) index)
+    fallback))
+
+(define (parse-ast-decl-vec-copy-range
+  [dst : (&mut dst (Array AstDecl))]
+  [src : (& src (Array AstDecl))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
+
+(define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
+  (let
+    [n : i64 (struct-get v len)]
+    [old-cap : i64 (array-length (struct-get v slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
+    (begin
+      (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+      (set! (struct-get v slots) bigger))))
+
+(define (parse-ast-decl-vec-push
+  [v : (&mut v ParseAstDeclVec)]
+  [value : AstDecl]) : unit
+  (begin
+    (if (< (struct-get v len) (array-length (struct-get v slots)))
+      unit
+      (parse-ast-decl-vec-grow v))
+    (let
+      [index : i64 (struct-get v len)]
+      (begin
+        (array-set! (struct-get v slots) index value)
+        (set! (struct-get v len) (+ index 1))))))
+
+(define (parse-ast-decl-vec-push-list!
+  [out : (&mut out ParseAstDeclVec)]
+  [decls : AstDeclList]) : unit
+  (match decls
+    [(AstDeclNil) unit]
+    [(AstDeclCons head rest)
+      (begin
+        (parse-ast-decl-vec-push out head)
+        (parse-ast-decl-vec-push-list! out (box-get rest)))]))
+
+(define (parse-ast-decl-vec-to-list-from
+  [items : (& items ParseAstDeclVec)]
+  [index : i64]
+  [tail : AstDeclList]) : AstDeclList
+  (if (< index 0)
+    tail
+    (parse-ast-decl-vec-to-list-from
+      items
+      (- index 1)
+      (ast-decl-cons
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
+        tail))))
+
+(define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
+  (parse-ast-decl-vec-to-list-from
+    items
+    (- (parse-ast-decl-vec-len items) 1)
+    AstDeclNil))
+
+(define (parse-ast-program-forms-into-vec
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclList
+  [cur : (Array i64)]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
   (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkAstDeclList AstDeclNil)
+    (OkParseAstDeclVec)
     (let
       ;; The spanned tree for one top-level form is dead once its AstDecl is
       ;; built (the decl carries AST-pool ids + spans by value, no sp ids), so
@@ -6534,23 +6635,32 @@
             [(OkAstSomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms dispatch pools toks cur)
-                  [(OkAstDeclList rest)
-                    (OkAstDeclList (ast-decl-cons decl rest))]
-                  [(ErrAstDeclList message) (ErrAstDeclList message)]))]
+                (parse-ast-decl-vec-push out decl)
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
             [(OkAstDecls decls)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms dispatch pools toks cur)
-                  [(OkAstDeclList rest)
-                    (OkAstDeclList (parse-ast-decl-list-append decls rest))]
-                  [(ErrAstDeclList message) (ErrAstDeclList message)]))]
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
             [(OkAstNoDecl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms dispatch pools toks cur))]
-            [(ErrAstMaybeDecl message) (ErrAstDeclList message)])]
-        [(ErrSpannedSexpr err) (ErrAstDeclList (source-error-message err))]))))
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+            [(ErrAstMaybeDecl message) (ErrParseAstDeclVec message)])]
+        [(ErrSpannedSexpr err) (ErrParseAstDeclVec (source-error-message err))]))))
+
+(define (parse-ast-program-forms
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultAstDeclList
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [result : ResultParseAstDeclVec
+      (parse-ast-program-forms-into-vec dispatch pools toks cur (&mut out))]
+    (match result
+      [(OkParseAstDeclVec) (OkAstDeclList (parse-ast-decl-vec-to-list (& out)))]
+      [(ErrParseAstDeclVec message) (ErrAstDeclList message)])))
 
 (define (parse-ast-program-dispatch) : SymI64Env
   (compiler-parse-dispatch-env))
@@ -6670,14 +6780,15 @@
     (compiler-diagnostic-with-code diag (compiler-diagnostic-code-parse))
     "parse"))
 
-(define (parse-ast-program-forms-diagnostic
+(define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  [cur : (Array i64)]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
   (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkAstDeclListDiagnostic AstDeclNil)
+    (OkParseAstDeclVecDiagnostic)
     (let
       ;; Bound the spanned pool to a single top-level form (see
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
@@ -6689,50 +6800,67 @@
             [(OkAstSomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms-diagnostic
+                (parse-ast-decl-vec-push out decl)
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur)
-                  [(OkAstDeclListDiagnostic rest)
-                    (OkAstDeclListDiagnostic (ast-decl-cons decl rest))]
-                  [(ErrAstDeclListDiagnostic diag)
-                    (ErrAstDeclListDiagnostic diag)]))]
+                  cur
+                  out))]
             [(OkAstDecls decls)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms-diagnostic
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur)
-                  [(OkAstDeclListDiagnostic rest)
-                    (OkAstDeclListDiagnostic
-                      (parse-ast-decl-list-append decls rest))]
-                  [(ErrAstDeclListDiagnostic diag)
-                    (ErrAstDeclListDiagnostic diag)]))]
+                  cur
+                  out))]
             [(OkAstNoDecl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms-diagnostic
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur))]
+                  cur
+                  out))]
             [(ErrAstMaybeDecl message)
-              (ErrAstDeclListDiagnostic
+              (ErrParseAstDeclVecDiagnostic
                 (parse-ast-canonical-diagnostic
                   (compiler-diagnostic-from-span
                     path
                     (spanned-sexpr-span spanned-form)
                     message)))])]
         [(ErrSpannedSexpr err)
-          (ErrAstDeclListDiagnostic
+          (ErrParseAstDeclVecDiagnostic
             (parse-ast-canonical-diagnostic
               (compiler-diagnostic-from-source-error path err)))]))))
+
+(define (parse-ast-program-forms-diagnostic
+  [path : String]
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [result : ResultParseAstDeclVecDiagnostic
+      (parse-ast-program-forms-diagnostic-into-vec
+        path
+        dispatch
+        pools
+        toks
+        cur
+        (&mut out))]
+    (match result
+      [(OkParseAstDeclVecDiagnostic)
+        (OkAstDeclListDiagnostic (parse-ast-decl-vec-to-list (& out)))]
+      [(ErrParseAstDeclVecDiagnostic diag) (ErrAstDeclListDiagnostic diag)])))
 
 (define (parse-ast-program-diagnostic
   [path : String]

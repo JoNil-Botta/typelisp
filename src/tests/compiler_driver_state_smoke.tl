@@ -1,4 +1,5 @@
 (import "../../stdlib/string.tl")
+(import "../../stdlib/io.tl")
 (import "../compiler_driver_core.tl")
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
@@ -1030,6 +1031,47 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-emit-ir-core-macro-source) : String
+  "(define (main) : i64
+  (if (and true true)
+    42
+    1))")
+
+(define (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path) : String
+  (let
+    [path : String "target/compiler_driver_emit_ir_core_macro.tl"]
+    [fallback : String "compiler_driver_emit_ir_core_macro.tl"]
+    [source : String (compiler-driver-state-smoke-emit-ir-core-macro-source)]
+    (match (try-write-file (& path) (& source))
+      [(OkIoUnit) path]
+      [(ErrIoUnit _)
+        (begin
+          (write-file fallback source)
+          fallback)])))
+
+(define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
+  (let
+    [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
+    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [input-path : String
+      (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
+    [needle : String "score"]
+    (begin
+      (compiler-driver-state-reset-file-state! state)
+      (match (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+        state
+        input-path
+        (BackendTargetLinux)
+        roots
+        2
+        (BackendModeScalar)
+        (compiler-cfg-empty))
+        [(OkCompilerDriver summary)
+          (and
+            (> (string-length summary) 0)
+            (string-contains (& summary) (& needle)))]
+        [(ErrCompilerDriver _) false]))))
+
 (define (main) : i64
   (begin
     (unless (compiler-driver-state-smoke-cache-isolated?) (return 2))
@@ -1060,4 +1102,7 @@
     (unless
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
+    (unless
+      (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
+      (return 17))
     42))

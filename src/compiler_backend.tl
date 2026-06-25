@@ -21493,6 +21493,16 @@
             use-counts
             buf)])]))
 
+;; Drift-proof per-instruction position for the scavenge coordinate. `post-base`
+;; is the cumulative instruction count through the current block (accumulated per
+;; block in emit-blocks-into, reset per function in install-ctx); the structural
+;; index of the head of `current-instrs` is `post-base - (count current-instrs)`,
+;; which equals the interval walk's I (point = 2*I), fusion-proof because the emit
+;; loop maintains current-instrs (consuming K drops its length by K). Consumed
+;; under (cfg scavenge-self-check) to verify, and later by the no-dst scavenge.
+(define compiler-backend-emit-instr-post-base : i64
+  0)
+
 (define (compiler-backend-emit-instrs-loop
   [target : CompilerBackendTarget]
   [function : String]
@@ -21529,6 +21539,24 @@
         (let
           [step-result : ResultCompilerBackend
             (begin
+              (cfg
+                scavenge-self-check
+                (match current-instrs
+                  [(IrInstrCons head-instr _)
+                    (compiler-backend-scavenge-check-instr
+                      compiler-backend-scavenge-ctx-starts
+                      compiler-backend-scavenge-ctx-ends
+                      compiler-backend-scavenge-ctx-assignments
+                      compiler-backend-scavenge-ctx-vars
+                      function
+                      (*
+                        2
+                        (-
+                          compiler-backend-emit-instr-post-base
+                          (compiler-ir-instr-list-count current-instrs)))
+                      head-instr)]
+                  [(IrInstrNil) unit])
+                unit)
               (set! compiler-backend-emit-instrs-continue-pending false)
               (match current-mode
                 [(CompilerBackendEmitInstrsModeNormal)
@@ -21850,46 +21878,52 @@
   (match blocks
     [(IrBlockNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrBlockCons block rest)
-      (match (compiler-backend-emit-block
-        target
-        function
-        source-function
-        all-blocks
-        block
-        (compiler-backend-next-block-label (box-get rest))
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts)
-        [(OkCompilerBackend head)
-          (compiler-backend-emit-blocks-into
-            target
-            function
-            source-function
-            all-blocks
-            (box-get rest)
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag
-            use-counts
-            (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (set!
+              compiler-backend-emit-instr-post-base
+              (+ compiler-backend-emit-instr-post-base (struct-get instrs len)))])
+        (match (compiler-backend-emit-block
+          target
+          function
+          source-function
+          all-blocks
+          block
+          (compiler-backend-next-block-label (box-get rest))
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts)
+          [(OkCompilerBackend head)
+            (compiler-backend-emit-blocks-into
+              target
+              function
+              source-function
+              all-blocks
+              (box-get rest)
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              (text-buf-append buf head))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(IrBlockArray seq)
       (compiler-backend-emit-blocks-into
         target
@@ -22271,29 +22305,31 @@
   [slot-vars : i64]
   [emit-blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]) : unit
-  (if (< slot-vars 1)
-    (compiler-backend-set-scavenge-ctx!
-      (make-array i64 1)
-      (make-array i64 1)
-      assignments
-      0)
-    (let
-      [func : CompilerIrFunction
-        (IrFunction name params ret-ty slot-vars emit-blocks)]
-      [liveness : CompilerFunctionLiveness
-        (compiler-live-analyze-function func)]
-      [starts : (Array i64) (make-array i64 slot-vars)]
-      [ends : (Array i64) (make-array i64 slot-vars)]
-      (begin
-        (compiler-reg-fill-i64-array starts -1)
-        (compiler-reg-fill-i64-array ends -1)
-        (compiler-reg-live-intervals-blocks-with-live
-          emit-blocks
-          liveness
-          0
-          starts
-          ends)
-        (compiler-backend-set-scavenge-ctx! starts ends assignments slot-vars)))))
+  (begin
+    (set! compiler-backend-emit-instr-post-base 0)
+    (if (< slot-vars 1)
+      (compiler-backend-set-scavenge-ctx!
+        (make-array i64 1)
+        (make-array i64 1)
+        assignments
+        0)
+      (let
+        [func : CompilerIrFunction
+          (IrFunction name params ret-ty slot-vars emit-blocks)]
+        [liveness : CompilerFunctionLiveness
+          (compiler-live-analyze-function func)]
+        [starts : (Array i64) (make-array i64 slot-vars)]
+        [ends : (Array i64) (make-array i64 slot-vars)]
+        (begin
+          (compiler-reg-fill-i64-array starts -1)
+          (compiler-reg-fill-i64-array ends -1)
+          (compiler-reg-live-intervals-blocks-with-live
+            emit-blocks
+            liveness
+            0
+            starts
+            ends)
+          (compiler-backend-set-scavenge-ctx! starts ends assignments slot-vars))))))
 
 (define (compiler-backend-scavenge-excluded?
   [exclude : (Array String)]

@@ -72,7 +72,7 @@
       roots
       (BackendModeScalar)
       (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
-      [(OkCompilerDriverLowered _ _ _ _) true]
+      [(OkCompilerDriverLowered _ _ _) true]
       [(ErrCompilerDriverLowered _) false])))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool

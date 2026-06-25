@@ -1557,6 +1557,11 @@
     (ast-node-pool-state-capture)
     (ty-node-pool-state-capture)))
 
+(define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
+  (ast-node-pool-context-new
+    (array-ref (struct-get pools expr-pool) 0)
+    (array-ref (struct-get pools type-pool) 0)))
+
 (define (ast-node-pool-context-capture-active! [pools : AstNodePoolContext]) : unit
   (begin
     (array-set! (struct-get pools expr-pool) 0 (ast-node-pool-state-capture))

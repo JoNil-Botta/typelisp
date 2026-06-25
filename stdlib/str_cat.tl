@@ -5,15 +5,16 @@
 ;# which would shadow the parser's built-in `when`/`and`/`or`/`unless` forms in
 ;# files that use them.
 ;#
-;# Usage: import this module, then call `(str-cat a b c)`. Expansions reference
-;# fully qualified `stdlib.string` helpers, so callers do not need legacy flat
-;# helper imports.
+;# Dotted usage: import this module as `stdlib.str_cat`, then call
+;# `(str_cat.str-cat a b c)`. Legacy path imports can call `(str-cat a b c)`.
+;# Expansions reference fully qualified `stdlib.string` helpers, so callers do
+;# not need string helper imports.
 ;#
 ;# ```lisp
-;# (import "../stdlib/str_cat.tl")
+;# (import stdlib.str_cat)
 ;#
 ;# (define (greet [name : String]) : String
-;#   (str-cat "hello, " name "!"))
+;#   (str_cat.str-cat "hello, " name "!"))
 ;# ```
 (module stdlib.str_cat)
 

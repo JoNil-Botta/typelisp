@@ -6207,11 +6207,12 @@
                                 ""
                                 reachable
                                 dispatch-variants))]
+                          [new-prev-arena : i64 (tl_arena_current)]
                           (begin
                             (unsafe
                               (tl_arena_set scratch-head)
                               (tl_region_reset mark)
-                              (tl_arena_set prev-arena))
+                              (tl_arena_set new-prev-arena))
                             pruned))))])
                 (let
                   [scratch-head : i64 (tl_arena_current)]

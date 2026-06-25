@@ -1160,7 +1160,7 @@
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff obj)
+        [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
               (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -1172,7 +1172,7 @@
               (> text-size 0)
               (> reloc-count 0)
               (compiler-object-coff-contains? obj "foreign_exact")))]
-        [(ErrCompilerObjectCoff _) false])]
+        [(ResultCompilerObjectCoff.Err _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-elf-renders-real-text-ok?) : bool
@@ -1222,7 +1222,7 @@
         (ObjectSectionRsrc)
         rsrc-data-label)]
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj)
+      [(ResultCompilerObjectCoff.Ok obj)
         (let
           [rsrc-header : i64
             (compiler-object-coff-section-header-offset (ObjectSectionRsrc))]
@@ -1303,7 +1303,7 @@
               (compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
               (compiler-object-coff-contains? obj ".rsrc")
               true)))]
-      [(ErrCompilerObjectCoff _) false])))
+      [(ResultCompilerObjectCoff.Err _) false])))
 
 (define (compiler-backend-windows-object-entry-unwind-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
@@ -1469,7 +1469,7 @@
           shape-ok
           (compiler-backend-windows-object-manifest-resource-ok? image))
           (match (compiler-object-coff-render image)
-            [(OkCompilerObjectCoff obj)
+            [(ResultCompilerObjectCoff.Ok obj)
               (let
                 [pdata-header : i64
                   (compiler-object-coff-section-header-offset
@@ -1512,7 +1512,7 @@
                   (=
                     (compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
                     0xc7)))]
-            [(ErrCompilerObjectCoff _) false])
+            [(ResultCompilerObjectCoff.Err _) false])
           false))]
     [(ErrCompilerBackendObject _) false]))
 
@@ -1522,7 +1522,7 @@
     (BackendTargetWindows))
     [(OkCompilerBackendObject image)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff obj)
+        [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
               (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -1545,7 +1545,7 @@
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
                 (= (compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
-        [(ErrCompilerObjectCoff _) false])]
+        [(ResultCompilerObjectCoff.Err _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
@@ -9735,8 +9735,8 @@
         [(ErrCompilerObjectElf _) false])]
     [(BackendTargetWindows)
       (match (compiler-object-coff-render image)
-        [(OkCompilerObjectCoff _) true]
-        [(ErrCompilerObjectCoff _) false])]))
+        [(ResultCompilerObjectCoff.Ok _) true]
+        [(ResultCompilerObjectCoff.Err _) false])]))
 
 (define (compiler-backend-f64-neg-sign-mask-object-target-ok?
   [target : CompilerBackendTarget]) : bool

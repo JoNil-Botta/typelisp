@@ -8371,19 +8371,38 @@
   [reg-arr : (Array String)]
   [rcount : i64]
   [var : i64]
-  [n : i64]) : i64
+  [n : i64]
+  [clobber-points : CompilerLiveI64Set]
+  [callee-regs : CompilerRegStringList]
+  [caller-saved-count : i64]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
     (compiler-reg-greedy-stage-rs-new)
     (let
+      ;; regmask-as-interference: a value spanning a clobber-point may only use
+      ;; callee-saved regs, so it starts its search past the caller-saved prefix
+      ;; and only accepts callee-saved copy-hints.
+      [spans : bool
+        (compiler-reg-greedy-var-spans-clobber?
+          interval-index
+          clobber-points
+          var)]
+      [start-idx : i64
+        (if spans
+          caller-saved-count
+          0)]
+      [hint-regs : CompilerRegStringList
+        (if spans
+          callee-regs
+          regs)]
       [hint : String
         (compiler-reg-greedy-hint-free-reg
           assignments
           interval-index
           ref-counts
           copy-hints
-          regs
+          hint-regs
           var
           n)]
       (if (not (string-eq hint ""))
@@ -8401,7 +8420,7 @@
               ref-counts
               var
               reg-arr
-              0
+              start-idx
               rcount
               n)]
           (if (not (string-eq free ""))
@@ -8424,7 +8443,7 @@
                   var
                   weight
                   reg-arr
-                  0
+                  start-idx
                   rcount
                   n)]
               (if (not (string-eq ev ""))
@@ -8530,7 +8549,10 @@
   [reg-arr : (Array String)]
   [rcount : i64]
   [stages : (Array i64)]
-  [n : i64]) : unit
+  [n : i64]
+  [clobber-points : CompilerLiveI64Set]
+  [callee-regs : CompilerRegStringList]
+  [caller-saved-count : i64]) : unit
   (if (>= i count)
     unit
     (let
@@ -8546,7 +8568,10 @@
           reg-arr
           rcount
           v
-          n)]
+          n
+          clobber-points
+          callee-regs
+          caller-saved-count)]
       (begin
         (if (and (>= v 0) (< v (array-length stages)))
           (array-set! stages v stg)
@@ -8564,7 +8589,47 @@
           reg-arr
           rcount
           stages
-          n)))))
+          n
+          clobber-points
+          callee-regs
+          caller-saved-count)))))
+
+;; Unified Greedy integer register pool: caller-saved zero-call scratch
+;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no
+;; prologue/epilogue save/restore, the LLVM CSR-cost try-order -- then the
+;; callee-saved pool. The first `caller-saved-count` entries are caller-saved: a
+;; value whose live range spans a backend clobber-point (call site / op that
+;; clobbers caller-saved regs) may NOT use them (it would be clobbered across the
+;; clobber), exactly the regmask-as-interference rule. Such values start their
+;; register search at the callee-saved offset. This folds the old
+;; prepass-partition + caller-saved-overflow into ONE allocation pass.
+(define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%r9"
+    (compiler-reg-string-cons
+      "%rcx"
+      (compiler-reg-string-cons "%rdx" (compiler-reg-sysv-integer-registers)))))
+
+(define (compiler-reg-greedy-caller-saved-count) : i64
+  3)
+
+;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
+;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check
+;; which the LiveIntervalUnion test already covers.) Out-of-range -> conservative
+;; spanning (callee-saved only).
+(define (compiler-reg-greedy-var-spans-clobber?
+  [interval-index : CompilerRegIntervalIndex]
+  [clobber-points : CompilerLiveI64Set]
+  [var : i64]) : bool
+  (let
+    [starts : (Array i64) (struct-get interval-index starts)]
+    [ends : (Array i64) (struct-get interval-index ends)]
+    (if (and (>= var 0) (< var (array-length starts)))
+      (compiler-reg-call-set-in-range?
+        clobber-points
+        (array-ref starts var)
+        (array-ref ends var))
+      true)))
 
 (define (compiler-reg-greedy-integer-state
   [candidates : CompilerRegIntervalList]
@@ -8573,7 +8638,10 @@
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [ref-counts : (Array i64)]
-  [copy-hints : (Array i64)]) : CompilerRegAssignState
+  [copy-hints : (Array i64)]
+  [clobber-points : CompilerLiveI64Set]
+  [callee-regs : CompilerRegStringList]
+  [caller-saved-count : i64]) : CompilerRegAssignState
   (let
     [n : i64 (array-length (struct-get assignments present))]
     [rcount : i64 (compiler-reg-string-list-count regs)]
@@ -8616,7 +8684,10 @@
             reg-arr
             rcount
             stages
-            n)
+            n
+            clobber-points
+            callee-regs
+            caller-saved-count)
           (CompilerRegAssignState CompilerRegActiveNil assignments))))))
 
 (define (compiler-reg-plan-from
@@ -8766,22 +8837,29 @@
     ;; into the tiny %rcx/%rdx pool (the backend's shift/mul scratch) only adds
     ;; churn -- e.g. tight numeric loops with a few live values. SIMD/AVX
     ;; (allow-caller-saved-zero-call = false) skips this and stays byte-identical.
+    ;; Under --cfg greedy-regalloc the unified greedy allocates ALL integer
+    ;; registers itself (caller-saved + callee-saved, clobber-gated), bypassing the
+    ;; prepass partition entirely -> false. Flag OFF selects the original gate at
+    ;; COMPILE time (no extra term), keeping the flag-off compiler byte-identical.
     [use-partition : bool
-      (and
-        allow-caller-saved-zero-call
-        ;; Only when fewer values than the callee-saved register count MUST be
-        ;; callee-saved (i.e. cross a clobber point) does displacing scratch into
-        ;; the caller-saved zero-call pool pay off -- it frees the callee-saved
-        ;; pool for the values that genuinely need it. When the function already
-        ;; has >= 5 clobber-spanning values the callee-saved pool is committed and
-        ;; the existing primary+eviction passes handle the pressure; partitioning
-        ;; there only pushes scratch into the backend's %rcx/%rdx scratch and
-        ;; regresses tight numeric loops (crc32).
-        (<
-          (compiler-reg-count-clobber-spanning-candidates
-            integer-candidates
-            clobber-points)
-          (compiler-reg-sysv-integer-register-count)))]
+      (cfg
+        greedy-regalloc
+        false
+        (and
+          allow-caller-saved-zero-call
+          ;; Only when fewer values than the callee-saved register count MUST be
+          ;; callee-saved (i.e. cross a clobber point) does displacing scratch into
+          ;; the caller-saved zero-call pool pay off -- it frees the callee-saved
+          ;; pool for the values that genuinely need it. When the function already
+          ;; has >= 5 clobber-spanning values the callee-saved pool is committed and
+          ;; the existing primary+eviction passes handle the pressure; partitioning
+          ;; there only pushes scratch into the backend's %rcx/%rdx scratch and
+          ;; regresses tight numeric loops (crc32).
+          (<
+            (compiler-reg-count-clobber-spanning-candidates
+              integer-candidates
+              clobber-points)
+            (compiler-reg-sysv-integer-register-count))))]
     [prepass-state : CompilerRegAssignState
       (if use-partition
         (compiler-reg-assign-caller-saved-zero-call-candidates
@@ -8813,12 +8891,15 @@
         (if allow-caller-saved-zero-call
           (compiler-reg-greedy-integer-state
             primary-candidates
-            integer-registers
+            (compiler-reg-greedy-integer-pool)
             prepass-assignments
             eff-index
             group-vars
             eviction-ref-counts
-            copy-hints)
+            copy-hints
+            clobber-points
+            integer-registers
+            (compiler-reg-greedy-caller-saved-count))
           (compiler-reg-assign-candidates
             primary-candidates
             integer-registers

@@ -1565,6 +1565,10 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reach-mark-decl inner names))]
     [(AstDeclDefStruct _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
@@ -1636,6 +1640,10 @@
       (hashmap.string-i64-map-contains? names (intern-str name))]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reachable-runtime-decl? inner names))]
+    [(AstDeclComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reachable-runtime-decl? inner names))]
@@ -2397,6 +2405,80 @@
     unit
     (io.panic "test CLI inline harness pruned runtime string helper root")))
 
+(define (tltest-generated-wrapper [item : String] [decl : AstDecl]) : AstDecl
+  (ast-decl-comptime-decl-with-meta
+    (AstSomeGeneratedDeclMeta "tltest-generated" item AstExprNil "tltest")
+    decl))
+
+(define (tltest-generated-reachability-self-test?) : bool
+  (let
+    [dep-name : String "__tl_generated_reachable_dep"]
+    [live-name : String "__tl_generated_reachable_live"]
+    [dead-name : String "__tl_generated_reachable_dead"]
+    [dep-decl : AstDecl
+      (tltest-generated-wrapper
+        dep-name
+        (ast-decl-def-fn
+          dep-name
+          AstParamNil
+          (AstTyUnit)
+          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+    [live-decl : AstDecl
+      (tltest-generated-wrapper
+        live-name
+        (ast-decl-def-fn
+          live-name
+          AstParamNil
+          (AstTyUnit)
+          (tltest-call-expr dep-name)))]
+    [dead-decl : AstDecl
+      (tltest-generated-wrapper
+        dead-name
+        (ast-decl-def-fn
+          dead-name
+          AstParamNil
+          (AstTyUnit)
+          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+    [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        dep-decl
+        (ast-decl-cons
+          live-decl
+          (ast-decl-cons
+            dead-decl
+            (ast-decl-cons
+              (ast-decl-test
+                "uses-generated-live"
+                (tltest-call-expr live-name)
+                span)
+              AstDeclNil))))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "generated.tl"
+        (ast-decl-path-cons
+          "generated.tl"
+          (ast-decl-path-cons
+            "generated.tl"
+            (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name? harness-decls live-name)
+                (tltest-decl-list-has-name? harness-decls dep-name)
+                (not (tltest-decl-list-has-name? harness-decls dead-name))))])])))
+
+(test
+  test-cli-inline-harness-prunes-generated-wrappers
+  (if (tltest-generated-reachability-self-test?)
+    unit
+    (panic "test CLI inline harness generated reachability mismatch")))
+
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let
     [helper-name : String "__tl_macro_generated_helper"]
@@ -2500,6 +2582,11 @@
   generated-module-body-imports-slice-module-macro-struct
   (begin
     (pair-user.score (Pair 7) (Pair 0))
+    unit))
+
+(cfg test
+  (test
+    generated-module-body-file-cfg-enabled
     unit))")
 
 (define (tltest-nested-module-macro-vector-typecheck-ok?
@@ -2559,7 +2646,7 @@
   (match (tltest-build-harness source decls paths)
     [(InlineHarness program harness-paths count)
       (begin
-        (unless (= count 2) (return false))
+        (unless (= count 3) (return false))
         (unless
           (tltest-nested-module-macro-vector-typecheck-ok?
             program

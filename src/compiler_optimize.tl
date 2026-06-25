@@ -13970,18 +13970,23 @@
     [(IrFunction _ _ _ _ blocks)
       (opt-induction-function-with-context (opt-cfg-context-build blocks) func)]))
 
+;; Membership uses the CFG index's O(1) reachability (label -> dense id ->
+;; reachable bool) instead of an O(n) string_eq scan over an OptLabelSet. The
+;; index is already built for this block list, so the set of reachable labels is
+;; identical -- only the lookup cost changes (the per-block / per-phi-input scans
+;; were ~half of string_eq in an opt1 self-compile).
 (define (opt-cfg-filter-phi-inputs
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match inputs
     [(IrPhiInputNil) (IrPhiInputNil)]
     [(IrPhiInputCons value label rest)
-      (if (opt-label-contains reachable label)
+      (if (opt-cfg-index-reachable? index label)
         (compiler-ir-phi-input-cons
           value
           label
-          (opt-cfg-filter-phi-inputs reachable (box-get rest)))
-        (opt-cfg-filter-phi-inputs reachable (box-get rest)))]))
+          (opt-cfg-filter-phi-inputs index (box-get rest)))
+        (opt-cfg-filter-phi-inputs index (box-get rest)))]))
 
 (define (opt-phi-input-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
@@ -13996,14 +14001,11 @@
         [_ (IrNoValue)])]
     [_ (IrNoValue)]))
 
-(define (opt-cfg-clean-instr
-  [reachable : OptLabelSet]
-  [instr : CompilerIrInstr]) : CompilerIrInstr
+(define (opt-cfg-clean-instr [index : OptCfgIndex] [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrPhi dst inputs ty)
       (let
-        [kept : CompilerIrPhiInputList
-          (opt-cfg-filter-phi-inputs reachable inputs)]
+        [kept : CompilerIrPhiInputList (opt-cfg-filter-phi-inputs index inputs)]
         (if (= (opt-phi-input-count kept) 1)
           (match (opt-phi-single-value kept)
             [(IrSomeValue value)
@@ -14015,53 +14017,49 @@
     [_ instr]))
 
 (define (opt-cfg-clean-instr-seq
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [index : i64 (- (struct-get instrs len) 1)]
+    [pos : i64 (- (struct-get instrs len) 1)]
     [out : CompilerIrInstrList IrInstrNil]
     (begin
-      (while (>= index 0)
+      (while (>= pos 0)
         (begin
           (set!
             out
             (compiler-ir-instr-cons
-              (opt-cfg-clean-instr reachable (array-ref slots index))
+              (opt-cfg-clean-instr index (array-ref slots pos))
               out))
-          (set! index (- index 1))))
+          (set! pos (- pos 1))))
       out)))
 
-(define (opt-cfg-clean-block
-  [reachable : OptLabelSet]
-  [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-cfg-clean-block [index : OptCfgIndex] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (compiler-ir-block label (opt-cfg-clean-instr-seq reachable instrs))]))
+      (compiler-ir-block label (opt-cfg-clean-instr-seq index instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
-  [reachable : OptLabelSet]
+  [index : OptCfgIndex]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label _)
-          (if (opt-label-contains reachable label)
+          (if (opt-cfg-index-reachable? index label)
             (compiler-ir-block-cons
-              (opt-cfg-clean-block reachable block)
-              (opt-cfg-filter-clean-blocks reachable (box-get rest)))
-            (opt-cfg-filter-clean-blocks reachable (box-get rest)))])]
+              (opt-cfg-clean-block index block)
+              (opt-cfg-filter-clean-blocks index (box-get rest)))
+            (opt-cfg-filter-clean-blocks index (box-get rest)))])]
     [(IrBlockArray seq)
-      (opt-cfg-filter-clean-blocks
-        reachable
-        (compiler-ir-block-seq-to-list seq))]))
+      (opt-cfg-filter-clean-blocks index (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-cfg-simplify-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [folded : CompilerIrBlockList (opt-cfg-fold-branches-blocks blocks)]
-    [reachable : OptLabelSet (opt-cfg-reachable-blocks folded)]
-    (opt-cfg-filter-clean-blocks reachable folded)))
+    [index : OptCfgIndex (opt-cfg-index-build folded)]
+    (opt-cfg-filter-clean-blocks index folded)))
 
 (define (opt-cfg-simplify-blocks-with-context-result
   [input : OptBlockCtxResult]) : OptBlockCtxResult
@@ -14072,7 +14070,7 @@
         (not (opt-cfg-blocks-have-foldable-branch? blocks))
         (opt-cfg-context-all-blocks-reachable? context))
         (OptBlockCtxResult
-          (opt-cfg-filter-clean-blocks (struct-get context reachable) blocks)
+          (opt-cfg-filter-clean-blocks (struct-get context index) blocks)
           context
           true)
         (let
@@ -20097,8 +20095,21 @@
 (defenum OptSccPopState
   (OptSccPopState i64 i64))
 
+;; Reachability working set keyed on each function's dense index slot (the value
+;; OptFunctionIndex.ids already maps a name to). `reachable` dedups by slot
+;; (I64I64Map) and the worklist carries slots, so the per-edge dedup / membership
+;; / pop-and-resolve are O(1) i64 compares instead of re-hashing and string_eq-ing
+;; the name (string_eq was ~6% of an opt1 self-compile, dominated by these
+;; reach/cfg sweeps). One name->slot probe per reference stays (unavoidable to
+;; resolve a reference), but the index value is a plain slot, so no global intern
+;; table is mutated -- IR names live in the transient optimize arena and interning
+;; them would dangle a table pointer after the rewind.
+(defenum OptReachWorklist
+  (OptReachWorklistNil)
+  (OptReachWorklistCons i64 (Box OptReachWorklist)))
+
 (defenum OptReachState
-  (OptReachState StringI64Map OptStringSet))
+  (OptReachState I64I64Map OptReachWorklist))
 
 (define (opt-function-index-capacity [count : i64]) : i64
   (if (< count 4)
@@ -20160,11 +20171,11 @@
       [(StringI64MapMissing) (OptNoI64)])
     (OptNoI64)))
 
-(define (opt-function-index-find [index : OptFunctionIndex] [name : String]) : OptMaybeFunction
-  (match (string-i64-map-get (struct-get index ids) name)
-    [(StringI64MapFound slot)
-      (OptSomeFunction (array-ref (struct-get index values) slot))]
-    [(StringI64MapMissing) (OptNoFunction)]))
+;; Resolve a function by its dense index slot (the value held in `ids` and in the
+;; reachability worklist). Slots only ever come from a successful `ids` lookup, so
+;; they are always in range.
+(define (opt-function-index-at-slot [index : OptFunctionIndex] [slot : i64]) : CompilerIrFunction
+  (array-ref (struct-get index values) slot))
 
 (define (opt-slot-list-contains? [slots : OptSlotList] [slot : i64]) : bool
   (match slots
@@ -23983,19 +23994,28 @@
     [(IrFunctionArray seq)
       (opt-function-list-find (compiler-ir-function-seq-to-list seq) name)]))
 
+;; Resolve `name` to its dense index slot with a single `ids` probe (the one
+;; name->key lookup the reachability walk needs); a name that names no function in
+;; this index is a no-op. The reachable set and worklist then key on that slot, so
+;; the dedup, membership, and pop-and-resolve are i64 compares -- no per-edge
+;; string_eq, and no global intern-table mutation (IR names are transient-arena
+;; strings, so interning them would dangle a table pointer after the rewind).
 (define (opt-reach-add-function
   [index : OptFunctionIndex]
   [state : OptReachState]
   [name : String]) : OptReachState
+  (match (string-i64-map-get (struct-get index ids) name)
+    [(StringI64MapMissing) state]
+    [(StringI64MapFound slot) (opt-reach-add-function-slot state slot)]))
+
+(define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match state
     [(OptReachState reachable worklist)
-      (if (opt-function-index-defines? index name)
-        (if (string-i64-map-contains? reachable name)
-          state
-          (OptReachState
-            (string-i64-map-put reachable name 1)
-            (OptStringCons name (box worklist))))
-        state)]))
+      (if (i64-i64-map-contains? reachable slot)
+        state
+        (OptReachState
+          (i64-i64-map-put reachable slot 1)
+          (OptReachWorklistCons slot (box worklist))))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : OptFunctionIndex]
@@ -24320,14 +24340,16 @@
   (match state
     [(OptReachState reachable worklist)
       (match worklist
-        [(OptStringNil) state]
-        [(OptStringCons name rest)
+        [(OptReachWorklistNil) state]
+        [(OptReachWorklistCons slot rest)
           (let
             [popped : OptReachState (OptReachState reachable (box-get rest))]
-            (match (opt-function-index-find index name)
-              [(OptSomeFunction func)
-                (opt-reach-process index (opt-reach-function index popped func))]
-              [(OptNoFunction) (opt-reach-process index popped)]))])]))
+            (opt-reach-process
+              index
+              (opt-reach-function
+                index
+                popped
+                (opt-function-index-at-slot index slot))))])]))
 
 (define (opt-reach-global
   [index : OptFunctionIndex]
@@ -24359,22 +24381,34 @@
         (opt-reach-global index state global)
         (box-get rest))]))
 
+;; `reachable` is keyed by dense index slot; resolve each function's slot through
+;; the index (the same name->slot map the reach walk used) and test membership.
+(define (opt-reach-slot-set-contains-name?
+  [index : OptFunctionIndex]
+  [reachable : I64I64Map]
+  [name : String]) : bool
+  (match (string-i64-map-get (struct-get index ids) name)
+    [(StringI64MapMissing) false]
+    [(StringI64MapFound slot) (i64-i64-map-contains? reachable slot)]))
+
 (define (opt-filter-reachable-functions
+  [index : OptFunctionIndex]
   [functions : CompilerIrFunctionList]
-  [reachable : StringI64Map]) : CompilerIrFunctionList
+  [reachable : I64I64Map]) : CompilerIrFunctionList
   (match functions
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction name _ _ _ _)
-          (if (string-i64-map-contains? reachable name)
+          (if (opt-reach-slot-set-contains-name? index reachable name)
             (compiler-ir-function-cons
               func
-              (opt-filter-reachable-functions (box-get rest) reachable))
-            (opt-filter-reachable-functions (box-get rest) reachable))])]
+              (opt-filter-reachable-functions index (box-get rest) reachable))
+            (opt-filter-reachable-functions index (box-get rest) reachable))])]
     [(IrFunctionArray seq)
       (compiler-ir-function-list-compact
         (opt-filter-reachable-functions
+          index
           (compiler-ir-function-seq-to-list seq)
           reachable))]))
 
@@ -24419,8 +24453,8 @@
   (if (opt-function-list-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
-      [reachable : StringI64Map
-        (string-i64-map-with-capacity
+      [reachable : I64I64Map
+        (i64-i64-map-with-capacity
           (opt-function-index-capacity (opt-function-list-count functions)))]
       (match (opt-reach-process
         index
@@ -24431,11 +24465,11 @@
             externs
             (opt-reach-add-function
               index
-              (OptReachState reachable (OptStringNil))
+              (OptReachState reachable (OptReachWorklistNil))
               "main"))
           globals))
         [(OptReachState reachable-out _)
-          (opt-filter-reachable-functions functions reachable-out)]))
+          (opt-filter-reachable-functions index functions reachable-out)]))
     functions))
 
 (defenum OptLoopBceArgcScan

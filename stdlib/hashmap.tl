@@ -2205,6 +2205,7 @@
   (defstruct I64StringMap
     (__hashmap_family_request i64)))
 
+;: Mutable-entry reference handle used by the String -> String module wrapper.
 (defstruct StringStringMapMutEntryRef
   (:lifetimes map)
   (borrow (&mut map (Array StringStringMapSlot)))
@@ -2213,6 +2214,7 @@
   (key String)
   (hash i64))
 
+;: Mutable-entry reference handle used by the i64 -> i64 module wrapper.
 (defstruct I64I64MapMutEntryRef
   (:lifetimes map)
   (borrow (&mut map (Array I64I64MapSlot)))
@@ -2221,6 +2223,7 @@
   (key i64)
   (hash i64))
 
+;: Mutable-entry reference handle used by the i64 -> String module wrapper.
 (defstruct I64StringMapMutEntryRef
   (:lifetimes map)
   (borrow (&mut map (Array I64StringMapSlot)))
@@ -2315,6 +2318,7 @@
                       (set! walked (+ walked 1)))))]))
           (StringStringMapMissing))))))
 
+;: Containment through an immutable generated String -> String map reference.
 (define (string-string-map-contains-borrowed-ref?
   [map : (& map StringStringMap)]
   [key : (& key str)]) : bool
@@ -2322,6 +2326,7 @@
     [(StringStringMapFound _) true]
     [(StringStringMapMissing) false]))
 
+;: Containment through a mutable generated String -> String map reference.
 (define (string-string-map-contains-borrowed-mut?
   [map : (&mut map StringStringMap)]
   [key : (& key str)]) : bool
@@ -2329,6 +2334,7 @@
     [(StringStringMapFound _) true]
     [(StringStringMapMissing) false]))
 
+;: Rehash a borrowed String -> String slot array into a fresh destination.
 (define (string-string-map-rehash-from-ref
   [src : (& src (Array StringStringMapSlot))]
   [dst : (Array StringStringMapSlot)]
@@ -2350,6 +2356,7 @@
         [(StringStringMapTombstone) unit])
       (string-string-map-rehash-from-ref src dst dst-capacity (+ index 1) count))))
 
+;: Resize a generated String -> String map in place.
 (define (string-string-map-resize!
   [map : (&mut map StringStringMap)]
   [new-capacity : i64]) : unit
@@ -2374,6 +2381,7 @@
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0))))
 
+;: Return whether a mutable String -> String map should grow before insert.
 (define (string-string-map-needs-grow-mut? [map : (&mut map StringStringMap)]) : bool
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -2382,11 +2390,13 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Grow a generated String -> String map in place.
 (define (string-string-map-grow! [map : (&mut map StringStringMap)]) : unit
   (string-string-map-resize!
     map
     (string-string-map-grow-capacity (array-length (struct-get map slots)))))
 
+;: Insert or update String -> String through a mutable map reference.
 (define (string-string-map-put!
   [map : (&mut map StringStringMap)]
   [key : String]
@@ -2471,6 +2481,7 @@
                 (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
               unit)))))))
 
+;: Remove a borrowed String key from String -> String through a mutable map reference.
 (define (string-string-map-remove-borrowed!
   [map : (&mut map StringStringMap)]
   [key : (& key str)]) : bool
@@ -2520,6 +2531,7 @@
                       (set! walked (+ walked 1)))))]))
           false)))))
 
+;: Reference variant of `string-string-map-next-occupied`.
 (define (string-string-map-next-occupied-ref
   [map : (& map StringStringMap)]
   [from : i64]) : i64
@@ -2537,6 +2549,7 @@
           [(StringStringMapTombstone) (set! index (+ index 1))]))
       capacity)))
 
+;: Reference variant of `string-string-map-entry-at`.
 (define (string-string-map-entry-at-ref
   [map : (& map StringStringMap)]
   [index : i64]) : StringStringMapEntry
@@ -2552,6 +2565,7 @@
       [(StringStringMapEmpty) (StringStringMapEntryNone)]
       [(StringStringMapTombstone) (StringStringMapEntryNone)])))
 
+;: Probe mutable String -> String slots and return mutable-entry metadata.
 (define (string-string-map-mut-entry-info-mut
   [slots : (&mut slots (Array StringStringMapSlot))]
   [capacity : i64]
@@ -2592,6 +2606,7 @@
                 (set! walked (+ walked 1)))]))
         (StringStringMapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Borrow String -> String slots mutably and return a wrapper mutable entry.
 (define (string-string-map-get-mut-entry-borrowed!
   [map : (&mut map StringStringMap)]
   [key : (& key str)]) : (StringStringMapMutEntryRef map)
@@ -2607,10 +2622,12 @@
       (struct-get info key)
       (struct-get info hash))))
 
+;: Return whether a String -> String wrapper mutable entry points at a live slot.
 (define (string-string-map-mut-entry-ref-present?
   [entry : (StringStringMapMutEntryRef map)]) : bool
   (struct-get entry present))
 
+;: Read a String -> String wrapper mutable entry value, or `fallback`.
 (define (string-string-map-mut-entry-ref-value-or
   [entry : (StringStringMapMutEntryRef map)]
   [fallback : String]) : String
@@ -2621,6 +2638,7 @@
       [(StringStringMapTombstone) fallback])
     fallback))
 
+;: Update a String -> String wrapper mutable entry in place when present.
 (define (string-string-map-mut-entry-ref-set!
   [entry : (StringStringMapMutEntryRef map)]
   [value : String]) : unit
@@ -2634,6 +2652,7 @@
         (struct-get entry hash)))
     unit))
 
+;: Lookup through an immutable generated i64 -> i64 map reference.
 (define (i64-i64-map-get-ref [map : (& map I64I64Map)] [key : i64]) : I64I64MapLookup
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -2673,6 +2692,7 @@
                       (set! walked (+ walked 1)))))]))
           (I64I64MapMissing))))))
 
+;: Lookup through a mutable generated i64 -> i64 map reference.
 (define (i64-i64-map-get-mut [map : (&mut map I64I64Map)] [key : i64]) : I64I64MapLookup
   (let
     [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
@@ -2713,16 +2733,19 @@
                       (set! walked (+ walked 1)))))]))
           (I64I64MapMissing))))))
 
+;: Containment through an immutable generated i64 -> i64 map reference.
 (define (i64-i64-map-contains-ref? [map : (& map I64I64Map)] [key : i64]) : bool
   (match (i64-i64-map-get-ref map key)
     [(I64I64MapFound _) true]
     [(I64I64MapMissing) false]))
 
+;: Containment through a mutable generated i64 -> i64 map reference.
 (define (i64-i64-map-contains-mut? [map : (&mut map I64I64Map)] [key : i64]) : bool
   (match (i64-i64-map-get-mut map key)
     [(I64I64MapFound _) true]
     [(I64I64MapMissing) false]))
 
+;: Rehash a borrowed i64 -> i64 slot array into a fresh destination.
 (define (i64-i64-map-rehash-from-ref
   [src : (& src (Array I64I64MapSlot))]
   [dst : (Array I64I64MapSlot)]
@@ -2739,6 +2762,7 @@
         [(I64I64MapTombstone) unit])
       (i64-i64-map-rehash-from-ref src dst dst-capacity (+ index 1) count))))
 
+;: Resize a generated i64 -> i64 map in place.
 (define (i64-i64-map-resize! [map : (&mut map I64I64Map)] [new-capacity : i64]) : unit
   (let
     [old-capacity : i64 (array-length (struct-get map slots))]
@@ -2759,6 +2783,7 @@
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0))))
 
+;: Return whether a mutable i64 -> i64 map should grow before insert.
 (define (i64-i64-map-needs-grow-mut? [map : (&mut map I64I64Map)]) : bool
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -2767,11 +2792,13 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Grow a generated i64 -> i64 map in place.
 (define (i64-i64-map-grow! [map : (&mut map I64I64Map)]) : unit
   (i64-i64-map-resize!
     map
     (i64-i64-map-grow-capacity (array-length (struct-get map slots)))))
 
+;: Insert or update i64 -> i64 through a mutable map reference.
 (define (i64-i64-map-put!
   [map : (&mut map I64I64Map)]
   [key : i64]
@@ -2851,6 +2878,7 @@
                 (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
               unit)))))))
 
+;: Remove an i64 key from i64 -> i64 through a mutable map reference.
 (define (i64-i64-map-remove! [map : (&mut map I64I64Map)] [key : i64]) : bool
   (let
     [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
@@ -2897,6 +2925,7 @@
                       (set! walked (+ walked 1)))))]))
           false)))))
 
+;: Reference variant of `i64-i64-map-next-occupied`.
 (define (i64-i64-map-next-occupied-ref [map : (& map I64I64Map)] [from : i64]) : i64
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -2912,6 +2941,7 @@
           [(I64I64MapTombstone) (set! index (+ index 1))]))
       capacity)))
 
+;: Reference variant of `i64-i64-map-entry-at`.
 (define (i64-i64-map-entry-at-ref [map : (& map I64I64Map)] [index : i64]) : I64I64MapEntry
   (if (if (< index 0)
     true
@@ -2922,6 +2952,7 @@
       [(I64I64MapEmpty) (I64I64MapEntryNone)]
       [(I64I64MapTombstone) (I64I64MapEntryNone)])))
 
+;: Probe mutable i64 -> i64 slots and return mutable-entry metadata.
 (define (i64-i64-map-mut-entry-info-mut
   [slots : (&mut slots (Array I64I64MapSlot))]
   [capacity : i64]
@@ -2962,6 +2993,7 @@
                 (set! walked (+ walked 1)))]))
         (I64I64MapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Borrow i64 -> i64 slots mutably and return a wrapper mutable entry.
 (define (i64-i64-map-get-mut-entry! [map : (&mut map I64I64Map)] [key : i64]) : (I64I64MapMutEntryRef
     map)
   (let
@@ -2975,10 +3007,12 @@
       (struct-get info key)
       (struct-get info hash))))
 
+;: Return whether an i64 -> i64 wrapper mutable entry points at a live slot.
 (define (i64-i64-map-mut-entry-ref-present?
   [entry : (I64I64MapMutEntryRef map)]) : bool
   (struct-get entry present))
 
+;: Read an i64 -> i64 wrapper mutable entry value, or `fallback`.
 (define (i64-i64-map-mut-entry-ref-value-or
   [entry : (I64I64MapMutEntryRef map)]
   [fallback : i64]) : i64
@@ -2989,6 +3023,7 @@
       [(I64I64MapTombstone) fallback])
     fallback))
 
+;: Update an i64 -> i64 wrapper mutable entry in place when present.
 (define (i64-i64-map-mut-entry-ref-set!
   [entry : (I64I64MapMutEntryRef map)]
   [value : i64]) : unit
@@ -2999,6 +3034,7 @@
       (I64I64MapOccupied (struct-get entry key) value (struct-get entry hash)))
     unit))
 
+;: Lookup through an immutable generated i64 -> String map reference.
 (define (i64-string-map-get-ref [map : (& map I64StringMap)] [key : i64]) : I64StringMapLookup
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -3038,6 +3074,7 @@
                       (set! walked (+ walked 1)))))]))
           (I64StringMapMissing))))))
 
+;: Lookup through a mutable generated i64 -> String map reference.
 (define (i64-string-map-get-mut [map : (&mut map I64StringMap)] [key : i64]) : I64StringMapLookup
   (let
     [slots : (&mut map (Array I64StringMapSlot)) (&mut (struct-get map slots))]
@@ -3078,11 +3115,13 @@
                       (set! walked (+ walked 1)))))]))
           (I64StringMapMissing))))))
 
+;: Containment through an immutable generated i64 -> String map reference.
 (define (i64-string-map-contains-ref? [map : (& map I64StringMap)] [key : i64]) : bool
   (match (i64-string-map-get-ref map key)
     [(I64StringMapFound _) true]
     [(I64StringMapMissing) false]))
 
+;: Containment through a mutable generated i64 -> String map reference.
 (define (i64-string-map-contains-mut?
   [map : (&mut map I64StringMap)]
   [key : i64]) : bool
@@ -3090,6 +3129,7 @@
     [(I64StringMapFound _) true]
     [(I64StringMapMissing) false]))
 
+;: Rehash a borrowed i64 -> String slot array into a fresh destination.
 (define (i64-string-map-rehash-from-ref
   [src : (& src (Array I64StringMapSlot))]
   [dst : (Array I64StringMapSlot)]
@@ -3111,6 +3151,7 @@
         [(I64StringMapTombstone) unit])
       (i64-string-map-rehash-from-ref src dst dst-capacity (+ index 1) count))))
 
+;: Resize a generated i64 -> String map in place.
 (define (i64-string-map-resize!
   [map : (&mut map I64StringMap)]
   [new-capacity : i64]) : unit
@@ -3134,6 +3175,7 @@
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0))))
 
+;: Return whether a mutable i64 -> String map should grow before insert.
 (define (i64-string-map-needs-grow-mut? [map : (&mut map I64StringMap)]) : bool
   (let
     [capacity : i64 (array-length (struct-get map slots))]
@@ -3142,11 +3184,13 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Grow a generated i64 -> String map in place.
 (define (i64-string-map-grow! [map : (&mut map I64StringMap)]) : unit
   (i64-string-map-resize!
     map
     (i64-string-map-grow-capacity (array-length (struct-get map slots)))))
 
+;: Insert or update i64 -> String through a mutable map reference.
 (define (i64-string-map-put!
   [map : (&mut map I64StringMap)]
   [key : i64]
@@ -3227,6 +3271,7 @@
                 (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
               unit)))))))
 
+;: Remove an i64 key from i64 -> String through a mutable map reference.
 (define (i64-string-map-remove! [map : (&mut map I64StringMap)] [key : i64]) : bool
   (let
     [slots : (&mut map (Array I64StringMapSlot)) (&mut (struct-get map slots))]
@@ -3273,6 +3318,7 @@
                       (set! walked (+ walked 1)))))]))
           false)))))
 
+;: Reference variant of `i64-string-map-next-occupied`.
 (define (i64-string-map-next-occupied-ref
   [map : (& map I64StringMap)]
   [from : i64]) : i64
@@ -3290,6 +3336,7 @@
           [(I64StringMapTombstone) (set! index (+ index 1))]))
       capacity)))
 
+;: Reference variant of `i64-string-map-entry-at`.
 (define (i64-string-map-entry-at-ref [map : (& map I64StringMap)] [index : i64]) : I64StringMapEntry
   (if (if (< index 0)
     true
@@ -3301,6 +3348,7 @@
       [(I64StringMapEmpty) (I64StringMapEntryNone)]
       [(I64StringMapTombstone) (I64StringMapEntryNone)])))
 
+;: Probe mutable i64 -> String slots and return mutable-entry metadata.
 (define (i64-string-map-mut-entry-info-mut
   [slots : (&mut slots (Array I64StringMapSlot))]
   [capacity : i64]
@@ -3341,6 +3389,7 @@
                 (set! walked (+ walked 1)))]))
         (I64StringMapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Borrow i64 -> String slots mutably and return a wrapper mutable entry.
 (define (i64-string-map-get-mut-entry!
   [map : (&mut map I64StringMap)]
   [key : i64]) : (I64StringMapMutEntryRef map)
@@ -3355,10 +3404,12 @@
       (struct-get info key)
       (struct-get info hash))))
 
+;: Return whether an i64 -> String wrapper mutable entry points at a live slot.
 (define (i64-string-map-mut-entry-ref-present?
   [entry : (I64StringMapMutEntryRef map)]) : bool
   (struct-get entry present))
 
+;: Read an i64 -> String wrapper mutable entry value, or `fallback`.
 (define (i64-string-map-mut-entry-ref-value-or
   [entry : (I64StringMapMutEntryRef map)]
   [fallback : String]) : String
@@ -3369,6 +3420,7 @@
       [(I64StringMapTombstone) fallback])
     fallback))
 
+;: Update an i64 -> String wrapper mutable entry in place when present.
 (define (i64-string-map-mut-entry-ref-set!
   [entry : (I64StringMapMutEntryRef map)]
   [value : String]) : unit

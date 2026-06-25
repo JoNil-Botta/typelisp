@@ -7,7 +7,6 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector)
-(import stdlib.fs)
 (import "compiler_typecheck.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_diagnostic.tl")
@@ -1139,6 +1138,11 @@
 (define (lower-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
 
+(define (lower-path-drive-qualified? [path : String]) : bool
+  (let
+    [n : i64 (string.string-length path)]
+    (and (> n 1) (= (cast (string.string-ref path 1) : i64) (cast ':' : i64)))))
+
 (define (lower-dirname [path : String]) : String
   (let
     [n : i64 (string.string-length path)]
@@ -1155,8 +1159,106 @@
         ""
         (string.substring path 0 (+ last 1))))))
 
+(define (lower-path-segment-vec-render-from
+  [segments : vector.StringVec]
+  [index : i64]
+  [prefix : String]) : String
+  (if (>= index (vector.string-vec-len segments))
+    prefix
+    (let
+      [segment : String (vector.string-vec-get segments index "")]
+      [next-prefix : String
+        (if (= (string.string-length prefix) 0)
+          segment
+          (string.string-append prefix (string.string-append "/" segment)))]
+      (lower-path-segment-vec-render-from segments (+ index 1) next-prefix))))
+
+(define (lower-path-segment-vec-render [segments : vector.StringVec]) : String
+  (lower-path-segment-vec-render-from segments 0 ""))
+
+(define (lower-path-normalize-segment
+  [segment : String]
+  [segments : vector.StringVec]
+  [rooted : bool]) : vector.StringVec
+  (cond
+    [(string.string-eq segment "") segments]
+    [(string.string-eq segment ".") segments]
+    [(not (string.string-eq segment ".."))
+      (vector.string-vec-push segments segment)]
+    [(<= (vector.string-vec-len segments) 0)
+      (if rooted
+        segments
+        (vector.string-vec-push segments segment))]
+    [else
+      (let
+        [top : String (vector.string-vec-last segments "")]
+        (if (string.string-eq top "..")
+          (vector.string-vec-push segments segment)
+          (vector.string-vec-pop-rest-or
+            (vector.string-vec-pop segments)
+            segments)))]))
+
 (define (lower-normalize-path [path : String]) : String
-  (fs.fs-path-normalize (& path)))
+  (let
+    [n : i64 (string.string-length path)]
+    [drive-root : bool
+      (if (> n 2)
+        (if (lower-path-drive-qualified? path)
+          (lower-path-separator? (string.string-ref path 2))
+          false)
+        false)]
+    [rooted : bool
+      (if drive-root
+        true
+        (if (> n 0)
+          (lower-path-separator? (string.string-ref path 0))
+          false))]
+    [i : i64
+      (if drive-root
+        3
+        (if rooted
+          1
+          0))]
+    [segment-start : i64 i]
+    [segments : vector.StringVec (vector.string-vec-new)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (lower-path-separator? (string.string-ref path i))
+            (begin
+              (set!
+                segments
+                (lower-path-normalize-segment
+                  (string.substring path segment-start (- i segment-start))
+                  segments
+                  rooted))
+              (set! segment-start (+ i 1)))
+            (set! segment-start segment-start))
+          (set! i (+ i 1))))
+      (set!
+        segments
+        (lower-path-normalize-segment
+          (string.substring path segment-start (- n segment-start))
+          segments
+          rooted))
+      (let
+        [body : String (lower-path-segment-vec-render segments)]
+        (cond
+          [(if drive-root
+              (= (string.string-length body) 0)
+              false)
+            (string.string-append (string.substring path 0 2) "/")]
+          [drive-root
+            (string.string-append
+              (string.substring path 0 2)
+              (string.string-append "/" body))]
+          [(if rooted
+              (= (string.string-length body) 0)
+              false)
+            "/"]
+          [rooted (string.string-append "/" body)]
+          [(= (string.string-length body) 0) "."]
+          [else body])))))
 
 (define (lower-string-prefix-at?
   [text : String]

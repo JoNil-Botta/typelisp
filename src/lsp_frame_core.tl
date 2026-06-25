@@ -4066,16 +4066,34 @@
                   (begin
                     (tc-inlay-hints-disable!)
                     (if (= found-idx -1)
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool false)
-                            "error"
-                            (json.JsonString
-                              "No type information at this position")))
-                        (LspContinue docs))
+                      ;; Fallback: try to find explicit type annotation
+                      (let
+                        [off : i64 (lsp-offset-at-position text line0 char0)]
+                        [sym : String (lsp-symbol-at-offset text off)]
+                        [bind-type : String
+                          (if (string-eq sym "")
+                            ""
+                            (lsp-binding-type text (lsp-symbol-base sym) off))]
+                        (if (string-eq bind-type "")
+                          (begin
+                            (lsp-write-response
+                              id
+                              (lsp-json-object2
+                                "success"
+                                (json.JsonBool false)
+                                "error"
+                                (json.JsonString
+                                  "No type information at this position")))
+                            (LspContinue docs))
+                          (begin
+                            (lsp-write-response
+                              id
+                              (lsp-json-object2
+                                "success"
+                                (json.JsonBool true)
+                                "type"
+                                (json.JsonString bind-type)))
+                            (LspContinue docs))))
                       (let
                         [found-type : String (tc-inlay-hint-type-at found-idx)]
                         (begin

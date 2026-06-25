@@ -5182,7 +5182,7 @@
                           (lsp-line-col-at-offset text body-start-off)]
                         [body-end-lc : LspLineCol
                           (lsp-line-col-at-offset text body-end-off)]
-                        (if (not (lsp-text-is-valid-form new-body))
+                        (if (not (lsp-text-is-valid-forms new-body))
                           (begin
                             (set!
                               err
@@ -5433,15 +5433,17 @@
             [(OkLspJsonText new-text)
               (match (lsp-patch-text text old-text new-text)
                 [(OkLspEdit replaced)
-                  (begin
-                    (lsp-write-response
-                      id
-                      (lsp-json-object2
-                        "success"
-                        (json.JsonBool true)
-                        "text"
-                        (json.JsonString replaced)))
-                    (LspContinue docs))]
+                  (let
+                    [formatted : String (lsp-format-edit-text replaced)]
+                    (begin
+                      (lsp-write-response
+                        id
+                        (lsp-json-object2
+                          "success"
+                          (json.JsonBool true)
+                          "text"
+                          (json.JsonString formatted)))
+                      (LspContinue docs)))]
                 [(ErrLspEdit message)
                   (begin
                     (lsp-write-error id -32600 message)
@@ -5653,15 +5655,17 @@
                     (lsp-json-int-field-default position "character" 0)]
                   (match (lsp-replace-form-at-position text line col new-text)
                     [(OkLspEdit replaced)
-                      (begin
-                        (lsp-write-response
-                          id
-                          (lsp-json-object2
-                            "success"
-                            (json.JsonBool true)
-                            "text"
-                            (json.JsonString replaced)))
-                        (LspContinue docs))]
+                      (let
+                        [formatted : String (lsp-format-edit-text replaced)]
+                        (begin
+                          (lsp-write-response
+                            id
+                            (lsp-json-object2
+                              "success"
+                              (json.JsonBool true)
+                              "text"
+                              (json.JsonString formatted)))
+                          (LspContinue docs)))]
                     [(ErrLspEdit message)
                       (begin
                         (lsp-write-error id -32600 message)
@@ -5974,15 +5978,17 @@
                       new-body
                       decls)
                       [(OkLspEdit replaced)
-                        (begin
-                          (lsp-write-response
-                            id
-                            (lsp-json-object2
-                              "success"
-                              (json.JsonBool true)
-                              "text"
-                              (json.JsonString replaced)))
-                          (LspContinue docs))]
+                        (let
+                          [formatted : String (lsp-format-edit-text replaced)]
+                          (begin
+                            (lsp-write-response
+                              id
+                              (lsp-json-object2
+                                "success"
+                                (json.JsonBool true)
+                                "text"
+                                (json.JsonString formatted)))
+                            (LspContinue docs)))]
                       [(ErrLspEdit message)
                         (begin
                           (lsp-write-error id -32600 message)
@@ -6009,15 +6015,17 @@
                         new-body
                         decls)
                         [(OkLspEdit replaced)
-                          (begin
-                            (lsp-write-response
-                              id
-                              (lsp-json-object2
-                                "success"
-                                (json.JsonBool true)
-                                "text"
-                                (json.JsonString replaced)))
-                            (LspContinue docs))]
+                          (let
+                            [formatted : String (lsp-format-edit-text replaced)]
+                            (begin
+                              (lsp-write-response
+                                id
+                                (lsp-json-object2
+                                  "success"
+                                  (json.JsonBool true)
+                                  "text"
+                                  (json.JsonString formatted)))
+                              (LspContinue docs)))]
                         [(ErrLspEdit message)
                           (begin
                             (lsp-write-error id -32600 message)
@@ -6071,15 +6079,18 @@
                           new-pattern
                           decls)
                           [(OkLspEdit replaced)
-                            (begin
-                              (lsp-write-response
-                                id
-                                (lsp-json-object2
-                                  "success"
-                                  (json.JsonBool true)
-                                  "text"
-                                  (json.JsonString replaced)))
-                              (LspContinue docs))]
+                            (let
+                              [formatted : String
+                                (lsp-format-edit-text replaced)]
+                              (begin
+                                (lsp-write-response
+                                  id
+                                  (lsp-json-object2
+                                    "success"
+                                    (json.JsonBool true)
+                                    "text"
+                                    (json.JsonString formatted)))
+                                (LspContinue docs)))]
                           [(ErrLspEdit message)
                             (begin
                               (lsp-write-error id -32600 message)

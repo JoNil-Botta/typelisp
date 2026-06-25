@@ -7118,17 +7118,41 @@
     (ctfe-expr-binding-clause-inspector-name? name)
     (ctfe-expr-binding-clause-list-inspector-name? name)))
 
+(define (tc-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
+  (string.is-string-prefix-at (& text) (& prefix) start))
+
+(define (tc-comptime-helper-qualified-candidate-from-id?
+  [name : String]
+  [first-dot : i64]) : bool
+  (if (<= first-dot 0)
+    false
+    (let
+      [prefix-id : i64 (intern-slice name 0 first-dot)]
+      (if (or
+        (= prefix-id (intern "comptime"))
+        (= prefix-id (intern "stdlib/comptime")))
+        true
+        (if (= prefix-id (intern "stdlib"))
+          (or
+            (tc-string-prefix-at? name "comptime." (+ first-dot 1))
+            (tc-string-prefix-at? name "comptime/" (+ first-dot 1)))
+          false)))))
+
 (define (tc-comptime-helper-qualified-lookup-key
   [env : TcTypeEnv]
-  [name : String]) : TcMaybeString
-  (let
-    [call-name : String (ctfe-comptime-helper-call-name name)]
-    (if (and
-      (not (string.string-eq call-name name))
-      (tc-comptime-syntax-helper-name? call-name)
-      (tc-source-name-bound-exact? env call-name))
-      (TcSomeString call-name)
-      (TcNoString))))
+  [name : String]
+  [name-id : i64]
+  [first-dot : i64]) : TcMaybeString
+  (if (tc-comptime-helper-qualified-candidate-from-id? name first-dot)
+    (let
+      [call-name : String (ctfe-comptime-helper-call-name name)]
+      (if (and
+        (not (string.string-eq call-name name))
+        (tc-comptime-syntax-helper-name? call-name)
+        (tc-source-name-bound-exact? env call-name))
+        (TcSomeString call-name)
+        (TcNoString)))
+    (TcNoString)))
 
 (define (tc-dotted-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (tc-dotted-type-name-lookup-key-from-id ctx name (tc-name-id name)))
@@ -7210,7 +7234,11 @@
               name-id
               first-dot))
             (OkTcString name)
-            (match (tc-comptime-helper-qualified-lookup-key env name)
+            (match (tc-comptime-helper-qualified-lookup-key
+              env
+              name
+              name-id
+              first-dot)
               [(TcSomeString key) (OkTcString key)]
               [(TcNoString)
                 (match (tc-source-dotted-alias-key ctx name name-id first-dot)
@@ -11734,6 +11762,16 @@
     import-unqualified
     ""))
 
+(define (tc-import-alias-materialized-key-id
+  [alias-key : String]
+  [target-module : String]) : i64
+  (intern (compiler-symbol-module-key alias-key target-module)))
+
+(define (tc-import-alias-materialized? [seen : hashmap.I64I64Map] [key : i64]) : bool
+  (match (hashmap.i64-i64-map-get seen key)
+    [(hashmap.I64I64MapFound _) true]
+    [(hashmap.I64I64MapMissing) false]))
+
 (define (tc-build-top-env-aliases-list
   [ctx : TcContext]
   [all-decls : AstDeclList]
@@ -11746,6 +11784,7 @@
     [cur-module-id : i64 (intern module)]
     [message : String ""]
     [ok : bool true]
+    [seen-aliases : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
     (begin
       (while ok
         (match cur
@@ -11767,22 +11806,34 @@
                       _))
                   (let
                     [importer-module : String (intern-str cur-module-id)]
-                    (match (tc-bind-import-alias-module
-                      ctx
-                      all-decls
-                      cur-env
-                      target-module
-                      (compiler-symbols-import-alias-key importer-module alias)
-                      importer-module
-                      (string.string-eq alias ""))
-                      [(OkTcEnv next-env)
-                        (begin
-                          (set! cur-env next-env)
-                          (set! cur rest))]
-                      [(ErrTcEnv step-message)
-                        (begin
-                          (set! message step-message)
-                          (set! ok false))]))]
+                    [alias-key : String
+                      (compiler-symbols-import-alias-key importer-module alias)]
+                    [seen-key : i64
+                      (tc-import-alias-materialized-key-id
+                        alias-key
+                        target-module)]
+                    (if (tc-import-alias-materialized? seen-aliases seen-key)
+                      (set! cur rest)
+                      (begin
+                        (set!
+                          seen-aliases
+                          (hashmap.i64-i64-map-put seen-aliases seen-key 1))
+                        (match (tc-bind-import-alias-module
+                          ctx
+                          all-decls
+                          cur-env
+                          target-module
+                          alias-key
+                          importer-module
+                          (string.string-eq alias ""))
+                          [(OkTcEnv next-env)
+                            (begin
+                              (set! cur-env next-env)
+                              (set! cur rest))]
+                          [(ErrTcEnv step-message)
+                            (begin
+                              (set! message step-message)
+                              (set! ok false))]))))]
                 [_ (set! cur rest)]))]))
       (if (string.string-eq message "")
         (OkTcEnv cur-env)

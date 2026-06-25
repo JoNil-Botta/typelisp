@@ -477,6 +477,51 @@
               (set! same false)))
           same)))))
 
+(define (ctfe-string-slice-eq? [text : String] [start : i64] [needle : String]) : bool
+  (let
+    [text-len : i64 (ctfe-private-string-length text)]
+    [needle-len : i64 (ctfe-private-string-length needle)]
+    (if (or (< start 0) (> (+ start needle-len) text-len))
+      false
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i needle-len))
+            (if (=
+              (cast (ctfe-private-string-ref text (+ start i)) : i64)
+              (cast (ctfe-private-string-ref needle i) : i64))
+              (set! i (+ i 1))
+              (set! same false)))
+          same)))))
+
+(define (ctfe-string-eq-after-prefix?
+  [name : String]
+  [prefix : String]
+  [base : String]) : bool
+  (let
+    [name-len : i64 (ctfe-private-string-length name)]
+    [prefix-len : i64 (ctfe-private-string-length prefix)]
+    [base-len : i64 (ctfe-private-string-length base)]
+    (and
+      (= name-len (+ prefix-len base-len))
+      (ctfe-string-prefix? name prefix)
+      (ctfe-string-slice-eq? name prefix-len base))))
+
+(define (ctfe-string-suffix-with-prefix?
+  [name : String]
+  [prefix : String]
+  [base : String]) : bool
+  (let
+    [name-len : i64 (ctfe-private-string-length name)]
+    [prefix-len : i64 (ctfe-private-string-length prefix)]
+    [base-len : i64 (ctfe-private-string-length base)]
+    [start : i64 (- name-len (+ prefix-len base-len))]
+    (and
+      (>= start 0)
+      (ctfe-string-slice-eq? name start prefix)
+      (ctfe-string-slice-eq? name (+ start prefix-len) base))))
+
 (define (ctfe-string-has-module-separator? [name : String]) : bool
   (let
     [i : i64 0]
@@ -3475,31 +3520,27 @@
     (and
       qualified
       (or
-        (string.string-eq name (string.string-append "comptime." base))
-        (string.string-eq name (string.string-append "comptime/" base))
-        (string.string-eq name (string.string-append "stdlib.comptime." base))
-        (string.string-eq name (string.string-append "stdlib.comptime/" base))
-        (string.string-eq name (string.string-append "stdlib/comptime." base))
-        (string.string-eq name (string.string-append "stdlib/comptime/" base))))))
+        (ctfe-string-eq-after-prefix? name "comptime." base)
+        (ctfe-string-eq-after-prefix? name "comptime/" base)
+        (ctfe-string-eq-after-prefix? name "stdlib.comptime." base)
+        (ctfe-string-eq-after-prefix? name "stdlib.comptime/" base)
+        (ctfe-string-eq-after-prefix? name "stdlib/comptime." base)
+        (ctfe-string-eq-after-prefix? name "stdlib/comptime/" base)))))
 
 (define (ctfe-stdlib-string-helper-name? [name : String] [base : String]) : bool
   (and
     (ctfe-string-has-module-separator? name)
     (or
-      (string.string-eq name (string.string-append "string." base))
-      (string.string-eq name (string.string-append "string/" base))
-      (string.string-eq name (string.string-append "stdlib.string." base))
-      (string.string-eq name (string.string-append "stdlib.string/" base))
-      (string.string-eq name (string.string-append "stdlib/string." base))
-      (string.string-eq name (string.string-append "stdlib/string/" base))
-      (string.string-eq name (string.string-append "stdlib/string.tl." base))
-      (string.string-eq name (string.string-append "stdlib/string.tl/" base))
-      (ctfe-string-suffix?
-        name
-        (string.string-append "/stdlib/string.tl." base))
-      (ctfe-string-suffix?
-        name
-        (string.string-append "/stdlib/string.tl/" base)))))
+      (ctfe-string-eq-after-prefix? name "string." base)
+      (ctfe-string-eq-after-prefix? name "string/" base)
+      (ctfe-string-eq-after-prefix? name "stdlib.string." base)
+      (ctfe-string-eq-after-prefix? name "stdlib.string/" base)
+      (ctfe-string-eq-after-prefix? name "stdlib/string." base)
+      (ctfe-string-eq-after-prefix? name "stdlib/string/" base)
+      (ctfe-string-eq-after-prefix? name "stdlib/string.tl." base)
+      (ctfe-string-eq-after-prefix? name "stdlib/string.tl/" base)
+      (ctfe-string-suffix-with-prefix? name "/stdlib/string.tl." base)
+      (ctfe-string-suffix-with-prefix? name "/stdlib/string.tl/" base))))
 
 (define (ctfe-string-eq-helper-name? [name : String]) : bool
   (or

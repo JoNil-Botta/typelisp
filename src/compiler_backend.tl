@@ -5683,16 +5683,35 @@
                   dst
                   operand
                   ty)
-                (string-append
-                  (compiler-backend-emit-group-word-move
-                    operand
-                    scratch
-                    is-float)
-                  (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
-                    dst
-                    scratch
-                    ty))))]
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home assignments dst)]
+                  ;; vreg-model: a register-homed 8-byte dst takes the spilled word
+                  ;; straight into its home (movq operand, dst-home), skipping the
+                  ;; %rax stage + store -- this is the struct-word/param move flood
+                  ;; (e.g. (struct-get pair left) of a spilled register-group arg).
+                  ;; An 8-byte word fills the whole register, so the typed store is
+                  ;; a bare movq and the direct move is identical. Spilled / narrow
+                  ;; (< 8) / float dsts keep the staged + typed-store path.
+                  (if (if (string-eq dst-home "")
+                    false
+                    (if is-float
+                      false
+                      (= (compiler-backend-type-size ty) 8)))
+                    (compiler-backend-emit-group-word-move
+                      operand
+                      dst-home
+                      is-float)
+                    (string-append
+                      (compiler-backend-emit-group-word-move
+                        operand
+                        scratch
+                        is-float)
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        scratch
+                        ty))))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-diagnostic-with-message

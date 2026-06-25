@@ -1,4 +1,4 @@
-;: SPEC SPMD contract: masked-if branches reject indirect varying calls.
+;: SPEC SPMD v1 private-call ABI: masked branches reject function-value calls.
 (define (bump [x : i64]) : i64
   (+ x 1))
 

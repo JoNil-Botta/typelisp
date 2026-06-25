@@ -1,4 +1,4 @@
-;: SPEC SPMD contract: indirect foreach calls with varying arguments are deferred.
+;: SPEC SPMD v1 private-call ABI: function-value varying calls stay rejected.
 (define (inc [x : i64]) : i64
   (+ x 1))
 

@@ -128,6 +128,9 @@ spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_r
 spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
 spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
 spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
+
+# SPMD v1 private-call ABI policy: public vector/mask/varying source types
+# stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred

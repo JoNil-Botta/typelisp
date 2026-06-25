@@ -3214,6 +3214,23 @@
         [(CompilerRegNoType) false])]
     [(CompilerRegNoType) false]))
 
+(define (compiler-reg-same-value-overlap-eligible?
+  [types : CompilerRegVarTypes]
+  [left : i64]
+  [right : i64]) : bool
+  (match (compiler-reg-var-types-lookup types left)
+    [(CompilerRegSomeType left-ty)
+      (match (compiler-reg-var-types-lookup types right)
+        [(CompilerRegSomeType right-ty)
+          (and
+            (compiler-reg-scalar-type? left-ty)
+            (compiler-reg-scalar-type? right-ty)
+            (if (compiler-reg-float-type? left-ty)
+              (compiler-reg-float-type? right-ty)
+              (not (compiler-reg-float-type? right-ty))))]
+        [(CompilerRegNoType) false])]
+    [(CompilerRegNoType) false]))
+
 (define (compiler-reg-location-conflicts?
   [assignments : CompilerRegAssignmentList]
   [intervals : CompilerRegIntervalIndex]
@@ -3531,6 +3548,43 @@
         (compiler-ir-block-seq-to-list seq)
         counts)]))
 
+(define (compiler-reg-mark-phi-def! [phi-defs : (Array i64)] [var : i64]) : unit
+  (if (and (>= var 0) (< var (array-length phi-defs)))
+    (array-set! phi-defs var 1)
+    unit))
+
+(define (compiler-reg-mark-phi-defs-seq!
+  [instrs : CompilerIrInstrSeq]
+  [phi-defs : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(IrInstrPhi dst _ _) (compiler-reg-mark-phi-def! phi-defs dst)]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-mark-phi-defs-blocks!
+  [blocks : CompilerIrBlockList]
+  [phi-defs : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-mark-phi-defs-seq! instrs phi-defs)
+            (compiler-reg-mark-phi-defs-blocks! (box-get rest) phi-defs))])]
+    [(IrBlockArray seq)
+      (compiler-reg-mark-phi-defs-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        phi-defs)]))
+
 (define (compiler-reg-param-count-defs!
   [params : CompilerIrParamList]
   [counts : (Array i64)]) : unit
@@ -3582,17 +3636,37 @@
 (define (compiler-reg-sv-single-def? [counts : (Array i64)] [var : i64]) : bool
   (and (>= var 0) (< var (array-length counts)) (= (array-ref counts var) 1)))
 
+(define (compiler-reg-sv-single-def-non-phi?
+  [counts : (Array i64)]
+  [phi-defs : (Array i64)]
+  [var : i64]) : bool
+  (and
+    (compiler-reg-sv-single-def? counts var)
+    (or (>= var (array-length phi-defs)) (= (array-ref phi-defs var) 0))))
+
+(define (compiler-reg-sv-eligible? [eligible : (Array i64)] [var : i64]) : bool
+  (if (= (array-length eligible) 0)
+    true
+    (and
+      (>= var 0)
+      (< var (array-length eligible))
+      (= (array-ref eligible var) 1))))
+
 (define (compiler-reg-sv-add-instr!
   [instr : CompilerIrInstr]
   [counts : (Array i64)]
+  [phi-defs : (Array i64)]
+  [eligible : (Array i64)]
   [parents : (Array i64)]) : unit
   (match instr
     [(IrInstrMov dst src _)
       (match src
         [(IrValueVar svar)
           (if (and
-            (compiler-reg-sv-single-def? counts dst)
-            (compiler-reg-sv-single-def? counts svar))
+            (compiler-reg-sv-single-def-non-phi? counts phi-defs dst)
+            (compiler-reg-sv-single-def-non-phi? counts phi-defs svar)
+            (compiler-reg-sv-eligible? eligible dst)
+            (compiler-reg-sv-eligible? eligible svar))
             (compiler-reg-sv-union! parents svar dst)
             unit)]
         [_ unit])]
@@ -3601,6 +3675,8 @@
 (define (compiler-reg-sv-seq!
   [instrs : CompilerIrInstrSeq]
   [counts : (Array i64)]
+  [phi-defs : (Array i64)]
+  [eligible : (Array i64)]
   [parents : (Array i64)]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -3609,13 +3685,20 @@
     (begin
       (while (< index count)
         (begin
-          (compiler-reg-sv-add-instr! (array-ref slots index) counts parents)
+          (compiler-reg-sv-add-instr!
+            (array-ref slots index)
+            counts
+            phi-defs
+            eligible
+            parents)
           (set! index (+ index 1))))
       unit)))
 
 (define (compiler-reg-sv-blocks!
   [blocks : CompilerIrBlockList]
   [counts : (Array i64)]
+  [phi-defs : (Array i64)]
+  [eligible : (Array i64)]
   [parents : (Array i64)]) : unit
   (match blocks
     [(IrBlockNil) unit]
@@ -3623,29 +3706,68 @@
       (match block
         [(IrBlock _ instrs)
           (begin
-            (compiler-reg-sv-seq! instrs counts parents)
-            (compiler-reg-sv-blocks! (box-get rest) counts parents))])]
+            (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)
+            (compiler-reg-sv-blocks!
+              (box-get rest)
+              counts
+              phi-defs
+              eligible
+              parents))])]
     [(IrBlockArray seq)
       (compiler-reg-sv-blocks!
         (compiler-ir-block-seq-to-list seq)
         counts
+        phi-defs
+        eligible
         parents)]))
 
-(define (compiler-reg-function-same-value-parents [func : CompilerIrFunction]) : (Array
-    i64)
+(define (compiler-reg-function-same-value-parents-filtered
+  [func : CompilerIrFunction]
+  [eligible : (Array i64)]) : (Array i64)
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
         [counts : (Array i64) (compiler-reg-function-def-counts func)]
+        [phi-defs : (Array i64) (make-array i64 vars)]
         [parents : (Array i64) (make-array i64 vars)]
         [index : i64 0]
         (begin
+          (compiler-reg-fill-i64-array phi-defs 0)
+          (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (while (< index vars)
             (begin
               (array-set! parents index index)
               (set! index (+ index 1))))
-          (compiler-reg-sv-blocks! blocks counts parents)
+          (compiler-reg-sv-blocks! blocks counts phi-defs eligible parents)
           parents))]))
+
+(define (compiler-reg-function-same-value-parents [func : CompilerIrFunction]) : (Array
+    i64)
+  (compiler-reg-function-same-value-parents-filtered func (make-array i64 0)))
+
+(define (compiler-reg-same-value-eligible-vars
+  [interval-index : CompilerRegIntervalIndex]
+  [clobber-points : CompilerLiveI64Set]) : (Array i64)
+  (let
+    [starts : (Array i64) (struct-get interval-index starts)]
+    [ends : (Array i64) (struct-get interval-index ends)]
+    [eligible : (Array i64) (make-array i64 (array-length starts))]
+    [var : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array eligible 0)
+      (while (< var (array-length starts))
+        (begin
+          (if (and
+            (>= (array-ref starts var) 0)
+            (not
+              (compiler-reg-call-set-in-range?
+                clobber-points
+                (array-ref starts var)
+                (array-ref ends var))))
+            (array-set! eligible var 1)
+            unit)
+          (set! var (+ var 1))))
+      eligible)))
 
 (define (compiler-reg-same-value-class?
   [parents : (Array i64)]
@@ -3697,7 +3819,9 @@
         (if strict
           (compiler-reg-vars-interfere-index? intervals left right)
           (compiler-reg-vars-interfere-segmented-index? intervals left right)))
-      (compiler-reg-same-value-class? sv-parents left right))))
+      (and
+        (compiler-reg-same-value-overlap-eligible? types left right)
+        (compiler-reg-same-value-class? sv-parents left right)))))
 
 (define (compiler-reg-coalesce-map-var-compatible-with-root?
   [parents : (Array i64)]
@@ -7641,6 +7765,57 @@
         s
         (compiler-reg-prepend-segments (box-get rest) dst))]))
 
+(define (compiler-reg-interval-list-insert-merged
+  [segments : CompilerRegIntervalList]
+  [var : i64]
+  [start : i64]
+  [end : i64]) : CompilerRegIntervalList
+  (match segments
+    [(CompilerRegIntervalNil)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval var start end)
+        CompilerRegIntervalNil)]
+    [(CompilerRegIntervalCons head rest)
+      (match head
+        [(CompilerRegInterval _ head-start head-end)
+          (cond
+            [(< end head-start)
+              (compiler-reg-interval-cons
+                (CompilerRegInterval var start end)
+                segments)]
+            [(< head-end start)
+              (compiler-reg-interval-cons
+                head
+                (compiler-reg-interval-list-insert-merged
+                  (box-get rest)
+                  var
+                  start
+                  end))]
+            [else
+              (compiler-reg-interval-list-insert-merged
+                (box-get rest)
+                var
+                (if (< start head-start)
+                  start
+                  head-start)
+                (if (> end head-end)
+                  end
+                  head-end))])])]))
+
+(define (compiler-reg-union-segments
+  [src : CompilerRegIntervalList]
+  [root : i64]
+  [dst : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (match src
+    [(CompilerRegIntervalNil) dst]
+    [(CompilerRegIntervalCons s rest)
+      (match s
+        [(CompilerRegInterval _ start end)
+          (compiler-reg-union-segments
+            (box-get rest)
+            root
+            (compiler-reg-interval-list-insert-merged dst root start end))])]))
+
 (define (compiler-reg-merged-root-index
   [coalesce : CompilerRegCoalesceMap]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegIntervalIndex
@@ -7689,17 +7864,19 @@
                 (if (> (array-ref orig-ends v) (array-ref root-ends rr))
                   (array-set! root-ends rr (array-ref orig-ends v))
                   unit)
-                ;; #3489 (PR4): the root carries the UNION of its members'
-                ;; segments (members are pairwise non-interfering, so the lists
-                ;; concatenate without overlap), exposing the class's holes to the
-                ;; hole-aware free-register check.
+                ;; #3489 (PR4) + #3788: the root carries the UNION of its
+                ;; members' segments. Normal coalescing only merges
+                ;; non-interfering members, but same-value coalescing deliberately
+                ;; admits overlapping members, so keep the root segment list
+                ;; sorted and non-overlapping while preserving genuine holes.
                 (array-set!
                   root-segs
                   rr
-                  (compiler-reg-prepend-segments
+                  (compiler-reg-union-segments
                     (if (< v (array-length orig-segs))
                       (array-ref orig-segs v)
                       CompilerRegIntervalNil)
+                    rr
                     (array-ref root-segs rr)))))
             unit)
           (set! v (+ v 1))))
@@ -8507,12 +8684,27 @@
       (compiler-reg-function-moves func false)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
-    ;; #2 same-value overlap coalescing is intentionally disabled in the
-    ;; production scalar path for now: allowing overlapping copy classes made a
-    ;; stage2-built opt2 compiler exhaust its allocator while compiling src/main.tl.
-    ;; Keep the helper/test infrastructure, but pass an empty map so ordinary
-    ;; interference rules decide coalescing.
-    [sv-parents : (Array i64) (make-array i64 0)]
+    ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
+    ;; registers). Hoisted so same-value filtering, integer greedy allocation, and
+    ;; the existing caller-saved spill rescue share one computation.
+    [clobber-points
+      : CompilerLiveI64Set
+      ;; Unconditional: the greedy now allocates the integer (both opt2 and SIMD)
+      ;; AND float->XMM classes, all of which use clobber-points for call-clobber
+      ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
+      ;; pool register callee-saved, so the clobber test never restricts there; on
+      ;; the XMM path call-spanning floats are already excluded pre-allocation.
+      (compiler-reg-backend-caller-clobber-points func)]
+    ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
+    ;; identical value and may coalesce even when their live segments overlap.
+    ;; Vars spanning a modeled caller-clobber point stay out of the same-value
+    ;; relation for now; their save/restore and regmask constraints are already
+    ;; represented by normal interference and must not be bypassed by an overlap
+    ;; waiver.
+    [sv-parents : (Array i64)
+      (compiler-reg-function-same-value-parents-filtered
+        func
+        (compiler-reg-same-value-eligible-vars interval-index clobber-points))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -8614,17 +8806,6 @@
             (compiler-reg-function-spill-weights func)
             (array-length (struct-get interval-index starts))))
         (make-array i64 0))]
-    ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
-    ;; registers). Hoisted so the call-spanning-aware pre-pass and the existing
-    ;; caller-saved overflow pass share one computation.
-    [clobber-points
-      : CompilerLiveI64Set
-      ;; Unconditional: the greedy now allocates the integer (both opt2 and SIMD)
-      ;; AND float->XMM classes, all of which use clobber-points for call-clobber
-      ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
-      ;; pool register callee-saved, so the clobber test never restricts there; on
-      ;; the XMM path call-spanning floats are already excluded pre-allocation.
-      (compiler-reg-backend-caller-clobber-points func)]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
     ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
@@ -12318,6 +12499,26 @@
                 IrInstrNil))
             IrBlockNil))))))
 
+(define (compiler-reg-same-value-clobber-function) : CompilerIrFunction
+  (IrFunction
+    "same_value_clobber"
+    IrParamNil
+    (AstTyI64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (IrInstrCall 1 "side_effect" IrCallArgsNil (AstTyUnit))
+            (compiler-ir-instr-cons
+              (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
 (define (compiler-reg-interference-blocks-coalesce-function) : CompilerIrFunction
   (IrFunction
     "interference_blocks_coalesce"
@@ -15487,12 +15688,104 @@
       [(CompilerRegNoLocation) true]
       [(CompilerRegSomeLocation _) false])))
 
+(define (compiler-reg-single-segment-range?
+  [segments : CompilerRegIntervalList]
+  [var : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (match segments
+    [(CompilerRegIntervalCons head rest)
+      (match head
+        [(CompilerRegInterval found-var found-start found-end)
+          (and
+            (= found-var var)
+            (= found-start start)
+            (= found-end end)
+            (match (box-get rest)
+              [(CompilerRegIntervalNil) true]
+              [_ false]))])]
+    [_ false]))
+
+(define (compiler-reg-merged-root-overlap-segments-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 3)]
+    [ends : (Array i64) (make-array i64 3)]
+    [segments : (Array CompilerRegIntervalList)
+      (make-array CompilerRegIntervalList 3)]
+    [parents : (Array i64) (make-array i64 3)]
+    (begin
+      (compiler-reg-fill-i64-array starts -1)
+      (compiler-reg-fill-i64-array ends -1)
+      (array-set! segments 0 CompilerRegIntervalNil)
+      (array-set! segments 1 CompilerRegIntervalNil)
+      (array-set! segments 2 CompilerRegIntervalNil)
+      (array-set! starts 0 0)
+      (array-set! ends 0 6)
+      (array-set! starts 1 2)
+      (array-set! ends 1 8)
+      (array-set!
+        segments
+        0
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 0 0 4)
+          (compiler-reg-interval-cons
+            (CompilerRegInterval 0 5 6)
+            CompilerRegIntervalNil)))
+      (array-set!
+        segments
+        1
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 1 2 8)
+          CompilerRegIntervalNil))
+      (array-set! parents 0 0)
+      (array-set! parents 1 0)
+      (array-set! parents 2 2)
+      (let
+        [merged : CompilerRegIntervalIndex
+          (compiler-reg-merged-root-index
+            (CompilerRegCoalesceMap parents)
+            (CompilerRegIntervalIndex starts ends segments))]
+        (and
+          (= (array-ref (struct-get merged starts) 0) 0)
+          (= (array-ref (struct-get merged ends) 0) 8)
+          (< (array-ref (struct-get merged starts) 1) 0)
+          (compiler-reg-single-segment-range?
+            (array-ref (struct-get merged segments) 0)
+            0
+            0
+            8))))))
+
 (define (compiler-reg-same-value-multi-def-census-ok?) : bool
   (let
     [parents : (Array i64)
       (compiler-reg-function-same-value-parents
         (compiler-reg-same-value-multi-def-census-function))]
     (not (compiler-reg-same-value-class? parents 0 1))))
+
+(define (compiler-reg-same-value-phi-census-ok?) : bool
+  (let
+    [parents : (Array i64)
+      (compiler-reg-function-same-value-parents
+        (compiler-reg-loop-backedge-function))]
+    (not (compiler-reg-same-value-class? parents 1 2))))
+
+(define (compiler-reg-same-value-clobber-census-ok?) : bool
+  (let
+    [func : CompilerIrFunction (compiler-reg-same-value-clobber-function)]
+    [selection : CompilerRegIntervalSelection
+      (compiler-reg-live-interval-selection
+        func
+        (compiler-live-analyze-function func))]
+    (match selection
+      [(CompilerRegIntervalSelection _ interval-index)
+        (let
+          [parents : (Array i64)
+            (compiler-reg-function-same-value-parents-filtered
+              func
+              (compiler-reg-same-value-eligible-vars
+                interval-index
+                (compiler-reg-backend-caller-clobber-points func)))]
+          (not (compiler-reg-same-value-class? parents 0 2)))])))
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
@@ -15522,7 +15815,10 @@
                         (compiler-reg-coalesce-interference-reject-ok?)
                         (compiler-reg-coalesce-segmented-map-ok?)
                         (compiler-reg-coalesce-strict-segmented-reject-ok?)
-                        (compiler-reg-same-value-multi-def-census-ok?))])])])])]))
+                        (compiler-reg-merged-root-overlap-segments-ok?)
+                        (compiler-reg-same-value-multi-def-census-ok?)
+                        (compiler-reg-same-value-phi-census-ok?)
+                        (compiler-reg-same-value-clobber-census-ok?))])])])])]))
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))

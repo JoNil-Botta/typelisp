@@ -12,6 +12,7 @@
 ;# array each round (`xs[r] = acc`), creating a cross-round data dependency:
 ;# without it the per-round sum would be loop-invariant and the optimizer
 ;# could collapse every round into a single pass times `rounds`.
+(import stdlib.array)
 (import "stdlib/io.tl")
 
 (define base-size : i64
@@ -24,14 +25,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! xs i (+ (* i 2654435761) 1013904223))
+        (array.array-set! xs i (+ (* i 2654435761) 1013904223))
         (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
     [n : i64 (+ base-size (arg-count))]
     [rounds : i64 (+ base-rounds (arg-count))]
-    [xs : (Array i64) (make-array i64 (+ base-size (arg-count)))]
+    [xs : (Array i64) (array.make-array i64 (+ base-size (arg-count)))]
     [acc : i64 0]
     [r : i64 0]
     (begin
@@ -42,8 +43,8 @@
             [i : i64 0]
             (while (< i n)
               (begin
-                (set! acc (+ acc (array-ref xs i)))
+                (set! acc (+ acc (array.array-ref xs i)))
                 (set! i (+ i 1)))))
-          (array-set! xs r acc)
+          (array.array-set! xs r acc)
           (set! r (+ r 1))))
       (bit-and acc 255))))

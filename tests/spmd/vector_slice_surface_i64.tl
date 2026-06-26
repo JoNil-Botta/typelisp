@@ -2,6 +2,7 @@
 ;; vectors and borrowed slices, while the SPMD body borrows their backing storage
 ;; before using varying lane indexes. This keeps public dynamic `(Array T)` out
 ;; of the user-facing function signatures.
+(import stdlib.array)
 (import stdlib.vector)
 (import stdlib.vector_slice)
 (import (vector.vector i64) as i64v)
@@ -26,7 +27,10 @@
     [out-slots : (&mut out (Array i64)) (i64v.slots-mut out)]
     (foreach
       ([i : i64 0 n])
-      (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
+      (array.array-set!
+        out-slots
+        i
+        (+ (array.array-ref a-slots i) (array.array-ref b-slots i))))))
 
 (define (fill-slice-foreach
   [a : (i64s.Slice a)]
@@ -39,7 +43,10 @@
     [out-slots : (&mut out (Array i64)) (struct-get out slots)]
     (foreach
       ([i : i64 0 n])
-      (array-set! out-slots i (+ (array-ref a-slots i) (array-ref b-slots i))))))
+      (array.array-set!
+        out-slots
+        i
+        (+ (array.array-ref a-slots i) (array.array-ref b-slots i))))))
 
 (define (checksum [v : (& v i64v.Vec)] [n : i64]) : i64
   (let

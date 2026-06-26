@@ -13,6 +13,9 @@
 ;# keeps each pass distinct (no hoisting) and the `base-reps + (arg-count)`
 ;# trip count (arg-count is 1 with no extra arguments, matching C `argc`) keeps
 ;# the result deterministic while preventing whole-loop constant folding.
+; Compatibility exception for #3772: SPMD value operands still use bare
+; array-ref so the checker sees the compiler array-read AST.
+(import stdlib.array)
 (import "stdlib/io.tl")
 
 (define array-len : i64
@@ -25,12 +28,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
+        (array.array-set! a i (+ i 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 array-len)]
+    [a : (Array i64) (array.make-array i64 array-len)]
     [reps : i64 (+ base-reps (arg-count))]
     [acc : i64 0]
     [r : i64 0]

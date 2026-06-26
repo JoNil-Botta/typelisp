@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
@@ -10,9 +11,9 @@
       [seed : String (string-append "seed" "arena")]
       [base : i64 (string-length seed)]
       [mark : ArenaMark (arena-mark)]
-      [items : (Array i64) (make-array i64 1)]
+      [items : (Array i64) (array.make-array i64 1)]
       (begin
-        (array-set! items 0 (+ base 33))
+        (array.array-set! items 0 (+ base 33))
         (unsafe
           (arena-rewind mark))
-        (array-ref items 0)))))
+        (array.array-ref items 0)))))

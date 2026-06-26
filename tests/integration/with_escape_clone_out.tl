@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
@@ -21,10 +22,10 @@
 
 (define (make-items [seed : i64]) : (Array String)
   (let
-    [items : (Array String) (make-array String 2)]
+    [items : (Array String) (array.make-array String 2)]
     (begin
-      (array-set! items 0 (piece seed 1))
-      (array-set! items 1 (piece seed 2))
+      (array.array-set! items 0 (piece seed 1))
+      (array.array-set! items 1 (piece seed 2))
       items)))
 
 (define (escape-items [scratch : Arena] [seed : i64]) : (Array String)
@@ -60,8 +61,8 @@
 
 (define (items-ok? [items : (Array String)] [seed : i64]) : bool
   (and
-    (string-eq (array-ref items 0) (piece seed 1))
-    (string-eq (array-ref items 1) (piece seed 2))))
+    (string-eq (array.array-ref items 0) (piece seed 1))
+    (string-eq (array.array-ref items 1) (piece seed 2))))
 
 (define (cell-ok? [cell : (Box String)] [seed : i64] [slot : i64]) : bool
   (string-eq (box-get cell) (piece seed slot)))
@@ -70,8 +71,8 @@
   (and
     (string-eq (struct-get bundle name) (piece seed 0))
     (items-ok? (struct-get bundle items) seed)
-    (string-eq (array-ref (struct-get bundle fixed) 0) (piece seed 4))
-    (string-eq (array-ref (struct-get bundle fixed) 1) (piece seed 5))
+    (string-eq (array.array-ref (struct-get bundle fixed) 0) (piece seed 4))
+    (string-eq (array.array-ref (struct-get bundle fixed) 1) (piece seed 5))
     (string-eq (box-get (struct-get bundle cell)) (piece seed 6))))
 
 (define (outcome-ok? [outcome : EscapeOutcome] [seed : i64]) : bool

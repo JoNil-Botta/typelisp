@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/sync.tl")
 (import "stdlib/thread.tl")
 
@@ -95,8 +96,8 @@
   [count : i64]) : unit
   (begin
     (channel-i64-pair-store-raw! channel ctx 0)
-    (array-set! ctx channel-i64-pair-raw-field-count base)
-    (array-set! ctx (+ channel-i64-pair-raw-field-count 1) count)))
+    (array.array-set! ctx channel-i64-pair-raw-field-count base)
+    (array.array-set! ctx (+ channel-i64-pair-raw-field-count 1) count)))
 
 (define (sync-pair-integration-receive-sum
   [channel : ChannelI64PairChannel]
@@ -148,9 +149,9 @@
 (define (sync-pair-integration-run [channel : ChannelI64PairChannel]) : i64
   (let
     [ctx-a : (Array i64)
-      (make-array i64 (+ channel-i64-pair-raw-field-count 2))]
+      (array.make-array i64 (+ channel-i64-pair-raw-field-count 2))]
     [ctx-b : (Array i64)
-      (make-array i64 (+ channel-i64-pair-raw-field-count 2))]
+      (array.make-array i64 (+ channel-i64-pair-raw-field-count 2))]
     (begin
       (sync-pair-integration-pack-context!
         ctx-a

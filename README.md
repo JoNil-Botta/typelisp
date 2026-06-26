@@ -205,10 +205,11 @@ struct/enum fields, and (optionally) `let` bindings.
 (cast 300 : u8)
 
 ;; Zero/identity initialization
+(import stdlib.array)
 (let ([n : i64 (init)]
       [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
-  (+ n (array-ref items 0)))
+  (+ n (array.array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,

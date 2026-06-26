@@ -1,5 +1,7 @@
 ;: SPEC borrow contract: compatibility dynamic-array shared borrow created
 ;: during reservation cannot escape activation (#3581 keeps this surface staged).
+(import stdlib.array)
+
 (define (borrow-items [items : (& items (Array i64))]) : (& items (Array i64))
   items)
 
@@ -10,5 +12,5 @@
 
 (define (main) : unit
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (Array i64) (array.make-array i64 1)]
     (take-mut-and-view (&mut items) (borrow-items (& items)))))

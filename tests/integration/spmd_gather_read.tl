@@ -1,9 +1,11 @@
+(import stdlib.array)
+
 (define (init-source [xs : (Array i64)] [source-len : i64]) : unit
   (let
     [i : i64 0]
     (while (< i source-len)
       (begin
-        (array-set! xs i (+ 100 (* i 3)))
+        (array.array-set! xs i (+ 100 (* i 3)))
         (set! i (+ i 1))))))
 
 (define (init-index [ix : (Array i64)] [n : i64] [source-len : i64]) : unit
@@ -11,7 +13,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! ix i (% (+ (* i 5) 3) source-len))
+        (array.array-set! ix i (% (+ (* i 5) 3) source-len))
         (set! i (+ i 1))))))
 
 (define (fill-gather-foreach
@@ -22,8 +24,8 @@
   (foreach
     ([i : i64 0 n])
     (let
-      [j : i64 (array-ref ix i)]
-      (array-set! out i (array-ref xs j)))))
+      [j : i64 (array.array-ref ix i)]
+      (array.array-set! out i (array.array-ref xs j)))))
 
 (define (fill-gather-scalar
   [xs : (Array i64)]
@@ -34,7 +36,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (array-ref xs (array-ref ix i)))
+        (array.array-set! out i (array.array-ref xs (array.array-ref ix i)))
         (set! i (+ i 1))))))
 
 (define (eq-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -44,7 +46,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -53,10 +55,10 @@
 (define (case-gather [n : i64]) : bool
   (let
     [source-len : i64 17]
-    [xs : (Array i64) (make-array i64 source-len)]
-    [ix : (Array i64) (make-array i64 n)]
-    [got : (Array i64) (make-array i64 n)]
-    [want : (Array i64) (make-array i64 n)]
+    [xs : (Array i64) (array.make-array i64 source-len)]
+    [ix : (Array i64) (array.make-array i64 n)]
+    [got : (Array i64) (array.make-array i64 n)]
+    [want : (Array i64) (array.make-array i64 n)]
     (begin
       (init-source xs source-len)
       (init-index ix n source-len)

@@ -20,6 +20,9 @@
   (Some 8))
 (define pair
   (Pair 10 11))
+
+; Compatibility exception for #3772: aggregate global initializers still require
+; the bare dynamic-array allocation alias in stage0's hidden initializer path.
 (define cells
   (make-array i64 3))
 (define nested : Nested

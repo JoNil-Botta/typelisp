@@ -24395,10 +24395,12 @@
 (define (opt-reach-add-global [state : OptReachState] [name : String]) : OptReachState
   (match state
     [(OptReachState reachable worklist globals)
-      (OptReachState
-        reachable
-        worklist
-        (hashmap.string-i64-map-put globals name 1))]))
+      (if (hashmap.string-i64-map-contains? globals name)
+        state
+        (OptReachState
+          reachable
+          worklist
+          (hashmap.string-i64-map-put globals name 1)))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : OptFunctionIndex]

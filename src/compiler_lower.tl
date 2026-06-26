@@ -34580,6 +34580,187 @@
       state
       (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty)))))
 
+;; #3792 aliasing guard for sret-forwarding RVO. The forwarded sret is the
+;; current function's result slot, which a CALLER may legally have aliased with
+;; one of this call's arguments (the `(set! place (f place ...))` /
+;; aggregate-place-update pattern -- HARD CONSTRAINT #4). If a callee then reads
+;; such an argument and writes its result in place through the (aliased) sret --
+;; e.g. it returns an enum/struct WRAPPING one of its parameters, like
+;; `string-i64-map-remove-borrowed` returning `(RemoveOk map)` -- the
+;; materialize-into-fresh-temp step of the value path is what makes that safe.
+;; Forwarding the sret removes that buffer, so we only forward when NO argument
+;; can alias the sret. An argument cannot alias the caller-owned result slot when
+;; it is a scalar (carries no inline-aggregate storage) or is itself a
+;; fresh-producing call/constructor whose result is an OWNED inline struct/enum
+;; (materialized into a distinct fresh temp). A place-expression of aggregate
+;; type (var/field/index/deref) or any reference/borrow may alias and is unsafe.
+(define (lower-rvo-arg-cannot-alias-sret?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]) : bool
+  (match (tc-expr ctx type-env arg)
+    [(OkTcType ty)
+      (or
+        (not (lower-type-contains-inline-aggregate? ctx ty))
+        (and
+          (match (ast-expr-unspan arg)
+            [(AstExprCall _ _) true]
+            [_ false])
+          (lower-type-inline-struct-or-enum? ctx ty)))]
+    [(ErrTcType _) false]))
+
+(define (lower-rvo-args-cannot-alias-sret?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : bool
+  (match args
+    [(AstExprNil) true]
+    [(AstExprCons arg rest)
+      (and
+        (lower-rvo-arg-cannot-alias-sret? ctx type-env (ast-node-get arg))
+        (lower-rvo-args-cannot-alias-sret? ctx type-env (box-get rest)))]))
+
+;; #3792 call-slot RVO for a tail-position direct CALL whose aggregate result is
+;; returned by the current function. The value path lowers the call into a fresh
+;; reserved result slot (`lower-call-append-sret-arg`) and then `lower-copy-bytes`
+;; copies that slot into the caller-owned sret. Instead, forward the caller's own
+;; sret pointer as the callee's hidden sret argument so the callee writes the
+;; final result DIRECTLY into the return slot, eliminating the materialize+copy.
+;;
+;; Correctness: the call's arguments are evaluated BEFORE the call exactly as on
+;; the value path, the would-be temporary's sole consumer is this return, and the
+;; `lower-rvo-args-cannot-alias-sret?` guard above ensures no argument can alias
+;; the destination -- so substituting the destination is sound. This mirrors
+;; `lower-direct-call`'s ordinary (non-builtin, non-C-ABI) sret path verbatim,
+;; only swapping the reserved slot for the provided `sret-var` and ending with the
+;; return. Anything outside that path (builtins, C-ABI/extern, bytes-view,
+;; indirect targets, incompatible/aliasing returns) yields `LowerNoDirectStore`
+;; and falls back to the unchanged value+copy path.
+(define (lower-return-direct-call-into-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (if (or
+    ;; Require a genuine top-level function-define so a direct `IrInstrCall` to
+    ;; this symbol is the correct lowering. This excludes builtins, C-ABI/extern
+    ;; declarations, and -- critically -- top-level function-VALUE globals /
+    ;; closures, whose call must go through an INDIRECT load of the variable
+    ;; (emitting a direct symbol call there would call into data). Same eligibility
+    ;; rule `lower-tail-call-direct-supported?` uses for direct TCO.
+    (not (lower-symbol-function-define? ctx (lower-hygiene-source-name name)))
+    (lower-bytes-view-from-parts-name? name)
+    (lower-c-abi-extern-call? ctx state env name)
+    (lower-c-abi-extern-value-call? ctx state env name)
+    ;; An argument that may alias the caller-owned sret makes in-place forwarding
+    ;; unsound (see `lower-rvo-args-cannot-alias-sret?`).
+    (not (lower-rvo-args-cannot-alias-sret? ctx type-env args)))
+    (LowerNoDirectStore)
+    (match (lower-lookup-type
+      ctx
+      (lower-state-type-cache state)
+      env
+      type-env
+      name)
+      [(OkTcType fn-ty)
+        (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+          [(AstTyFunc param-types fn-ret)
+            (if (not
+              (lower-tail-call-compatible-return?
+                ctx
+                (ty-node-get fn-ret)
+                ret-ty))
+              ;; The callee's declared return type differs from this function's
+              ;; return type (beyond regions): the value path coerces the call
+              ;; result into the sret slot, so forwarding the slot to the callee
+              ;; -- which would write its OWN-typed result -- is unsound. Keep the
+              ;; materialize+copy path. (Same compatibility rule TCO requires.)
+              (LowerNoDirectStore)
+              (match (lower-direct-call-param-types
+                ctx
+                type-env
+                name
+                args
+                (tc-resolve-type-list ctx (box-get param-types)))
+                [(OkTcTypeList call-param-types)
+                  (match (lower-call-args-as-needed
+                    ctx
+                    state
+                    env
+                    type-env
+                    args
+                    call-param-types)
+                    [(OkLowerCallArgs args-state values writebacks)
+                      (match (lower-state-alloc-var args-state)
+                        [(LowerAlloc allocated call-var)
+                          (let
+                            [result-ir-ty : AstType
+                              (lower-one-word-register-storage-type ctx ret-ty)]
+                            [sret-values : CompilerIrValueList
+                              (lower-value-list-append-one
+                                values
+                                (IrValueVar sret-var))]
+                            [call-state : LowerState
+                              (lower-state-emit-at-expr
+                                allocated
+                                (IrInstrCall
+                                  call-var
+                                  (lower-resolve-call-name allocated env name)
+                                  (compiler-ir-call-args-from-list sret-values)
+                                  result-ir-ty)
+                                origin)]
+                            [writeback-state : LowerState
+                              (lower-apply-arg-writebacks
+                                ctx
+                                call-state
+                                writebacks)]
+                            (LowerDirectStore
+                              (lower-state-emit
+                                writeback-state
+                                (IrInstrReturn
+                                  (lower-return-maybe
+                                    (IrValueVar sret-var)
+                                    ret-ty)))))])]
+                    [(ErrLowerCallArgs message) (LowerDirectStoreErr message)])]
+                [(ErrTcTypeList message)
+                  (LowerDirectStoreErr
+                    (lower-diagnostic-at-expr origin message))]))]
+          [_ (LowerNoDirectStore)])]
+      [(ErrTcType _) (LowerNoDirectStore)])))
+
+;; Tail-position direct-call fallback shared by the non-constructor branches of
+;; `lower-return-call-name-to-sret`: try the call-slot RVO above, otherwise keep
+;; the unchanged materialize-into-temp + copy-to-sret behavior.
+(define (lower-return-call-fallback-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (match (lower-return-direct-call-into-sret
+    ctx
+    state
+    env
+    type-env
+    name
+    args
+    ret-ty
+    sret-var
+    origin)
+    [(LowerDirectStore done-state) (OkLowerState done-state)]
+    [(LowerDirectStoreErr message) (ErrLowerState message)]
+    [(LowerNoDirectStore)
+      (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
+
 (define (lower-return-call-name-to-sret
   [ctx : TcContext]
   [state : LowerState]
@@ -34646,23 +34827,27 @@
                 [(OkLowerState done-state)
                   (lower-return-sret done-state ret-ty sret-var)]
                 [(ErrLowerState message) (ErrLowerState message)])
-              (lower-return-expr-generic
+              (lower-return-call-fallback-to-sret
                 ctx
                 state
                 env
                 type-env
-                origin
+                name
+                args
                 ret-ty
-                sret-var))]
+                sret-var
+                origin))]
           [(NoneI64)
-            (lower-return-expr-generic
+            (lower-return-call-fallback-to-sret
               ctx
               state
               env
               type-env
-              origin
+              name
+              args
               ret-ty
-              sret-var)])])))
+              sret-var
+              origin)])])))
 
 (define (lower-return-call-to-sret
   [ctx : TcContext]

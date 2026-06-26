@@ -221,10 +221,10 @@ tl_array_fill8:
     cmpq %r8, %rax
     jge .Lf9_while_exit.2
 .Lf9_while_body.1:
-    movq -32(%rbp), %r10
+    movq -32(%rbp), %r9
     movq -48(%rbp), %r8
     movq -24(%rbp), %rax
-    movq %rax, (%r10,%r8,8)
+    movq %rax, (%r9,%r8,8)
     movq -48(%rbp), %rax
     addq $1, %rax
     movq %rax, -48(%rbp)
@@ -242,12 +242,12 @@ tl_array_zero:
     movq %rsi, -16(%rbp)
 .Lf10_entry:
     movq -16(%rbp), %rax
-    movq %rax, %r10
-    movq %rax, %r11
-    sarq $63, %r11
+    movq %rax, %r9
+    movq %rax, %rcx
+    sarq $63, %rcx
     movabsq $7, %r8
-    andq %r8, %r11
-    addq %r11, %rax
+    andq %r8, %rcx
+    addq %rcx, %rax
     sarq $3, %rax
     movq %rax, -32(%rbp)
     movq %rax, -40(%rbp)
@@ -265,9 +265,9 @@ tl_array_zero:
     cmpq %r8, %rax
     jge .Lf10_while_exit.2
 .Lf10_while_body.1:
-    movq -72(%rbp), %r10
+    movq -72(%rbp), %r9
     movq -88(%rbp), %r8
-    movq $0, (%r10,%r8,8)
+    movq $0, (%r9,%r8,8)
     movq -88(%rbp), %rax
     addq $1, %rax
     movq %rax, -88(%rbp)
@@ -279,9 +279,9 @@ tl_array_zero:
     cmpq %r8, %rax
     jge .Lf10_while_exit.5
 .Lf10_while_body.4:
-    movq -8(%rbp), %r10
+    movq -8(%rbp), %r9
     movq -96(%rbp), %r8
-    movb $0, (%r10,%r8,1)
+    movb $0, (%r9,%r8,1)
     movq -96(%rbp), %rax
     addq $1, %rax
     movq %rax, -96(%rbp)

@@ -3461,6 +3461,21 @@
       (+ base vars)
       base)))
 
+;; Frame slots reserving the LARGEST possible callee-save area (all 5 callee
+;; regs). The emergency spill slot is placed pre-body from frame-slots, but
+;; on-demand scavenge callee-save can grow the real (post-body) callee-save area
+;; -- so the emergency slot must sit below the maximum area or it overlaps an
+;; on-demand-saved register's slot. Used for the emergency slot offset, and for
+;; the frame size when an emergency actually fires (so the slot is in-bounds).
+(define (compiler-backend-frame-slots-emergency-max
+  [vars : i64]
+  [has-group-vars : bool]) : i64
+  (let
+    [base : i64 (+ vars 5)]
+    (if has-group-vars
+      (+ base vars)
+      base)))
+
 (define (compiler-backend-param-var? [params : CompilerIrParamList] [var : i64]) : bool
   (match params
     [(IrParamNil) false]
@@ -9324,6 +9339,31 @@
     (str-cat "(%r10," index-reg "," (int->string scale) ")" "")
     ""))
 
+;; Generic (base-reg-parameterized) form of gep-index-r10-asm: fold the scaled
+;; index into base-reg in place for non-SIB scales (1 or odd), so a scavenged
+;; base register works the same way %r10 did.
+(define (compiler-backend-gep-index-base-asm
+  [base-reg : String]
+  [scale : i64]
+  [index-reg : String]) : String
+  (if (= scale 1)
+    (str-cat "    addq " index-reg ", " base-reg "\n")
+    (if (or (= scale 2) (= scale 4) (= scale 8))
+      (str-cat
+        "    leaq ("
+        base-reg
+        ","
+        index-reg
+        ","
+        (int->string scale)
+        "), "
+        base-reg
+        "\n"
+        "")
+      (string-append
+        (str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
+        (str-cat "    addq " index-reg ", " base-reg "\n")))))
+
 (define (compiler-backend-gep-index-address
   [base-reg : String]
   [scale : i64]
@@ -9529,6 +9569,29 @@
   (let
     [a : (Array String) (make-array String 1)]
     (begin (array-set! a 0 r) a)))
+
+;; Superset + all callee-saved + one extra: the scavenge may only pick a
+;; caller-saved pool register (r9 today) or fall back, never an on-demand
+;; callee-save. Used by the dynamic-index base scavenge: pooling a callee-saved
+;; base actively exposes a pre-existing on-demand-callee-save corruption bug
+;; (frame grows post-body but some frame-relative state is fixed pre-body), so
+;; the base is restricted to caller-saved registers until that is fixed.
+(define (compiler-backend-scavenge-exclude-caller-only [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 11)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 "%r12")
+      (array-set! a 6 "%r13")
+      (array-set! a 7 "%r14")
+      (array-set! a 8 "%r15")
+      (array-set! a 9 "%rbx")
+      (array-set! a 10 extra)
+      a)))
 
 ;; The binop-scavenge exclude superset [rax,rdx,rcx,r10,r11] PLUS one more
 ;; already-chosen register (so a second scavenge at the same point avoids it).
@@ -9851,12 +9914,15 @@
                           "%rax")))))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
-      ;; RESIDUAL (blocks pooling %r10): this dynamic-index branch still hardcodes
-      ;; %r10 as the addressing base (gep-index-address-r10 / "(%r10)" /
-      ;; emit-load-value-with-plan base "%r10") and ignores base-reg-in. A
-      ;; gep-pair whose first offset is non-constant therefore can NOT share the
-      ;; threaded base yet. Scavenge a base here (threading base-reg-in) before
-      ;; %r10 enters the allocator pool.
+      ;; Dynamic-index (SIB) load. Active-scavenge BOTH the index and the base:
+      ;; pick the index first (excluding the binop superset, fallback %r8), then
+      ;; the base excluding the chosen index (and %r10, so it actively picks a
+      ;; DIFFERENT register rather than its fallback). With the freeness query
+      ;; now sound for live-IN values (block-live-in seeding), both operand homes
+      ;; -- including a call-spanning/loop-carried base or offset live ACROSS this
+      ;; load -- read OCCUPIED at the load point, so neither scratch can collide
+      ;; with a live value. base loads before offset; since base/index avoid each
+      ;; other and both operand homes, neither copy clobbers the other's source.
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         [scav-idx : String
@@ -9865,19 +9931,35 @@
             (compiler-backend-binop-scavenge-exclude-build)
             5
             "%r8")]
-        [addr : String (compiler-backend-gep-index-address-r10 scale scav-idx)]
+        ;; A gep-PAIR threads a shared base register in via base-reg-in: the 1st
+        ;; load must materialize the base there so the 2nd (r10-live) load can
+        ;; reuse it. Only actively scavenge our own base for SINGLE loads
+        ;; (base-reg-in ""); otherwise honour the threaded register or the 2nd
+        ;; load reads an unloaded base. base-reg-in is %r10 today (the pair's
+        ;; reserved fallback), so an active idx + threaded base still never
+        ;; collide (scav-idx excludes %r10).
+        [scav-base : String
+          (if (string-eq base-reg-in "")
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-scavenge-exclude-caller-only scav-idx)
+              11
+              "%r10")
+            base-reg-in)]
+        [addr : String
+          (compiler-backend-gep-index-address scav-base scale scav-idx)]
         [addr-asm : String
           (if (string-eq addr "")
-            (compiler-backend-gep-index-r10-asm scale scav-idx)
+            (compiler-backend-gep-index-base-asm scav-base scale scav-idx)
             "")]
         [load-addr : String
           (if (string-eq addr "")
-            "(%r10)"
+            (str-cat "(" scav-base ")" "")
             addr)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           base
-          "%r10")
+          scav-base)
           [(OkCompilerBackend base-asm)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
@@ -22065,6 +22147,10 @@
                 scavenge-self-check
                 (match current-instrs
                   [(IrInstrCons head-instr _)
+                    ;; Per-step used-var check against the LIVE installed ctx
+                    ;; (real point). Live-through validation is done by the
+                    ;; function-level scavenge-self-check (which has the liveness
+                    ;; to supply live-after sets); pass empty here.
                     (compiler-backend-scavenge-check-instr
                       compiler-backend-scavenge-ctx-starts
                       compiler-backend-scavenge-ctx-ends
@@ -22076,7 +22162,8 @@
                         (-
                           compiler-backend-emit-instr-post-base
                           (compiler-ir-instr-list-count current-instrs)))
-                      head-instr)]
+                      head-instr
+                      (compiler-live-set-empty))]
                   [(IrInstrNil) unit])
                 unit)
               (set! compiler-backend-emit-instrs-continue-pending false)
@@ -22824,6 +22911,63 @@
     (set! compiler-backend-scavenge-ctx-assignments assignments)
     (set! compiler-backend-scavenge-ctx-vars vars)))
 
+;; #FOUNDATION: seed each block's live-IN at its ENTRY point. The shared coarse
+;; interval build (compiler-reg-live-intervals-blocks-with-live, also used by the
+;; AVX plan so it must stay byte-identical) extends a value's interval to
+;; `point+1` when it is live-AFTER an instruction, but never seeds a block's
+;; live-IN at the block's FIRST point. A value live into a block that its first
+;; instruction does not use -- a parameter at the entry block (live in its ABI
+;; register from function entry), or a loop-carried value at a loop header
+;; reached by a back-edge -- therefore has a GAP at the block's entry point, and
+;; the scavenge free-register query FALSE-FREES its register there, clobbering a
+;; call-spanning / loop-carried value. This pass closes the gap by extending the
+;; first instruction's live-after set to the entry point (its uses + defs are
+;; already marked there by the main build, so the live-in is then fully covered).
+;; Sound: it only ever EXTENDS an interval, never shrinks one. The point walk
+;; mirrors compiler-reg-live-intervals-blocks-with-live EXACTLY (+2 per instr,
+;; IrBlockArray flattened first) so the entry points line up.
+(define (compiler-backend-scavenge-seed-block-liveins
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
+  (match blocks
+    [(IrBlockNil) point]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [live-afters : CompilerLiveInstrSetVec
+              (compiler-reg-live-intervals-find-afters liveness label)]
+            [after-items : (Array CompilerLiveI64Set)
+              (struct-get live-afters items)]
+            [count : i64 (struct-get instrs len)]
+            (begin
+              (if (> count 0)
+                (compiler-reg-extend-set-words
+                  starts
+                  ends
+                  (if (> (array-length after-items) 0)
+                    (array-ref after-items 0)
+                    (compiler-live-set-empty))
+                  0
+                  point)
+                unit)
+              (compiler-backend-scavenge-seed-block-liveins
+                (box-get rest)
+                liveness
+                (+ point (* 2 count))
+                starts
+                ends)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-scavenge-seed-block-liveins
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        point
+        starts
+        ends)]))
+
 ;; Same interval build as scavenge-self-check, installed UNCONDITIONALLY so the
 ;; scavenge hook can read it during emission. Read-only -> no codegen change.
 (define (compiler-backend-scavenge-install-ctx!
@@ -22853,6 +22997,12 @@
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (compiler-reg-live-intervals-blocks-with-live
+            emit-blocks
+            liveness
+            0
+            starts
+            ends)
+          (compiler-backend-scavenge-seed-block-liveins
             emit-blocks
             liveness
             0
@@ -23235,7 +23385,8 @@
   [vars : i64]
   [name : String]
   [point : i64]
-  [instr : CompilerIrInstr]) : unit
+  [instr : CompilerIrInstr]
+  [live-after : CompilerLiveI64Set]) : unit
   (let
     [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
     [v : i64 0]
@@ -23291,6 +23442,50 @@
                 [(CompilerRegNoLocation) unit]))
             unit)
           (set! v (+ v 1))))
+      ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this
+      ;; second loop validates LIVE-THROUGH values (live-after but not used
+      ;; here). A value live ACROSS this instruction must be reported OCCUPIED
+      ;; on its register -- a scavenge querying `point` would otherwise pick it
+      ;; and clobber a call-spanning / loop-carried value. This is the class the
+      ;; old used-var-only self-check missed (its blind spot).
+      (let
+        [w : i64 0]
+        (while (< w vars)
+          (begin
+            (if (compiler-live-set-contains? live-after w)
+              (match (compiler-reg-assignment-lookup assignments w)
+                [(CompilerRegSomeLocation loc)
+                  (match loc
+                    [(CompilerRegRegister home)
+                      (if (compiler-backend-scavenge-free-at-point?
+                        starts
+                        ends
+                        assignments
+                        vars
+                        point
+                        home)
+                        (panic
+                          (str-cat
+                            "SCAVENGE-LIVETHROUGH-VIOLATION fn="
+                            name
+                            " point="
+                            (int->string point)
+                            " live-var="
+                            (int->string w)
+                            " reg="
+                            home
+                            " WRONGLY-FREE iv=["
+                            (int->string (array-ref starts w))
+                            ","
+                            (int->string (array-ref ends w))
+                            "]"))
+                        unit)]
+                    [(CompilerRegRegisterPair _ _) unit]
+                    [(CompilerRegSpill _) unit]
+                    [(CompilerRegRemat _) unit])]
+                [(CompilerRegNoLocation) unit])
+              unit)
+            (set! w (+ w 1)))))
       unit)))
 
 (define (compiler-backend-scavenge-check-seq
@@ -23300,10 +23495,12 @@
   [vars : i64]
   [name : String]
   [instrs : CompilerIrInstrSeq]
+  [live-afters : CompilerLiveInstrSetVec]
   [point : i64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
+    [after-items : (Array CompilerLiveI64Set) (struct-get live-afters items)]
     [index : i64 0]
     [out : i64 point]
     (begin
@@ -23316,7 +23513,10 @@
             vars
             name
             out
-            (array-ref slots index))
+            (array-ref slots index)
+            (if (< index (array-length after-items))
+              (array-ref after-items index)
+              (compiler-live-set-empty)))
           (set! out (+ out 2))
           (set! index (+ index 1))))
       out)))
@@ -23327,19 +23527,21 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [name : String]
+  [liveness : CompilerFunctionLiveness]
   [blocks : CompilerIrBlockList]
   [point : i64]) : i64
   (match blocks
     [(IrBlockNil) point]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(IrBlock label instrs)
           (compiler-backend-scavenge-check-blocks
             starts
             ends
             assignments
             vars
             name
+            liveness
             (box-get rest)
             (compiler-backend-scavenge-check-seq
               starts
@@ -23348,6 +23550,7 @@
               vars
               name
               instrs
+              (compiler-reg-live-intervals-find-afters liveness label)
               point))])]
     [(IrBlockArray seq)
       (compiler-backend-scavenge-check-blocks
@@ -23356,6 +23559,7 @@
         assignments
         vars
         name
+        liveness
         (compiler-ir-block-seq-to-list seq)
         point)]))
 
@@ -23386,12 +23590,19 @@
           0
           starts
           ends)
+        (compiler-backend-scavenge-seed-block-liveins
+          emit-blocks
+          liveness
+          0
+          starts
+          ends)
         (compiler-backend-scavenge-check-blocks
           starts
           ends
           assignments
           slot-vars
           name
+          liveness
           emit-blocks
           0)
         unit))))
@@ -23612,7 +23823,7 @@
               name
               params
               ret-ty
-              slot-vars
+              remat-vars
               emit-blocks-list
               assignments)
             unit)]
@@ -23665,9 +23876,8 @@
                           (+
                             (+
                               (compiler-backend-frame-size
-                                (compiler-backend-frame-slots-with-groups
+                                (compiler-backend-frame-slots-emergency-max
                                   slot-vars
-                                  assignments
                                   has-group-vars))
                               (compiler-backend-outgoing-frame-space
                                 target
@@ -23698,10 +23908,18 @@
                           (+
                             (+
                               (compiler-backend-frame-size
-                                (compiler-backend-frame-slots-with-groups
-                                  slot-vars
-                                  assignments
-                                  has-group-vars))
+                                (if compiler-backend-emergency-used
+                                  ;; an emergency fired -> reserve the max
+                                  ;; callee-save area so the emergency slot
+                                  ;; (placed below it) is in-bounds and never
+                                  ;; overlaps an on-demand callee-save slot.
+                                  (compiler-backend-frame-slots-emergency-max
+                                    slot-vars
+                                    has-group-vars)
+                                  (compiler-backend-frame-slots-with-groups
+                                    slot-vars
+                                    assignments
+                                    has-group-vars)))
                               (compiler-backend-outgoing-frame-space
                                 target
                                 emit-blocks-list

@@ -23625,6 +23625,46 @@
         (compiler-backend-plan-uses-reg? assignments reg))
       (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg))))
 
+;; Emergency scratch register when no candidate is free. Soundness rule: the
+;; chosen reg's held value must NOT be an operand of the instruction -- emergency-
+;; wrap preserves the value ACROSS but not DURING, so an operand-home reg would be
+;; read as the scratch mid-instruction. Prefer the fallback (the site's reserved
+;; scratch) when it is FREE at this point: free => no var homes it => not an
+;; operand home, so it is sound AND nothing needs preserving. This is byte-
+;; identical to the legacy behaviour while the fallback regs are unpooled (they
+;; are always free then) and it keeps the #32 optimisation open (a free reg needs
+;; no save/restore). If the fallback is OCCUPIED (a pooled reg now homing a value,
+;; possibly an operand), use the first NON-EXCLUDED candidate: non-excluded =>
+;; not an operand home AND not a template-hardcoded superset reg, so emergency-
+;; wrapping it is sound (even a callee-saved or non-operand-occupied reg -- the
+;; wrap restores it). All-excluded is pathological/unreachable (exclude is
+;; superset(5)+a few operand homes vs 9 candidates) -> fallback last resort.
+;; Returns the first non-excluded candidate index, or -1 = "use the fallback".
+(define (compiler-backend-scavenge-emergency-cand-index
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [cands : (Array String)]
+  [n : i64]) : i64
+  (if (compiler-backend-scavenge-free-at-point? starts ends assignments vars point fallback)
+    -1
+    (let
+      [i : i64 0]
+      [found : i64 -1]
+      (begin
+        (while (and (< i n) (< found 0))
+          (begin
+            (if (not (compiler-backend-scavenge-excluded? exclude exclude-n (array-ref cands i)))
+              (set! found i)
+              unit)
+            (set! i (+ i 1))))
+        found))))
+
 (define (compiler-backend-scavenge-pick-iter
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -23638,16 +23678,30 @@
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
-    (begin
-      (set! compiler-backend-emergency-pending true)
-      (set! compiler-backend-emergency-reg
-        (cond
-          [(string-eq fallback "%r10") "%r10"]
-          [(string-eq fallback "%r11") "%r11"]
-          [(string-eq fallback "%rax") "%rax"]
-          [else "%r8"]))
-      (set! compiler-backend-emergency-used true)
-      fallback)
+    (let
+      [emidx : i64
+        (compiler-backend-scavenge-emergency-cand-index starts ends assignments vars point exclude exclude-n fallback cands n)]
+      (begin
+        (set! compiler-backend-emergency-pending true)
+        (set! compiler-backend-emergency-used true)
+        (if (< emidx 0)
+          (begin
+            ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
+            ;; restores it). String is move-only, so map the fallback -- always one
+            ;; of the reserved scratch regs %r8/%r10/%r11/%rax -- to a fresh literal
+            ;; for the global, and return the owned fallback. (emidx<0 = the
+            ;; fallback is FREE here, preferred; or the pathological all-excluded
+            ;; last resort.)
+            (set! compiler-backend-emergency-reg
+              (cond
+                [(string-eq fallback "%r10") "%r10"]
+                [(string-eq fallback "%r11") "%r11"]
+                [(string-eq fallback "%rax") "%rax"]
+                [else "%r8"]))
+            fallback)
+          (begin
+            (set! compiler-backend-emergency-reg (array-ref cands emidx))
+            (array-ref cands emidx)))))
     (if (compiler-backend-scavenge-candidate-ok?
       starts
       ends

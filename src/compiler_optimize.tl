@@ -13071,8 +13071,8 @@
   (OptSomeInductionFact OptInductionFact))
 
 (defenum OptInductionDerived
-  (OptInductionDerivedMul i64 AstType)
-  (OptInductionDerivedGep CompilerIrValue AstType))
+  (OptInductionDerivedMul i64 i64 AstType)
+  (OptInductionDerivedGep CompilerIrValue i64 AstType))
 
 (defenum OptInductionDerivedList
   (OptInductionDerivedNil)
@@ -13453,6 +13453,167 @@
         [_ (OptNoI64)])]
     [_ (OptNoI64)]))
 
+(define (opt-induction-offset-ok? [offset : i64]) : bool
+  (opt-induction-small-const? offset))
+
+(define (opt-induction-affine-offset-from-add
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 offset)
+            (if (opt-induction-offset-ok? offset)
+              (OptSomeI64 offset)
+              (OptNoI64))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [(IrValueI64 offset)
+      (match rhs
+        [(IrValueVar var)
+          (if (and (= var phi-var) (opt-induction-offset-ok? offset))
+            (OptSomeI64 offset)
+            (OptNoI64))]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-affine-offset-from-sub
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match lhs
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (match rhs
+          [(IrValueI64 offset)
+            (if (opt-induction-offset-ok? offset)
+              (let
+                [negated : i64 (- 0 offset)]
+                (if (opt-induction-offset-ok? negated)
+                  (OptSomeI64 negated)
+                  (OptNoI64)))
+              (OptNoI64))]
+          [_ (OptNoI64)])
+        (OptNoI64))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-affine-offset-from-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match op
+    [(IrBinAdd) (opt-induction-affine-offset-from-add lhs rhs phi-var)]
+    [(IrBinSub) (opt-induction-affine-offset-from-sub lhs rhs phi-var)]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-affine-offset-env-instr
+  [env : hashmap.I64I64Map]
+  [phi-var : i64]
+  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (if (opt-induction-i64-type? ty)
+        (match (opt-induction-affine-offset-from-binop op lhs rhs phi-var)
+          [(OptSomeI64 offset) (hashmap.i64-i64-map-put env dst offset)]
+          [(OptNoI64) env])
+        env)]
+    [_ env]))
+
+(define (opt-induction-affine-offset-env-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-var : i64]
+  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    env
+    (opt-induction-affine-offset-env-instr-seq-from
+      instrs
+      (+ index 1)
+      phi-var
+      (opt-induction-affine-offset-env-instr
+        env
+        phi-var
+        (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-induction-affine-offset-env-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [phi-var : i64]
+  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  (opt-induction-affine-offset-env-instr-seq-from instrs 0 phi-var env))
+
+(define (opt-induction-affine-offset-env-blocks
+  [body-blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  (match body-blocks
+    [(IrBlockNil) env]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-induction-affine-offset-env-blocks
+            (box-get rest)
+            phi-var
+            (opt-induction-affine-offset-env-instr-seq instrs phi-var env))])]
+    [(IrBlockArray seq)
+      (opt-induction-affine-offset-env-blocks
+        (compiler-ir-block-seq-to-list seq)
+        phi-var
+        env)]))
+
+(define (opt-induction-affine-offset-env
+  [body-blocks : CompilerIrBlockList]
+  [fact : OptInductionFact]) : hashmap.I64I64Map
+  (match fact
+    [(OptInductionFact phi-var _ _ _ _)
+      (opt-induction-affine-offset-env-blocks
+        body-blocks
+        phi-var
+        (hashmap.i64-i64-map-with-capacity
+          (opt-licm-body-map-capacity body-blocks)))]))
+
+(define (opt-induction-value-offset
+  [offsets : hashmap.I64I64Map]
+  [value : CompilerIrValue]
+  [phi-var : i64]) : OptMaybeI64
+  (match value
+    [(IrValueVar var)
+      (if (= var phi-var)
+        (OptSomeI64 0)
+        (match (hashmap.i64-i64-map-get offsets var)
+          [(hashmap.I64I64MapFound offset) (OptSomeI64 offset)]
+          [(hashmap.I64I64MapMissing) (OptNoI64)]))]
+    [_ (OptNoI64)]))
+
+(define (opt-induction-mul-derived
+  [offsets : hashmap.I64I64Map]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [phi-var : i64]
+  [step : i64]
+  [ty : AstType]) : OptMaybeInductionDerived
+  (match (opt-induction-value-offset offsets lhs phi-var)
+    [(OptSomeI64 offset)
+      (match rhs
+        [(IrValueI64 scale)
+          (if (opt-induction-scale-ok? step scale)
+            (OptSomeInductionDerived (OptInductionDerivedMul scale offset ty))
+            (OptNoInductionDerived))]
+        [_ (OptNoInductionDerived)])]
+    [(OptNoI64)
+      (match lhs
+        [(IrValueI64 scale)
+          (match (opt-induction-value-offset offsets rhs phi-var)
+            [(OptSomeI64 offset)
+              (if (opt-induction-scale-ok? step scale)
+                (OptSomeInductionDerived
+                  (OptInductionDerivedMul scale offset ty))
+                (OptNoInductionDerived))]
+            [(OptNoI64) (OptNoInductionDerived)])]
+        [_ (OptNoInductionDerived)])]))
+
 ;; Induction runs without a hoisted set, so GEP-base loop-invariance is
 ;; `opt-licm-value-invariant?` with an empty `hoisted` map: a var is invariant
 ;; iff it is not defined inside the loop body. Evaluating it directly avoids
@@ -13466,6 +13627,7 @@
 
 (define (opt-induction-find-derived-instr
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [loop-defs : hashmap.I64I64Map]
   [instr : CompilerIrInstr]) : OptMaybeInductionDerived
   (match fact
@@ -13475,37 +13637,37 @@
           (match op
             [(IrBinMul)
               (if (opt-induction-i64-type? ty)
-                (match (opt-induction-mul-scale lhs rhs phi-var step)
-                  [(OptSomeI64 scale)
-                    (OptSomeInductionDerived (OptInductionDerivedMul scale ty))]
-                  [(OptNoI64) (OptNoInductionDerived)])
+                (opt-induction-mul-derived offsets lhs rhs phi-var step ty)
                 (OptNoInductionDerived))]
             [_ (OptNoInductionDerived)])]
         [(IrInstrGep _ base offset ty)
-          (match offset
-            [(IrValueVar offset-var)
-              (if (and
-                (= offset-var phi-var)
-                (opt-induction-value-base-invariant? loop-defs base))
-                (OptSomeInductionDerived (OptInductionDerivedGep base ty))
+          (match (opt-induction-value-offset offsets offset phi-var)
+            [(OptSomeI64 derived-offset)
+              (if (opt-induction-value-base-invariant? loop-defs base)
+                (OptSomeInductionDerived
+                  (OptInductionDerivedGep base derived-offset ty))
                 (OptNoInductionDerived))]
-            [_ (OptNoInductionDerived)])]
+            [(OptNoI64) (OptNoInductionDerived)])]
         [_ (OptNoInductionDerived)])]))
 
 (define (opt-induction-derived-eq?
   [left : OptInductionDerived]
   [right : OptInductionDerived]) : bool
   (match left
-    [(OptInductionDerivedMul left-scale left-ty)
+    [(OptInductionDerivedMul left-scale left-offset left-ty)
       (match right
-        [(OptInductionDerivedMul right-scale right-ty)
-          (and (= left-scale right-scale) (opt-type-eq left-ty right-ty))]
+        [(OptInductionDerivedMul right-scale right-offset right-ty)
+          (and
+            (= left-scale right-scale)
+            (= left-offset right-offset)
+            (opt-type-eq left-ty right-ty))]
         [_ false])]
-    [(OptInductionDerivedGep left-base left-ty)
+    [(OptInductionDerivedGep left-base left-offset left-ty)
       (match right
-        [(OptInductionDerivedGep right-base right-ty)
+        [(OptInductionDerivedGep right-base right-offset right-ty)
           (and
             (opt-value-eq left-base right-base)
+            (= left-offset right-offset)
             (opt-type-eq left-ty right-ty))]
         [_ false])]))
 
@@ -13543,8 +13705,18 @@
     [(OptInductionDerivedCons _ rest)
       (+ 1 (opt-induction-derived-list-count (box-get rest)))]))
 
+(define (opt-induction-derived-list-slot-count
+  [deriveds : OptInductionDerivedList]) : i64
+  (match deriveds
+    [(OptInductionDerivedNil) 0]
+    [(OptInductionDerivedCons derived rest)
+      (+
+        (opt-induction-derived-slot-count derived)
+        (opt-induction-derived-list-slot-count (box-get rest)))]))
+
 (define (opt-induction-collect-derived-instr-seq-from
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [loop-defs : hashmap.I64I64Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -13553,11 +13725,13 @@
     deriveds
     (match (opt-induction-find-derived-instr
       fact
+      offsets
       loop-defs
       (compiler-ir-instr-seq-ref instrs index))
       [(OptSomeInductionDerived derived)
         (opt-induction-collect-derived-instr-seq-from
           fact
+          offsets
           loop-defs
           instrs
           (+ index 1)
@@ -13565,6 +13739,7 @@
       [(OptNoInductionDerived)
         (opt-induction-collect-derived-instr-seq-from
           fact
+          offsets
           loop-defs
           instrs
           (+ index 1)
@@ -13572,11 +13747,13 @@
 
 (define (opt-induction-collect-derived-instr-seq
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [loop-defs : hashmap.I64I64Map]
   [instrs : CompilerIrInstrSeq]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
   (opt-induction-collect-derived-instr-seq-from
     fact
+    offsets
     loop-defs
     instrs
     0
@@ -13584,6 +13761,7 @@
 
 (define (opt-induction-collect-derived-blocks
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [loop-defs : hashmap.I64I64Map]
   [body-blocks : CompilerIrBlockList]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
@@ -13594,61 +13772,73 @@
         [(IrBlock _ instrs)
           (opt-induction-collect-derived-blocks
             fact
+            offsets
             loop-defs
             (box-get rest)
             (opt-induction-collect-derived-instr-seq
               fact
+              offsets
               loop-defs
               instrs
               deriveds))])]
     [(IrBlockArray seq)
       (opt-induction-collect-derived-blocks
         fact
+        offsets
         loop-defs
         (compiler-ir-block-seq-to-list seq)
         deriveds)]))
 
 (define (opt-induction-derived-type [derived : OptInductionDerived]) : AstType
   (match derived
-    [(OptInductionDerivedMul _ ty) ty]
-    [(OptInductionDerivedGep _ ty) ty]))
+    [(OptInductionDerivedMul _ _ ty) ty]
+    [(OptInductionDerivedGep _ _ ty) ty]))
 
 (define (opt-induction-derived-matches?
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [instr : CompilerIrInstr]) : bool
   (match fact
     [(OptInductionFact phi-var _ _ step _)
       (match derived
-        [(OptInductionDerivedMul scale ty)
+        [(OptInductionDerivedMul scale offset ty)
           (match instr
             [(IrInstrBinOp _ op lhs rhs instr-ty)
               (match op
                 [(IrBinMul)
                   (and
                     (opt-type-eq instr-ty ty)
-                    (match (opt-induction-mul-scale lhs rhs phi-var step)
-                      [(OptSomeI64 found-scale) (= found-scale scale)]
-                      [(OptNoI64) false]))]
+                    (match (opt-induction-mul-derived
+                      offsets
+                      lhs
+                      rhs
+                      phi-var
+                      step
+                      ty)
+                      [(OptSomeInductionDerived found)
+                        (opt-induction-derived-eq? found derived)]
+                      [(OptNoInductionDerived) false]))]
                 [_ false])]
             [_ false])]
-        [(OptInductionDerivedGep base ty)
+        [(OptInductionDerivedGep base derived-offset ty)
           (match instr
-            [(IrInstrGep _ instr-base offset instr-ty)
+            [(IrInstrGep _ instr-base instr-offset instr-ty)
               (and
                 (opt-type-eq instr-ty ty)
                 (opt-value-eq instr-base base)
-                (match offset
-                  [(IrValueVar offset-var) (= offset-var phi-var)]
-                  [_ false]))]
+                (match (opt-induction-value-offset offsets instr-offset phi-var)
+                  [(OptSomeI64 found-offset) (= found-offset derived-offset)]
+                  [(OptNoI64) false]))]
             [_ false])])]))
 
 (define (opt-induction-rewrite-instr
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
-  (if (opt-induction-derived-matches? fact derived instr)
+  (if (opt-induction-derived-matches? fact offsets derived instr)
     (match (opt-instr-def-var instr)
       [(OptSomeI64 dst)
         (IrInstrMov
@@ -13660,6 +13850,7 @@
 
 (define (opt-induction-rewrite-instrs
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -13667,11 +13858,17 @@
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (compiler-ir-instr-cons
-        (opt-induction-rewrite-instr fact derived derived-phi instr)
-        (opt-induction-rewrite-instrs fact derived derived-phi (box-get rest)))]))
+        (opt-induction-rewrite-instr fact offsets derived derived-phi instr)
+        (opt-induction-rewrite-instrs
+          fact
+          offsets
+          derived
+          derived-phi
+          (box-get rest)))]))
 
 (define (opt-induction-rewrite-instr-seq-from
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrSeq]
@@ -13681,11 +13878,13 @@
     (compiler-ir-instr-cons
       (opt-induction-rewrite-instr
         fact
+        offsets
         derived
         derived-phi
         (compiler-ir-instr-seq-ref instrs index))
       (opt-induction-rewrite-instr-seq-from
         fact
+        offsets
         derived
         derived-phi
         instrs
@@ -13693,15 +13892,23 @@
 
 (define (opt-induction-rewrite-instr-seq
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-induction-rewrite-instr-seq-from fact derived derived-phi instrs 0))
+  (opt-induction-rewrite-instr-seq-from
+    fact
+    offsets
+    derived
+    derived-phi
+    instrs
+    0))
 
 (define (opt-induction-rewrite-blocks
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -13716,6 +13923,7 @@
                 label
                 (opt-induction-rewrite-instr-seq
                   fact
+                  offsets
                   derived
                   derived-phi
                   instrs))
@@ -13724,6 +13932,7 @@
               body
               index
               fact
+              offsets
               derived
               derived-phi
               (box-get rest)))])]
@@ -13732,6 +13941,7 @@
         body
         index
         fact
+        offsets
         derived
         derived-phi
         (compiler-ir-block-seq-to-list seq))]))
@@ -13740,6 +13950,7 @@
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
+  [offsets : hashmap.I64I64Map]
   [deriveds : OptInductionDerivedList]
   [frame : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -13750,30 +13961,100 @@
         body
         index
         fact
+        offsets
         (box-get rest)
-        (+ frame 3)
+        (+ frame (opt-induction-derived-slot-count derived))
         (opt-induction-rewrite-blocks
           body
           index
           fact
+          offsets
           derived
-          (+ frame 1)
+          (opt-induction-derived-phi-var derived frame)
           blocks))]))
 
-(define (opt-induction-seed-instr
+(define (opt-induction-derived-offset [derived : OptInductionDerived]) : i64
+  (match derived
+    [(OptInductionDerivedMul _ offset _) offset]
+    [(OptInductionDerivedGep _ offset _) offset]))
+
+(define (opt-induction-derived-slot-count [derived : OptInductionDerived]) : i64
+  (if (= (opt-induction-derived-offset derived) 0)
+    3
+    4))
+
+(define (opt-induction-derived-seed-var
+  [derived : OptInductionDerived]
+  [frame : i64]) : i64
+  (if (= (opt-induction-derived-offset derived) 0)
+    frame
+    (+ frame 1)))
+
+(define (opt-induction-derived-phi-var
+  [derived : OptInductionDerived]
+  [frame : i64]) : i64
+  (if (= (opt-induction-derived-offset derived) 0)
+    (+ frame 1)
+    (+ frame 2)))
+
+(define (opt-induction-derived-next-var
+  [derived : OptInductionDerived]
+  [frame : i64]) : i64
+  (if (= (opt-induction-derived-offset derived) 0)
+    (+ frame 2)
+    (+ frame 3)))
+
+(define (opt-induction-offset-seed-instr
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [offset-var : i64]) : CompilerIrInstr
+  (match fact
+    [(OptInductionFact _ start _ _ ty)
+      (IrInstrBinOp
+        offset-var
+        (IrBinAdd)
+        start
+        (IrValueI64 (opt-induction-derived-offset derived))
+        ty)]))
+
+(define (opt-induction-final-seed-instr
   [fact : OptInductionFact]
   [derived : OptInductionDerived]
   [seed-var : i64]) : CompilerIrInstr
   (match derived
-    [(OptInductionDerivedMul scale ty)
+    [(OptInductionDerivedMul scale offset ty)
       (IrInstrBinOp
         seed-var
         (IrBinMul)
-        (opt-induction-fact-start fact)
+        (if (= offset 0)
+          (opt-induction-fact-start fact)
+          (IrValueVar (- seed-var 1)))
         (IrValueI64 scale)
         ty)]
-    [(OptInductionDerivedGep base ty)
-      (IrInstrGep seed-var base (opt-induction-fact-start fact) ty)]))
+    [(OptInductionDerivedGep base offset ty)
+      (IrInstrGep
+        seed-var
+        base
+        (if (= offset 0)
+          (opt-induction-fact-start fact)
+          (IrValueVar (- seed-var 1)))
+        ty)]))
+
+(define (opt-induction-seed-instrs-for-derived
+  [fact : OptInductionFact]
+  [derived : OptInductionDerived]
+  [frame : i64]) : CompilerIrInstrList
+  (let
+    [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
+    (if (= (opt-induction-derived-offset derived) 0)
+      (compiler-ir-instr-cons
+        (opt-induction-final-seed-instr fact derived seed-var)
+        IrInstrNil)
+      (compiler-ir-instr-cons
+        (opt-induction-offset-seed-instr fact derived frame)
+        (compiler-ir-instr-cons
+          (opt-induction-final-seed-instr fact derived seed-var)
+          IrInstrNil)))))
 
 (define (opt-induction-next-instr
   [fact : OptInductionFact]
@@ -13781,14 +14062,14 @@
   [derived-phi : i64]
   [next-var : i64]) : CompilerIrInstr
   (match derived
-    [(OptInductionDerivedMul scale ty)
+    [(OptInductionDerivedMul scale _ ty)
       (IrInstrBinOp
         next-var
         (IrBinAdd)
         (IrValueVar derived-phi)
         (IrValueI64 (* (opt-induction-fact-step fact) scale))
         ty)]
-    [(OptInductionDerivedGep _ ty)
+    [(OptInductionDerivedGep _ _ ty)
       (IrInstrGep
         next-var
         (IrValueVar derived-phi)
@@ -13817,9 +14098,12 @@
   (match deriveds
     [(OptInductionDerivedNil) IrInstrNil]
     [(OptInductionDerivedCons derived rest)
-      (compiler-ir-instr-cons
-        (opt-induction-seed-instr fact derived frame)
-        (opt-induction-seed-instrs fact (box-get rest) (+ frame 3)))]))
+      (opt-aggregate-instr-list-append
+        (opt-induction-seed-instrs-for-derived fact derived frame)
+        (opt-induction-seed-instrs
+          fact
+          (box-get rest)
+          (+ frame (opt-induction-derived-slot-count derived))))]))
 
 (define (opt-induction-phi-instrs
   [deriveds : OptInductionDerivedList]
@@ -13834,10 +14118,14 @@
           derived
           preheader
           latch
-          frame
-          (+ frame 1)
-          (+ frame 2))
-        (opt-induction-phi-instrs (box-get rest) preheader latch (+ frame 3)))]))
+          (opt-induction-derived-seed-var derived frame)
+          (opt-induction-derived-phi-var derived frame)
+          (opt-induction-derived-next-var derived frame))
+        (opt-induction-phi-instrs
+          (box-get rest)
+          preheader
+          latch
+          (+ frame (opt-induction-derived-slot-count derived))))]))
 
 (define (opt-induction-next-instrs
   [fact : OptInductionFact]
@@ -13847,8 +14135,15 @@
     [(OptInductionDerivedNil) IrInstrNil]
     [(OptInductionDerivedCons derived rest)
       (compiler-ir-instr-cons
-        (opt-induction-next-instr fact derived (+ frame 1) (+ frame 2))
-        (opt-induction-next-instrs fact (box-get rest) (+ frame 3)))]))
+        (opt-induction-next-instr
+          fact
+          derived
+          (opt-induction-derived-phi-var derived frame)
+          (opt-induction-derived-next-var derived frame))
+        (opt-induction-next-instrs
+          fact
+          (box-get rest)
+          (+ frame (opt-induction-derived-slot-count derived))))]))
 
 (define (opt-induction-insert-support-blocks
   [header : String]
@@ -13919,9 +14214,12 @@
                     body-blocks
                     (hashmap.i64-i64-map-with-capacity
                       (opt-licm-body-map-capacity body-blocks)))]
+                [offsets : hashmap.I64I64Map
+                  (opt-induction-affine-offset-env body-blocks fact)]
                 [deriveds : OptInductionDerivedList
                   (opt-induction-collect-derived-blocks
                     fact
+                    offsets
                     loop-defs
                     body-blocks
                     (OptInductionDerivedNil))]
@@ -13935,6 +14233,7 @@
                         body
                         index
                         fact
+                        offsets
                         deriveds
                         frame
                         blocks)]
@@ -13957,7 +14256,7 @@
                         phi-instrs
                         next-instrs
                         rewritten)
-                      (+ frame (* derived-count 3))
+                      (+ frame (opt-induction-derived-list-slot-count deriveds))
                       true))))]
             [(OptNoInductionFact) (OptInductionApplyResult blocks frame false)])))]
     [(OptNoLoopPreheader) (OptInductionApplyResult blocks frame false)]))
@@ -35325,6 +35624,111 @@
               (IrInstrNil)))
           (IrBlockNil))))))
 
+(define (opt-induction-offset-index-mul-blocks
+  [step : i64]
+  [op : CompilerIrBinOp]
+  [offset : i64]
+  [scale : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 op (IrValueVar 3) (IrValueI64 offset) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinMul)
+                (IrValueVar 4)
+                (IrValueI64 scale)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrBinOp
+                  7
+                  (IrBinAdd)
+                  (IrValueVar 6)
+                  (IrValueI64 7)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 3)
+                    (IrValueI64 step)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-induction-offset-index-gep-blocks
+  [step : i64]
+  [op : CompilerIrBinOp]
+  [offset : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            3
+            (compiler-ir-phi-input-cons
+              (IrValueVar 1)
+              "entry"
+              (compiler-ir-phi-input-cons (IrValueVar 5) "body" (IrPhiInputNil)))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrBinOp 4 op (IrValueVar 3) (IrValueI64 offset) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrGep 6 (IrValueVar 2) (IrValueVar 4) (AstTyU8))
+              (compiler-ir-instr-cons
+                (IrInstrLoad 7 (IrValueVar 6) (AstTyU8))
+                (compiler-ir-instr-cons
+                  (IrInstrBinOp
+                    5
+                    (IrBinAdd)
+                    (IrValueVar 3)
+                    (IrValueI64 step)
+                    (AstTyI64))
+                  (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
 (define (opt-induction-multi-offset-blocks [duplicate : bool]) : CompilerIrBlockList
   (let
     [second-scale : i64
@@ -35740,6 +36144,25 @@
     [multi-gep-func : CompilerIrFunction
       (opt-induction-optimized-function (opt-induction-multi-gep-blocks))]
     [multi-gep : CompilerIrBlockList (opt-function-blocks multi-gep-func)]
+    [offset-add-mul-func : CompilerIrFunction
+      (opt-induction-optimized-function
+        (opt-induction-offset-index-mul-blocks 2 (IrBinAdd) 3 4))]
+    [offset-add-mul : CompilerIrBlockList
+      (opt-function-blocks offset-add-mul-func)]
+    [offset-sub-mul-func : CompilerIrFunction
+      (opt-induction-optimized-function
+        (opt-induction-offset-index-mul-blocks 2 (IrBinSub) 1 4))]
+    [offset-sub-mul : CompilerIrBlockList
+      (opt-function-blocks offset-sub-mul-func)]
+    [offset-gep-func : CompilerIrFunction
+      (opt-induction-optimized-function
+        (opt-induction-offset-index-gep-blocks 2 (IrBinAdd) 2))]
+    [offset-gep : CompilerIrBlockList (opt-function-blocks offset-gep-func)]
+    [unsupported-offset-func : CompilerIrFunction
+      (opt-induction-optimized-function
+        (opt-induction-offset-index-mul-blocks 2 (IrBinAdd) 1000001 4))]
+    [unsupported-offset : CompilerIrBlockList
+      (opt-function-blocks unsupported-offset-func)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       [(not (= (opt-count-phi-blocks out) 2)) 2]
@@ -35788,6 +36211,26 @@
       [(not (= (opt-blocks-mov-src-var multi-gep 4 (- 0 1)) 33)) 45]
       [(not (= (opt-blocks-mov-src-var multi-gep 7 (- 0 1)) 36)) 46]
       [(not (= (opt-count-gep-label-blocks multi-gep "body") 2)) 47]
+      [(not (opt-verify-ok? (opt-verify-function offset-add-mul-func))) 48]
+      [(not (= (opt-function-frame offset-add-mul-func) 36)) 49]
+      [(not (= (opt-count-phi-blocks offset-add-mul) 2)) 50]
+      [(not (= (opt-blocks-mov-src-var offset-add-mul 6 (- 0 1)) 34)) 51]
+      [(not (= (opt-count-mul-label-blocks offset-add-mul "body") 0)) 52]
+      [(not (opt-verify-ok? (opt-verify-function offset-sub-mul-func))) 53]
+      [(not (= (opt-function-frame offset-sub-mul-func) 36)) 54]
+      [(not (= (opt-count-phi-blocks offset-sub-mul) 2)) 55]
+      [(not (= (opt-blocks-mov-src-var offset-sub-mul 6 (- 0 1)) 34)) 56]
+      [(not (= (opt-count-mul-label-blocks offset-sub-mul "body") 0)) 57]
+      [(not (opt-verify-ok? (opt-verify-function offset-gep-func))) 58]
+      [(not (= (opt-function-frame offset-gep-func) 36)) 59]
+      [(not (= (opt-count-phi-blocks offset-gep) 2)) 60]
+      [(not (= (opt-blocks-mov-src-var offset-gep 6 (- 0 1)) 34)) 61]
+      [(not (= (opt-count-gep-label-blocks offset-gep "body") 1)) 62]
+      [(not (opt-verify-ok? (opt-verify-function unsupported-offset-func))) 63]
+      [(not (= (opt-function-frame unsupported-offset-func) 32)) 64]
+      [(not (= (opt-blocks-mov-src-var unsupported-offset 6 (- 0 1)) (- 0 1)))
+        65]
+      [(not (= (opt-count-mul-label-blocks unsupported-offset "body") 1)) 66]
       [else 42])))
 
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList

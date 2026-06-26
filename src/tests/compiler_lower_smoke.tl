@@ -400,6 +400,9 @@
       (compiler-lower-module-macro-codegen-ok?)
       (panic "lower: module macro codegen smoke mismatch"))
     (unless
+      (compiler-lower-module-macro-global-init-ok?)
+      (panic "lower: module macro global init smoke mismatch"))
+    (unless
       (compiler-lower-module-macro-stdlib-vector-import-ok?)
       (panic "lower: module macro stdlib vector import smoke mismatch"))
     (unless

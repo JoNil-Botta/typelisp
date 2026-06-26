@@ -79,6 +79,14 @@
 (define lower-decls-global-type-cache : LowerTypeCache
   (LowerNoTypeCache))
 
+;; #3792: call-slot RVO forwards the current function's hidden sret slot to the
+;; callee and then returns that slot. Callees whose body can emit an early exit
+;; (`return` or `try`) are not yet guaranteed to write that forwarded slot on
+;; every path; those older paths may still return a heap aggregate pointer. This
+;; set is rebuilt once per lower-decls run and lets the RVO guard stay cheap.
+(define lower-rvo-early-return-functions : hashmap.StringI64Map
+  (hashmap.string-i64-map-with-capacity 8))
+
 (defenum LowerStringSet
   (LowerStringNil)
   (LowerStringCons String (Box LowerStringSet)))
@@ -34508,27 +34516,33 @@
   [type-env : TcTypeEnv]
   [name : i64]
   [ret-ty : AstType]) : bool
-  (if (lower-tail-call-self-target? state name)
-    true
-    (let
-      [source-name : String (intern-str name)]
-      (if (lower-symbol-function-define? ctx source-name)
-        (match (lower-lookup-type-id
-          ctx
-          (lower-state-type-cache state)
-          env
-          type-env
-          name)
-          [(OkTcType fn-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-              [(AstTyFunc param-types callee-ret)
-                (lower-tail-call-compatible-return?
-                  ctx
-                  (ty-node-get callee-ret)
-                  ret-ty)]
-              [_ false])]
-          [(ErrTcType _) false])
-        false))))
+  (if (and
+    ;; Direct aggregate tail calls also forward the current sret slot. A callee
+    ;; early-exit path may return a heap aggregate pointer instead of filling it.
+    (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty)
+    (lower-rvo-callee-has-early-return? state env (intern-str name)))
+    false
+    (if (lower-tail-call-self-target? state name)
+      true
+      (let
+        [source-name : String (intern-str name)]
+        (if (lower-symbol-function-define? ctx source-name)
+          (match (lower-lookup-type-id
+            ctx
+            (lower-state-type-cache state)
+            env
+            type-env
+            name)
+            [(OkTcType fn-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                [(AstTyFunc param-types callee-ret)
+                  (lower-tail-call-compatible-return?
+                    ctx
+                    (ty-node-get callee-ret)
+                    ret-ty)]
+                [_ false])]
+            [(ErrTcType _) false])
+          false)))))
 
 (define (lower-tail-call-args-for-target
   [ctx : TcContext]
@@ -34784,6 +34798,429 @@
       state
       (IrInstrReturn (lower-return-maybe (IrValueVar sret-var) ret-ty)))))
 
+(define (lower-rvo-node-has-early-return? [id : i64]) : bool
+  (lower-rvo-expr-has-early-return? (ast-node-get id)))
+
+(define (lower-rvo-expr-list-has-early-return? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (or
+        (lower-rvo-node-has-early-return? head)
+        (lower-rvo-expr-list-has-early-return? (box-get rest)))]))
+
+(define (lower-rvo-let-bindings-have-early-return?
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (or
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (lower-rvo-node-has-early-return? init-box)])
+        (lower-rvo-let-bindings-have-early-return? (box-get rest)))]))
+
+(define (lower-rvo-match-arms-have-early-return? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (or
+        (match arm
+          [(AstMatchArm _ body-box) (lower-rvo-node-has-early-return? body-box)])
+        (lower-rvo-match-arms-have-early-return? (box-get rest)))]))
+
+(define (lower-rvo-resource-bindings-have-early-return?
+  [bindings : AstResourceBindingList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (or
+        (match binding
+          [(AstResourceBinding _ acquire-box cleanup-box)
+            (or
+              (lower-rvo-node-has-early-return? acquire-box)
+              (lower-rvo-node-has-early-return? cleanup-box))])
+        (lower-rvo-resource-bindings-have-early-return? (box-get rest)))]))
+
+(define (lower-rvo-expr-has-early-return? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprReturn _) true]
+    [(AstExprTry _) true]
+    [(AstExprLiteral _) false]
+    [(AstExprVar _) false]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprInit _) false]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrAddrOf _) false]
+    [(AstExprBinaryData _) false]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprSpmdProgramIndex) false]
+    [(AstExprSpmdProgramCount) false]
+    [(AstExprSpanned inner-box _) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-rvo-node-has-early-return? left-box)
+        (lower-rvo-node-has-early-return? right-box))]
+    [(AstExprUnary _ inner-box) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprAnn inner-box _) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprCast inner-box _) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprBorrow _ _ inner-box) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprCall func-box args)
+      (or
+        (lower-rvo-node-has-early-return? func-box)
+        (lower-rvo-expr-list-has-early-return? args))]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-rvo-node-has-early-return? cond-box)
+        (lower-rvo-node-has-early-return? then-box)
+        (lower-rvo-node-has-early-return? else-box))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (lower-rvo-let-bindings-have-early-return? bindings)
+            (lower-rvo-node-has-early-return? body-box))])]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda _ _ body-box) (lower-rvo-node-has-early-return? body-box)])]
+    [(AstExprTuple exprs) (lower-rvo-expr-list-has-early-return? exprs)]
+    [(AstExprTupleRef tuple-box index-box)
+      (or
+        (lower-rvo-node-has-early-return? tuple-box)
+        (lower-rvo-node-has-early-return? index-box))]
+    [(AstExprArray exprs) (lower-rvo-expr-list-has-early-return? exprs)]
+    [(AstExprMakeArray _ len-box) (lower-rvo-node-has-early-return? len-box)]
+    [(AstExprArrayRef arr-box index-box)
+      (or
+        (lower-rvo-node-has-early-return? arr-box)
+        (lower-rvo-node-has-early-return? index-box))]
+    [(AstExprArraySet arr-box index-box value-box)
+      (or
+        (lower-rvo-node-has-early-return? arr-box)
+        (lower-rvo-node-has-early-return? index-box)
+        (lower-rvo-node-has-early-return? value-box))]
+    [(AstExprArrayPush arr-box value-box)
+      (or
+        (lower-rvo-node-has-early-return? arr-box)
+        (lower-rvo-node-has-early-return? value-box))]
+    [(AstExprStringRef str-box index-box)
+      (or
+        (lower-rvo-node-has-early-return? str-box)
+        (lower-rvo-node-has-early-return? index-box))]
+    [(AstExprWhile cond-box body-box)
+      (or
+        (lower-rvo-node-has-early-return? cond-box)
+        (lower-rvo-node-has-early-return? body-box))]
+    [(AstExprBegin exprs) (lower-rvo-expr-list-has-early-return? exprs)]
+    [(AstExprUnsafe exprs) (lower-rvo-expr-list-has-early-return? exprs)]
+    [(AstExprSet _ rhs-box) (lower-rvo-node-has-early-return? rhs-box)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrut-box arms)
+          (or
+            (lower-rvo-node-has-early-return? scrut-box)
+            (lower-rvo-match-arms-have-early-return? arms))])]
+    [(AstExprForeach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach _ _ start-box end-box body-box)
+          (or
+            (lower-rvo-node-has-early-return? start-box)
+            (lower-rvo-node-has-early-return? end-box)
+            (lower-rvo-node-has-early-return? body-box))])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+          (or
+            (lower-rvo-node-has-early-return? start-box)
+            (lower-rvo-node-has-early-return? end-box)
+            (lower-rvo-node-has-early-return? init-box)
+            (lower-rvo-node-has-early-return? value-box))])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+          (or
+            (lower-rvo-node-has-early-return? start-box)
+            (lower-rvo-node-has-early-return? end-box)
+            (lower-rvo-node-has-early-return? init-box)
+            (lower-rvo-node-has-early-return? value-box)
+            (lower-rvo-node-has-early-return? body-box))])]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (or
+        (lower-rvo-node-has-early-return? value-box)
+        (lower-rvo-node-has-early-return? lane-box))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (or
+        (lower-rvo-node-has-early-return? value-box)
+        (lower-rvo-node-has-early-return? lane-box))]
+    [(AstExprStructGet receiver-box _)
+      (lower-rvo-node-has-early-return? receiver-box)]
+    [(AstExprStructSet receiver-box _ value-box)
+      (or
+        (lower-rvo-node-has-early-return? receiver-box)
+        (lower-rvo-node-has-early-return? value-box))]
+    [(AstExprWithRegion _ body) (lower-rvo-expr-list-has-early-return? body)]
+    [(AstExprWithEscape scratch-box body)
+      (or
+        (lower-rvo-node-has-early-return? scratch-box)
+        (lower-rvo-expr-list-has-early-return? body))]
+    [(AstExprWithScratch body) (lower-rvo-expr-list-has-early-return? body)]
+    [(AstExprInArena arena-box body)
+      (or
+        (lower-rvo-node-has-early-return? arena-box)
+        (lower-rvo-expr-list-has-early-return? body))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (or
+            (lower-rvo-resource-bindings-have-early-return? bindings)
+            (lower-rvo-expr-list-has-early-return? body))])]
+    [(AstExprBox inner-box) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprBoxGet inner-box) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprBoxTake inner-box) (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprBoxSet inner-box value-box)
+      (or
+        (lower-rvo-node-has-early-return? inner-box)
+        (lower-rvo-node-has-early-return? value-box))]
+    [(AstExprComptime _) false]
+    [(AstExprQuote _) false]
+    [(AstExprQuasiquote _) false]
+    [(AstExprUnquote _) false]
+    [(AstExprUnquoteSplicing _) false]
+    [(AstExprBracketClause items) (lower-rvo-expr-list-has-early-return? items)]
+    [(AstExprPtrNullCheck inner-box)
+      (lower-rvo-node-has-early-return? inner-box)]
+    [(AstExprPtrRead ptr-box) (lower-rvo-node-has-early-return? ptr-box)]
+    [(AstExprPtrWrite ptr-box value-box)
+      (or
+        (lower-rvo-node-has-early-return? ptr-box)
+        (lower-rvo-node-has-early-return? value-box))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (or
+        (lower-rvo-node-has-early-return? ptr-box)
+        (lower-rvo-node-has-early-return? offset-box))]
+    [(AstExprPtrCast ptr-box _) (lower-rvo-node-has-early-return? ptr-box)]
+    [(AstExprPtrToInt ptr-box) (lower-rvo-node-has-early-return? ptr-box)]
+    [(AstExprIntToPtr value-box _) (lower-rvo-node-has-early-return? value-box)]
+    [(AstExprStringData str-box) (lower-rvo-node-has-early-return? str-box)]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (or
+        (lower-rvo-node-has-early-return? ptr-box)
+        (lower-rvo-node-has-early-return? len-box))]
+    [(AstExprArrayData array-box) (lower-rvo-node-has-early-return? array-box)]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (or
+        (lower-rvo-node-has-early-return? leaf-box)
+        (lower-rvo-node-has-early-return? subleaf-box))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (or
+        (lower-rvo-node-has-early-return? leaf-box)
+        (lower-rvo-node-has-early-return? subleaf-box))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (or
+        (lower-rvo-node-has-early-return? leaf-box)
+        (lower-rvo-node-has-early-return? subleaf-box))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (or
+        (lower-rvo-node-has-early-return? leaf-box)
+        (lower-rvo-node-has-early-return? subleaf-box))]
+    [(AstExprXgetbv index-box) (lower-rvo-node-has-early-return? index-box)]
+    [(AstExprSyscall args) (lower-rvo-expr-list-has-early-return? args)]
+    [_ true]))
+
+;; #3792 aliasing guard for sret-forwarding RVO. The forwarded sret is the
+;; current function's result slot, which a CALLER may legally have aliased with
+;; one of this call's arguments (the `(set! place (f place ...))` /
+;; aggregate-place-update pattern -- HARD CONSTRAINT #4). If a callee then reads
+;; such an argument and writes its result in place through the (aliased) sret --
+;; e.g. it returns an enum/struct WRAPPING one of its parameters, like
+;; `string-i64-map-remove-borrowed` returning `(RemoveOk map)` -- the
+;; materialize-into-fresh-temp step of the value path is what makes that safe.
+;; Forwarding the sret removes that buffer, so we only forward when NO argument
+;; can alias the sret. An argument cannot alias the caller-owned result slot when
+;; it is a scalar (carries no inline-aggregate storage) or is itself a
+;; fresh-producing call/constructor whose result is an OWNED inline struct/enum
+;; (materialized into a distinct fresh temp). A place-expression of aggregate
+;; type (var/field/index/deref) or any reference/borrow may alias and is unsafe.
+(define (lower-rvo-arg-cannot-alias-sret?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]) : bool
+  (match (tc-expr ctx type-env arg)
+    [(OkTcType ty)
+      (or
+        (not (lower-type-contains-inline-aggregate? ctx ty))
+        (and
+          (match (ast-expr-unspan arg)
+            [(AstExprCall _ _) true]
+            [_ false])
+          (lower-type-inline-struct-or-enum? ctx ty)))]
+    [(ErrTcType _) false]))
+
+(define (lower-rvo-args-cannot-alias-sret?
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : bool
+  (match args
+    [(AstExprNil) true]
+    [(AstExprCons arg rest)
+      (and
+        (lower-rvo-arg-cannot-alias-sret? ctx type-env (ast-node-get arg))
+        (lower-rvo-args-cannot-alias-sret? ctx type-env (box-get rest)))]))
+
+(define (lower-rvo-callee-has-early-return?
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]) : bool
+  (hashmap.string-i64-map-contains?
+    lower-rvo-early-return-functions
+    (lower-resolve-call-name state env name)))
+
+;; #3792 call-slot RVO for a tail-position direct CALL whose aggregate result is
+;; returned by the current function. The value path lowers the call into a fresh
+;; reserved result slot (`lower-call-append-sret-arg`) and then `lower-copy-bytes`
+;; copies that slot into the caller-owned sret. Instead, forward the caller's own
+;; sret pointer as the callee's hidden sret argument so the callee writes the
+;; final result DIRECTLY into the return slot, eliminating the materialize+copy.
+;;
+;; Correctness: the call's arguments are evaluated BEFORE the call exactly as on
+;; the value path, the would-be temporary's sole consumer is this return, and the
+;; `lower-rvo-args-cannot-alias-sret?` guard above ensures no argument can alias
+;; the destination -- so substituting the destination is sound. This mirrors
+;; `lower-direct-call`'s ordinary (non-builtin, non-C-ABI) sret path verbatim,
+;; only swapping the reserved slot for the provided `sret-var` and ending with the
+;; return. Anything outside that path (builtins, C-ABI/extern, bytes-view,
+;; indirect targets, incompatible/aliasing returns) yields `LowerNoDirectStore`
+;; and falls back to the unchanged value+copy path.
+(define (lower-return-direct-call-into-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : LowerMaybeDirectStore
+  (if (or
+    ;; Require a genuine top-level function-define so a direct `IrInstrCall` to
+    ;; this symbol is the correct lowering. This excludes builtins, C-ABI/extern
+    ;; declarations, and -- critically -- top-level function-VALUE globals /
+    ;; closures, whose call must go through an INDIRECT load of the variable
+    ;; (emitting a direct symbol call there would call into data). Same eligibility
+    ;; rule `lower-tail-call-direct-supported?` uses for direct TCO.
+    (not (lower-symbol-function-define? ctx (lower-hygiene-source-name name)))
+    ;; Explicit early exits are still lowered through return paths that may hand
+    ;; back an allocated aggregate in `rax` instead of filling the forwarded sret.
+    (lower-rvo-callee-has-early-return? state env name)
+    (lower-bytes-view-from-parts-name? name)
+    (lower-c-abi-extern-call? ctx state env name)
+    (lower-c-abi-extern-value-call? ctx state env name)
+    ;; An argument that may alias the caller-owned sret makes in-place forwarding
+    ;; unsound (see `lower-rvo-args-cannot-alias-sret?`).
+    (not (lower-rvo-args-cannot-alias-sret? ctx type-env args)))
+    (LowerNoDirectStore)
+    (match (lower-lookup-type
+      ctx
+      (lower-state-type-cache state)
+      env
+      type-env
+      name)
+      [(OkTcType fn-ty)
+        (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+          [(AstTyFunc param-types fn-ret)
+            (if (not
+              (lower-tail-call-compatible-return?
+                ctx
+                (ty-node-get fn-ret)
+                ret-ty))
+              ;; The callee's declared return type differs from this function's
+              ;; return type (beyond regions): the value path coerces the call
+              ;; result into the sret slot, so forwarding the slot to the callee
+              ;; -- which would write its OWN-typed result -- is unsound. Keep the
+              ;; materialize+copy path. (Same compatibility rule TCO requires.)
+              (LowerNoDirectStore)
+              (match (lower-direct-call-param-types
+                ctx
+                type-env
+                name
+                args
+                (tc-resolve-type-list ctx (box-get param-types)))
+                [(OkTcTypeList call-param-types)
+                  (match (lower-call-args-as-needed
+                    ctx
+                    state
+                    env
+                    type-env
+                    args
+                    call-param-types)
+                    [(OkLowerCallArgs args-state values writebacks)
+                      (match (lower-state-alloc-var args-state)
+                        [(LowerAlloc allocated call-var)
+                          (let
+                            [result-ir-ty : AstType
+                              (lower-one-word-register-storage-type ctx ret-ty)]
+                            [sret-values : CompilerIrValueList
+                              (lower-value-list-append-one
+                                values
+                                (IrValueVar sret-var))]
+                            [call-state : LowerState
+                              (lower-state-emit-at-expr
+                                allocated
+                                (IrInstrCall
+                                  call-var
+                                  (lower-resolve-call-name allocated env name)
+                                  (compiler-ir-call-args-from-list sret-values)
+                                  result-ir-ty)
+                                origin)]
+                            [writeback-state : LowerState
+                              (lower-apply-arg-writebacks
+                                ctx
+                                call-state
+                                writebacks)]
+                            (LowerDirectStore
+                              (lower-state-emit
+                                writeback-state
+                                (IrInstrReturn
+                                  (lower-return-maybe
+                                    (IrValueVar sret-var)
+                                    ret-ty)))))])]
+                    [(ErrLowerCallArgs message) (LowerDirectStoreErr message)])]
+                [(ErrTcTypeList message)
+                  (LowerDirectStoreErr
+                    (lower-diagnostic-at-expr origin message))]))]
+          [_ (LowerNoDirectStore)])]
+      [(ErrTcType _) (LowerNoDirectStore)])))
+
+;; Tail-position direct-call fallback shared by the non-constructor branches of
+;; `lower-return-call-name-to-sret`: try the call-slot RVO above, otherwise keep
+;; the unchanged materialize-into-temp + copy-to-sret behavior.
+(define (lower-return-call-fallback-to-sret
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [sret-var : i64]
+  [origin : AstExpr]) : ResultLowerState
+  (match (lower-return-direct-call-into-sret
+    ctx
+    state
+    env
+    type-env
+    name
+    args
+    ret-ty
+    sret-var
+    origin)
+    [(LowerDirectStore done-state) (OkLowerState done-state)]
+    [(LowerDirectStoreErr message) (ErrLowerState message)]
+    [(LowerNoDirectStore)
+      (lower-return-expr-generic ctx state env type-env origin ret-ty sret-var)]))
+
 (define (lower-return-call-name-to-sret
   [ctx : TcContext]
   [state : LowerState]
@@ -34850,23 +35287,27 @@
                 [(OkLowerState done-state)
                   (lower-return-sret done-state ret-ty sret-var)]
                 [(ErrLowerState message) (ErrLowerState message)])
-              (lower-return-expr-generic
+              (lower-return-call-fallback-to-sret
                 ctx
                 state
                 env
                 type-env
-                origin
+                name
+                args
                 ret-ty
-                sret-var))]
+                sret-var
+                origin))]
           [(NoneI64)
-            (lower-return-expr-generic
+            (lower-return-call-fallback-to-sret
               ctx
               state
               env
               type-env
-              origin
+              name
+              args
               ret-ty
-              sret-var)])])))
+              sret-var
+              origin)])])))
 
 (define (lower-return-call-to-sret
   [ctx : TcContext]
@@ -37350,6 +37791,68 @@
             [(ErrLowerFunction message) (ErrLowerDispatchDecl message)]))]
       [(ErrTcType message) (ErrLowerDispatchDecl (lower-diagnostic message))])))
 
+(define (lower-rvo-early-return-functions-from-decls-in-module
+  [decls : AstDeclList]
+  [names : LowerNameEnv]
+  [module : String]
+  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  (match decls
+    [(AstDeclNil) out]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-rvo-early-return-functions-from-decls-in-module
+              rest
+              names
+              (intern-str next-module)
+              out)]
+          [(AstDeclUnsafe inner-box)
+            (lower-rvo-early-return-functions-from-decls-in-module
+              (ast-decl-cons (box-get inner-box) rest)
+              names
+              module
+              out)]
+          [(AstDeclComptimeDecl _ template-box)
+            (lower-rvo-early-return-functions-from-decls-in-module
+              (ast-decl-cons (box-get template-box) rest)
+              names
+              module
+              out)]
+          [(AstDeclDefFn name _ _ body-box _)
+            (let
+              [next-out : hashmap.StringI64Map
+                (if (lower-rvo-node-has-early-return? body-box)
+                  (hashmap.string-i64-map-put
+                    out
+                    (lower-current-decl-logical-name
+                      names
+                      module
+                      (intern-str name))
+                    1)
+                  out)]
+              (lower-rvo-early-return-functions-from-decls-in-module
+                rest
+                names
+                module
+                next-out))]
+          [_
+            (lower-rvo-early-return-functions-from-decls-in-module
+              rest
+              names
+              module
+              out)]))]))
+
+(define (lower-rvo-early-return-functions-from-decls
+  [decls : AstDeclList]
+  [names : LowerNameEnv]) : hashmap.StringI64Map
+  (lower-rvo-early-return-functions-from-decls-in-module
+    decls
+    names
+    ""
+    (hashmap.string-i64-map-with-capacity 8192)))
+
 (define (lower-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -37375,6 +37878,9 @@
       ;; the leading "" module before the first (module ...) marker.
       (set! lower-active-global-name-cache (lower-name-cache-from-env names))
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
+      (set!
+        lower-rvo-early-return-functions
+        (lower-rvo-early-return-functions-from-decls decls names))
       (lower-decls-in-module
         ctx
         top-env
@@ -40254,6 +40760,15 @@
     (begin
       (if flag (return 7) unit)
       42)))")
+
+(define (compiler-lower-sret-rvo-early-return-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (make-big [flag : bool]) : Big
+  (begin
+    (if flag (return (Big 4 5 6)) unit)
+    (Big 1 2 3)))
+(define (main [flag : bool]) : Big
+  (make-big flag))")
 
 (define (compiler-lower-resource-with-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
@@ -44551,6 +45066,16 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 1))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-sret-rvo-early-return-fallback-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-sret-rvo-early-return-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-call-count functions "main" "make-big") 0)
+            (> (lower-test-function-copy-bytes-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-resource-with-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-resource-with-source))
     [(OkCompilerLower program _)
@@ -47824,6 +48349,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-return-with-arena-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-sret-rvo-early-return-fallback-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-resource-with-shape-ok?)

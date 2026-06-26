@@ -8868,8 +8868,8 @@
   [addr : String]) : String
   (str-cat "    cmpq " rhs ", " addr "\n"))
 
-(define (compiler-backend-emit-compare-memory-flags [rhs : String]) : String
-  (compiler-backend-emit-compare-memory-address-flags rhs "(%r10)"))
+(define (compiler-backend-emit-compare-memory-flags [rhs : String] [base : String]) : String
+  (compiler-backend-emit-compare-memory-address-flags rhs (compiler-backend-copy-address 0 base)))
 
 (define (compiler-backend-emit-load-compare-branch
   [assignments : CompilerRegAssignmentList]
@@ -8889,7 +8889,13 @@
         (compiler-diagnostic-at-start
           ""
           "backend: unsupported load compare branch"))
-      (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
+      (let
+        [scav-base : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r10")]
+      (match (compiler-backend-emit-load-value-with-plan assignments ptr scav-base)
         [(OkCompilerBackend ptr-asm)
           (match (compiler-backend-immediate-operand rhs)
             [(CompilerBackendSomeImmediate imm)
@@ -8897,7 +8903,7 @@
                 (string-append
                   ptr-asm
                   (string-append
-                    (compiler-backend-emit-compare-memory-flags imm)
+                    (compiler-backend-emit-compare-memory-flags imm scav-base)
                     (compiler-backend-emit-compare-branch-jumps
                       function
                       true-label
@@ -8909,8 +8915,8 @@
               (let
                 [scav-rhs : String
                   (compiler-backend-scavenge-reg-here
-                    (compiler-backend-binop-scavenge-exclude-build)
-                    5
+                    (compiler-backend-scavenge-exclude-with scav-base)
+                    6
                     "%r8")]
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
@@ -8924,7 +8930,7 @@
                           rhs-asm
                           (string-append
                             (compiler-backend-emit-compare-memory-flags
-                              scav-rhs)
+                              scav-rhs scav-base)
                             (compiler-backend-emit-compare-branch-jumps
                               function
                               true-label
@@ -8933,7 +8939,7 @@
                               true-jcc
                               false-jcc)))))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
   [assignments : CompilerRegAssignmentList]
@@ -9498,6 +9504,20 @@
   (let
     [a : (Array String) (make-array String 1)]
     (begin (array-set! a 0 r) a)))
+
+;; The binop-scavenge exclude superset [rax,rdx,rcx,r10,r11] PLUS one more
+;; already-chosen register (so a second scavenge at the same point avoids it).
+(define (compiler-backend-scavenge-exclude-with [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 extra)
+      a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
   (if (= disp 0)

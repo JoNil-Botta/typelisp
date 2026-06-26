@@ -40,6 +40,9 @@ CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
+OPT_ASM="$WORKDIR/profile-opt.s"
+OPT_STDOUT="$WORKDIR/profile-opt.stdout"
+OPT_STDERR="$WORKDIR/profile-opt.stderr"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -76,6 +79,14 @@ assert_layout_row() {
         "compile-profile|typecheck.layout.$1|" \
         "$LAYOUT_STDOUT" \
         "$LAYOUT_STDERR"
+}
+
+assert_opt_escape_row() {
+    assert_contains_in \
+        "$OPT_STDERR" \
+        "compile-profile-detail|optimize.escape.$1|" \
+        "$OPT_STDOUT" \
+        "$OPT_STDERR"
 }
 
 echo "[compile-profile] compile profile-enabled CLI"
@@ -145,5 +156,29 @@ assert_layout_row "stdlib_variant_spec_visits"
 assert_layout_row "cache_hits"
 assert_layout_row "cache_misses"
 assert_layout_row "cache_bypasses"
+
+echo "[compile-profile] compile optimizer escape fixture"
+if ! "$PROFILE_BIN" compile tests/integration/compile_profile_optimizer_escape.tl \
+    -o "$OPT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    --opt-level 1 \
+    > "$OPT_STDOUT" 2> "$OPT_STDERR"; then
+    show_failure_logs "$OPT_STDOUT" "$OPT_STDERR"
+    fail "profiled optimized fixture compile failed"
+fi
+
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.functions|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
+assert_opt_escape_row "body"
+assert_opt_escape_row "compact"
+assert_opt_escape_row "clone"
+assert_opt_escape_row "restore"
+assert_contains_in "$OPT_STDERR" "|1|main" "$OPT_STDOUT" "$OPT_STDERR"
 
 echo "[compile-profile] ok"

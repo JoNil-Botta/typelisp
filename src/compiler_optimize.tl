@@ -211,6 +211,27 @@
 
 (cfg
   compile-profile
+  (define (compiler-opt-profile-escape-finish
+    [phase : String]
+    [level : i64]
+    [name : String]
+    [start-ms : i64]) : unit
+    (let
+      [elapsed : i64 (- (profile.profile-now-ms) start-ms)]
+      (io.print-error
+        (str_cat.str-cat
+          "compile-profile-detail|optimize.escape."
+          phase
+          "|"
+          (string.int->string elapsed)
+          "|"
+          (string.int->string level)
+          "|"
+          name
+          "\n")))))
+
+(cfg
+  compile-profile
   (define (compiler-opt-profile-function-name [func : CompilerIrFunction]) : String
     (match func
       [(IrFunction name _ _ _ _) name])))
@@ -20698,27 +20719,66 @@
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (let
     [enclosing : i64 (arena.tl_arena_current)]
+    [_profile-name : String
+      (cfg compile-profile (compiler-opt-profile-function-name func) "")]
     (begin
       (unsafe
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
+        [_t-body : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+        [body : CompilerIrFunction
+          (optimize-function-with-level-and-summaries func level summaries)]
+        [_profile-body : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-escape-finish
+              "body"
+              level
+              _profile-name
+              _t-body))]
+        [_t-compact : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
         [optimized : CompilerIrFunction
-          (compiler-ir-function-compact-blocks
-            (optimize-function-with-level-and-summaries func level summaries))]
+          (compiler-ir-function-compact-blocks body)]
+        [_profile-compact : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-escape-finish
+              "compact"
+              level
+              _profile-name
+              _t-compact))]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
             (arena.tl_arena_set enclosing))
           (let
+            [_t-clone : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
             [escaped : CompilerIrFunction (clone optimized)]
+            [_profile-clone : unit
+              (cfg
+                compile-profile
+                (compiler-opt-profile-escape-finish
+                  "clone"
+                  level
+                  _profile-name
+                  _t-clone))]
             [new-enclosing : i64 (arena.tl_arena_current)]
-            (begin
+            [_t-restore : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+            [_restore : unit
               (unsafe
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))
-              escaped)))))))
+                (arena.tl_arena_set new-enclosing))]
+            [_profile-restore : unit
+              (cfg
+                compile-profile
+                (compiler-opt-profile-escape-finish
+                  "restore"
+                  level
+                  _profile-name
+                  _t-restore))]
+            escaped))))))
 
 (defenum OptStringSet
   (OptStringNil)

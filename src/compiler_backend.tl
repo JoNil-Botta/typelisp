@@ -7911,7 +7911,7 @@
               operand-ty
               (compiler-backend-scavenge-reg
                 dst
-                (compiler-backend-binop-scavenge-exclude-build)
+                (compiler-backend-binop-scavenge-exclude-for-op op)
                 5
                 "%r8"))
               [(CompilerBackendSomeAsm op-asm)
@@ -7948,7 +7948,7 @@
                           [scav-rhs : String
                             (compiler-backend-scavenge-reg
                               dst
-                              (compiler-backend-binop-scavenge-exclude-build)
+                              (compiler-backend-binop-scavenge-exclude-for-op op)
                               5
                               "%r8")]
                           (match (compiler-backend-emit-load-value-with-plan
@@ -7998,7 +7998,7 @@
                               [scav-rhs : String
                                 (compiler-backend-scavenge-reg
                                   dst
-                                  (compiler-backend-binop-scavenge-exclude-build)
+                                  (compiler-backend-binop-scavenge-exclude-for-op op)
                                   5
                                   "%r8")]
                               (match (compiler-backend-emit-load-value-with-plan
@@ -8041,7 +8041,7 @@
                           [scav-rhs : String
                             (compiler-backend-scavenge-reg
                               dst
-                              (compiler-backend-binop-scavenge-exclude-build)
+                              (compiler-backend-binop-scavenge-exclude-for-op op)
                               5
                               "%r8")]
                           (match (if (if (string-eq rhs-reg "")
@@ -8145,7 +8145,7 @@
     [scav-rhs : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-binop-scavenge-exclude-build)
+        (compiler-backend-binop-scavenge-exclude-for-op op)
         5
         "%r8")]
     (match (compiler-backend-binop-literal-divmod-asm
@@ -22649,6 +22649,35 @@
       (array-set! a 2 "%rcx")
       (array-set! a 3 "%r10")
       (array-set! a 4 "%r11")
+      a)))
+
+;; Op-specific scavenge exclude: only the registers THIS op actually clobbers
+;; (beyond operand/dst homes, excluded separately). The over-broad superset
+;; excluded rcx+rdx for every op, removing them as scratch candidates even for
+;; add/sub/and/or/xor/cmp that don't touch them -> needless degradation to the
+;; fallback. Returns a size-5 array (padded with the no-op "%rax", which is not a
+;; scavenge candidate). div/mod -> rdx (high dividend); shift -> rcx (count dest);
+;; mul -> rdx; everything else -> nothing extra.
+(define (compiler-backend-binop-scavenge-exclude-for-op
+  [op : CompilerIrBinOp]) : (Array String)
+  (let
+    [extra : String
+      (match op
+        [(IrBinDiv) "%rdx"]
+        [(IrBinMod) "%rdx"]
+        [(IrBinSafeDiv) "%rdx"]
+        [(IrBinSafeMod) "%rdx"]
+        [(IrBinShl) "%rcx"]
+        [(IrBinShr) "%rcx"]
+        [(IrBinMul) "%rdx"]
+        [_ "%rax"])]
+    [a : (Array String) (make-array String 5)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 extra)
+      (array-set! a 2 "%rax")
+      (array-set! a 3 "%rax")
+      (array-set! a 4 "%rax")
       a)))
 
 ;; Append one register to an exclude array (returns a fresh size-(n+1) array).

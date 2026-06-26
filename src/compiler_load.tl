@@ -1983,6 +1983,8 @@
     [(AstTyExpr) (CompilerLoadSurfaceMacroExpr)]
     [(AstTyVar name)
       (cond
+        [(or (= name (intern "Expr")) (= name (intern "expr")))
+          (CompilerLoadSurfaceMacroExpr)]
         [(or (= name (intern "Module")) (= name (intern "module")))
           (CompilerLoadSurfaceMacroModule)]
         [(or (= name (intern "Decls")) (= name (intern "decls")))

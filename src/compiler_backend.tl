@@ -25864,7 +25864,7 @@ tl_profile_alloc_peak_bytes:
         slow-label
         "\n")]
     [ordinary-body-a : String
-      (backend-cat4
+      (str_cat.str-cat
         "    movq 40(%r8), %r9
     testq $1, 48(%r9)
     jnz "
@@ -25874,24 +25874,25 @@ tl_profile_alloc_peak_bytes:
     movq %rax, "
         next-reg)]
     [ordinary-body-b : String
-      (backend-cat4 "\n    addq $" size-text ", " next-reg)]
+      (str_cat.str-cat "\n    addq $" size-text ", " next-reg)]
     [ordinary-body-c : String
-      (backend-cat4 "\n    jc " slow-label "\n    cmpq 24(%r8), " next-reg)]
+      (str_cat.str-cat "\n    jc " slow-label "\n    cmpq 24(%r8), " next-reg)]
     [ordinary-body-d : String
-      (backend-cat4 "\n    ja " slow-label "\n    movq " next-reg)]
+      (str_cat.str-cat "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
-      (backend-cat4
+      (str_cat.str-cat
         ordinary-body-a
         ordinary-body-b
         ordinary-body-c
-        (backend-cat3 ordinary-body-d ", 16(%r8)\n" ""))]
+        ordinary-body-d
+        ", 16(%r8)\n")]
     [ordinary-profile : String
       (compiler-backend-runtime-profile-alloc-account
         size-imm
         profile-label
         profile)]
     [atomic-body-a : String
-      (backend-cat4
+      (str_cat.str-cat
         "    ret
 "
         atomic-label
@@ -25901,22 +25902,25 @@ tl_profile_alloc_peak_bytes:
 "
         atomic-cas-label)]
     [atomic-body-b : String
-      (backend-cat4 ":\n    movq %rax, " next-reg "\n    addq $" size-text)]
-    [atomic-body-c : String (backend-cat4 ", " next-reg "\n    jc " slow-label)]
+      (str_cat.str-cat ":\n    movq %rax, " next-reg "\n    addq $" size-text)]
+    [atomic-body-c : String
+      (str_cat.str-cat ", " next-reg "\n    jc " slow-label)]
     [atomic-body-d : String
-      (backend-cat4 "\n    cmpq 24(%r8), " next-reg "\n    ja " slow-label)]
+      (str_cat.str-cat "\n    cmpq 24(%r8), " next-reg "\n    ja " slow-label)]
     [atomic-body-e : String
-      (backend-cat4
+      (str_cat.str-cat
         "\n    lock cmpxchgq "
         next-reg
         ", 16(%r8)\n    jne "
         atomic-cas-label)]
     [atomic-body : String
-      (backend-cat4
+      (str_cat.str-cat
         atomic-body-a
         atomic-body-b
         atomic-body-c
-        (backend-cat3 atomic-body-d atomic-body-e "\n"))]
+        atomic-body-d
+        atomic-body-e
+        "\n")]
     [atomic-profile : String
       (compiler-backend-runtime-profile-alloc-account
         size-imm

@@ -17021,7 +17021,8 @@
   (clone-field-type-able?
     (tc-context-pools ctx)
     (tc-type-without-regions (tc-resolve-type ctx ty))
-    (tc-clone-able-set ctx)))
+    (tc-clone-able-set ctx)
+    (tc-context-module ctx)))
 
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
@@ -36171,6 +36172,7 @@
 
 (define (macro-identity-key-params
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [params : AstMacroParamList]
   [args : AstExprList]
@@ -36229,6 +36231,7 @@
                     (match (if (tc-macro-type-param-kind? ty)
                       (match (macro-type-arg-with-fallback
                         ctx
+                        decls
                         fallback-module
                         head-expr)
                         [(OkMacroTypeArg resolved-ty)
@@ -36260,6 +36263,7 @@
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
+                          decls
                           fallback-module
                           rest-params
                           rest-args
@@ -36275,6 +36279,7 @@
 
 (define (macro-module-identity
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [macro-name : String]
   [definition-module : String]
@@ -36284,6 +36289,7 @@
   [call-expr : AstExpr]) : ResultGenKey
   (match (macro-identity-key-params
     ctx
+    decls
     fallback-module
     params
     args
@@ -39457,7 +39463,109 @@
     (tc-type-render expected)
     ", got bracket clause"))
 
-(define (macro-type-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroTypeArg
+(define (macro-type-arg-module-qualify-name [ctx : TcContext] [name : i64]) : String
+  (let
+    [name-str : String (intern-str name)]
+    [module : String (tc-context-module ctx)]
+    (if (and
+      (> (string.string-length module) 0)
+      (not (tc-name-qualified? name-str))
+      (not (tc-source-slash-qualified? name-str)))
+      (str_cat.str-cat (tc-name-slashes-to-dots module) "." name-str)
+      name-str)))
+
+(define (macro-type-arg-module-qualify-list
+  [ctx : TcContext]
+  [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head rest)
+      (ast-type-cons
+        (macro-type-arg-module-qualify ctx (ty-node-get head))
+        (macro-type-arg-module-qualify-list ctx (box-get rest)))]))
+
+(define (macro-type-arg-module-qualify [ctx : TcContext] [ty : AstType]) : AstType
+  (match ty
+    [(AstTyFunc args ret)
+      (ast-ty-func
+        (macro-type-arg-module-qualify-list ctx (box-get args))
+        (macro-type-arg-module-qualify ctx (ty-node-get ret)))]
+    [(AstTyTuple elems)
+      (ast-ty-tuple (macro-type-arg-module-qualify-list ctx (box-get elems)))]
+    [(AstTyArray elem len)
+      (ast-ty-array (macro-type-arg-module-qualify ctx (ty-node-get elem)) len)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyBox elem)
+      (ast-ty-box (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyPtr elem)
+      (ast-ty-ptr (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyRef region inner)
+      (ast-ty-ref
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyMutRef region inner)
+      (ast-ty-mut-ref
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyRegion region inner)
+      (ast-ty-region
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyVar name)
+      (AstTyVar (intern (macro-type-arg-module-qualify-name ctx name)))]
+    [(AstTyVarArgs name lifetimes)
+      (ast-ty-var-args
+        (intern (macro-type-arg-module-qualify-name ctx name))
+        (box-get lifetimes))]
+    [_ ty]))
+
+(define (macro-type-arg-reflections-from-decls [decls : AstDeclList]) : CtfeReflectInfoList
+  (begin
+    (ctfe-build-seen-reset!)
+    (ctfe-reflections-from-decls
+      decls
+      ""
+      (ctfe-reflect-info-list-with-capacity (ctfe-metadata-decl-capacity decls)))))
+
+(define (macro-type-arg-reflect-resolve
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [ty : AstType]) : AstType
+  (let
+    [infos : CtfeReflectInfoList (macro-type-arg-reflections-from-decls decls)]
+    [reflected : AstType
+      (ctfe-reflect-resolve-type-with-pools (tc-context-pools ctx) infos ty)]
+    (if (tc-type-needs-resolution? reflected)
+      (let
+        [qualified-reflected : AstType
+          (ctfe-reflect-resolve-type-with-pools
+            (tc-context-pools ctx)
+            infos
+            (macro-type-arg-module-qualify ctx reflected))]
+        (if (tc-type-needs-resolution? qualified-reflected)
+          reflected
+          qualified-reflected))
+      reflected)))
+
+(define (macro-type-arg-resolve
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [ty : AstType]) : AstType
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    (if (tc-type-needs-resolution? resolved)
+      (let
+        [reflected : AstType
+          (macro-type-arg-reflect-resolve ctx decls resolved)]
+        (if (tc-type-needs-resolution? reflected)
+          (macro-type-arg-module-qualify ctx reflected)
+          reflected))
+      resolved)))
+
+(define (macro-type-arg [ctx : TcContext] [decls : AstDeclList] [arg : AstExpr]) : ResultMacroTypeArg
   (match (ctfe-expr-to-type
     arg
     arg
@@ -39465,21 +39573,25 @@
     (ctfe-fuel-limit))
     [(OkCtfeQuoteType ty _)
       (match (tc-source-type-policy-ok ctx ty)
-        [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
+        [(OkTcUnit) (OkMacroTypeArg (macro-type-arg-resolve ctx decls ty))]
         [(ErrTcUnit message)
           (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [arg : AstExpr]) : ResultMacroTypeArg
-  (match (macro-type-arg ctx arg)
+  (match (macro-type-arg ctx decls arg)
     [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
     [(ErrMacroTypeArg primary-diag)
       (if (string.string-eq fallback-module (tc-context-module ctx))
         (ErrMacroTypeArg primary-diag)
-        (match (macro-type-arg (tc-context-with-module ctx fallback-module) arg)
+        (match (macro-type-arg
+          (tc-context-with-module ctx fallback-module)
+          decls
+          arg)
           [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
           [(ErrMacroTypeArg _) (ErrMacroTypeArg primary-diag)]))]))
 
@@ -39714,7 +39826,11 @@
   [expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
   (if (tc-macro-type-param-kind? expected)
-    (match (macro-type-arg ctx arg)
+    (match (macro-type-arg
+      ctx
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box) (box-get decls-box)])
+      arg)
       [(OkMacroTypeArg _) OkMacroCheck]
       [(ErrMacroTypeArg diag) (ErrMacroCheck diag)])
     (let
@@ -39821,6 +39937,7 @@
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [name : i64]
@@ -39831,7 +39948,7 @@
   [env : CtfeEnv]) : ResultMacroEnv
   (cond
     [(tc-macro-type-param-kind? ty)
-      (match (macro-type-arg-with-fallback ctx fallback-module arg-expr)
+      (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
         [(OkMacroTypeArg resolved-ty)
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
@@ -39888,6 +40005,7 @@
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
 (define (macro-bind-params
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [params : AstMacroParamList]
@@ -39925,6 +40043,7 @@
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (macro-bind-fixed-param
                       ctx
+                      decls
                       fallback-module
                       type-env
                       pname
@@ -39936,6 +40055,7 @@
                       [(OkMacroEnv next-env)
                         (macro-bind-params
                           ctx
+                          decls
                           fallback-module
                           type-env
                           rest-params
@@ -39949,6 +40069,7 @@
 ;; returned syntax value for expression, module, or declaration positions.
 (define (macro-eval-transformer-expanded
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [macro-name : String]
@@ -39960,6 +40081,7 @@
     (tc-context-capture-active-pools! ctx)
     (match (macro-bind-params
       ctx
+      decls
       fallback-module
       type-env
       params
@@ -40007,6 +40129,7 @@
     [(OkMacroExprList expanded-args)
       (macro-eval-transformer-expanded
         ctx
+        decls
         (tc-context-module ctx)
         type-env
         macro-name
@@ -40427,6 +40550,7 @@
 
 (define (macro-vector-family-fast-decls
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
@@ -40446,6 +40570,7 @@
                     [(AstExprNil)
                       (match (macro-type-arg-with-fallback
                         ctx
+                        decls
                         fallback-module
                         type-expr)
                         [(OkMacroTypeArg elem-ty)
@@ -40607,6 +40732,7 @@
               (tc-context-capture-active-pools! ctx)
               (match (macro-bind-params
                 ctx
+                decls
                 (tc-context-module ctx)
                 type-env
                 params
@@ -41728,6 +41854,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            orig-decls
                             call-module
                             macro-name
                             definition-module
@@ -41741,6 +41868,7 @@
                                 definition-module)
                                 (match (macro-vector-family-fast-decls
                                   call-ctx
+                                  orig-decls
                                   call-module
                                   expanded-args
                                   call-expr)
@@ -41764,6 +41892,7 @@
                                     (ErrMacroDeclExpansion diag)])
                                 (match (macro-eval-transformer-expanded
                                   call-ctx
+                                  orig-decls
                                   call-module
                                   global-env
                                   macro-name
@@ -41865,6 +41994,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            orig-decls
                             call-module
                             macro-name
                             definition-module
@@ -41875,6 +42005,7 @@
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer-expanded
                                 call-ctx
+                                orig-decls
                                 call-module
                                 global-env
                                 macro-name
@@ -43263,7 +43394,10 @@
             ;; point for every CTFE reflection/layout query.
             (set!
               ctfe-needs-metadata
-              (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
+              (or
+                has-defmacro
+                (ctfe-program-has-type-literal? decls)
+                has-expr-type-macros))
             (if (or has-defmacro (macro-program-needs-expansion? decls))
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))

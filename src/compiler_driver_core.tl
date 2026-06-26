@@ -2123,23 +2123,14 @@
   [cfgs : SymI64Env]) : ResultCompilerDriver
   ;; Emit-IR needs the macro prelude but must remain runtime-free so
   ;; target parity checks compare user IR rather than OS-specific runtime IR.
-  (let
-    [prev-no-main-entry-prune : bool (lower-no-main-entry-prune-active?)]
-    (begin
-      (lower-no-main-entry-prune-set! true)
-      (let
-        [lowered : ResultCompilerDriverLowered
-          (compiler-driver-load-and-lower-pic-image
-            input-path
-            target
-            stdlib-roots
-            mode
-            (compiler-driver-target-cfgs target cfgs))]
-        (begin
-          (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
-          (compiler-driver-emit-ir-summary-lowered-result-with-level
-            lowered
-            opt-level))))))
+  (compiler-driver-emit-ir-summary-lowered-result-with-level
+    (compiler-driver-load-and-lower-pic-image
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+    opt-level))
 
 (define (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -2149,24 +2140,15 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
-  (let
-    [prev-no-main-entry-prune : bool (lower-no-main-entry-prune-active?)]
-    (begin
-      (lower-no-main-entry-prune-set! true)
-      (let
-        [lowered : ResultCompilerDriverLowered
-          (compiler-driver-load-and-lower-pic-image-with-state
-            state
-            input-path
-            target
-            stdlib-roots
-            mode
-            (compiler-driver-target-cfgs target cfgs))]
-        (begin
-          (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
-          (compiler-driver-emit-ir-summary-lowered-result-with-level
-            lowered
-            opt-level))))))
+  (compiler-driver-emit-ir-summary-lowered-result-with-level
+    (compiler-driver-load-and-lower-pic-image-with-state
+      state
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-target-cfgs target cfgs))
+    opt-level))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]

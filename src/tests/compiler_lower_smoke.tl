@@ -145,6 +145,9 @@
     (unless
       (compiler-lower-smoke-direct-no-main-keeps-source-symbols?)
       (panic "lower: direct no-main compile pruned source symbol"))
+    (unless
+      (compiler-lower-module-macro-stdlib-vector-import-no-main-ok?)
+      (panic "lower: no-main module macro vector import failed"))
     true))
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
@@ -459,6 +462,9 @@
     (unless
       (compiler-lower-module-macro-stdlib-vector-import-ok?)
       (panic "lower: module macro stdlib vector import smoke mismatch"))
+    (unless
+      (compiler-lower-module-macro-stdlib-vector-import-no-main-ok?)
+      (panic "lower: no-main module macro stdlib vector import smoke mismatch"))
     (unless
       (compiler-lower-function-decl-count-wrapped-ok?)
       (panic "lower: function decl count smoke mismatch"))

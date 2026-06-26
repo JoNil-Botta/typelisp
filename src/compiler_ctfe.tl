@@ -6278,13 +6278,7 @@
           (match (ctfe-env-lookup env name)
             [(CtfeSomeValue value)
               (match value
-                [(CtfeType ty)
-                  (OkCtfeQuoteType
-                    (ctfe-reflect-resolve-type-with-pools
-                      (ctfe-env-pools env)
-                      (ctfe-env-reflections env)
-                      ty)
-                    fuel)]
+                [(CtfeType ty) (OkCtfeQuoteType ty fuel)]
                 [(CtfeExpr node _)
                   (let
                     [node-expr : AstExpr (ctfe-ast-get env node)]
@@ -6308,6 +6302,14 @@
                 origin
                 "type unquote expects exactly one type parameter")))])]
     [_ (ctfe-type-expr-error origin)]))
+
+(define (ctfe-quote-type-var [name : i64] [env : CtfeEnv] [fuel : i64]) : ResultCtfeQuoteType
+  (match (ctfe-env-lookup env (intern-str name))
+    [(CtfeSomeValue value)
+      (match value
+        [(CtfeType ty) (OkCtfeQuoteType ty fuel)]
+        [_ (OkCtfeQuoteType (AstTyVar name) fuel)])]
+    [(CtfeNoValue) (OkCtfeQuoteType (AstTyVar name) fuel)]))
 
 (define (ctfe-quote-type-list
   [types : AstTypeList]
@@ -6417,6 +6419,7 @@
       (if (= name (intern "unquote"))
         (ctfe-quote-type-unquote (box-get lifetimes) env origin fuel)
         (OkCtfeQuoteType ty fuel))]
+    [(AstTyVar name) (ctfe-quote-type-var name env fuel)]
     [_ (OkCtfeQuoteType ty fuel)]))
 
 (define (ctfe-quote-maybe-type

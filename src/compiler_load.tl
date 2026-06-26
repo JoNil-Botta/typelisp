@@ -135,6 +135,7 @@
   (has-cleanup bool)
   (has-export bool)
   (has-generated-meta bool)
+  (was-unsafe bool)
   (span AstSourceSpan))
 
 (defenum CompilerLoadSurfaceDeclList
@@ -2089,6 +2090,7 @@
   [module-id : String]
   [decl : AstDecl]
   [generated : bool]
+  [was-unsafe : bool]
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match decl
     [(AstDeclImport (AstImportSpec kind import-path module-name alias span))
@@ -2115,6 +2117,7 @@
           false
           false
           generated
+          was-unsafe
           (compiler-load-surface-zero-span))
         false
         false
@@ -2134,6 +2137,7 @@
             false
             has-export
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           has-export
@@ -2151,6 +2155,7 @@
           false
           false
           generated
+          was-unsafe
           (compiler-load-surface-zero-span))
         false
         false
@@ -2177,6 +2182,7 @@
             has-cleanup
             false
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           false
@@ -2199,6 +2205,7 @@
             has-cleanup
             false
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           false
@@ -2221,6 +2228,7 @@
             has-cleanup
             false
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           false
@@ -2243,6 +2251,7 @@
             has-cleanup
             false
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           false
@@ -2265,6 +2274,7 @@
             false
             false
             generated
+            was-unsafe
             (compiler-load-surface-zero-span))
           false
           false
@@ -2282,6 +2292,7 @@
           false
           false
           generated
+          was-unsafe
           (compiler-load-surface-zero-span))
         false
         false
@@ -2299,6 +2310,7 @@
           false
           false
           generated
+          was-unsafe
           span)
         true
         false
@@ -2316,6 +2328,7 @@
           false
           false
           generated
+          was-unsafe
           (compiler-load-surface-zero-span))
         false
         false
@@ -2333,6 +2346,7 @@
           false
           false
           generated
+          was-unsafe
           (compiler-load-surface-zero-span))
         false
         false
@@ -2344,6 +2358,7 @@
         module-id
         (box-get inner-box)
         generated
+        true
         build)]
     [(AstDeclComptimeDecl meta inner-box)
       (compiler-load-surface-build-decl
@@ -2351,6 +2366,7 @@
         module-id
         (box-get inner-box)
         (or generated (compiler-load-surface-generated-meta? meta))
+        was-unsafe
         build)]
     [(AstDeclModule _) build]))
 
@@ -2374,6 +2390,7 @@
               source-path
               module-id
               decl
+              false
               false
               (compiler-load-surface-build-decls source-path module-id rest))]))]))
 
@@ -5328,6 +5345,18 @@
         true
         (compiler-load-surface-decl-generated? (box-get rest) name))]))
 
+(define (compiler-load-surface-decl-unsafe?
+  [decls : CompilerLoadSurfaceDeclList]
+  [name : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (if (and
+        (string.string-eq (struct-get decl name) name)
+        (struct-get decl was-unsafe))
+        true
+        (compiler-load-surface-decl-unsafe? (box-get rest) name))]))
+
 (define (compiler-load-surface-decl-cleanup?
   [decls : CompilerLoadSurfaceDeclList]
   [name : String]) : bool
@@ -5370,6 +5399,7 @@
 (define value : i64 1)
 (define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
 (extern (foreign [x : i64]) : i64)
+(unsafe (extern (danger [x : i64]) : i64))
 (defstruct Resource (:cleanup close-resource) (fd i64 (:cleanup close-fd)))
 (defenum Maybe (:cleanup close-maybe) (None) (Some i64 (:cleanup close-i64)))
 (defmacro (expr-m [x : Expr]) : Expr x)
@@ -5403,11 +5433,12 @@
         "vec"
         "vector")
       (compiler-load-surface-import-has? imports 1 "feature.tl" "feat" "")
-      (= (compiler-load-surface-decl-list-count decls) 12)
+      (= (compiler-load-surface-decl-list-count decls) 13)
       (= (compiler-load-surface-decl-kind-count decls 6) 3)
       (compiler-load-surface-decl-has? decls 1 "value")
       (compiler-load-surface-decl-has? decls 2 "pub")
       (compiler-load-surface-decl-has? decls 3 "foreign")
+      (compiler-load-surface-decl-unsafe? decls "danger")
       (compiler-load-surface-decl-cleanup? decls "Resource")
       (compiler-load-surface-decl-cleanup? decls "Maybe")
       (compiler-load-surface-decl-generated? decls "generated-value")

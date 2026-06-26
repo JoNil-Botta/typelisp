@@ -8,7 +8,7 @@
 ;;   typelisp <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
-;; inspect, repl, lsp, new, and init. The command name is `(arg 1)`; each
+;; inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`; each
 ;; `*-run-from` entry parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
@@ -34,7 +34,7 @@
 (import stdlib.string)
 
 (define (cli-argc) : i64
-  (io.arg-count))
+  (arg-count))
 
 (define (cli-arg [index : i64]) : String
   (io.arg index))

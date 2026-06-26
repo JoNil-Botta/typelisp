@@ -2,13 +2,15 @@
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
-(import "../stdlib/io.tl")
+(import stdlib.io)
+(import stdlib.process)
+(import stdlib.vector)
 (import "host_plan.tl")
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.string)
+(import stdlib.str_cat)
 
 (defenum RunPlanConfig
   (RunPlanConfig String String String String String String String))
@@ -22,9 +24,9 @@
     String
     CompilerBackendTarget
     CompilerBackendMode
-    StringVec
-    StringVec
-    ProcessStringList
+    vector.StringVec
+    vector.StringVec
+    process.ProcessStringList
     i64
     SourceToolLinkInputs))
 
@@ -33,22 +35,22 @@
   (ErrRunCliConfig String))
 
 (define (run-plan-unknown-target [value : String]) : String
-  (str-cat "run: unknown target " value ""))
+  (str_cat.str-cat "run: unknown target " value ""))
 
 (define (run-plan-unknown-mode [value : String]) : String
-  (str-cat "run: unknown backend mode " value ""))
+  (str_cat.str-cat "run: unknown backend mode " value ""))
 
 (define (run-plan-unknown-opt-level [value : String]) : String
-  (str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
+  (str_cat.str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
 (define (run-plan-append-stdlib [stdlib-lines : String] [root : String]) : String
-  (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
+  (string.string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
 
 (define (run-plan-append-cfg [cfg-lines : String] [name : String]) : String
-  (string-append cfg-lines (host-plan-netline "cfg" name)))
+  (string.string-append cfg-lines (host-plan-netline "cfg" name)))
 
 (define (run-plan-append-runtime [runtime-lines : String] [value : String]) : String
-  (string-append runtime-lines (host-plan-netline "runtime-arg" value)))
+  (string.string-append runtime-lines (host-plan-netline "runtime-arg" value)))
 
 (define (run-plan-runtime-args
   [idx : i64]
@@ -59,7 +61,7 @@
     (run-plan-runtime-args
       (+ idx 1)
       count
-      (run-plan-append-runtime runtime-lines (arg idx)))))
+      (run-plan-append-runtime runtime-lines (io.arg idx)))))
 
 (define (run-plan-parse-options
   [idx : i64]
@@ -82,9 +84,9 @@
         cfg-lines
         runtime-lines))
     (let
-      [current : String (arg idx)]
+      [current : String (io.arg idx)]
       (cond
-        [(string-eq current "--")
+        [(string.string-eq current "--")
           (OkRunPlanConfig
             (RunPlanConfig
               source
@@ -94,11 +96,11 @@
               stdlib-lines
               cfg-lines
               (run-plan-runtime-args (+ idx 1) count runtime-lines)))]
-        [(string-eq current "--target")
+        [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --target requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (if (host-plan-target-valid? value)
                 (run-plan-parse-options
                   (+ idx 2)
@@ -111,11 +113,11 @@
                   cfg-lines
                   runtime-lines)
                 (ErrRunPlanConfig (run-plan-unknown-target value)))))]
-        [(string-eq current "--backend-mode")
+        [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --backend-mode requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (if (host-plan-backend-mode-valid? value)
                 (run-plan-parse-options
                   (+ idx 2)
@@ -128,11 +130,11 @@
                   cfg-lines
                   runtime-lines)
                 (ErrRunPlanConfig (run-plan-unknown-mode value)))))]
-        [(string-eq current "--opt-level")
+        [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --opt-level requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (if (host-plan-opt-level-valid? value)
                 (run-plan-parse-options
                   (+ idx 2)
@@ -145,7 +147,7 @@
                   cfg-lines
                   runtime-lines)
                 (ErrRunPlanConfig (run-plan-unknown-opt-level value)))))]
-        [(string-eq current "--stdlib-root")
+        [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --stdlib-root requires a value")
             (run-plan-parse-options
@@ -155,10 +157,10 @@
               target
               mode
               opt-level
-              (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
+              (run-plan-append-stdlib stdlib-lines (io.arg (+ idx 1)))
               cfg-lines
               runtime-lines))]
-        [(string-eq current "--cfg")
+        [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --cfg requires a value")
             (run-plan-parse-options
@@ -169,7 +171,7 @@
               mode
               opt-level
               stdlib-lines
-              (run-plan-append-cfg cfg-lines (arg (+ idx 1)))
+              (run-plan-append-cfg cfg-lines (io.arg (+ idx 1)))
               runtime-lines))]
         [else
           (OkRunPlanConfig
@@ -189,7 +191,7 @@
   (if (<= count idx)
     (ErrRunPlanConfig "run: expected source path")
     (let
-      [source : String (arg idx)]
+      [source : String (io.arg idx)]
       (if (host-plan-flag? source)
         (ErrRunPlanConfig "run: expected source path before flags")
         (run-plan-parse-options
@@ -213,13 +215,13 @@
         stdlib-lines
         cfg-lines
         runtime-lines)
-      (str-cat
+      (str_cat.str-cat
         (host-plan-header)
         (host-plan-word-line "action" "run-source")
         (host-plan-netline "source" source)
         (host-plan-word-line "target" target)
         (host-plan-word-line "backend-mode" mode)
-        (if (string-eq opt-level "")
+        (if (string.string-eq opt-level "")
           ""
           (host-plan-word-line "opt-level" opt-level))
         stdlib-lines
@@ -231,18 +233,18 @@
   (match (run-plan-config-from idx (arg-count))
     [(OkRunPlanConfig config)
       (begin
-        (print-string (run-plan-render config))
+        (io.print-string (run-plan-render config))
         0)]
     [(ErrRunPlanConfig message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]))
 
 (define (run-cli-unknown-target [value : String]) : String
-  (str-cat "run: unknown target " value ""))
+  (str_cat.str-cat "run: unknown target " value ""))
 
 (define (run-cli-unknown-opt-level [value : String]) : String
-  (str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
+  (str_cat.str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
 (define (run-cli-parse-options
   [idx : i64]
@@ -250,9 +252,9 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
-  [runtime-args : ProcessStringList]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
+  [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
   (if (>= idx count)
@@ -267,9 +269,9 @@
         opt-level
         link-inputs))
     (let
-      [current : String (arg idx)]
+      [current : String (io.arg idx)]
       (cond
-        [(string-eq current "--")
+        [(string.string-eq current "--")
           (OkRunCliConfig
             (RunCliConfig
               source
@@ -280,11 +282,11 @@
               (source-tool-args-from-argv (+ idx 1) count runtime-args)
               opt-level
               link-inputs))]
-        [(string-eq current "--target")
+        [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --target requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (match (source-tool-target value)
                 [(OkSourceToolTarget parsed-target)
                   (run-cli-parse-options
@@ -300,11 +302,11 @@
                     link-inputs)]
                 [(ErrSourceToolTarget _)
                   (ErrRunCliConfig (run-cli-unknown-target value))])))]
-        [(string-eq current "--backend-mode")
+        [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --backend-mode requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (match (source-tool-backend-mode "run" value)
                 [(OkSourceToolBackendMode parsed-mode)
                   (run-cli-parse-options
@@ -319,11 +321,11 @@
                     opt-level
                     link-inputs)]
                 [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))]
-        [(string-eq current "--opt-level")
+        [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --opt-level requires a value")
             (let
-              [value : String (arg (+ idx 1))]
+              [value : String (io.arg (+ idx 1))]
               (if (source-tool-opt-level-valid? value)
                 (run-cli-parse-options
                   (+ idx 2)
@@ -334,10 +336,10 @@
                   stdlib-roots
                   cfg-names
                   runtime-args
-                  (string->int value)
+                  (string.string->int value)
                   link-inputs)
                 (ErrRunCliConfig (run-cli-unknown-opt-level value)))))]
-        [(string-eq current "--stdlib-root")
+        [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --stdlib-root requires a value")
             (run-cli-parse-options
@@ -346,12 +348,12 @@
               source
               target
               mode
-              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
               cfg-names
               runtime-args
               opt-level
               link-inputs))]
-        [(string-eq current "--cfg")
+        [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --cfg requires a value")
             (run-cli-parse-options
@@ -361,11 +363,11 @@
               target
               mode
               stdlib-roots
-              (string-vec-push cfg-names (arg (+ idx 1)))
+              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
               runtime-args
               opt-level
               link-inputs))]
-        [(string-eq current "--link-lib")
+        [(string.string-eq current "--link-lib")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --link-lib requires a value")
             (run-cli-parse-options
@@ -378,8 +380,8 @@
               cfg-names
               runtime-args
               opt-level
-              (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
-        [(string-eq current "--link-search")
+              (source-tool-link-inputs-add-lib link-inputs (io.arg (+ idx 1)))))]
+        [(string.string-eq current "--link-search")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --link-search requires a value")
             (run-cli-parse-options
@@ -394,8 +396,8 @@
               opt-level
               (source-tool-link-inputs-add-search-dir
                 link-inputs
-                (arg (+ idx 1)))))]
-        [(string-eq current "--link-arg")
+                (io.arg (+ idx 1)))))]
+        [(string.string-eq current "--link-arg")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --link-arg requires a value")
             (run-cli-parse-options
@@ -408,7 +410,9 @@
               cfg-names
               runtime-args
               opt-level
-              (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
+              (source-tool-link-inputs-add-raw-arg
+                link-inputs
+                (io.arg (+ idx 1)))))]
         [else
           (OkRunCliConfig
             (RunCliConfig
@@ -428,7 +432,7 @@
   (if (<= count idx)
     (ErrRunCliConfig "run: expected source path")
     (let
-      [source : String (arg idx)]
+      [source : String (io.arg idx)]
       (if (source-tool-flag? source)
         (ErrRunCliConfig "run: expected source path before flags")
         (run-cli-parse-options
@@ -437,33 +441,33 @@
           source
           (source-tool-default-target)
           (BackendModeScalar)
-          (string-vec-new)
-          (string-vec-new)
-          (process-args-empty)
+          (vector.string-vec-new)
+          (vector.string-vec-new)
+          (process.process-args-empty)
           (compiler-optimize-default-level)
           (source-tool-link-inputs-empty))))))
 
 (define (run-cli-typecheck-doctests
   [source : String]
-  [stdlib-roots : StringVec]) : i64
-  (match (try-read-file (& source))
-    [(ErrIoString _) 0]
-    [(OkIoString text)
+  [stdlib-roots : vector.StringVec]) : i64
+  (match (io.try-read-file (& source))
+    [(io.ErrIoString _) 0]
+    [(io.OkIoString text)
       (let
         [report : DocTestRunReport
           (doc-test-typecheck-source-with-roots source text stdlib-roots)]
         (if (doc-test-run-report-ok? report)
           0
           (begin
-            (print-error (doc-test-run-report-render report))
+            (io.print-error (doc-test-run-report-render report))
             1)))]))
 
 (define (run-cli-run-source-with-doctests
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
-  [runtime-args : ProcessStringList]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
+  [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
@@ -518,7 +522,7 @@
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]))
 
 (define (run-direct-from [idx : i64] [count : i64]) : i64
@@ -545,13 +549,13 @@
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]))
 
 ;; Run the `run` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
 (define (run-run-from [start : i64] [count : i64]) : i64
-  (if (and (> count start) (string-eq (arg start) "--direct"))
+  (if (and (> count start) (string.string-eq (io.arg start) "--direct"))
     (run-direct-from (+ start 1) count)
     (run-direct-from start count)))

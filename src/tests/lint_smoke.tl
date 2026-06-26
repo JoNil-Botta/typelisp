@@ -1,20 +1,20 @@
 ;; lint_smoke.tl - Runnable smoke for lint_core.tl (#1163).
-(import "../../stdlib/string.tl")
+(import stdlib.string)
 (import "../lint_core.tl")
 
 (define (lint-smoke-string-append-source) : String
-  "(define (main) : i64 (string-length (string-append \"a\" \"b\")))")
+  "(define (main) : i64 (string.string-length (string.string-append \"a\" \"b\")))")
 
 (define (lint-smoke-string-concat-source) : String
-  "(define (main) : i64 (string-length (string-concat \"a\" \"b\")))")
+  "(define (main) : i64 (string.string-length (string.string-concat \"a\" \"b\")))")
 
 (define (lint-smoke-string-concat5-source) : String
   "(define (main) : i64
-  (string-length (string-concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))")
+  (string.string-length (string.string-concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))")
 
 (define (lint-smoke-nested-string-append-source) : String
   "(define (main) : i64
-  (string-length (string-append \"a\" (string-append \"b\" \"c\"))))")
+  (string.string-length (string.string-append \"a\" (string.string-append \"b\" \"c\"))))")
 
 (define (lint-smoke-loop-string-append-source) : String
   "(define (main) : i64
@@ -24,9 +24,9 @@
     (begin
       (while (< i 3)
         (begin
-          (set! out (string-append out \"x\"))
+          (set! out (string.string-append out \"x\"))
           (set! i (+ i 1))))
-      (string-length out))))")
+      (string.string-length out))))")
 
 (define (lint-smoke-deprecated-string-concat-self-test) : i64
   (begin
@@ -46,7 +46,7 @@
       [(LintSomeFinding finding)
         (if (and
           (= (struct-get finding depth) 0)
-          (string-eq
+          (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-deprecated-string-concat-id)))
           unit
@@ -127,10 +127,10 @@
           (let
             [span : AstSourceSpan (struct-get finding span)]
             (if (and
-              (string-eq
+              (string.string-eq
                 (struct-get finding rule-id)
                 (lint-rule-nested-str-cat-id))
-              (string-eq
+              (string.string-eq
                 (struct-get finding message)
                 "nested str-cat: prefer one flat str-cat call")
               (= (struct-get span start-line) 23))

@@ -1,4 +1,6 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
+(import stdlib.io)
+(import stdlib.vector)
 (import "../compiler_driver_core.tl")
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
@@ -32,16 +34,17 @@
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : StringVec (string-vec-push (string-vec-new) root)]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) root)]
     (begin
       (compiler-load-test-mkdir root)
-      (write-file
+      (io.write-file
         dep
         "(module stdlib.maybe_string)
 (defenum MaybeString (NoString) (SomeString String))
 (define (maybe-string-single [value : String]) : MaybeString
   (SomeString value))")
-      (write-file
+      (io.write-file
         entry
         "(import stdlib.maybe_string)
 (define (main) : i64
@@ -59,13 +62,15 @@
             (ast-program decls)
             paths)
             [(OkCompilerLower _ _) true]
-            [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))])]
+            [(ErrCompilerLower diag)
+              (io.panic (compiler-diagnostic-message diag))])]
         [(ErrCompilerLoadWithPaths diag)
-          (panic (compiler-diagnostic-message diag))]))))
+          (io.panic (compiler-diagnostic-message diag))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
       (BackendTargetLinux)
@@ -393,6 +398,9 @@
     (unless
       (compiler-lower-module-macro-codegen-ok?)
       (panic "lower: module macro codegen smoke mismatch"))
+    (unless
+      (compiler-lower-module-macro-stdlib-vector-import-ok?)
+      (panic "lower: module macro stdlib vector import smoke mismatch"))
     (unless
       (compiler-lower-function-decl-count-wrapped-ok?)
       (panic "lower: function decl count smoke mismatch"))

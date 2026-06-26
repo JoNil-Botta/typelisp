@@ -14,11 +14,11 @@
 ;; be allocated in the persistent program arena, never a transient scratch arena
 ;; (which gets destroyed, leaving the global pool dangling). arena.tl has no
 ;; imports, so this adds no cycle.
-(import "../stdlib/arena.tl")
+(import stdlib.arena)
 
 ;; #2604: hash/equality helpers for the ty-node hash-consing table below.
-(import "../stdlib/hash.tl")
-(import "../stdlib/string.tl")
+(import stdlib.hash)
+(import stdlib.string)
 
 (defstruct AstSourceSpan
   (start-line i64)
@@ -45,13 +45,13 @@
 (define (ast-lit-int-text [lit : AstLiteral]) : String
   (match lit
     [(AstLitInt value text)
-      (if (> (string-length text) 0)
+      (if (> (string.string-length text) 0)
         text
-        (int->string value))]
+        (string.int->string value))]
     [_ ""]))
 
 (define (ast-int-literal-negative? [text : String]) : bool
-  (and (> (string-length text) 0) (= (string-ref text 0) '-')))
+  (and (> (string.string-length text) 0) (= (string.string-ref text 0) '-')))
 
 (define (ast-int-literal-digits-start [text : String]) : i64
   (if (ast-int-literal-negative? text)
@@ -61,11 +61,11 @@
 (define (ast-int-literal-base [text : String]) : i64
   (let
     [start : i64 (ast-int-literal-digits-start text)]
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     (if (< (+ start 1) n)
-      (if (= (string-ref text start) '0')
+      (if (= (string.string-ref text start) '0')
         (let
-          [prefix : char (string-ref text (+ start 1))]
+          [prefix : char (string.string-ref text (+ start 1))]
           (cond
             [(or (= prefix 'x') (= prefix 'X')) 16]
             [(or (= prefix 'b') (= prefix 'B')) 2]
@@ -95,7 +95,7 @@
   (let
     [i : i64 start]
     (begin
-      (while (and (< i end) (= (string-ref text i) '0'))
+      (while (and (< i end) (= (string.string-ref text i) '0'))
         (set! i (+ i 1)))
       i)))
 
@@ -107,7 +107,7 @@
   (let
     [mag-start : i64 (ast-int-literal-skip-leading-zeroes text start end)]
     [mag-len : i64 (- end mag-start)]
-    [limit-len : i64 (string-length limit)]
+    [limit-len : i64 (string.string-length limit)]
     (cond
       [(= mag-len 0) true]
       [(< mag-len limit-len) true]
@@ -121,8 +121,9 @@
               (let
                 [actual : i64
                   (ast-int-literal-digit-value
-                    (string-ref text (+ mag-start i)))]
-                [want : i64 (ast-int-literal-digit-value (string-ref limit i))]
+                    (string.string-ref text (+ mag-start i)))]
+                [want : i64
+                  (ast-int-literal-digit-value (string.string-ref limit i))]
                 (begin
                   (if (< actual want)
                     (set! result -1)
@@ -140,7 +141,7 @@
   (let
     [base : i64 (ast-int-literal-base text)]
     [start : i64 (ast-int-literal-value-start text)]
-    [end : i64 (string-length text)]
+    [end : i64 (string.string-length text)]
     (cond
       [(= base 16)
         (ast-int-literal-magnitude-leq-limit? text start end limit-hex)]
@@ -152,7 +153,7 @@
   (let
     [base : u64 (cast (ast-int-literal-base text) : u64)]
     [i : i64 (ast-int-literal-value-start text)]
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     [value : u64 (cast 0 : u64)]
     (begin
       (while (< i n)
@@ -161,7 +162,9 @@
             value
             (+
               (* value base)
-              (cast (ast-int-literal-digit-value (string-ref text i)) : u64)))
+              (cast
+                (ast-int-literal-digit-value (string.string-ref text i))
+                : u64)))
           (set! i (+ i 1))))
       value)))
 
@@ -557,7 +560,7 @@
 ;; scratch arena is destroyed, leaving the pool dangling (a non-deterministic
 ;; use-after-free). This is why the pool previously failed closed.
 (define node-pool-base-arena : i64
-  (tl_arena_current))
+  (arena.tl_arena_current))
 (define ast-node-pool-count : i64
   0)
 
@@ -577,16 +580,16 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [new-slots : (Array AstExpr)
       (begin
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         (let
           [arr : (Array AstExpr) (make-array AstExpr new-cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     [len : i64 ast-node-pool-count]
     [i : i64 0]
@@ -654,21 +657,21 @@
 (define (ast-expr-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstExprNodePoolState
   (let
     [cap : i64 (node-pool-state-normalize-capacity capacity)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [slots : (Array AstExpr)
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [arr : (Array AstExpr) (make-array AstExpr cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     (AstExprNodePoolState slots 0 base-arena)))
 
 (define (ast-expr-node-pool-state-create [capacity : i64]) : AstExprNodePoolState
-  (ast-expr-node-pool-state-init capacity (tl_arena_current)))
+  (ast-expr-node-pool-state-init capacity (arena.tl_arena_current)))
 
 (define (ast-expr-node-pool-state-len [pool : AstExprNodePoolState]) : i64
   (struct-get pool count))
@@ -704,16 +707,16 @@
         1024
         (* old-cap 2))]
     [base-arena : i64 (struct-get pool base-arena)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [new-slots : (Array AstExpr)
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [arr : (Array AstExpr) (make-array AstExpr new-cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     [len : i64 (struct-get pool count)]
     [i : i64 0]
@@ -807,16 +810,16 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [new-slots : (Array AstType)
       (begin
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         (let
           [arr : (Array AstType) (make-array AstType new-cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     [len : i64 ty-node-pool-count]
     [i : i64 0]
@@ -836,7 +839,7 @@
 ;; arena active, so every copy is program-lifetime. Node-id references need
 ;; no copy: they point at pool nodes made persistent by the same rule.
 (define (ty-node-persist-string [s : String]) : String
-  (substring s 0 (string-length s)))
+  (string.substring s 0 (string.string-length s)))
 
 (define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
   (match items
@@ -902,31 +905,31 @@
   (let
     [cap : i64 (node-pool-state-normalize-capacity capacity)]
     [dedup-cap : i64 (ast-type-node-pool-state-dedup-capacity cap)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [slots : (Array AstType)
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [arr : (Array AstType) (make-array AstType cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     [dedup-slots : (Array i64)
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [arr : (Array i64) (make-array i64 dedup-cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     (AstTypeNodePoolState slots 0 base-arena false dedup-slots 0)))
 
 (define (ast-type-node-pool-state-create [capacity : i64]) : AstTypeNodePoolState
-  (ast-type-node-pool-state-init capacity (tl_arena_current)))
+  (ast-type-node-pool-state-init capacity (arena.tl_arena_current)))
 
 (define (ast-type-node-pool-state-len [pool : AstTypeNodePoolState]) : i64
   (struct-get pool count))
@@ -989,16 +992,16 @@
         1024
         (* old-cap 2))]
     [base-arena : i64 (struct-get pool base-arena)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [new-slots : (Array AstType)
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [arr : (Array AstType) (make-array AstType new-cap)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             arr)))]
     [len : i64 (struct-get pool count)]
     [i : i64 0]
@@ -1028,16 +1031,16 @@
     [slots : (Array AstType) (struct-get ready slots)]
     [id : i64 (struct-get ready count)]
     [base-arena : i64 (struct-get ready base-arena)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [persistent : AstType
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [out : AstType (ty-node-persist node)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             out)))]
     (begin
       (array-set! slots id persistent)
@@ -1114,17 +1117,17 @@
   [id : i64]
   [node : AstType]) : AstTypeNodePoolState
   (let
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 (struct-get pool base-arena)]
     [persistent : AstType
       (begin
         (unsafe
-          (tl_arena_set base-arena))
+          (arena.tl_arena_set base-arena))
         (let
           [out : AstType (ty-node-persist node)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             out)))]
     (begin
       (array-set! (struct-get pool slots) id persistent)
@@ -1140,16 +1143,16 @@
       unit)
     (let
       [id : i64 ty-node-pool-count]
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [persistent : AstType
         (begin
           (unsafe
-            (tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set node-pool-base-arena))
           (let
             [out : AstType (ty-node-persist node)]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               out)))]
       (begin
         (array-set! ty-node-pool-slots id persistent)
@@ -1191,17 +1194,17 @@
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (match items
-    [(AstLifetimeNil) (hash-combine seed 11)]
+    [(AstLifetimeNil) (hash.hash-combine seed 11)]
     [(AstLifetimeCons name rest)
       (ty-lifetime-list-hash
         (box-get rest)
-        (hash-combine seed (hash-string (& name))))]))
+        (hash.hash-combine seed (hash.hash-string (& name))))]))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
   (match items
-    [(AstTypeNil) (hash-combine seed 13)]
+    [(AstTypeNil) (hash.hash-combine seed 13)]
     [(AstTypeCons id rest)
-      (ty-type-list-hash (box-get rest) (hash-combine seed id))]))
+      (ty-type-list-hash (box-get rest) (hash.hash-combine seed id))]))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
@@ -1225,28 +1228,35 @@
     [(AstTyExpr) 17]
     [(AstTyExprList) 18]
     [(AstTyFunc args ret)
-      (hash-combine (ty-type-list-hash (box-get args) 19) ret)]
+      (hash.hash-combine (ty-type-list-hash (box-get args) 19) ret)]
     [(AstTyTuple elems) (ty-type-list-hash (box-get elems) 20)]
-    [(AstTyArray elem count) (hash-combine (hash-combine 21 elem) count)]
-    [(AstTyDynArray elem) (hash-combine 22 elem)]
-    [(AstTyBox inner) (hash-combine 23 inner)]
+    [(AstTyArray elem count)
+      (hash.hash-combine (hash.hash-combine 21 elem) count)]
+    [(AstTyDynArray elem) (hash.hash-combine 22 elem)]
+    [(AstTyBox inner) (hash.hash-combine 23 inner)]
     [(AstTyRegion name inner)
-      (hash-combine (hash-combine 24 (hash-string (& name))) inner)]
+      (hash.hash-combine
+        (hash.hash-combine 24 (hash.hash-string (& name)))
+        inner)]
     [(AstTyRef name inner)
-      (hash-combine (hash-combine 25 (hash-string (& name))) inner)]
+      (hash.hash-combine
+        (hash.hash-combine 25 (hash.hash-string (& name)))
+        inner)]
     [(AstTyMutRef name inner)
-      (hash-combine (hash-combine 26 (hash-string (& name))) inner)]
-    [(AstTyEnum name) (hash-combine 27 name)]
+      (hash.hash-combine
+        (hash.hash-combine 26 (hash.hash-string (& name)))
+        inner)]
+    [(AstTyEnum name) (hash.hash-combine 27 name)]
     [(AstTyEnumArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 28 name))]
-    [(AstTyStruct name) (hash-combine 29 name)]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 28 name))]
+    [(AstTyStruct name) (hash.hash-combine 29 name)]
     [(AstTyStructArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 30 name))]
-    [(AstTyVar name) (hash-combine 31 name)]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 30 name))]
+    [(AstTyVar name) (hash.hash-combine 31 name)]
     [(AstTyVarArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash-combine 32 name))]
-    [(AstTyPtr inner) (hash-combine 33 inner)]
-    [(AstTyMutPtr inner) (hash-combine 34 inner)]))
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 32 name))]
+    [(AstTyPtr inner) (hash.hash-combine 33 inner)]
+    [(AstTyMutPtr inner) (hash.hash-combine 34 inner)]))
 
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
@@ -1258,7 +1268,7 @@
       (match b
         [(AstLifetimeCons b-name b-rest)
           (and
-            (string-eq a-name b-name)
+            (string.string-eq a-name b-name)
             (ty-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -1384,17 +1394,17 @@
     [(AstTyRegion a-name a-inner)
       (match b
         [(AstTyRegion b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string.string-eq a-name b-name))]
         [_ false])]
     [(AstTyRef a-name a-inner)
       (match b
         [(AstTyRef b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string.string-eq a-name b-name))]
         [_ false])]
     [(AstTyMutRef a-name a-inner)
       (match b
         [(AstTyMutRef b-name b-inner)
-          (and (= a-inner b-inner) (string-eq a-name b-name))]
+          (and (= a-inner b-inner) (string.string-eq a-name b-name))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -3138,7 +3148,7 @@
       (match b
         [(AstLifetimeCons b-head b-rest)
           (and
-            (string-eq a-head b-head)
+            (string.string-eq a-head b-head)
             (ast-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -3267,21 +3277,21 @@
       (match b
         [(AstTyRegion b-region b-inner)
           (and
-            (string-eq a-region b-region)
+            (string.string-eq a-region b-region)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyRef a-lifetime a-inner)
       (match b
         [(AstTyRef b-lifetime b-inner)
           (and
-            (string-eq a-lifetime b-lifetime)
+            (string.string-eq a-lifetime b-lifetime)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-lifetime a-inner)
       (match b
         [(AstTyMutRef b-lifetime b-inner)
           (and
-            (string-eq a-lifetime b-lifetime)
+            (string.string-eq a-lifetime b-lifetime)
             (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
@@ -3349,15 +3359,15 @@
   (match a
     [(AstExternLinkLib aname)
       (match b
-        [(AstExternLinkLib bname) (string-eq aname bname)]
+        [(AstExternLinkLib bname) (string.string-eq aname bname)]
         [_ false])]
     [(AstExternLinkSearch adir)
       (match b
-        [(AstExternLinkSearch bdir) (string-eq adir bdir)]
+        [(AstExternLinkSearch bdir) (string.string-eq adir bdir)]
         [_ false])]
     [(AstExternLinkArg aarg)
       (match b
-        [(AstExternLinkArg barg) (string-eq aarg barg)]
+        [(AstExternLinkArg barg) (string.string-eq aarg barg)]
         [_ false])]))
 
 (define (ast-extern-link-input-list-eq?
@@ -3539,7 +3549,8 @@
                     [else-expr : AstExpr (ast-node-get else-box)]
                     (and
                       (match cond
-                        [(AstExprVar name) (string-eq (intern-str name) "cond")]
+                        [(AstExprVar name)
+                          (string.string-eq (intern-str name) "cond")]
                         [_ false])
                       (match then-expr
                         [(AstExprMatch match-box)
@@ -3550,7 +3561,9 @@
                                 (and
                                   (match scrut
                                     [(AstExprVar name)
-                                      (string-eq (intern-str name) "input")]
+                                      (string.string-eq
+                                        (intern-str name)
+                                        "input")]
                                     [_ false])
                                   (compiler-ast-single-arm-box-ok? arms)))])]
                         [_ false])
@@ -3723,7 +3736,7 @@
           (match (ty-node-get ret)
             [(AstTyRef region ptr)
               (and
-                (string-eq region "r")
+                (string.string-eq region "r")
                 (match (ty-node-get ptr)
                   [(AstTyPtr array)
                     (match (ty-node-get array)

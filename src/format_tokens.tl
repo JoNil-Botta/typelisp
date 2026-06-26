@@ -3,8 +3,8 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 
 (defenum FormatToken
   (FmtLParen)
@@ -184,14 +184,14 @@
 
 (define (fmt-source-position-at [src : String] [target : i64]) : FormatPosition
   (let
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [i : i64 0]
     [line : i64 1]
     [col : i64 1]
     (begin
       (while (and (< i target) (< i n))
         (let
-          [c : char (string-ref src i)]
+          [c : char (string.string-ref src i)]
           (begin
             (if (= c '\n')
               (begin
@@ -424,7 +424,7 @@
   [n : i64]) : i64
   (match (fmt-scan-prefixed-number-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
+    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -465,7 +465,7 @@
   [n : i64]) : i64
   (match (fmt-scan-number-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
+    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -536,7 +536,7 @@
   [n : i64]) : i64
   (match (fmt-scan-string-end-result src data start n)
     [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (panic (format-source-error-message err))]))
+    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -648,7 +648,7 @@
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (let
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [data : (Ptr u8)
       (unsafe
         (string-data (& src)))]
@@ -683,7 +683,7 @@
                       starts
                       count
                       i
-                      (FmtComment (substring src i (- end i))))
+                      (FmtComment (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [(= c '(')
@@ -720,7 +720,7 @@
                         starts
                         count
                         i
-                        (FmtChar (substring src i (- end i))))
+                        (FmtChar (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ErrFmtCharEnd err) (return (ErrFormatTokenStream err))]
@@ -768,7 +768,7 @@
                         starts
                         count
                         i
-                        (FmtString (substring src i (- end i))))
+                        (FmtString (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
@@ -781,7 +781,7 @@
                         starts
                         count
                         i
-                        (FmtInt (substring src i (- end i))))
+                        (FmtInt (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
@@ -794,7 +794,7 @@
                       starts
                       count
                       i
-                      (FmtSymbol (substring src i (- end i))))
+                      (FmtSymbol (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
@@ -818,4 +818,4 @@
 (define (format-lex [src : String]) : FormatTokenStream
   (match (format-lex-result src)
     [(OkFormatTokenStream stream) stream]
-    [(ErrFormatTokenStream err) (panic (format-source-error-message err))]))
+    [(ErrFormatTokenStream err) (io.panic (format-source-error-message err))]))

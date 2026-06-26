@@ -21804,16 +21804,16 @@
           (+ acc (string-length s))
           (str-cat s out))])))
 
-(define (compiler-backend-r8c-write? [delta : String]) : bool
+(define (compiler-backend-r8c-write? [delta : String] [reg : String]) : bool
   (or
-    (compiler-backend-string-contains? delta "%r8\n")
+    (compiler-backend-string-contains? delta (str-cat reg "\n"))
     (or
-      (compiler-backend-string-contains? delta "%r8d\n")
+      (compiler-backend-string-contains? delta (str-cat reg "d\n"))
       (or
-        (compiler-backend-string-contains? delta "%r8w\n")
-        (compiler-backend-string-contains? delta "%r8b\n")))))
+        (compiler-backend-string-contains? delta (str-cat reg "w\n"))
+        (compiler-backend-string-contains? delta (str-cat reg "b\n"))))))
 
-(define (compiler-backend-r8c-occupied-strict? [point : i64]) : bool
+(define (compiler-backend-r8c-occupied-strict? [point : i64] [reg : String]) : bool
   (let
     [v : i64 0]
     [hit : bool false]
@@ -21827,11 +21827,18 @@
             (compiler-backend-scavenge-var-holds?
               compiler-backend-scavenge-ctx-assignments
               v
-              "%r8"))
+              reg))
             (set! hit true)
             unit)
           (set! v (+ v 1))))
       hit)))
+
+(define (compiler-backend-r8c-check-reg! [delta : String] [reg : String]) : unit
+  (if (and
+    (compiler-backend-r8c-write? delta reg)
+    (compiler-backend-r8c-occupied-strict? compiler-backend-r8c-point reg))
+    (print-error (str-cat "=RXC= " reg "\n" delta))
+    unit))
 
 (define (compiler-backend-r8c-check! [function : String] [nb : TextBuf]) : unit
   (let
@@ -21839,14 +21846,10 @@
     (if (> dl 0)
       (let
         [delta : String (compiler-backend-r8c-delta (struct-get nb chunks) dl 0 "")]
-        (if (and
-          (compiler-backend-r8c-write? delta)
-          (compiler-backend-r8c-occupied-strict? compiler-backend-r8c-point))
-          (print-error
-            (str-cat
-              "=R8C=\n"
-              delta))
-          unit))
+        (begin
+          (compiler-backend-r8c-check-reg! delta "%r8")
+          (compiler-backend-r8c-check-reg! delta "%r10")
+          (compiler-backend-r8c-check-reg! delta "%r11")))
       unit)))
 
 (define (compiler-backend-emit-instrs-loop

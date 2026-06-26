@@ -21705,6 +21705,74 @@
 (define compiler-backend-emit-current-count : i64
   0)
 
+;; r8-collision detector (cfg r8-collision-check): with %r8 pooled, logs every
+;; emitted %r8-write that occurs while a live value occupies %r8 -- a hardcoded-%r8
+;; emission colliding with the pooled %r8. Logs (does not panic) so one compile
+;; yields the complete site list.
+(define compiler-backend-r8c-len0 : i64 0)
+(define compiler-backend-r8c-point : i64 0)
+
+(define (compiler-backend-r8c-delta
+  [chunks : TextBufChunkList]
+  [need : i64]
+  [acc : i64]
+  [out : String]) : String
+  (if (>= acc need)
+    out
+    (match chunks
+      [(TextBufChunkNil) out]
+      [(TextBufChunkCons s rest)
+        (compiler-backend-r8c-delta
+          (box-get rest)
+          need
+          (+ acc (string-length s))
+          (str-cat s out))])))
+
+(define (compiler-backend-r8c-write? [delta : String]) : bool
+  (or
+    (compiler-backend-string-contains? delta "%r8\n")
+    (or
+      (compiler-backend-string-contains? delta "%r8d\n")
+      (or
+        (compiler-backend-string-contains? delta "%r8w\n")
+        (compiler-backend-string-contains? delta "%r8b\n")))))
+
+(define (compiler-backend-r8c-occupied-strict? [point : i64]) : bool
+  (let
+    [v : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (< v compiler-backend-scavenge-ctx-vars) (not hit))
+        (begin
+          (if (and
+            (>= (array-ref compiler-backend-scavenge-ctx-starts v) 0)
+            (< (array-ref compiler-backend-scavenge-ctx-starts v) point)
+            (< point (array-ref compiler-backend-scavenge-ctx-ends v))
+            (compiler-backend-scavenge-var-holds?
+              compiler-backend-scavenge-ctx-assignments
+              v
+              "%r8"))
+            (set! hit true)
+            unit)
+          (set! v (+ v 1))))
+      hit)))
+
+(define (compiler-backend-r8c-check! [function : String] [nb : TextBuf]) : unit
+  (let
+    [dl : i64 (- (text-buf-length nb) compiler-backend-r8c-len0)]
+    (if (> dl 0)
+      (let
+        [delta : String (compiler-backend-r8c-delta (struct-get nb chunks) dl 0 "")]
+        (if (and
+          (compiler-backend-r8c-write? delta)
+          (compiler-backend-r8c-occupied-strict? compiler-backend-r8c-point))
+          (print-error
+            (str-cat
+              "=R8C=\n"
+              delta))
+          unit))
+      unit)))
+
 (define (compiler-backend-emit-instrs-loop
   [target : CompilerBackendTarget]
   [function : String]
@@ -21744,6 +21812,18 @@
               (set!
                 compiler-backend-emit-current-count
                 (compiler-ir-instr-list-count current-instrs))
+              (cfg
+                r8-collision-check
+                (begin
+                  (set! compiler-backend-r8c-len0 (text-buf-length current-buf))
+                  (set!
+                    compiler-backend-r8c-point
+                    (*
+                      2
+                      (-
+                        compiler-backend-emit-instr-post-base
+                        (compiler-ir-instr-list-count current-instrs)))))
+                unit)
               (cfg
                 scavenge-self-check
                 (match current-instrs
@@ -21838,6 +21918,12 @@
             [(OkCompilerBackend asm)
               (if compiler-backend-emit-instrs-continue-pending
                 (begin
+                  (cfg
+                    r8-collision-check
+                    (compiler-backend-r8c-check!
+                      function
+                      compiler-backend-emit-instrs-next-buf)
+                    unit)
                   (set! current-mode compiler-backend-emit-instrs-next-mode)
                   (set! current-instrs compiler-backend-emit-instrs-next-instrs)
                   (set! current-buf compiler-backend-emit-instrs-next-buf))

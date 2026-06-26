@@ -436,6 +436,49 @@
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
   (array-ref (struct-get instrs slots) index))
 
+(define (compiler-ir-instr-seq-set!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [instr : CompilerIrInstr]) : unit
+  (array-set! (struct-get instrs slots) index instr))
+
+(define (compiler-ir-instr-seq-rewrite!
+  [instrs : CompilerIrInstrSeq]
+  [rewrite : (-> CompilerIrInstr CompilerIrInstr)]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (struct-get instrs len)]
+    (while (< index count)
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          index
+          (rewrite (compiler-ir-instr-seq-ref instrs index)))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-instr-seq-compact!
+  [instrs : CompilerIrInstrSeq]
+  [keep? : (-> CompilerIrInstr bool)]) : unit
+  (let
+    [read : i64 0]
+    [write : i64 0]
+    [count : i64 (struct-get instrs len)]
+    (begin
+      (while (< read count)
+        (begin
+          (if (keep? (compiler-ir-instr-seq-ref instrs read))
+            (begin
+              (if (not (= write read))
+                (compiler-ir-instr-seq-set!
+                  instrs
+                  write
+                  (compiler-ir-instr-seq-ref instrs read))
+                unit)
+              (set! write (+ write 1)))
+            unit)
+          (set! read (+ read 1))))
+      (set! (struct-get instrs len) write))))
+
 (define (compiler-ir-block [label : String] [instrs : CompilerIrInstrList]) : CompilerIrBlock
   (IrBlock label (compiler-ir-instr-seq-from-list instrs)))
 
@@ -3568,6 +3611,79 @@
         [(IrInstrMov dst _ _) (= dst want)]
         [_ false])]))
 
+(define (compiler-ir-instr-seq-mov-dst?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [want : i64]) : bool
+  (match (compiler-ir-instr-seq-ref instrs index)
+    [(IrInstrMov dst _ _) (= dst want)]
+    [_ false]))
+
+(define (compiler-ir-instr-seq-return-var?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [want : i64]) : bool
+  (match (compiler-ir-instr-seq-ref instrs index)
+    [(IrInstrReturn (IrSomeValue (IrValueVar var))) (= var want)]
+    [_ false]))
+
+(define (compiler-ir-instr-seq-test-rewrite [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst value ty) (IrInstrMov (+ dst 10) value ty)]
+    [(IrInstrAlloc dst ty) (IrInstrAlloc dst ty)]
+    [(IrInstrReturn value) (IrInstrReturn value)]
+    [_ instr]))
+
+(define (compiler-ir-instr-seq-test-keep-non-alloc? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrAlloc _ _) false]
+    [_ true]))
+
+(define (compiler-ir-instr-seq-mutable-rewrite-ok?) : bool
+  (let
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+            IrInstrNil)))]
+    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+    (begin
+      (compiler-ir-instr-seq-rewrite! seq compiler-ir-instr-seq-test-rewrite)
+      (and
+        (= (compiler-ir-instr-seq-count seq) 3)
+        (compiler-ir-instr-seq-mov-dst? seq 0 11)
+        (compiler-ir-instr-seq-mov-dst? seq 1 12)
+        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+
+(define (compiler-ir-instr-seq-mutable-compact-ok?) : bool
+  (let
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrAlloc 9 (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+              IrInstrNil))))]
+    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+    [roundtrip : CompilerIrInstrList IrInstrNil]
+    (begin
+      (compiler-ir-instr-seq-compact!
+        seq
+        compiler-ir-instr-seq-test-keep-non-alloc?)
+      (set! roundtrip (compiler-ir-instr-seq-to-list seq))
+      (and
+        (= (compiler-ir-instr-seq-count seq) 3)
+        (= (compiler-ir-instr-list-count roundtrip) 3)
+        (compiler-ir-instr-seq-mov-dst? seq 0 1)
+        (compiler-ir-instr-seq-mov-dst? seq 1 2)
+        (compiler-ir-instr-seq-return-var? seq 2 2)))))
+
 (define (compiler-ir-block-list-first-label?
   [blocks : CompilerIrBlockList]
   [want : String]) : bool
@@ -3617,4 +3733,6 @@
     (unless (compiler-ir-switch-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-boxed-list-ok?) (return 1))
     (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     42))

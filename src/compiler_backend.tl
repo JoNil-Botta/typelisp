@@ -3427,11 +3427,11 @@
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : CompilerRegAssignmentList]) : bool
   (or
-    (compiler-backend-plan-uses-reg? assignments "%rbx")
-    (compiler-backend-plan-uses-reg? assignments "%r12")
-    (compiler-backend-plan-uses-reg? assignments "%r13")
-    (compiler-backend-plan-uses-reg? assignments "%r14")
-    (compiler-backend-plan-uses-reg? assignments "%r15")))
+    (compiler-backend-callee-needs-save? assignments "%rbx")
+    (compiler-backend-callee-needs-save? assignments "%r12")
+    (compiler-backend-callee-needs-save? assignments "%r13")
+    (compiler-backend-callee-needs-save? assignments "%r14")
+    (compiler-backend-callee-needs-save? assignments "%r15")))
 
 ;; Callee-saved registers are spilled to frame slots that sit just below the
 ;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
@@ -3442,7 +3442,7 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (if (compiler-backend-plan-uses-callee-regs? assignments)
-    (if (compiler-backend-plan-uses-reg? assignments "%rbx")
+    (if (compiler-backend-callee-needs-save? assignments "%rbx")
       (+ vars 5)
       (+ vars 4))
     vars))
@@ -3785,12 +3785,60 @@
     reg
     (AstTyF64)))
 
+;; On-demand callee-save: the scavenge may use a FREE callee-saved register even
+;; when the allocator did not home a value there. Record which callee-saved regs
+;; it used during this function's body emission so the prologue/epilogue save and
+;; restore them too. Reset per function in scavenge-install-ctx! (runs before the
+;; body, and the body is emitted before the prologue str-cat reads the set).
+(define compiler-backend-scavenge-used-callee : (Array bool)
+  (make-array bool 5))
+
+(define (compiler-backend-scavenge-callee-idx [reg : String]) : i64
+  (cond
+    [(string-eq reg "%r12") 0]
+    [(string-eq reg "%r13") 1]
+    [(string-eq reg "%r14") 2]
+    [(string-eq reg "%r15") 3]
+    [(string-eq reg "%rbx") 4]
+    [else (- 0 1)]))
+
+(define (compiler-backend-scavenge-mark-callee-used! [reg : String]) : unit
+  (let
+    [idx : i64 (compiler-backend-scavenge-callee-idx reg)]
+    (if (>= idx 0)
+      (array-set! compiler-backend-scavenge-used-callee idx true)
+      unit)))
+
+(define (compiler-backend-scavenge-callee-used? [reg : String]) : bool
+  (let
+    [idx : i64 (compiler-backend-scavenge-callee-idx reg)]
+    (if (>= idx 0)
+      (array-ref compiler-backend-scavenge-used-callee idx)
+      false)))
+
+(define (compiler-backend-scavenge-reset-callee!) : unit
+  (begin
+    (array-set! compiler-backend-scavenge-used-callee 0 false)
+    (array-set! compiler-backend-scavenge-used-callee 1 false)
+    (array-set! compiler-backend-scavenge-used-callee 2 false)
+    (array-set! compiler-backend-scavenge-used-callee 3 false)
+    (array-set! compiler-backend-scavenge-used-callee 4 false)))
+
+;; A callee-saved reg must be saved by the prologue iff the allocator homes a
+;; value there OR the scavenge used it on demand.
+(define (compiler-backend-callee-needs-save?
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : bool
+  (or
+    (compiler-backend-plan-uses-reg? assignments reg)
+    (compiler-backend-scavenge-callee-used? reg)))
+
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [reg : String]
   [idx : i64]) : String
-  (if (compiler-backend-plan-uses-reg? assignments reg)
+  (if (compiler-backend-callee-needs-save? assignments reg)
     (str-cat
       "    movq "
       reg
@@ -3804,7 +3852,7 @@
   [vars : i64]
   [reg : String]
   [idx : i64]) : String
-  (if (compiler-backend-plan-uses-reg? assignments reg)
+  (if (compiler-backend-callee-needs-save? assignments reg)
     (str-cat
       "    movq "
       (compiler-backend-callee-save-slot vars idx)
@@ -3819,11 +3867,11 @@
 (define (compiler-backend-callee-save-pop-eligible?
   [assignments : CompilerRegAssignmentList]) : bool
   (let
-    [r12 : bool (compiler-backend-plan-uses-reg? assignments "%r12")]
-    [r13 : bool (compiler-backend-plan-uses-reg? assignments "%r13")]
-    [r14 : bool (compiler-backend-plan-uses-reg? assignments "%r14")]
-    [r15 : bool (compiler-backend-plan-uses-reg? assignments "%r15")]
-    [rbx : bool (compiler-backend-plan-uses-reg? assignments "%rbx")]
+    [r12 : bool (compiler-backend-callee-needs-save? assignments "%r12")]
+    [r13 : bool (compiler-backend-callee-needs-save? assignments "%r13")]
+    [r14 : bool (compiler-backend-callee-needs-save? assignments "%r14")]
+    [r15 : bool (compiler-backend-callee-needs-save? assignments "%r15")]
+    [rbx : bool (compiler-backend-callee-needs-save? assignments "%rbx")]
     (or
       (and r12 r13 (not r14) (not r15) (not rbx))
       (and r12 r13 r14 (not r15) (not rbx))
@@ -3833,15 +3881,15 @@
 (define (compiler-backend-callee-save-pop-start-idx
   [assignments : CompilerRegAssignmentList]) : i64
   (cond
-    [(compiler-backend-plan-uses-reg? assignments "%rbx") 4]
-    [(compiler-backend-plan-uses-reg? assignments "%r15") 3]
-    [(compiler-backend-plan-uses-reg? assignments "%r14") 2]
+    [(compiler-backend-callee-needs-save? assignments "%rbx") 4]
+    [(compiler-backend-callee-needs-save? assignments "%r15") 3]
+    [(compiler-backend-callee-needs-save? assignments "%r14") 2]
     [else 1]))
 
 (define (compiler-backend-emit-pop-callee-reg
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : String
-  (if (compiler-backend-plan-uses-reg? assignments reg)
+  (if (compiler-backend-callee-needs-save? assignments reg)
     (str-cat "    popq " reg "\n" "")
     ""))
 
@@ -22598,6 +22646,7 @@
   [assignments : CompilerRegAssignmentList]) : unit
   (begin
     (set! compiler-backend-emit-instr-post-base 0)
+    (compiler-backend-scavenge-reset-callee!)
     (if (< slot-vars 1)
       (compiler-backend-set-scavenge-ctx!
         (make-array i64 1)
@@ -22737,34 +22786,6 @@
       (array-set! a 6 (if (string-eq r2 "") "%rax" r2))
       a)))
 
-;; Callee-saved pool registers: usable as transient scratch ONLY if the function
-;; already saves them (some var is assigned to them), so the prologue preserves
-;; the caller's value across our transient clobber.
-(define (compiler-backend-scavenge-callee-saved? [reg : String]) : bool
-  (or
-    (string-eq reg "%r12")
-    (string-eq reg "%r13")
-    (string-eq reg "%r14")
-    (string-eq reg "%r15")
-    (string-eq reg "%rbx")))
-
-;; Is `reg` assigned to any var (so a callee-saved reg is saved by the prologue)?
-(define (compiler-backend-scavenge-reg-used-somewhere?
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [reg : String]) : bool
-  (let
-    [v : i64 0]
-    [used : bool false]
-    (begin
-      (while (and (< v vars) (not used))
-        (begin
-          (if (compiler-backend-scavenge-var-holds? assignments v reg)
-            (set! used true)
-            unit)
-          (set! v (+ v 1))))
-      used)))
-
 ;; Scavenge candidate pool -- MUST stay in sync with
 ;; compiler-reg-greedy-integer-pool: caller-saved r8/r9/rcx/rdx + callee-saved
 ;; r12-r15/rbx. Non-pool registers (rax/rsi/rdi/r10/r11) are NOT candidates: the
@@ -22797,10 +22818,7 @@
   [reg : String]) : bool
   (and
     (not (compiler-backend-scavenge-excluded? exclude exclude-n reg))
-    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)
-    (or
-      (not (compiler-backend-scavenge-callee-saved? reg))
-      (compiler-backend-scavenge-reg-used-somewhere? assignments vars reg))))
+    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)))
 
 (define (compiler-backend-scavenge-pick-iter
   [starts : (Array i64)]
@@ -22825,7 +22843,11 @@
       exclude
       exclude-n
       (array-ref cands i))
-      (array-ref cands i)
+      (let
+        [picked : String (array-ref cands i)]
+        (begin
+          (compiler-backend-scavenge-mark-callee-used! picked)
+          picked))
       (compiler-backend-scavenge-pick-iter
         starts
         ends

@@ -34899,12 +34899,16 @@
   (ErrMacroDeclExpansion (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDeclsWithPaths
-  (OkMacroDeclsWithPaths AstDeclList AstDeclPathList)
+  (OkMacroDeclsWithPaths AstDeclList AstDeclPathList bool)
   (ErrMacroDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpand
   (OkMacroExpand AstProgram AstDeclPathList)
   (ErrMacroExpand (Box CompilerDiagnostic)))
+
+(defenum ResultMacroExpandPass
+  (OkMacroExpandPass AstProgram AstDeclPathList bool)
+  (ErrMacroExpandPass (Box CompilerDiagnostic)))
 
 (defenum ResultMacroValue
   (OkMacroValue CompilerCtfeValue)
@@ -38827,6 +38831,46 @@
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
+(define (macro-eval-transformer-expanded
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : AstMacroParamList]
+  [body : AstExpr]
+  [expanded-args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroValue
+  (begin
+    (tc-context-capture-active-pools! ctx)
+    (match (macro-bind-params
+      ctx
+      type-env
+      params
+      expanded-args
+      (tc-ctfe-env ctx)
+      (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
+      call-expr)
+      [(OkMacroEnv env)
+        (begin
+          (cfg compile-profile (compiler-tc-macro-profile-start))
+          (match (ctfe-eval-node
+            body
+            (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+            (ctfe-fuel-limit))
+            [(OkCtfe value _)
+              (begin
+                (ast-node-pool-context-install! (tc-context-pools ctx))
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish macro-name expanded-args))
+                (OkMacroValue value))]
+            [(ErrCtfe diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish macro-name expanded-args))
+                (ErrMacroValue diag))]))]
+      [(ErrMacroEnv diag) (ErrMacroValue diag)])))
+
 (define (macro-eval-transformer
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -38843,47 +38887,459 @@
   ;; unbound value.
   (match (macro-expand-exprs ctx type-env decls depth args)
     [(OkMacroExprList expanded-args)
-      (begin
-        (tc-context-capture-active-pools! ctx)
-        (match (macro-bind-params
-          ctx
-          type-env
-          params
-          expanded-args
-          (tc-ctfe-env ctx)
-          (tc-string-list-contains
-            macro-expand-expr-type-macro-names
-            macro-name)
-          call-expr)
-          [(OkMacroEnv env)
-            (begin
-              (cfg compile-profile (compiler-tc-macro-profile-start))
-              (match (ctfe-eval-node
-                body
-                (ctfe-env-extend
-                  env
-                  (ctfe-hygiene-enabled-name)
-                  (CtfeBool true))
-                (ctfe-fuel-limit))
-                [(OkCtfe value _)
-                  (begin
-                    (ast-node-pool-context-install! (tc-context-pools ctx))
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-profile-finish
-                        macro-name
-                        expanded-args))
-                    (OkMacroValue value))]
-                [(ErrCtfe diag)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-profile-finish
-                        macro-name
-                        expanded-args))
-                    (ErrMacroValue diag))]))]
-          [(ErrMacroEnv diag) (ErrMacroValue diag)]))]
+      (macro-eval-transformer-expanded
+        ctx
+        type-env
+        macro-name
+        params
+        body
+        expanded-args
+        call-expr)]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
+
+;; Fast path for the hot stdlib.vector_family declaration macro. The macro body
+;; is a deterministic quasiquote that emits a fixed growable-vector declaration
+;; family, so building the AST directly avoids CTFE plus macro-output parsing.
+(define (macro-vector-family-decls-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (string.string-eq definition-module "stdlib.vector_family")
+    (tc-name-base-eq? macro-name "vector-family")))
+
+(define (macro-vf-name-expr [expr : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name) (TcSomeString (intern-str name))]
+    [_ (TcNoString)]))
+
+(define (macro-vf-var [name : String]) : i64
+  (ast-node-push (AstExprVar (intern name))))
+
+(define (macro-vf-lit-i64 [value : i64]) : i64
+  (ast-node-push (AstExprLiteral (ast-lit-int value))))
+
+(define (macro-vf-lit-bool [value : bool]) : i64
+  (ast-node-push (AstExprLiteral (AstLitBool value))))
+
+(define (macro-vf-unit) : i64
+  (ast-node-push (AstExprLiteral AstLitUnit)))
+
+(define (macro-vf-expr-list1 [a : i64]) : AstExprList
+  (ast-expr-cons a AstExprNil))
+
+(define (macro-vf-expr-list2 [a : i64] [b : i64]) : AstExprList
+  (ast-expr-cons a (macro-vf-expr-list1 b)))
+
+(define (macro-vf-expr-list3 [a : i64] [b : i64] [c : i64]) : AstExprList
+  (ast-expr-cons a (macro-vf-expr-list2 b c)))
+
+(define (macro-vf-expr-list4 [a : i64] [b : i64] [c : i64] [d : i64]) : AstExprList
+  (ast-expr-cons a (macro-vf-expr-list3 b c d)))
+
+(define (macro-vf-param [name : String] [ty : AstType]) : AstParam
+  (ast-param name ty false))
+
+(define (macro-vf-param-list1 [a : AstParam]) : AstParamList
+  (ast-param-cons a AstParamNil))
+
+(define (macro-vf-param-list2 [a : AstParam] [b : AstParam]) : AstParamList
+  (ast-param-cons a (macro-vf-param-list1 b)))
+
+(define (macro-vf-param-list3 [a : AstParam] [b : AstParam] [c : AstParam]) : AstParamList
+  (ast-param-cons a (macro-vf-param-list2 b c)))
+
+(define (macro-vf-param-list4
+  [a : AstParam]
+  [b : AstParam]
+  [c : AstParam]
+  [d : AstParam]) : AstParamList
+  (ast-param-cons a (macro-vf-param-list3 b c d)))
+
+(define (macro-vf-call [name : String] [args : AstExprList]) : i64
+  (ast-expr-call (macro-vf-var name) args))
+
+(define (macro-vf-call0 [name : String]) : i64
+  (macro-vf-call name AstExprNil))
+
+(define (macro-vf-call1 [name : String] [a : i64]) : i64
+  (macro-vf-call name (macro-vf-expr-list1 a)))
+
+(define (macro-vf-call2 [name : String] [a : i64] [b : i64]) : i64
+  (macro-vf-call name (macro-vf-expr-list2 a b)))
+
+(define (macro-vf-array-length [value : i64]) : i64
+  (macro-vf-call1 "array-length" value))
+
+(define (macro-vf-array-ty [elem-ty : AstType]) : AstType
+  (ast-ty-dyn-array elem-ty))
+
+(define (macro-vf-vec-ty [vec-name : String]) : AstType
+  (AstTyVar (intern vec-name)))
+
+(define (macro-vf-ref-ty [region : String] [inner : AstType]) : AstType
+  (ast-ty-ref region inner))
+
+(define (macro-vf-mut-ref-ty [region : String] [inner : AstType]) : AstType
+  (ast-ty-mut-ref region inner))
+
+(define (macro-vf-borrow [mutable : bool] [expr : i64]) : i64
+  (ast-expr-borrow mutable (AstBorrowLifetimeInferred) expr))
+
+(define (macro-vf-struct-get [target : String] [field : String]) : i64
+  (ast-expr-struct-get-id (macro-vf-var target) (intern field)))
+
+(define (macro-vf-struct-set [target : String] [field : String] [value : i64]) : i64
+  (ast-expr-struct-set-id (macro-vf-var target) (intern field) value))
+
+(define (macro-vf-begin2 [a : i64] [b : i64]) : i64
+  (ast-node-push (AstExprBegin (macro-vf-expr-list2 a b))))
+
+(define (macro-vf-struct-decl [vec-name : String] [elem-ty : AstType]) : AstDecl
+  (let
+    [slots-field : AstFieldDef
+      (ast-field-def "slots" (macro-vf-array-ty elem-ty) AstFieldNoCleanup)]
+    [len-field : AstFieldDef (ast-field-def "len" (AstTyI64) AstFieldNoCleanup)]
+    (ast-decl-def-struct
+      vec-name
+      (AstStructReprDefault)
+      (AstStructNoCleanup)
+      (ast-field-def-cons
+        slots-field
+        (ast-field-def-cons len-field AstFieldDefNil)))))
+
+(define (macro-vf-slots-decl
+  [slots-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    slots-name
+    (macro-vf-param-list1
+      (macro-vf-param "v" (macro-vf-ref-ty "v" (macro-vf-vec-ty vec-name))))
+    (macro-vf-ref-ty "v" (macro-vf-array-ty elem-ty))
+    (macro-vf-borrow false (macro-vf-struct-get "v" "slots"))))
+
+(define (macro-vf-len-decl [len-name : String] [vec-name : String]) : AstDecl
+  (ast-decl-def-fn
+    len-name
+    (macro-vf-param-list1
+      (macro-vf-param "v" (macro-vf-ref-ty "v" (macro-vf-vec-ty vec-name))))
+    (AstTyI64)
+    (macro-vf-struct-get "v" "len")))
+
+(define (macro-vf-capacity-decl
+  [capacity-name : String]
+  [slots-name : String]
+  [vec-name : String]) : AstDecl
+  (ast-decl-def-fn
+    capacity-name
+    (macro-vf-param-list1
+      (macro-vf-param "v" (macro-vf-ref-ty "v" (macro-vf-vec-ty vec-name))))
+    (AstTyI64)
+    (macro-vf-array-length (macro-vf-call1 slots-name (macro-vf-var "v")))))
+
+(define (macro-vf-with-capacity-decl
+  [with-capacity-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (let
+    [capacity-var : i64 (macro-vf-var "capacity")]
+    [cap-var : i64 (macro-vf-var "cap")]
+    [cap-init : i64
+      (ast-expr-if
+        (ast-expr-binary (AstBinLt) capacity-var (macro-vf-lit-i64 1))
+        (macro-vf-lit-i64 1)
+        (macro-vf-var "capacity"))]
+    [make-slots : i64 (ast-expr-make-array elem-ty cap-var)]
+    [body : i64
+      (macro-vf-call
+        vec-name
+        (macro-vf-expr-list2 make-slots (macro-vf-lit-i64 0)))]
+    (ast-decl-def-fn
+      with-capacity-name
+      (macro-vf-param-list1 (macro-vf-param "capacity" (AstTyI64)))
+      (macro-vf-vec-ty vec-name)
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding "cap" (AstSomeType (AstTyI64)) cap-init)
+          AstLetBindingNil)
+        body))))
+
+(define (macro-vf-new-decl
+  [new-name : String]
+  [with-capacity-name : String]
+  [vec-name : String]) : AstDecl
+  (ast-decl-def-fn
+    new-name
+    AstParamNil
+    (macro-vf-vec-ty vec-name)
+    (macro-vf-call1 with-capacity-name (macro-vf-lit-i64 4))))
+
+(define (macro-vf-bounds-check [len-expr : i64]) : i64
+  (ast-expr-if
+    (ast-expr-binary (AstBinGe) (macro-vf-var "index") (macro-vf-lit-i64 0))
+    (ast-expr-binary (AstBinLt) (macro-vf-var "index") len-expr)
+    (macro-vf-lit-bool false)))
+
+(define (macro-vf-get-decl
+  [get-name : String]
+  [slots-name : String]
+  [len-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    get-name
+    (macro-vf-param-list3
+      (macro-vf-param "v" (macro-vf-ref-ty "v" (macro-vf-vec-ty vec-name)))
+      (macro-vf-param "index" (AstTyI64))
+      (macro-vf-param "fallback" elem-ty))
+    elem-ty
+    (ast-expr-if
+      (macro-vf-bounds-check (macro-vf-call1 len-name (macro-vf-var "v")))
+      (ast-expr-array-ref
+        (macro-vf-call1 slots-name (macro-vf-var "v"))
+        (macro-vf-var "index"))
+      (macro-vf-var "fallback"))))
+
+(define (macro-vf-set-decl
+  [set-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    set-name
+    (macro-vf-param-list3
+      (macro-vf-param "v" (macro-vf-mut-ref-ty "v" (macro-vf-vec-ty vec-name)))
+      (macro-vf-param "index" (AstTyI64))
+      (macro-vf-param "value" elem-ty))
+    (AstTyUnit)
+    (ast-expr-if
+      (macro-vf-bounds-check (macro-vf-struct-get "v" "len"))
+      (ast-expr-array-set
+        (macro-vf-struct-get "v" "slots")
+        (macro-vf-var "index")
+        (macro-vf-var "value"))
+      (macro-vf-unit))))
+
+(define (macro-vf-copy-range-decl
+  [copy-range-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (ast-decl-def-fn
+    copy-range-name
+    (macro-vf-param-list4
+      (macro-vf-param
+        "dst"
+        (macro-vf-mut-ref-ty "dst" (macro-vf-array-ty elem-ty)))
+      (macro-vf-param "src" (macro-vf-ref-ty "src" (macro-vf-array-ty elem-ty)))
+      (macro-vf-param "index" (AstTyI64))
+      (macro-vf-param "count" (AstTyI64)))
+    (AstTyUnit)
+    (ast-expr-if
+      (ast-expr-binary (AstBinGe) (macro-vf-var "index") (macro-vf-var "count"))
+      (macro-vf-unit)
+      (macro-vf-begin2
+        (ast-expr-array-set
+          (macro-vf-var "dst")
+          (macro-vf-var "index")
+          (ast-expr-array-ref (macro-vf-var "src") (macro-vf-var "index")))
+        (macro-vf-call
+          copy-range-name
+          (macro-vf-expr-list4
+            (macro-vf-var "dst")
+            (macro-vf-var "src")
+            (ast-expr-binary
+              (AstBinAdd)
+              (macro-vf-var "index")
+              (macro-vf-lit-i64 1))
+            (macro-vf-var "count")))))))
+
+(define (macro-vf-grow-decl
+  [grow-name : String]
+  [copy-range-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (let
+    [n-init : i64 (macro-vf-struct-get "v" "len")]
+    [old-cap-init : i64
+      (macro-vf-array-length (macro-vf-struct-get "v" "slots"))]
+    [new-cap-init : i64
+      (ast-expr-if
+        (ast-expr-binary
+          (AstBinLt)
+          (macro-vf-var "old-cap")
+          (macro-vf-lit-i64 1))
+        (macro-vf-lit-i64 1)
+        (ast-expr-binary
+          (AstBinMul)
+          (macro-vf-var "old-cap")
+          (macro-vf-lit-i64 2)))]
+    [bigger-init : i64 (ast-expr-make-array elem-ty (macro-vf-var "new-cap"))]
+    [copy-call : i64
+      (macro-vf-call
+        copy-range-name
+        (macro-vf-expr-list4
+          (macro-vf-borrow true (macro-vf-var "bigger"))
+          (macro-vf-borrow false (macro-vf-struct-get "v" "slots"))
+          (macro-vf-lit-i64 0)
+          (macro-vf-var "n")))]
+    [body : i64
+      (macro-vf-begin2
+        copy-call
+        (macro-vf-struct-set "v" "slots" (macro-vf-var "bigger")))]
+    (ast-decl-def-fn
+      grow-name
+      (macro-vf-param-list1
+        (macro-vf-param
+          "v"
+          (macro-vf-mut-ref-ty "v" (macro-vf-vec-ty vec-name))))
+      (AstTyUnit)
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding "n" (AstSomeType (AstTyI64)) n-init)
+          (ast-let-binding-cons
+            (ast-let-binding "old-cap" (AstSomeType (AstTyI64)) old-cap-init)
+            (ast-let-binding-cons
+              (ast-let-binding "new-cap" (AstSomeType (AstTyI64)) new-cap-init)
+              (ast-let-binding-cons
+                (ast-let-binding
+                  "bigger"
+                  (AstSomeType (macro-vf-array-ty elem-ty))
+                  bigger-init)
+                AstLetBindingNil))))
+        body))))
+
+(define (macro-vf-push-decl
+  [push-name : String]
+  [grow-name : String]
+  [vec-name : String]
+  [elem-ty : AstType]) : AstDecl
+  (let
+    [ensure-capacity : i64
+      (ast-expr-if
+        (ast-expr-binary
+          (AstBinLt)
+          (macro-vf-struct-get "v" "len")
+          (macro-vf-array-length (macro-vf-struct-get "v" "slots")))
+        (macro-vf-unit)
+        (macro-vf-call1 grow-name (macro-vf-var "v")))]
+    [push-body : i64
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding
+            "index"
+            (AstSomeType (AstTyI64))
+            (macro-vf-struct-get "v" "len"))
+          AstLetBindingNil)
+        (macro-vf-begin2
+          (ast-expr-array-set
+            (macro-vf-struct-get "v" "slots")
+            (macro-vf-var "index")
+            (macro-vf-var "value"))
+          (macro-vf-struct-set
+            "v"
+            "len"
+            (ast-expr-binary
+              (AstBinAdd)
+              (macro-vf-var "index")
+              (macro-vf-lit-i64 1)))))]
+    (ast-decl-def-fn
+      push-name
+      (macro-vf-param-list2
+        (macro-vf-param
+          "v"
+          (macro-vf-mut-ref-ty "v" (macro-vf-vec-ty vec-name)))
+        (macro-vf-param "value" elem-ty))
+      (AstTyUnit)
+      (macro-vf-begin2 ensure-capacity push-body))))
+
+(define (macro-vf-decls [elem-ty : AstType] [vec-name : String] [base : String]) : AstDeclList
+  (let
+    [slots-name : String (string.string-append base "-slots")]
+    [len-name : String (string.string-append base "-len")]
+    [capacity-name : String (string.string-append base "-capacity")]
+    [with-capacity-name : String (string.string-append base "-with-capacity")]
+    [new-name : String (string.string-append base "-new")]
+    [get-name : String (string.string-append base "-get")]
+    [set-name : String (string.string-append base "-set!")]
+    [copy-range-name : String (string.string-append base "-copy-range")]
+    [grow-name : String (string.string-append base "-grow")]
+    [push-name : String (string.string-append base "-push")]
+    (ast-decl-cons
+      (macro-vf-struct-decl vec-name elem-ty)
+      (ast-decl-cons
+        (macro-vf-slots-decl slots-name vec-name elem-ty)
+        (ast-decl-cons
+          (macro-vf-len-decl len-name vec-name)
+          (ast-decl-cons
+            (macro-vf-capacity-decl capacity-name slots-name vec-name)
+            (ast-decl-cons
+              (macro-vf-with-capacity-decl with-capacity-name vec-name elem-ty)
+              (ast-decl-cons
+                (macro-vf-new-decl new-name with-capacity-name vec-name)
+                (ast-decl-cons
+                  (macro-vf-get-decl
+                    get-name
+                    slots-name
+                    len-name
+                    vec-name
+                    elem-ty)
+                  (ast-decl-cons
+                    (macro-vf-set-decl set-name vec-name elem-ty)
+                    (ast-decl-cons
+                      (macro-vf-copy-range-decl copy-range-name elem-ty)
+                      (ast-decl-cons
+                        (macro-vf-grow-decl
+                          grow-name
+                          copy-range-name
+                          vec-name
+                          elem-ty)
+                        (ast-decl-cons
+                          (macro-vf-push-decl
+                            push-name
+                            grow-name
+                            vec-name
+                            elem-ty)
+                          AstDeclNil)))))))))))))
+
+(define (macro-vector-family-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
+  (ErrMacroParsedDecls
+    (box
+      (ctfe-diagnostic-at-expr
+        call-expr
+        "typecheck: vector-family expects exactly three arguments"))))
+
+(define (macro-vector-family-fast-decls
+  [ctx : TcContext]
+  [args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroParsedDecls
+  (match args
+    [(AstExprCons type-id rest1-box)
+      (let
+        [type-expr : AstExpr (ast-node-get type-id)]
+        [rest1 : AstExprList (box-get rest1-box)]
+        (match rest1
+          [(AstExprCons vec-id rest2-box)
+            (let
+              [vec-expr : AstExpr (ast-node-get vec-id)]
+              [rest2 : AstExprList (box-get rest2-box)]
+              (match rest2
+                [(AstExprCons prefix-id rest3-box)
+                  (match (box-get rest3-box)
+                    [(AstExprNil)
+                      (match (macro-type-arg ctx type-expr)
+                        [(OkMacroTypeArg elem-ty)
+                          (match (macro-vf-name-expr vec-expr)
+                            [(TcSomeString vec-name)
+                              (match (macro-vf-name-expr
+                                (ast-node-get prefix-id))
+                                [(TcSomeString base)
+                                  (OkMacroParsedDecls
+                                    (macro-vf-decls elem-ty vec-name base))]
+                                [(TcNoString) (OkMacroParsedDecls AstDeclNil)])]
+                            [(TcNoString) (OkMacroParsedDecls AstDeclNil)])]
+                        [(ErrMacroTypeArg diag) (ErrMacroParsedDecls diag)])]
+                    [_ (macro-vector-family-fast-arity-error call-expr)])]
+                [_ (macro-vector-family-fast-arity-error call-expr)]))]
+          [_ (macro-vector-family-fast-arity-error call-expr)]))]
+    [_ (macro-vector-family-fast-arity-error call-expr)]))
 
 ;; The core prelude macros below are deterministic syntax rewrites. Expanding
 ;; them in the compiler avoids running the CTFE evaluator for thousands of hot
@@ -40161,47 +40617,70 @@
                             (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
-                              (match (macro-eval-transformer
-                                call-ctx
-                                global-env
-                                orig-decls
+                              (if (macro-vector-family-decls-macro?
                                 macro-name
-                                params
-                                body
-                                args
-                                0
-                                call-expr)
-                                [(OkMacroValue value)
-                                  (let
-                                    [parse-dispatch : SymI64Env
-                                      (macro-parse-dispatch-for-macro
-                                        macro-name
-                                        definition-module)]
-                                    (match (macro-decls-from-ctfe-value
-                                      value
-                                      call-expr
-                                      parse-dispatch)
-                                      [(OkMacroParsedDecls generated)
-                                        (let
-                                          [contextual-generated : AstDeclList
-                                            (macro-generated-context-decls
-                                              generated
-                                              definition-module)]
-                                          [wrapped : AstDeclList
-                                            (macro-wrap-generated-decls-decls
-                                              contextual-generated
-                                              macro-name
-                                              (macro-decls-generated-key
-                                                identity))]
-                                          (OkMacroDeclExpansion
-                                            wrapped
-                                            (macro-paths-for-decls
+                                definition-module)
+                                (match (macro-vector-family-fast-decls
+                                  call-ctx
+                                  expanded-args
+                                  call-expr)
+                                  [(OkMacroParsedDecls generated)
+                                    (let
+                                      [contextual-generated : AstDeclList
+                                        (macro-generated-context-decls
+                                          generated
+                                          definition-module)]
+                                      [wrapped : AstDeclList
+                                        (macro-wrap-generated-decls-decls
+                                          contextual-generated
+                                          macro-name
+                                          (macro-decls-generated-key identity))]
+                                      (OkMacroDeclExpansion
+                                        wrapped
+                                        (macro-paths-for-decls
+                                          wrapped
+                                          decl-path)))]
+                                  [(ErrMacroParsedDecls diag)
+                                    (ErrMacroDeclExpansion diag)])
+                                (match (macro-eval-transformer-expanded
+                                  call-ctx
+                                  global-env
+                                  macro-name
+                                  params
+                                  body
+                                  expanded-args
+                                  call-expr)
+                                  [(OkMacroValue value)
+                                    (let
+                                      [parse-dispatch : SymI64Env
+                                        (macro-parse-dispatch-for-macro
+                                          macro-name
+                                          definition-module)]
+                                      (match (macro-decls-from-ctfe-value
+                                        value
+                                        call-expr
+                                        parse-dispatch)
+                                        [(OkMacroParsedDecls generated)
+                                          (let
+                                            [contextual-generated : AstDeclList
+                                              (macro-generated-context-decls
+                                                generated
+                                                definition-module)]
+                                            [wrapped : AstDeclList
+                                              (macro-wrap-generated-decls-decls
+                                                contextual-generated
+                                                macro-name
+                                                (macro-decls-generated-key
+                                                  identity))]
+                                            (OkMacroDeclExpansion
                                               wrapped
-                                              decl-path)))]
-                                      [(ErrMacroParsedDecls diag)
-                                        (ErrMacroDeclExpansion diag)]))]
-                                [(ErrMacroValue diag)
-                                  (ErrMacroDeclExpansion diag)])]
+                                              (macro-paths-for-decls
+                                                wrapped
+                                                decl-path)))]
+                                        [(ErrMacroParsedDecls diag)
+                                          (ErrMacroDeclExpansion diag)]))]
+                                  [(ErrMacroValue diag)
+                                    (ErrMacroDeclExpansion diag)]))]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
                         [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                       (if (tc-macro-result-module? ret)
@@ -40272,15 +40751,13 @@
                             (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
-                              (match (macro-eval-transformer
+                              (match (macro-eval-transformer-expanded
                                 call-ctx
                                 global-env
-                                orig-decls
                                 macro-name
                                 params
                                 body
-                                args
-                                0
+                                expanded-args
                                 call-expr)
                                 [(OkMacroValue value)
                                   (let
@@ -41331,6 +41808,42 @@
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? (box-get rest)))]))
 
+(define (macro-expanded-decl-inert? [decl : AstDecl] [can-share : bool]) : bool
+  (match decl
+    [(AstDeclModule _) true]
+    [(AstDeclDef _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDeclDefFn _ _ _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDeclTest _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDeclExtern _ _ _ _) true]
+    [(AstDeclDefEnum _ _ _) true]
+    [(AstDeclDefEnumLifetimes _ _ _ _) true]
+    [(AstDeclDefStruct _ _ _ _) true]
+    [(AstDeclDefStructLifetimes _ _ _ _ _) true]
+    [(AstDeclIncludeStr _ _) true]
+    [(AstDeclIncludeBin _ _) true]
+    [(AstDeclDefDispatch _ _) true]
+    [(AstDeclUnsafe inner-box)
+      (macro-expanded-decl-inert? (box-get inner-box) can-share)]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-expanded-decl-inert? (box-get template-box) can-share)]
+    [_ false]))
+
+(define (macro-expanded-decls-inert? [decls : AstDeclList] [can-share : bool]) : bool
+  (match decls
+    [(AstDeclNil) true]
+    [(AstDeclCons decl rest)
+      (and
+        (macro-expanded-decl-inert? decl can-share)
+        (macro-expanded-decls-inert? (box-get rest) can-share))]))
+
+(define (macro-decls-have-import-placeholder? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-import-placeholder? decl)
+        (macro-decls-have-import-placeholder? (box-get rest)))]))
+
 (define (macro-expand-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -41358,7 +41871,8 @@
                 result
                 (OkMacroDeclsWithPaths
                   (macro-decl-list-reverse out-rev)
-                  (macro-decl-path-list-reverse out-paths-rev)))
+                  (macro-decl-path-list-reverse out-paths-rev)
+                  false))
               (set! done true))]
           [(AstDeclCons decl rest)
             (let
@@ -41394,19 +41908,38 @@
                       decl
                       decl-path)
                       [(OkMacroDeclExpansion expanded expanded-paths)
-                        (begin
-                          (set!
-                            result
-                            (OkMacroDeclsWithPaths
-                              (macro-decl-list-append
-                                (macro-decl-list-reverse out-rev)
-                                (macro-decl-list-append expanded rest))
-                              (macro-decl-path-list-append
-                                (macro-decl-path-list-reverse out-paths-rev)
+                        (if (and
+                          (macro-expanded-decls-inert? expanded can-share)
+                          (not (macro-decls-have-import-placeholder? rest))
+                          (macro-expanded-decls-inert? rest can-share))
+                          (begin
+                            (set!
+                              out-rev
+                              (macro-decl-list-reverse-into expanded out-rev))
+                            (set!
+                              out-paths-rev
+                              (macro-decl-path-list-reverse-into
+                                expanded-paths
+                                out-paths-rev))
+                            (set!
+                              cur-module
+                              (macro-decls-final-module expanded cur-module))
+                            (set! cur-decls rest)
+                            (set! cur-paths rest-paths))
+                          (begin
+                            (set!
+                              result
+                              (OkMacroDeclsWithPaths
+                                (macro-decl-list-append
+                                  (macro-decl-list-reverse out-rev)
+                                  (macro-decl-list-append expanded rest))
                                 (macro-decl-path-list-append
-                                  expanded-paths
-                                  rest-paths))))
-                          (set! done true))]
+                                  (macro-decl-path-list-reverse out-paths-rev)
+                                  (macro-decl-path-list-append
+                                    expanded-paths
+                                    rest-paths))
+                                true))
+                            (set! done true)))]
                       [(ErrMacroDeclExpansion diag)
                         (begin
                           (set! result (ErrMacroDeclsWithPaths diag))
@@ -41568,10 +42101,10 @@
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
-(define (macro-expand-program-pass-with-paths-and-pools
+(define (macro-expand-program-pass-with-paths-and-pools-with-followup
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [pools : AstNodePoolContext]) : ResultMacroExpand
+  [pools : AstNodePoolContext]) : ResultMacroExpandPass
   (begin
     (ast-node-pool-context-install! pools)
     (match program
@@ -41654,7 +42187,10 @@
                                         paths
                                         ""
                                         (not has-expr-type-macros))
-                                        [(OkMacroDeclsWithPaths ndecls npaths)
+                                        [(OkMacroDeclsWithPaths
+                                            ndecls
+                                            npaths
+                                            needs-followup?)
                                           (begin
                                             (tc-context-capture-active-pools!
                                               ctx)
@@ -41665,9 +42201,10 @@
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
-                                            (OkMacroExpand
+                                            (OkMacroExpandPass
                                               (ast-program ndecls)
-                                              npaths))]
+                                              npaths
+                                              needs-followup?))]
                                         [(ErrMacroDeclsWithPaths diag)
                                           (begin
                                             (tc-context-capture-active-pools!
@@ -41679,18 +42216,30 @@
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
-                                            (ErrMacroExpand diag))]))]
+                                            (ErrMacroExpandPass diag))]))]
                                   [(ErrTcEnv message)
-                                    (ErrMacroExpand
+                                    (ErrMacroExpandPass
                                       (box (tc-diag-at-start message)))])]
                               [(ErrTcUnit message)
-                                (ErrMacroExpand
+                                (ErrMacroExpandPass
                                   (box (tc-diag-at-start message)))])))]
                       [(ErrCompilerRegistries message)
-                        (ErrMacroExpand (box (tc-diag-at-start message)))])]
+                        (ErrMacroExpandPass (box (tc-diag-at-start message)))])]
                   [(ErrCompilerSymbols message)
-                    (ErrMacroExpand (box (tc-diag-at-start message)))]))
-              (OkMacroExpand program paths))))])))
+                    (ErrMacroExpandPass (box (tc-diag-at-start message)))]))
+              (OkMacroExpandPass program paths false))))])))
+
+(define (macro-expand-program-pass-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]) : ResultMacroExpand
+  (match (macro-expand-program-pass-with-paths-and-pools-with-followup
+    program
+    paths
+    pools)
+    [(OkMacroExpandPass expanded expanded-paths _)
+      (OkMacroExpand expanded expanded-paths)]
+    [(ErrMacroExpandPass diag) (ErrMacroExpand diag)]))
 
 (define (macro-expand-program-pass-with-paths
   [program : AstProgram]
@@ -41703,10 +42252,9 @@
 (define (macro-expand-fixed-point-limit) : i64
   8)
 
-;; The walker expands one existing module-macro placeholder per pass; generated
-;; modules can introduce their own import placeholders for the next pass. Keep a
-;; fixed guard, but scale it with loaded placeholder volume so legitimate nested
-;; module families converge under `test` cfg stdlib imports.
+;; Generated modules can introduce their own import placeholders for the next
+;; pass. Keep a fixed guard, but scale it with loaded placeholder volume so
+;; legitimate nested module families converge under `test` cfg stdlib imports.
 (define (macro-expand-fixed-point-limit-for-program [program : AstProgram]) : i64
   (match program
     [(AstProgram decls-box)
@@ -41996,58 +42544,53 @@
       (box
         (tc-diag-at-start
           "typecheck: module macro expansion exceeded fixed-point limit")))
-    (let
-      [had-placeholders : bool
-        (match program
-          [(AstProgram input-decls-box)
-            (macro-program-has-module-placeholder? (box-get input-decls-box))])]
-      (match (macro-expand-program-pass-with-paths-and-pools
-        program
-        paths
-        pools)
-        [(OkMacroExpand expanded expanded-paths)
-          (match (macro-materialize-generated-imports
-            expanded
-            expanded-paths
-            stdlib-roots
-            cfgs
-            pools)
-            [(OkMacroMaterializeImport
-                materialized-decls
-                materialized-paths
-                _
-                materialized-imports?)
-              (let
-                [materialized : AstProgram (ast-program materialized-decls)]
-                [normalized-result : ResultGenProgramWithPaths
-                  (if (compiler-specialize-needed? materialized)
-                    (gen-normalize-program-with-paths-and-pools
-                      materialized
-                      materialized-paths
-                      (tc-decl-path-list-last materialized-paths "")
-                      pools)
-                    (OkGenProgramWithPaths materialized materialized-paths))]
-                (match normalized-result
-                  [(OkGenProgramWithPaths normalized normalized-paths)
-                    (match normalized
-                      [(AstProgram decls-box)
-                        (let
-                          [decls : AstDeclList (box-get decls-box)]
-                          (if (or
-                            had-placeholders
-                            materialized-imports?
-                            (macro-program-has-module-placeholder? decls))
-                            (macro-expand-program-with-paths-loop-and-pools
-                              normalized
-                              normalized-paths
-                              pools
-                              stdlib-roots
-                              cfgs
-                              (- fuel 1))
-                            (OkMacroExpand normalized normalized-paths)))])]
-                  [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
-            [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
-        [(ErrMacroExpand diag) (ErrMacroExpand diag)]))))
+    (match (macro-expand-program-pass-with-paths-and-pools-with-followup
+      program
+      paths
+      pools)
+      [(OkMacroExpandPass expanded expanded-paths needs-followup?)
+        (match (macro-materialize-generated-imports
+          expanded
+          expanded-paths
+          stdlib-roots
+          cfgs
+          pools)
+          [(OkMacroMaterializeImport
+              materialized-decls
+              materialized-paths
+              _
+              materialized-imports?)
+            (let
+              [materialized : AstProgram (ast-program materialized-decls)]
+              [normalized-result : ResultGenProgramWithPaths
+                (if (compiler-specialize-needed? materialized)
+                  (gen-normalize-program-with-paths-and-pools
+                    materialized
+                    materialized-paths
+                    (tc-decl-path-list-last materialized-paths "")
+                    pools)
+                  (OkGenProgramWithPaths materialized materialized-paths))]
+              (match normalized-result
+                [(OkGenProgramWithPaths normalized normalized-paths)
+                  (match normalized
+                    [(AstProgram decls-box)
+                      (let
+                        [decls : AstDeclList (box-get decls-box)]
+                        (if (or
+                          needs-followup?
+                          materialized-imports?
+                          (macro-program-has-module-placeholder? decls))
+                          (macro-expand-program-with-paths-loop-and-pools
+                            normalized
+                            normalized-paths
+                            pools
+                            stdlib-roots
+                            cfgs
+                            (- fuel 1))
+                          (OkMacroExpand normalized normalized-paths)))])]
+                [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+          [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
+      [(ErrMacroExpandPass diag) (ErrMacroExpand diag)])))
 
 (define (macro-expand-program-with-paths-loop
   [program : AstProgram]

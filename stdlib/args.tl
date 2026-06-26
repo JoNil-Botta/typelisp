@@ -33,6 +33,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 ;: Option arity: a boolean flag consumes no value, while a value flag consumes
 ;: the following argv string.
@@ -69,7 +70,7 @@
 ;: Parsed argv result: ordered option occurrences and ordered positionals.
 (defstruct ArgsParsed
   (options ArgsOptionList)
-  (positionals vector.StringVec))
+  (positionals svec.Vec))
 
 ;: Structured parse errors.
 (defenum ArgsError
@@ -90,7 +91,7 @@
 ;: result is produced; positionals are appended into a vector in input order.
 (defstruct ArgsParseState
   (options ArgsOptionList)
-  (positionals vector.StringVec)
+  (positionals svec.Vec)
   (stop-options bool))
 
 ;: Internal successful step result: next state plus next argv index.
@@ -229,9 +230,11 @@
 (define (args-parsed-options [parsed : ArgsParsed]) : ArgsOptionList
   (struct-get parsed options))
 
-;: Return the positional arguments in input order.
-(define (args-parsed-positionals [parsed : ArgsParsed]) : vector.StringVec
-  (struct-get parsed positionals))
+;: Borrow the positional arguments in input order.
+(define (args-parsed-positionals [parsed : (& parsed ArgsParsed)]) : (&
+    parsed
+    svec.Vec)
+  (& (struct-get parsed positionals)))
 
 ;: Count option occurrences in a parsed result.
 (define (args-option-count [parsed : ArgsParsed] [name : String]) : i64
@@ -329,16 +332,20 @@
 
 ;: Return a fresh empty parse state.
 (define (args-parse-state-empty) : ArgsParseState
-  (ArgsParseState (ArgsOptionNil) (vector.string-vec-new) false))
+  (ArgsParseState (ArgsOptionNil) (svec.new) false))
 
 ;: Add a positional token to a parse state.
 (define (args-parse-state-add-positional
   [state : ArgsParseState]
   [value : String]) : ArgsParseState
-  (ArgsParseState
-    (struct-get state options)
-    (vector.string-vec-push (struct-get state positionals) value)
-    (struct-get state stop-options)))
+  (let
+    [positionals : svec.Vec (struct-get state positionals)]
+    (begin
+      (svec.push (&mut positionals) value)
+      (ArgsParseState
+        (struct-get state options)
+        positionals
+        (struct-get state stop-options)))))
 
 ;: Add a parsed option occurrence to a parse state.
 (define (args-parse-state-add-option
@@ -369,7 +376,7 @@
 ;: Finish parser field accumulators into the public ordered result.
 (define (args-parse-finish-fields
   [options : ArgsOptionList]
-  [positionals : vector.StringVec]) : ArgsParsed
+  [positionals : svec.Vec]) : ArgsParsed
   (ArgsParsed (args-option-list-reverse options) positionals))
 
 ;: Advance past one positional token.
@@ -466,7 +473,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : vector.StringVec]
+  [positionals : svec.Vec]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
@@ -479,14 +486,16 @@
           "")]
       (cond
         [stop-options
-          (args-parse-array-loop-fields
-            specs
-            argv
-            (+ index 1)
-            end
-            options
-            (vector.string-vec-push positionals current)
-            stop-options)]
+          (begin
+            (svec.push (&mut positionals) current)
+            (args-parse-array-loop-fields
+              specs
+              argv
+              (+ index 1)
+              end
+              options
+              positionals
+              stop-options))]
         [(stdlib.args.args-end-of-options-token? current)
           (args-parse-array-loop-fields
             specs
@@ -531,14 +540,16 @@
                   positionals
                   stop-options))])]
         [else
-          (args-parse-array-loop-fields
-            specs
-            argv
-            (+ index 1)
-            end
-            options
-            (vector.string-vec-push positionals current)
-            stop-options)]))))
+          (begin
+            (svec.push (&mut positionals) current)
+            (args-parse-array-loop-fields
+              specs
+              argv
+              (+ index 1)
+              end
+              options
+              positionals
+              stop-options))]))))
 
 ;: Bridge an `ArgsParseState` into the field-based array parser loop.
 (define (args-parse-array-loop
@@ -568,7 +579,7 @@
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
-    [positionals : vector.StringVec (vector.string-vec-new)]
+    [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
     [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
@@ -584,7 +595,7 @@
           (cond
             [stop-options
               (begin
-                (set! positionals (vector.string-vec-push positionals current))
+                (svec.push (&mut positionals) current)
                 (set! i (+ i 1)))]
             [(stdlib.args.args-end-of-options-token? current)
               (begin
@@ -625,7 +636,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (set! positionals (vector.string-vec-push positionals current))
+                (svec.push (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -642,7 +653,7 @@
   [index : i64]
   [end : i64]
   [options : ArgsOptionList]
-  [positionals : vector.StringVec]
+  [positionals : svec.Vec]
   [stop-options : bool]) : ResultArgsParsed
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
@@ -655,13 +666,15 @@
           "")]
       (cond
         [stop-options
-          (args-parse-argv-loop-fields
-            specs
-            (+ index 1)
-            end
-            options
-            (vector.string-vec-push positionals current)
-            stop-options)]
+          (begin
+            (svec.push (&mut positionals) current)
+            (args-parse-argv-loop-fields
+              specs
+              (+ index 1)
+              end
+              options
+              positionals
+              stop-options))]
         [(stdlib.args.args-end-of-options-token? current)
           (args-parse-argv-loop-fields
             specs
@@ -703,13 +716,15 @@
                   positionals
                   stop-options))])]
         [else
-          (args-parse-argv-loop-fields
-            specs
-            (+ index 1)
-            end
-            options
-            (vector.string-vec-push positionals current)
-            stop-options)]))))
+          (begin
+            (svec.push (&mut positionals) current)
+            (args-parse-argv-loop-fields
+              specs
+              (+ index 1)
+              end
+              options
+              positionals
+              stop-options))]))))
 
 ;: Bridge an `ArgsParseState` into the field-based process argv parser loop.
 (define (args-parse-argv-loop
@@ -736,7 +751,7 @@
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
-    [positionals : vector.StringVec (vector.string-vec-new)]
+    [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
     [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
@@ -752,7 +767,7 @@
           (cond
             [stop-options
               (begin
-                (set! positionals (vector.string-vec-push positionals current))
+                (svec.push (&mut positionals) current)
                 (set! i (+ i 1)))]
             [(stdlib.args.args-end-of-options-token? current)
               (begin
@@ -793,7 +808,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (set! positionals (vector.string-vec-push positionals current))
+                (svec.push (&mut positionals) current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -907,18 +922,18 @@
 
 ;: Assert that a string vector is empty.
 (define (args-test-assert-string-vec-empty
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [message : String]) : unit
-  (args-test-assert-i64-eq (vector.string-vec-len items) 0 message))
+  (args-test-assert-i64-eq (svec.len items) 0 message))
 
 ;: Assert that a string vector contains exactly two strings.
 (define (args-test-assert-string-vec2
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [first : String]
   [second : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (vector.string-vec-to-array items)]
+    [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
         (array-length values)
@@ -935,13 +950,13 @@
 
 ;: Assert that a string vector contains exactly three strings.
 (define (args-test-assert-string-vec3
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (vector.string-vec-to-array items)]
+    [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
         (array-length values)
@@ -969,7 +984,7 @@
         "empty argv should parse")]
     (begin
       (args-test-assert-string-vec-empty
-        (args-parsed-positionals parsed)
+        (args-parsed-positionals (& parsed))
         "empty argv has no positionals")
       (args-test-assert-i64-eq
         (args-option-count parsed "verbose")
@@ -992,10 +1007,10 @@
     (args-test-assert-string-vec3
       (begin
         (args-test-assert-i64-eq
-          (vector.string-vec-len (args-parsed-positionals parsed))
+          (svec.len (args-parsed-positionals (& parsed)))
           3
           "positionals parsed count")
-        (args-parsed-positionals parsed))
+        (args-parsed-positionals (& parsed)))
       "src.tl"
       "out.s"
       "-"
@@ -1023,7 +1038,7 @@
         "out.s"
         "short value flag consumes next argv")
       (args-test-assert-string-vec2
-        (args-parsed-positionals parsed)
+        (args-parsed-positionals (& parsed))
         "input.tl"
         "rest"
         "positionals before and after flags preserved"))))
@@ -1043,7 +1058,7 @@
         0
         "options after -- are positionals")
       (args-test-assert-string-vec2
-        (args-parsed-positionals parsed)
+        (args-parsed-positionals (& parsed))
         "--verbose"
         "-o"
         "-- preserves following tokens as positionals"))))

@@ -121,6 +121,8 @@
 ;; without rescanning every declaration to rediscover those paths.
 (define lower-reach-active-runtime-paths : hashmap.I64I64Map
   (hashmap.i64-i64-map-with-capacity 8))
+(define lower-reach-active-body-used-types : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 8))
 
 (defenum LowerSpmdInlineHelper
   (LowerNoSpmdInlineHelper)
@@ -5848,6 +5850,12 @@
                       lower-reach-active-runtime-paths
                       (intern body-path)
                       1))
+                  (set!
+                    lower-reach-active-body-used-types
+                    (lower-used-types-add-expr
+                      lower-reach-active-body-used-types
+                      ""
+                      body))
                   (lower-reach-process
                     all-functions
                     names
@@ -6209,6 +6217,420 @@
             module
             (box-get rest))])]))
 
+(define (lower-used-types-add-expr-id
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [expr-id : i64]) : hashmap.I64I64Map
+  (lower-used-types-add-expr used module (ast-node-get expr-id)))
+
+(define (lower-used-types-add-expr-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [exprs : AstExprList]) : hashmap.I64I64Map
+  (match exprs
+    [(AstExprNil) used]
+    [(AstExprCons expr rest)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module expr)
+        module
+        (box-get rest))]))
+
+(define (lower-used-types-add-pattern
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [pattern : AstPattern]) : hashmap.I64I64Map
+  (match pattern
+    [(AstPatVar _ maybe-ty)
+      (lower-used-types-add-maybe-type used module maybe-ty)]
+    [(AstPatTuple patterns-box)
+      (lower-used-types-add-pattern-list used module (box-get patterns-box))]
+    [(AstPatWildcard) used]
+    [(AstPatBinding _) used]
+    [(AstPatVariant name patterns-box)
+      (let
+        [name-str : String (intern-str name)]
+        [with-head : hashmap.I64I64Map
+          (if (or
+            (tc-name-qualified? name-str)
+            (>= (tc-name-first-dot name-str) 0))
+            (lower-used-type-name-add used module name)
+            used)]
+        (lower-used-types-add-pattern-list
+          with-head
+          module
+          (box-get patterns-box)))]
+    [(AstPatLiteral _) used]))
+
+(define (lower-used-types-add-pattern-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [patterns : AstPatternList]) : hashmap.I64I64Map
+  (match patterns
+    [(AstPatternNil) used]
+    [(AstPatternCons pattern rest)
+      (lower-used-types-add-pattern-list
+        (lower-used-types-add-pattern used module (box-get pattern))
+        module
+        (box-get rest))]))
+
+(define (lower-used-types-add-let-bindings
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : AstLetBindingList]) : hashmap.I64I64Map
+  (match bindings
+    [(AstLetBindingNil) used]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ maybe-ty value-box)
+          (lower-used-types-add-let-bindings
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-maybe-type used module maybe-ty)
+              module
+              value-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-match-arms
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [arms : AstMatchArmList]) : hashmap.I64I64Map
+  (match arms
+    [(AstMatchArmNil) used]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (lower-used-types-add-match-arms
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-pattern used module pattern)
+              module
+              body-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-resource-bindings
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : AstResourceBindingList]) : hashmap.I64I64Map
+  (match bindings
+    [(AstResourceBindingNil) used]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ acquire-box cleanup-box)
+          (lower-used-types-add-resource-bindings
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id used module acquire-box)
+              module
+              cleanup-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-expr
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [expr : AstExpr]) : hashmap.I64I64Map
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprLiteral _) used]
+    [(AstExprVar _) used]
+    [(AstExprBinary _ lhs-box rhs-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module lhs-box)
+        module
+        rhs-box)]
+    [(AstExprUnary _ inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprCall callee-box args)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module callee-box)
+        module
+        args)]
+    [(AstExprIf cond-box then-box else-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id
+          (lower-used-types-add-expr-id used module cond-box)
+          module
+          then-box)
+        module
+        else-box)]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-let-bindings used module bindings)
+            module
+            body-box)])]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params ret body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-maybe-type
+              (lower-used-types-add-param-list used module params)
+              module
+              ret)
+            module
+            body-box)])]
+    [(AstExprTuple values) (lower-used-types-add-expr-list used module values)]
+    [(AstExprTupleRef value-box _)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprArray values) (lower-used-types-add-expr-list used module values)]
+    [(AstExprMakeArray ty len-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        len-box)]
+    [(AstExprArrayRef array-box index-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module array-box)
+        module
+        index-box)]
+    [(AstExprArraySet array-box index-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id
+          (lower-used-types-add-expr-id used module array-box)
+          module
+          index-box)
+        module
+        value-box)]
+    [(AstExprArrayPush array-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module array-box)
+        module
+        value-box)]
+    [(AstExprStringRef text-box index-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module text-box)
+        module
+        index-box)]
+    [(AstExprWhile cond-box body-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module cond-box)
+        module
+        body-box)]
+    [(AstExprBegin exprs) (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprUnsafe exprs) (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprSet _ value-box)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprAnn inner-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        inner-box)]
+    [(AstExprCast inner-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        inner-box)]
+    [(AstExprBorrow _ _ inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch value-box arms)
+          (lower-used-types-add-match-arms
+            (lower-used-types-add-expr-id used module value-box)
+            module
+            arms)])]
+    [(AstExprForeach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach _ index-ty start-box end-box body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-type used module index-ty)
+                module
+                start-box)
+              module
+              end-box)
+            module
+            body-box)])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce
+            _
+            _
+            index-ty
+            source-box
+            init-box
+            map-expr-box
+            reduce-expr-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-expr-id
+                  (lower-used-types-add-type used module index-ty)
+                  module
+                  source-box)
+                module
+                init-box)
+              module
+              map-expr-box)
+            module
+            reduce-expr-box)])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            _
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-expr-id
+                  (lower-used-types-add-expr-id
+                    (lower-used-types-add-type
+                      (lower-used-types-add-type used module index-ty)
+                      module
+                      prefix-ty)
+                    module
+                    start-box)
+                  module
+                  end-box)
+                module
+                init-box)
+              module
+              value-box)
+            module
+            body-box)])]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module value-box)
+        module
+        lane-box)]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module value-box)
+        module
+        lane-box)]
+    [(AstExprStructGet value-box _)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprStructSet receiver-box _ value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module receiver-box)
+        module
+        value-box)]
+    [(AstExprWithRegion _ exprs)
+      (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprWithEscape scratch-box exprs)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module scratch-box)
+        module
+        exprs)]
+    [(AstExprWithScratch exprs)
+      (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprInArena arena-box exprs)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module arena-box)
+        module
+        exprs)]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lower-used-types-add-expr-list
+            (lower-used-types-add-resource-bindings used module bindings)
+            module
+            body)])]
+    [(AstExprBox inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxGet inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxTake inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxSet inner-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module inner-box)
+        module
+        value-box)]
+    [(AstExprTypeLiteral ty) (lower-used-types-add-type used module ty)]
+    [(AstExprInit maybe-ty)
+      (lower-used-types-add-maybe-type used module maybe-ty)]
+    [(AstExprComptime inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprQuote _) used]
+    [(AstExprQuasiquote _) used]
+    [(AstExprUnquote inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprUnquoteSplicing inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBracketClause items)
+      (lower-used-types-add-expr-list used module items)]
+    [(AstExprTry inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprReturn inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprPtrNull ty) (lower-used-types-add-type used module ty)]
+    [(AstExprPtrNullCheck value-box)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprPtrAddrOf _) used]
+    [(AstExprPtrRead ptr-box)
+      (lower-used-types-add-expr-id used module ptr-box)]
+    [(AstExprPtrWrite ptr-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        value-box)]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        offset-box)]
+    [(AstExprPtrCast ptr-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        ptr-box)]
+    [(AstExprPtrToInt ptr-box)
+      (lower-used-types-add-expr-id used module ptr-box)]
+    [(AstExprIntToPtr value-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        value-box)]
+    [(AstExprStringData inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        len-box)]
+    [(AstExprArrayData inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBinaryData _) used]
+    [(AstExprSpmdProgramIndex) used]
+    [(AstExprSpmdProgramCount) used]
+    [(AstExprProgramArgc) used]
+    [(AstExprProgramArgv) used]
+    [(AstExprProgramEnvp) used]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprXgetbv index-box)
+      (lower-used-types-add-expr-id used module index-box)]
+    [(AstExprSyscall args) (lower-used-types-add-expr-list used module args)]))
+
 (define (lower-used-types-add-field-list
   [used : hashmap.I64I64Map]
   [module : String]
@@ -6292,7 +6714,8 @@
     [(AstDeclDefEnumLifetimes _ _ _ _) used]
     [(AstDeclDefStruct _ _ _ _) used]
     [(AstDeclDefStructLifetimes _ _ _ _ _) used]
-    [(AstDeclTest _ _ _) used]
+    [(AstDeclTest _ body-box _)
+      (lower-used-types-add-expr-id used module body-box)]
     [(AstDeclUnsafe inner-box)
       (lower-used-types-add-kept-runtime-decl used module (box-get inner-box))]
     [(AstDeclComptimeDecl _ inner-box)
@@ -6902,6 +7325,9 @@
                   (set!
                     lower-reach-active-runtime-paths
                     (hashmap.i64-i64-map-with-capacity 1024))
+                  (set!
+                    lower-reach-active-body-used-types
+                    (lower-used-types-precise-empty))
                   (match (lower-reach-process
                     all-functions
                     name-cache
@@ -6956,7 +7382,7 @@
                               entry-path
                               ""
                               reachable-runtime-paths
-                              (lower-used-types-precise-empty)
+                              lower-reach-active-body-used-types
                               true)
                               [(LowerUsedTypePathSeed
                                   reachable-path-type-names
@@ -49660,6 +50086,106 @@
               "thread.tl"
               (ast-decl-path-cons "entry.tl" AstDeclPathNil))))))))
 
+(define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [test-body : i64
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding
+            "mark"
+            (AstSomeType (AstTyStruct (intern "ImportedMark")))
+            unit-expr)
+          AstLetBindingNil)
+        unit-expr)]
+    (ast-program
+      (ast-decl-cons
+        (ast-decl-def-struct
+          "ImportedMark"
+          AstStructReprDefault
+          AstStructNoCleanup
+          AstFieldDefNil)
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "DeadMark"
+            AstStructReprDefault
+            AstStructNoCleanup
+            AstFieldDefNil)
+          (ast-decl-cons
+            (ast-decl-test
+              "uses-imported-mark-annotation"
+              test-body
+              (AstSourceSpan 1 1 1 1))
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil)))))))
+
+(define (compiler-lower-type-decl-dce-test-body-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "types.tl"
+    (ast-decl-path-cons
+      "types.tl"
+      (ast-decl-path-cons
+        "entry.tl"
+        (ast-decl-path-cons "entry.tl" AstDeclPathNil)))))
+
+(define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-module "struct.match.geom")
+      (ast-decl-cons
+        (ast-decl-def-struct
+          "QPoint"
+          AstStructReprDefault
+          AstStructNoCleanup
+          (ast-field-def-cons
+            (ast-field-def "x" (AstTyI64) AstFieldNoCleanup)
+            (ast-field-def-cons
+              (ast-field-def "y" (AstTyI64) AstFieldNoCleanup)
+              AstFieldDefNil)))
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "DeadGeom"
+            AstStructReprDefault
+            AstStructNoCleanup
+            (ast-field-def-cons
+              (ast-field-def "value" (AstTyI64) AstFieldNoCleanup)
+              AstFieldDefNil))
+          (ast-decl-cons
+            (ast-decl-module "main")
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-expr-match
+                  (ast-node-push (AstExprLiteral (ast-lit-int 0)))
+                  (ast-match-arm-cons
+                    (ast-match-arm
+                      (ast-pat-variant
+                        "geom.QPoint"
+                        (ast-pattern-cons
+                          (ast-pat-binding "x")
+                          (ast-pattern-cons (ast-pat-binding "y") AstPatternNil)))
+                      (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+                    AstMatchArmNil)))
+              AstDeclNil)))))))
+
+(define (compiler-lower-type-decl-dce-body-pattern-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "geom.tl"
+    (ast-decl-path-cons
+      "geom.tl"
+      (ast-decl-path-cons
+        "geom.tl"
+        (ast-decl-path-cons
+          "entry.tl"
+          (ast-decl-path-cons "entry.tl" AstDeclPathNil))))))
+
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
     [program : AstProgram (compiler-lower-ast-dce-program)]
@@ -49791,6 +50317,53 @@
                 (lower-test-decl-list-defines? kept "Arena")
                 (lower-test-decl-list-defines? kept "ArenaMark")
                 (not (lower-test-decl-list-defines? kept "DeadArenaPeer"))))])])))
+
+(define (compiler-lower-type-decl-dce-test-body-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-test-body-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-test-body-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 3)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ImportedMark")
+                (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
+
+(define (compiler-lower-type-decl-dce-body-pattern-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-body-pattern-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-body-pattern-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "QPoint")
+                (not (lower-test-decl-list-defines? kept "DeadGeom"))))])])))
 
 (define (compiler-lower-macro-body-dce-ok?) : bool
   (let
@@ -50082,6 +50655,12 @@
         unit
         (set! ok false))
       (if (compiler-lower-type-decl-dce-arena-support-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-test-body-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-body-pattern-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-macro-body-dce-ok?)

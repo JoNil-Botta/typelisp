@@ -26422,6 +26422,13 @@
         [(ErrTcLifetimeSubst _) fields])]
     [_ fields]))
 
+(define (tc-context-with-nominal-owner-module
+  [ctx : TcContext]
+  [nominal-name : String]) : TcContext
+  (if (tc-name-qualified? nominal-name)
+    (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
+    ctx))
+
 (define (tc-init-struct-supported
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -26431,21 +26438,24 @@
     [(OkTcStructDecl decl)
       (match decl
         [(TcStructDecl repr cleanup fields)
-          (if (ast-struct-repr-c? repr)
-            (ErrTcUnit "typecheck: init supports only default-layout structs")
-            (if (ast-struct-cleanup? cleanup)
-              (ErrTcUnit (tc-init-cleanup-owning-message ctx struct-ty))
-              (match (tc-init-aggregate-layout-ok ctx struct-ty)
-                [(OkTcUnit)
-                  (tc-init-type-list-supported
-                    ctx
-                    env
-                    (tc-init-struct-field-types-for-result
-                      ctx
-                      struct-name
-                      struct-ty
-                      fields))]
-                [(ErrTcUnit message) (ErrTcUnit message)])))])]
+          (let
+            [field-ctx : TcContext
+              (tc-context-with-nominal-owner-module ctx struct-name)]
+            (if (ast-struct-repr-c? repr)
+              (ErrTcUnit "typecheck: init supports only default-layout structs")
+              (if (ast-struct-cleanup? cleanup)
+                (ErrTcUnit (tc-init-cleanup-owning-message ctx struct-ty))
+                (match (tc-init-aggregate-layout-ok field-ctx struct-ty)
+                  [(OkTcUnit)
+                    (tc-init-type-list-supported
+                      field-ctx
+                      env
+                      (tc-init-struct-field-types-for-result
+                        field-ctx
+                        struct-name
+                        struct-ty
+                        fields))]
+                  [(ErrTcUnit message) (ErrTcUnit message)]))))])]
     [(ErrTcStructDecl message) (ErrTcUnit message)]))
 
 (define (tc-init-enum-supported
@@ -26453,31 +26463,33 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [enum-ty : AstType]) : ResultTcUnit
-  (match (tc-enum-decl ctx enum-name)
-    [(OkTcEnumDecl decl)
-      (match decl
-        [(TcEnumDecl cleanup variants)
-          (if (ast-enum-cleanup? cleanup)
-            (ErrTcUnit (tc-init-cleanup-owning-message ctx enum-ty))
-            (match (tc-init-aggregate-layout-ok ctx enum-ty)
-              [(OkTcUnit)
-                (match variants
-                  [(AstVariantDefNil)
-                    (ErrTcUnit
-                      "typecheck: init requires enum with at least one variant")]
-                  [(AstVariantDefCons variant _)
-                    (match variant
-                      [(AstVariantDef _ fields _)
-                        (tc-init-type-list-supported
-                          ctx
-                          env
-                          (tc-init-enum-fields-for-result
-                            ctx
-                            enum-name
-                            enum-ty
-                            fields))])])]
-              [(ErrTcUnit message) (ErrTcUnit message)]))])]
-    [(ErrTcEnumDecl message) (ErrTcUnit message)]))
+  (let
+    [field-ctx : TcContext (tc-context-with-nominal-owner-module ctx enum-name)]
+    (match (tc-enum-decl ctx enum-name)
+      [(OkTcEnumDecl decl)
+        (match decl
+          [(TcEnumDecl cleanup variants)
+            (if (ast-enum-cleanup? cleanup)
+              (ErrTcUnit (tc-init-cleanup-owning-message ctx enum-ty))
+              (match (tc-init-aggregate-layout-ok field-ctx enum-ty)
+                [(OkTcUnit)
+                  (match variants
+                    [(AstVariantDefNil)
+                      (ErrTcUnit
+                        "typecheck: init requires enum with at least one variant")]
+                    [(AstVariantDefCons variant _)
+                      (match variant
+                        [(AstVariantDef _ fields _)
+                          (tc-init-type-list-supported
+                            field-ctx
+                            env
+                            (tc-init-enum-fields-for-result
+                              field-ctx
+                              enum-name
+                              enum-ty
+                              fields))])])]
+                [(ErrTcUnit message) (ErrTcUnit message)]))])]
+      [(ErrTcEnumDecl message) (ErrTcUnit message)])))
 
 (define (tc-init-type-supported
   [ctx : TcContext]

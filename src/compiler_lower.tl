@@ -15673,6 +15673,13 @@
           [(ErrTcLifetimeSubst _) field-types])]
       [_ field-types])))
 
+(define (lower-context-with-nominal-owner-module
+  [ctx : TcContext]
+  [nominal-name : String]) : TcContext
+  (if (tc-name-qualified? nominal-name)
+    (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
+    ctx))
+
 (define (lower-construct-struct
   [ctx : TcContext]
   [state : LowerState]
@@ -15809,31 +15816,34 @@
   [type-env : TcTypeEnv]
   [struct-name : String]
   [struct-ty : AstType]) : ResultLowerExpr
-  (if (lower-struct-repr-c? ctx struct-name)
-    (ErrLowerExpr
-      (box
-        (lower-diagnostic "lower: init supports only default-layout structs")))
-    (match (lower-struct-fields ctx struct-name)
-      [(OkAstFieldDefList fields)
-        (let
-          [field-types : AstTypeList
-            (tc-resolve-type-list
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (if (lower-struct-repr-c? field-ctx struct-name)
+      (ErrLowerExpr
+        (box
+          (lower-diagnostic "lower: init supports only default-layout structs")))
+      (match (lower-struct-fields field-ctx struct-name)
+        [(OkAstFieldDefList fields)
+          (let
+            [field-types : AstTypeList
+              (tc-resolve-type-list
+                field-ctx
+                (lower-struct-constructor-field-types-for-result
+                  field-ctx
+                  struct-name
+                  struct-ty
+                  fields))]
+            (lower-construct-struct
               ctx
-              (lower-struct-constructor-field-types-for-result
-                ctx
-                struct-name
-                struct-ty
-                fields))]
-          (lower-construct-struct
-            ctx
-            state
-            env
-            type-env
-            struct-name
-            (lower-init-expr-list-from-types field-types)
-            struct-ty))]
-      [(ErrAstFieldDefList message)
-        (ErrLowerExpr (box (lower-diagnostic message)))])))
+              state
+              env
+              type-env
+              struct-name
+              (lower-init-expr-list-from-types field-types)
+              struct-ty))]
+        [(ErrAstFieldDefList message)
+          (ErrLowerExpr (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum
   [ctx : TcContext]
@@ -15842,54 +15852,57 @@
   [type-env : TcTypeEnv]
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
-  (match (tc-enum-decl ctx enum-name)
-    [(OkTcEnumDecl decl)
-      (match decl
-        [(TcEnumDecl _ variants)
-          (match variants
-            [(AstVariantDefNil)
-              (ErrLowerExpr
-                (box
-                  (lower-diagnostic
-                    "lower: init requires enum with at least one variant")))]
-            [(AstVariantDefCons variant _)
-              (match variant
-                [(AstVariantDef variant-name fields _)
-                  (let
-                    [lookup-name : String
-                      (tc-variant-name-for-enum
-                        enum-name
-                        (intern-str variant-name))]
-                    [payload-types : AstTypeList
-                      (tc-resolve-type-list
-                        ctx
-                        (lower-enum-constructor-fields-for-result
-                          ctx
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx enum-name)]
+    (match (tc-enum-decl field-ctx enum-name)
+      [(OkTcEnumDecl decl)
+        (match decl
+          [(TcEnumDecl _ variants)
+            (match variants
+              [(AstVariantDefNil)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic
+                      "lower: init requires enum with at least one variant")))]
+              [(AstVariantDefCons variant _)
+                (match variant
+                  [(AstVariantDef variant-name fields _)
+                    (let
+                      [lookup-name : String
+                        (tc-variant-name-for-enum
                           enum-name
-                          enum-ty
-                          fields))]
-                    (match (compiler-registries-lookup-variant
-                      (tc-context-registries ctx)
-                      lookup-name)
-                      [(SomeI64 handle)
-                        (lower-construct-enum-with-name
-                          ctx
-                          state
-                          env
-                          type-env
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types payload-types)
-                          enum-name
-                          enum-ty)]
-                      [(NoneI64)
-                        (ErrLowerExpr
-                          (box
-                            (lower-diagnostic
-                              (string.string-append
-                                "lower: unknown variant "
-                                lookup-name))))]))])])])]
-    [(ErrTcEnumDecl message) (ErrLowerExpr (box (lower-diagnostic message)))]))
+                          (intern-str variant-name))]
+                      [payload-types : AstTypeList
+                        (tc-resolve-type-list
+                          field-ctx
+                          (lower-enum-constructor-fields-for-result
+                            field-ctx
+                            enum-name
+                            enum-ty
+                            fields))]
+                      (match (compiler-registries-lookup-variant
+                        (tc-context-registries ctx)
+                        lookup-name)
+                        [(SomeI64 handle)
+                          (lower-construct-enum-with-name
+                            ctx
+                            state
+                            env
+                            type-env
+                            lookup-name
+                            handle
+                            (lower-init-expr-list-from-types payload-types)
+                            enum-name
+                            enum-ty)]
+                        [(NoneI64)
+                          (ErrLowerExpr
+                            (box
+                              (lower-diagnostic
+                                (string.string-append
+                                  "lower: unknown variant "
+                                  lookup-name))))]))])])])]
+      [(ErrTcEnumDecl message) (ErrLowerExpr (box (lower-diagnostic message)))])))
 
 (define (lower-init-struct-into
   [ctx : TcContext]
@@ -15899,32 +15912,35 @@
   [dst : CompilerIrValue]
   [struct-name : String]
   [struct-ty : AstType]) : ResultLowerState
-  (if (lower-struct-repr-c? ctx struct-name)
-    (ErrLowerState
-      (box
-        (lower-diagnostic "lower: init supports only default-layout structs")))
-    (match (lower-struct-fields ctx struct-name)
-      [(OkAstFieldDefList fields)
-        (let
-          [field-types : AstTypeList
-            (tc-resolve-type-list
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (if (lower-struct-repr-c? field-ctx struct-name)
+      (ErrLowerState
+        (box
+          (lower-diagnostic "lower: init supports only default-layout structs")))
+      (match (lower-struct-fields field-ctx struct-name)
+        [(OkAstFieldDefList fields)
+          (let
+            [field-types : AstTypeList
+              (tc-resolve-type-list
+                field-ctx
+                (lower-struct-constructor-field-types-for-result
+                  field-ctx
+                  struct-name
+                  struct-ty
+                  fields))]
+            (lower-construct-struct-into
               ctx
-              (lower-struct-constructor-field-types-for-result
-                ctx
-                struct-name
-                struct-ty
-                fields))]
-          (lower-construct-struct-into
-            ctx
-            state
-            env
-            type-env
-            dst
-            struct-name
-            (lower-init-expr-list-from-types field-types)
-            struct-ty))]
-      [(ErrAstFieldDefList message)
-        (ErrLowerState (box (lower-diagnostic message)))])))
+              state
+              env
+              type-env
+              dst
+              struct-name
+              (lower-init-expr-list-from-types field-types)
+              struct-ty))]
+        [(ErrAstFieldDefList message)
+          (ErrLowerState (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum-into
   [ctx : TcContext]
@@ -15934,55 +15950,58 @@
   [dst : CompilerIrValue]
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
-  (match (tc-enum-decl ctx enum-name)
-    [(OkTcEnumDecl decl)
-      (match decl
-        [(TcEnumDecl _ variants)
-          (match variants
-            [(AstVariantDefNil)
-              (ErrLowerState
-                (box
-                  (lower-diagnostic
-                    "lower: init requires enum with at least one variant")))]
-            [(AstVariantDefCons variant _)
-              (match variant
-                [(AstVariantDef variant-name fields _)
-                  (let
-                    [lookup-name : String
-                      (tc-variant-name-for-enum
-                        enum-name
-                        (intern-str variant-name))]
-                    [payload-types : AstTypeList
-                      (tc-resolve-type-list
-                        ctx
-                        (lower-enum-constructor-fields-for-result
-                          ctx
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx enum-name)]
+    (match (tc-enum-decl field-ctx enum-name)
+      [(OkTcEnumDecl decl)
+        (match decl
+          [(TcEnumDecl _ variants)
+            (match variants
+              [(AstVariantDefNil)
+                (ErrLowerState
+                  (box
+                    (lower-diagnostic
+                      "lower: init requires enum with at least one variant")))]
+              [(AstVariantDefCons variant _)
+                (match variant
+                  [(AstVariantDef variant-name fields _)
+                    (let
+                      [lookup-name : String
+                        (tc-variant-name-for-enum
                           enum-name
-                          enum-ty
-                          fields))]
-                    (match (compiler-registries-lookup-variant
-                      (tc-context-registries ctx)
-                      lookup-name)
-                      [(SomeI64 handle)
-                        (lower-construct-enum-with-name-into
-                          ctx
-                          state
-                          env
-                          type-env
-                          dst
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types payload-types)
-                          enum-name
-                          enum-ty)]
-                      [(NoneI64)
-                        (ErrLowerState
-                          (box
-                            (lower-diagnostic
-                              (string.string-append
-                                "lower: unknown variant "
-                                lookup-name))))]))])])])]
-    [(ErrTcEnumDecl message) (ErrLowerState (box (lower-diagnostic message)))]))
+                          (intern-str variant-name))]
+                      [payload-types : AstTypeList
+                        (tc-resolve-type-list
+                          field-ctx
+                          (lower-enum-constructor-fields-for-result
+                            field-ctx
+                            enum-name
+                            enum-ty
+                            fields))]
+                      (match (compiler-registries-lookup-variant
+                        (tc-context-registries ctx)
+                        lookup-name)
+                        [(SomeI64 handle)
+                          (lower-construct-enum-with-name-into
+                            ctx
+                            state
+                            env
+                            type-env
+                            dst
+                            lookup-name
+                            handle
+                            (lower-init-expr-list-from-types payload-types)
+                            enum-name
+                            enum-ty)]
+                        [(NoneI64)
+                          (ErrLowerState
+                            (box
+                              (lower-diagnostic
+                                (string.string-append
+                                  "lower: unknown variant "
+                                  lookup-name))))]))])])])]
+      [(ErrTcEnumDecl message) (ErrLowerState (box (lower-diagnostic message)))])))
 
 (define (lower-init-expr-into
   [ctx : TcContext]

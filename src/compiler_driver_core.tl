@@ -1,4 +1,6 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
+(import stdlib.arena)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -46,20 +48,20 @@
   [pool-arena : i64]) : CompilerDriverState
   (let
     [expr-cell : (Array AstExprNodePoolState)
-      (make-array AstExprNodePoolState 1)]
+      (array.make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
-      (make-array AstTypeNodePoolState 1)]
+      (array.make-array AstTypeNodePoolState 1)]
     [builtin-cell : (Array CompilerBuiltinIdsState)
-      (make-array CompilerBuiltinIdsState 1)]
+      (array.make-array CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
-      (make-array CompilerLowerArenaState 1)]
-    [pool-arena-cell : (Array i64) (make-array i64 1)]
+      (array.make-array CompilerLowerArenaState 1)]
+    [pool-arena-cell : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! expr-cell 0 expr-pool)
-      (array-set! type-cell 0 type-pool)
-      (array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
-      (array-set! lower-cell 0 (compiler-lower-arena-state-new))
-      (array-set! pool-arena-cell 0 pool-arena)
+      (array.array-set! expr-cell 0 expr-pool)
+      (array.array-set! type-cell 0 type-pool)
+      (array.array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
+      (array.array-set! lower-cell 0 (compiler-lower-arena-state-new))
+      (array.array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
@@ -80,7 +82,7 @@
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
-    [pool-arena : i64 (tl_arena_make)]
+    [pool-arena : i64 (arena.tl_arena_make)]
     [state : CompilerDriverState
       (compiler-driver-state-new-from-pools-and-arena
         (ast-expr-node-pool-state-init 2097152 pool-arena)
@@ -88,9 +90,9 @@
         pool-arena)]
     (begin
       (compiler-builtin-ids-state-capture-from-globals!
-        (array-ref (struct-get state builtin-ids) 0))
+        (array.array-ref (struct-get state builtin-ids) 0))
       (compiler-lower-arena-state-capture-from-globals!
-        (array-ref (struct-get state lower-arenas) 0))
+        (array.array-ref (struct-get state lower-arenas) 0))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
@@ -125,8 +127,8 @@
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (ast-node-pools-state-install!
-    (array-ref (struct-get state expr-pool) 0)
-    (array-ref (struct-get state type-pool) 0)))
+    (array.array-ref (struct-get state expr-pool) 0)
+    (array.array-ref (struct-get state type-pool) 0)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -134,7 +136,7 @@
     (struct-get state type-pool)))
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
-  (array-ref (struct-get state pool-arena) 0))
+  (array.array-ref (struct-get state pool-arena) 0))
 
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
@@ -148,7 +150,7 @@
     unit
     (let
       [old-arena : i64 (compiler-driver-state-owned-pool-arena state)]
-      [new-arena : i64 (tl_arena_make)]
+      [new-arena : i64 (arena.tl_arena_make)]
       (begin
         (compiler-load-session-floors-set! 0 0 0)
         (compiler-load-program-cache-clear!)
@@ -156,18 +158,18 @@
         (if (tc-prefix-snapshot-cache-active?)
           unit
           (tc-prefix-snapshot-cache-clear!))
-        (array-set! (struct-get state pool-arena) 0 new-arena)
-        (array-set!
+        (array.array-set! (struct-get state pool-arena) 0 new-arena)
+        (array.array-set!
           (struct-get state expr-pool)
           0
           (ast-expr-node-pool-state-init 2097152 new-arena))
-        (array-set!
+        (array.array-set!
           (struct-get state type-pool)
           0
           (ast-type-node-pool-state-init 262144 new-arena))
         (compiler-driver-state-install-pools! state)
         (unsafe
-          (tl_arena_destroy old-arena))))))
+          (arena.tl_arena_destroy old-arena))))))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -179,28 +181,34 @@
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (compiler-builtin-ids-state-install!
-    (array-ref (struct-get state builtin-ids) 0)))
+    (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-install!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (array.array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-capture-active-pools!
   [state : CompilerDriverState]) : unit
   (begin
-    (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
-    (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
+    (array.array-set!
+      (struct-get state expr-pool)
+      0
+      (ast-node-pool-state-capture))
+    (array.array-set!
+      (struct-get state type-pool)
+      0
+      (ty-node-pool-state-capture))))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
   (compiler-builtin-ids-state-capture-from-globals!
-    (array-ref (struct-get state builtin-ids) 0)))
+    (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-capture-from-globals!
-    (array-ref (struct-get state lower-arenas) 0)))
+    (array.array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-install-transients!
   [state : CompilerDriverState]) : unit
@@ -971,11 +979,11 @@
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (let
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
       (begin
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         (let
           [persistent-key : String (string.string-copy (& key))]
           [cold : ResultCompilerLoadWithPaths
@@ -991,7 +999,7 @@
                   seen)]
               [(ErrCompilerLoadWithPaths _) unit])
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             cold)))]
     loaded))
 
@@ -1137,11 +1145,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
       (begin
         (unsafe
-          (tl_arena_set (ast-node-pool-context-base-arena pools)))
+          (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
           [persistent-key : String (string.string-copy (& key))]
           [cold : ResultCompilerLoadWithPaths
@@ -1161,7 +1169,7 @@
                   pools)]
               [(ErrCompilerLoadWithPaths _) unit])
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             cold)))]
     loaded))
 

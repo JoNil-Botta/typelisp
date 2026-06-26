@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.vector)
@@ -172,7 +173,7 @@
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
     [expr-a0 : AstExprNodePoolState
-      (array-ref (struct-get state-a expr-pool) 0)]
+      (array.array-ref (struct-get state-a expr-pool) 0)]
     [expr-a-id0 : i64 (ast-expr-node-pool-state-mark expr-a0)]
     [expr-a1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a0 7)]
@@ -180,7 +181,7 @@
     [expr-a2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-a1 8)]
     [expr-b0 : AstExprNodePoolState
-      (array-ref (struct-get state-b expr-pool) 0)]
+      (array.array-ref (struct-get state-b expr-pool) 0)]
     [expr-b-mark : i64 (ast-expr-node-pool-state-mark expr-b0)]
     [expr-b1 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b0 11)]
@@ -190,7 +191,7 @@
     [expr-b2 : AstExprNodePoolState
       (compiler-driver-state-smoke-expr-push expr-b-reset 12)]
     [type-a0 : AstTypeNodePoolState
-      (array-ref (struct-get state-a type-pool) 0)]
+      (array.array-ref (struct-get state-a type-pool) 0)]
     [type-a-id0 : i64 (ast-type-node-pool-state-mark type-a0)]
     [type-a1 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-a0 (AstTyI64))]
@@ -198,7 +199,7 @@
     [type-a2 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-a1 (AstTyString))]
     [type-b0 : AstTypeNodePoolState
-      (array-ref (struct-get state-b type-pool) 0)]
+      (array.array-ref (struct-get state-b type-pool) 0)]
     [type-b-mark : i64 (ast-type-node-pool-state-mark type-b0)]
     [type-b1 : AstTypeNodePoolState
       (compiler-driver-state-smoke-type-push type-b0 (AstTyBool))]
@@ -229,9 +230,9 @@
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
     [type-a0 : AstTypeNodePoolState
-      (array-ref (struct-get state-a type-pool) 0)]
+      (array.array-ref (struct-get state-a type-pool) 0)]
     [type-b0 : AstTypeNodePoolState
-      (array-ref (struct-get state-b type-pool) 0)]
+      (array.array-ref (struct-get state-b type-pool) 0)]
     (match (ast-type-node-pool-state-push type-a0 (AstTyI64))
       [(AstTypeNodePoolPushOk type-a1 a-id)
         (match (ast-type-node-pool-state-push type-b0 (AstTyI64))
@@ -306,8 +307,8 @@
       (match (box-get decls-box)
         [(AstDeclCons (AstDeclDefFn _ _ (AstTyPtr inner-id) body-id _) _)
           (begin
-            (array-set! body-cell 0 body-id)
-            (array-set! type-cell 0 inner-id)
+            (array.array-set! body-cell 0 body-id)
+            (array.array-set! type-cell 0 inner-id)
             (and
               (compiler-driver-state-smoke-context-type-u8? pools inner-id)
               (compiler-driver-state-smoke-context-ptr-null-u8? pools body-id)))]
@@ -317,12 +318,12 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [body-cell : (Array i64) (make-array i64 1)]
-    [type-cell : (Array i64) (make-array i64 1)]
+    [body-cell : (Array i64) (array.make-array i64 1)]
+    [type-cell : (Array i64) (array.make-array i64 1)]
     [ok : bool true]
     (begin
-      (array-set! body-cell 0 (- 0 1))
-      (array-set! type-cell 0 (- 0 1))
+      (array.array-set! body-cell 0 (- 0 1))
+      (array.array-set! type-cell 0 (- 0 1))
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
       (let
@@ -353,17 +354,17 @@
             [(OkAstProgramDiagnostic _) unit]
             [(ErrAstProgramDiagnostic _) (set! ok false)])
           (compiler-driver-state-reset-file-state! state-b)
-          (unless (>= (array-ref body-cell 0) 0) (set! ok false))
-          (unless (>= (array-ref type-cell 0) 0) (set! ok false))
+          (unless (>= (array.array-ref body-cell 0) 0) (set! ok false))
+          (unless (>= (array.array-ref type-cell 0) 0) (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array-ref type-cell 0))
+              (array.array-ref type-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array-ref body-cell 0))
+              (array.array-ref body-cell 0))
             (set! ok false))
           ok)))))
 
@@ -707,7 +708,10 @@
         body-cell
         type-cell)
         (begin
-          (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
+          (array.array-set!
+            before-cell
+            0
+            (ast-node-pool-context-expr-len pools))
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
             AstDeclPathNil
@@ -716,7 +720,10 @@
             pools)
             [(OkCompilerTypecheck _)
               (begin
-                (array-set! after-cell 0 (ast-node-pool-context-expr-len pools))
+                (array.array-set!
+                  after-cell
+                  0
+                  (ast-node-pool-context-expr-len pools))
                 true)]
             [(ErrCompilerTypecheck _) false]))
         false)]
@@ -726,24 +733,24 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [body-a-cell : (Array i64) (make-array i64 1)]
-    [type-a-cell : (Array i64) (make-array i64 1)]
-    [before-a-cell : (Array i64) (make-array i64 1)]
-    [after-a-cell : (Array i64) (make-array i64 1)]
-    [body-b-cell : (Array i64) (make-array i64 1)]
-    [type-b-cell : (Array i64) (make-array i64 1)]
-    [before-b-cell : (Array i64) (make-array i64 1)]
-    [after-b-cell : (Array i64) (make-array i64 1)]
+    [body-a-cell : (Array i64) (array.make-array i64 1)]
+    [type-a-cell : (Array i64) (array.make-array i64 1)]
+    [before-a-cell : (Array i64) (array.make-array i64 1)]
+    [after-a-cell : (Array i64) (array.make-array i64 1)]
+    [body-b-cell : (Array i64) (array.make-array i64 1)]
+    [type-b-cell : (Array i64) (array.make-array i64 1)]
+    [before-b-cell : (Array i64) (array.make-array i64 1)]
+    [after-b-cell : (Array i64) (array.make-array i64 1)]
     [ok : bool true]
     (begin
-      (array-set! body-a-cell 0 (- 0 1))
-      (array-set! type-a-cell 0 (- 0 1))
-      (array-set! before-a-cell 0 (- 0 1))
-      (array-set! after-a-cell 0 (- 0 1))
-      (array-set! body-b-cell 0 (- 0 1))
-      (array-set! type-b-cell 0 (- 0 1))
-      (array-set! before-b-cell 0 (- 0 1))
-      (array-set! after-b-cell 0 (- 0 1))
+      (array.array-set! body-a-cell 0 (- 0 1))
+      (array.array-set! type-a-cell 0 (- 0 1))
+      (array.array-set! before-a-cell 0 (- 0 1))
+      (array.array-set! after-a-cell 0 (- 0 1))
+      (array.array-set! body-b-cell 0 (- 0 1))
+      (array.array-set! type-b-cell 0 (- 0 1))
+      (array.array-set! before-b-cell 0 (- 0 1))
+      (array.array-set! after-b-cell 0 (- 0 1))
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
       (let
@@ -767,15 +774,17 @@
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array-ref type-a-cell 0))
+              (array.array-ref type-a-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array-ref body-a-cell 0))
+              (array.array-ref body-a-cell 0))
             (set! ok false))
           (unless
-            (> (array-ref after-a-cell 0) (array-ref before-a-cell 0))
+            (>
+              (array.array-ref after-a-cell 0)
+              (array.array-ref before-a-cell 0))
             (set! ok false))
           (compiler-driver-state-install-pools! state-a)
           (unless
@@ -793,15 +802,17 @@
           (unless
             (compiler-driver-state-smoke-context-type-u8?
               pools-a
-              (array-ref type-a-cell 0))
+              (array.array-ref type-a-cell 0))
             (set! ok false))
           (unless
             (compiler-driver-state-smoke-context-ptr-null-u8?
               pools-a
-              (array-ref body-a-cell 0))
+              (array.array-ref body-a-cell 0))
             (set! ok false))
           (unless
-            (> (array-ref after-b-cell 0) (array-ref before-b-cell 0))
+            (>
+              (array.array-ref after-b-cell 0)
+              (array.array-ref before-b-cell 0))
             (set! ok false))
           ok)))))
 
@@ -822,7 +833,7 @@
           (let
             [state-a-generation : i64
               (compiler-builtin-ids-state-generation
-                (array-ref (struct-get state-a builtin-ids) 0))]
+                (array.array-ref (struct-get state-a builtin-ids) 0))]
             (begin
               (compiler-driver-state-install-builtins! state-b)
               (let
@@ -837,7 +848,7 @@
                   (unless
                     (=
                       (compiler-builtin-ids-state-generation
-                        (array-ref (struct-get state-a builtin-ids) 0))
+                        (array.array-ref (struct-get state-a builtin-ids) 0))
                       state-a-generation)
                     (set! ok false))
                   (compiler-driver-state-install-builtins! state-a)
@@ -867,7 +878,7 @@
       (let
         [before : i64
           (compiler-driver-state-smoke-builtin-ids-data-addr
-            (array-ref (struct-get state builtin-ids) 0))]
+            (array.array-ref (struct-get state builtin-ids) 0))]
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
@@ -877,7 +888,7 @@
           (let
             [after : i64
               (compiler-driver-state-smoke-builtin-ids-data-addr
-                (array-ref (struct-get state builtin-ids) 0))]
+                (array.array-ref (struct-get state builtin-ids) 0))]
             (begin
               (unless (= before after) (set! ok false))
               (compiler-builtin-reset!)
@@ -908,9 +919,9 @@
               (compiler-driver-state-reset-file-state! state-b)
               (let
                 [lower-b : CompilerLowerArenaState
-                  (array-ref (struct-get state-b lower-arenas) 0)]
+                  (array.array-ref (struct-get state-b lower-arenas) 0)]
                 [lower-a : CompilerLowerArenaState
-                  (array-ref (struct-get state-a lower-arenas) 0)]
+                  (array.array-ref (struct-get state-a lower-arenas) 0)]
                 (begin
                   (unless
                     (= (compiler-lower-arena-state-scratch-arena lower-b) 0)

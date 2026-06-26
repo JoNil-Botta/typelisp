@@ -3,6 +3,7 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
+(import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import "read.tl")
@@ -756,10 +757,10 @@
 (define (package-lock-self-test) : i64
   (if (package-lock-self-test-ok?)
     42
-    (panic "package-lock: self-test mismatch")))
+    (io.panic "package-lock: self-test mismatch")))
 
 (test
   package-lock-parse-emit-round-trip
   (if (package-lock-self-test-ok?)
     unit
-    (panic "package-lock: inline self-test mismatch")))
+    (io.panic "package-lock: inline self-test mismatch")))

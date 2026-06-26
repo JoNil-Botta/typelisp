@@ -1,4 +1,5 @@
 ;; Regression for stale lowerer global-name cache use during prune body indexing.
+(import stdlib.io)
 (import "stdlib/test.tl")
 (import "../../src/compiler_lower.tl")
 
@@ -18,7 +19,7 @@
             (set! lower-active-global-name-cache prev-name-cache)
             42)]
         [(ErrCompilerLower diag)
-          (panic (compiler-diagnostic-message (box-get diag)))]))))
+          (io.panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (test
   compiler-lower-body-index-cache

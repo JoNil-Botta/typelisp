@@ -41474,13 +41474,7 @@
               (OkMacroDecl
                 (ast-decl-def-fn-export-id name params ret nbody export))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclTest name expr-box span)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (match (macro-expand-expr ctx global-env decls 0 expr)
-            [(OkMacroExpr nexpr)
-              (OkMacroDecl (ast-decl-test-id name nexpr span))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+      [(AstDeclTest _ _ _) (OkMacroDecl decl)]
       [(AstDeclImport (AstImportSpec kind _ _ _ _))
         (match kind
           [(AstImportMacro call-id _)
@@ -42408,7 +42402,7 @@
     [(AstDeclDef _ _ expr-box) (macro-node-uses-macro? ctx decls expr-box)]
     [(AstDeclDefFn _ _ _ body-box _)
       (macro-node-uses-macro? ctx decls body-box)]
-    [(AstDeclTest _ expr-box _) (macro-node-uses-macro? ctx decls expr-box)]
+    [(AstDeclTest _ _ _) false]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
         [(AstImportMacro _ _) true]
@@ -42752,8 +42746,7 @@
       (not (macro-expr-might-fire? (ast-node-get expr-box)))]
     [(AstDeclDefFn _ _ _ body-box _)
       (not (macro-expr-might-fire? (ast-node-get body-box)))]
-    [(AstDeclTest _ expr-box _)
-      (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+    [(AstDeclTest _ _ _) true]
     [_ false]))
 
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
@@ -43133,10 +43126,7 @@
         [body : AstExpr (ast-node-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
     [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclTest _ body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclTest _ _ _) false]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
         [(AstImportMacro _ _) true]
@@ -43257,6 +43247,11 @@
             (cfg compile-profile (compiler-tc-macro-profile-reset))
             ;; Same per-compile reset for the clone-able type set cache.
             (tc-clone-able-cache-reset!)
+            ;; Type-name misses are keyed only by lookup text. Each macro
+            ;; fixed-point pass rebuilds symbols from a different expanded
+            ;; program, so a miss from an earlier pass must not hide generated
+            ;; module-local types introduced by that pass.
+            (tc-nominal-owner-cache-reset!)
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.

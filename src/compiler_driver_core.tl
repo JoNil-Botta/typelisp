@@ -1305,33 +1305,39 @@
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
-        (match (lower-compiler-program-with-decl-paths-mode-cache
-          input-path
-          (ast-program decls)
-          paths
-          (compiler-driver-lower-mode-for-target target mode)
-          stdlib-roots
-          (compiler-load-prelude-cache-key
-            "typecheck-prefix-lower"
-            stdlib-roots
-            cfgs))
-          [(OkCompilerLower program spans)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
-              (if (ty-node-pool-exhausted?)
-                (ErrCompilerDriverLowered
-                  (box
-                    (compiler-driver-ty-node-pool-exhausted-diagnostic
-                      input-path)))
-                (compiler-driver-lowered-from-active-pools program spans)))]
-          [(ErrCompilerLower diag)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-driver-profile-finish-phase "lower"))
-              (ErrCompilerDriverLowered diag))]))]
+        (let
+          [prev-no-main-entry-prune : bool (lower-no-main-entry-prune-active?)]
+          (begin
+            (lower-no-main-entry-prune-set! true)
+            (match (lower-compiler-program-with-decl-paths-mode-cache
+              input-path
+              (ast-program decls)
+              paths
+              (compiler-driver-lower-mode-for-target target mode)
+              stdlib-roots
+              (compiler-load-prelude-cache-key
+                "typecheck-prefix-lower"
+                stdlib-roots
+                cfgs))
+              [(OkCompilerLower program spans)
+                (begin
+                  (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (if (ty-node-pool-exhausted?)
+                    (ErrCompilerDriverLowered
+                      (box
+                        (compiler-driver-ty-node-pool-exhausted-diagnostic
+                          input-path)))
+                    (compiler-driver-lowered-from-active-pools program spans)))]
+              [(ErrCompilerLower diag)
+                (begin
+                  (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "lower"))
+                  (ErrCompilerDriverLowered diag))]))))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -1399,36 +1405,43 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
-          (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
-            input-path
-            (ast-program decls)
-            paths
-            (compiler-driver-lower-mode-for-target target mode)
-            stdlib-roots
-            (compiler-load-prelude-cache-key
-              "typecheck-prefix-lower"
-              stdlib-roots
-              cfgs)
-            pools)
-            [(OkCompilerLower program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (if (ty-node-pool-exhausted?)
-                  (ErrCompilerDriverLowered
-                    (box
-                      (compiler-driver-ty-node-pool-exhausted-diagnostic
-                        input-path)))
+          (let
+            [prev-no-main-entry-prune : bool
+              (lower-no-main-entry-prune-active?)]
+            (begin
+              (lower-no-main-entry-prune-set! true)
+              (match (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+                input-path
+                (ast-program decls)
+                paths
+                (compiler-driver-lower-mode-for-target target mode)
+                stdlib-roots
+                (compiler-load-prelude-cache-key
+                  "typecheck-prefix-lower"
+                  stdlib-roots
+                  cfgs)
+                pools)
+                [(OkCompilerLower program spans)
                   (begin
-                    (ast-node-pool-context-capture-active! pools)
-                    (compiler-driver-lowered-from-pools program spans pools))))]
-            [(ErrCompilerLower diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ErrCompilerDriverLowered diag))]))]
+                    (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-finish-phase "lower"))
+                    (if (ty-node-pool-exhausted?)
+                      (ErrCompilerDriverLowered
+                        (box
+                          (compiler-driver-ty-node-pool-exhausted-diagnostic
+                            input-path)))
+                      (begin
+                        (ast-node-pool-context-capture-active! pools)
+                        (compiler-driver-lowered-from-pools program spans pools))))]
+                [(ErrCompilerLower diag)
+                  (begin
+                    (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-finish-phase "lower"))
+                    (ErrCompilerDriverLowered diag))]))))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
@@ -2123,14 +2136,23 @@
   [cfgs : SymI64Env]) : ResultCompilerDriver
   ;; Emit-IR needs the macro prelude but must remain runtime-free so
   ;; target parity checks compare user IR rather than OS-specific runtime IR.
-  (compiler-driver-emit-ir-summary-lowered-result-with-level
-    (compiler-driver-load-and-lower-pic-image
-      input-path
-      target
-      stdlib-roots
-      mode
-      (compiler-driver-target-cfgs target cfgs))
-    opt-level))
+  (let
+    [prev-no-main-entry-prune : bool (lower-no-main-entry-prune-active?)]
+    (begin
+      (lower-no-main-entry-prune-set! true)
+      (let
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-pic-image
+            input-path
+            target
+            stdlib-roots
+            mode
+            (compiler-driver-target-cfgs target cfgs))]
+        (begin
+          (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+          (compiler-driver-emit-ir-summary-lowered-result-with-level
+            lowered
+            opt-level))))))
 
 (define (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -2140,15 +2162,24 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
-  (compiler-driver-emit-ir-summary-lowered-result-with-level
-    (compiler-driver-load-and-lower-pic-image-with-state
-      state
-      input-path
-      target
-      stdlib-roots
-      mode
-      (compiler-driver-target-cfgs target cfgs))
-    opt-level))
+  (let
+    [prev-no-main-entry-prune : bool (lower-no-main-entry-prune-active?)]
+    (begin
+      (lower-no-main-entry-prune-set! true)
+      (let
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-pic-image-with-state
+            state
+            input-path
+            target
+            stdlib-roots
+            mode
+            (compiler-driver-target-cfgs target cfgs))]
+        (begin
+          (lower-no-main-entry-prune-set! prev-no-main-entry-prune)
+          (compiler-driver-emit-ir-summary-lowered-result-with-level
+            lowered
+            opt-level))))))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
   [input-path : String]

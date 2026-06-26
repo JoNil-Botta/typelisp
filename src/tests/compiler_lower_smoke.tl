@@ -80,6 +80,26 @@
       [(OkCompilerDriverLowered _ _ _) true]
       [(ErrCompilerDriverLowered _) false])))
 
+(define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
+  (let
+    [path : String "target/lower_module_macro_vector_no_main.tl"]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    (begin
+      (io.write-file
+        path
+        (compiler-lower-module-macro-stdlib-vector-import-no-main-source))
+      (match (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+        path
+        (BackendTargetLinux)
+        roots
+        0
+        (BackendModeScalar)
+        (compiler-cfg-empty))
+        [(OkCompilerDriver _) true]
+        [(ErrCompilerDriver diag)
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
+
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
     (unless
@@ -91,6 +111,9 @@
     (unless
       (compiler-lower-smoke-stdlib-args-ok?)
       (panic "lower: issue3494 stdlib args failed"))
+    (unless
+      (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?)
+      (panic "lower: no-main module macro vector IR failed"))
     true))
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit

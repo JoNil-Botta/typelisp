@@ -6983,6 +6983,15 @@
 (define (lower-comptime-only-module? [module : String]) : bool
   (string.string-eq module "stdlib.comptime"))
 
+(define lower-no-main-entry-prune-active : bool
+  false)
+
+(define (lower-no-main-entry-prune-active?) : bool
+  lower-no-main-entry-prune-active)
+
+(define (lower-no-main-entry-prune-set! [active : bool]) : unit
+  (set! lower-no-main-entry-prune-active active))
+
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -7267,7 +7276,9 @@
                 entry-path
                 name-cache)]
             [result : LowerPrunedProgram
-              (if (hashmap.string-i64-map-contains? all-functions "main")
+              (if (or
+                (hashmap.string-i64-map-contains? all-functions "main")
+                lower-no-main-entry-prune-active)
                 (begin
                   (set!
                     lower-reach-active-runtime-paths
@@ -7303,12 +7314,19 @@
                               entry-path
                               ""
                               all-functions
-                              (lower-reach-add-logical
-                                all-functions
-                                (LowerReachState
-                                  (hashmap.i64-i64-map-with-capacity 8192)
-                                  LowerStringNil)
-                                "main")))))
+                              (let
+                                [base-roots : LowerReachState
+                                  (LowerReachState
+                                    (hashmap.i64-i64-map-with-capacity 8192)
+                                    LowerStringNil)]
+                                (if (hashmap.string-i64-map-contains?
+                                  all-functions
+                                  "main")
+                                  (lower-reach-add-logical
+                                    all-functions
+                                    base-roots
+                                    "main")
+                                  base-roots))))))
                       decls))
                     [(LowerReachState reachable _)
                       (let
@@ -45485,6 +45503,28 @@
     (compiler-lower-module-macro-stdlib-vector-import-source))
     [(OkCompilerLower _ _) true]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-module-macro-stdlib-vector-import-no-main-source) : String
+  "(defmacro (vector-user) : Module
+  `(begin
+    (module generated.lower_vector_user_no_main)
+    (import stdlib.vector)
+    (defstruct T
+      (value i64))
+    (import (vector T) as vec)
+    (define (make [value : i64]) : T
+      (T value))
+    (define (score [first : T] [fallback : T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) first)
+          (if (= (vec.len (& items)) 1)
+            (begin
+              (vec.get (& items) 0 fallback)
+              42)
+            0))))))
+(import (vector-user) as user)")
 
 (define (compiler-lower-function-decl-count-wrapped-ok?) : bool
   (let

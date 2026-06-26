@@ -3,8 +3,8 @@
 ;; The CST keeps enough shape for a formatter without committing to final
 ;; layout: atoms keep original token spelling, comments stay as trivia nodes,
 ;; and parenthesized/bracketed lists keep their delimiter kind.
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 (import "format_tokens.tl")
 
 (defenum FormatCst
@@ -257,7 +257,7 @@
   [stop-tag : i64]) : FormatParsedCstList
   (match (fmt-parse-seq-result stream idx stop-tag)
     [(OkFormatParsedCstList parsed) parsed]
-    [(ErrFormatParsedCstList err) (panic (format-source-error-message err))]))
+    [(ErrFormatParsedCstList err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
@@ -305,7 +305,7 @@
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
   (match (fmt-parse-one-result stream idx)
     [(OkFormatParsedCst parsed) parsed]
-    [(ErrFormatParsedCst err) (panic (format-source-error-message err))]))
+    [(ErrFormatParsedCst err) (io.panic (format-source-error-message err))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
@@ -317,7 +317,7 @@
 (define (parse-format-tokens [stream : FormatTokenStream]) : FormatCst
   (match (parse-format-tokens-result stream)
     [(OkFormatCst tree) tree]
-    [(ErrFormatCst err) (panic (format-source-error-message err))]))
+    [(ErrFormatCst err) (io.panic (format-source-error-message err))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
   (match (format-lex-result src)
@@ -327,12 +327,12 @@
 (define (parse-format-source [src : String]) : FormatCst
   (match (parse-format-source-result src)
     [(OkFormatCst tree) tree]
-    [(ErrFormatCst err) (panic (format-source-error-message err))]))
+    [(ErrFormatCst err) (io.panic (format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import \"std.tl\")
 ; header comment
-(extern (print [arg0 : i64]) : unit)
+(extern (io.print [arg0 : i64]) : unit)
 (defenum Maybe (Some i64) (None))
 (defstruct Point (x i64) (y i64))
 (define (main [xs : (Array i64)] [p : Point]) : i64
@@ -357,9 +357,11 @@
     (and
       (= (format-token-tag-count stream (fmt-tag-int)) 2)
       (= (format-token-tag (format-token-at stream 1)) (fmt-tag-int))
-      (string-eq (format-token-text (format-token-at stream 1)) "0x2a")
+      (string.string-eq (format-token-text (format-token-at stream 1)) "0x2a")
       (= (format-token-tag (format-token-at stream 2)) (fmt-tag-int))
-      (string-eq (format-token-text (format-token-at stream 2)) "-0b101010")
+      (string.string-eq
+        (format-token-text (format-token-at stream 2))
+        "-0b101010")
       (= (format-token-tag (format-token-at stream 4)) (fmt-tag-end)))))
 
 (define (format-cst-apostrophe-char-ok?) : bool
@@ -374,7 +376,7 @@
     [(OkFormatCst _) false]
     [(ErrFormatCst err)
       (and
-        (string-eq
+        (string.string-eq
           (format-source-error-message err)
           "format cst: unexpected closing delimiter")
         (format-source-span-eq? (format-source-error-span err) 2 3 2 3))]))
@@ -384,13 +386,13 @@
     (match (parse-format-source-result "#x'")
       [(OkFormatCst _) false]
       [(ErrFormatCst err)
-        (string-eq
+        (string.string-eq
           (format-source-error-message err)
           "format lexer: unexpected character")])
     (match (parse-format-source-result "#\\space'")
       [(OkFormatCst _) false]
       [(ErrFormatCst err)
-        (string-eq
+        (string.string-eq
           (format-source-error-message err)
           "format lexer: unexpected character")])))
 

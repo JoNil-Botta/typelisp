@@ -6,9 +6,10 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.str_cat)
+(import stdlib.hashmap)
 (import "compiler_liveness.tl")
 (cfg test (import stdlib.test))
 
@@ -508,7 +509,7 @@
   (match regs
     [(CompilerRegStringNil) false]
     [(CompilerRegStringCons reg rest)
-      (if (string-eq reg want)
+      (if (string.string-eq reg want)
         true
         (compiler-reg-string-list-contains? (box-get rest) want))]))
 
@@ -1844,11 +1845,11 @@
 (define (compiler-reg-bits-build-rows!
   [blocks : CompilerLiveBlockList]
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap.StringI64Map]
   [use-rows : (Array i64)]
   [def-rows : (Array i64)]
   [words : i64]
-  [index : i64]) : StringI64Map
+  [index : i64]) : hashmap.StringI64Map
   (match blocks
     [(CompilerLiveBlockNil) idmap]
     [(CompilerLiveBlockCons block rest)
@@ -1861,7 +1862,7 @@
             (compiler-reg-bits-build-rows!
               (box-get rest)
               arr
-              (string-i64-map-put idmap label index)
+              (hashmap.string-i64-map-put idmap label index)
               use-rows
               def-rows
               words
@@ -1902,22 +1903,22 @@
   [live-out : (Array i64)]
   [live-in : (Array i64)]
   [succs : CompilerLiveLabelSet]
-  [idmap : StringI64Map]
+  [idmap : hashmap.StringI64Map]
   [b : i64]
   [words : i64]) : unit
   (match succs
     [(CompilerLiveLabelNil) unit]
     [(CompilerLiveLabelCons label rest)
       (begin
-        (match (string-i64-map-get idmap label)
-          [(StringI64MapFound idx)
+        (match (hashmap.string-i64-map-get idmap label)
+          [(hashmap.StringI64MapFound idx)
             (compiler-reg-bits-or-row!
               live-out
               (* b words)
               live-in
               (* idx words)
               words)]
-          [(StringI64MapMissing) unit])
+          [(hashmap.StringI64MapMissing) unit])
         (compiler-reg-bits-or-succs!
           live-out
           live-in
@@ -1957,7 +1958,7 @@
 
 (define (compiler-reg-bits-iterate!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap.StringI64Map]
   [words : i64]
   [use-rows : (Array i64)]
   [live-in : (Array i64)]
@@ -2000,7 +2001,7 @@
 
 (define (compiler-reg-bits-fixpoint!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : StringI64Map]
+  [idmap : hashmap.StringI64Map]
   [count : i64]
   [words : i64]
   [use-rows : (Array i64)]
@@ -2173,11 +2174,11 @@
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (let
-            [idmap : StringI64Map
+            [idmap : hashmap.StringI64Map
               (compiler-reg-bits-build-rows!
                 live-blocks
                 arr
-                (string-i64-map-with-capacity
+                (hashmap.string-i64-map-with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
                 def-rows
@@ -2833,7 +2834,7 @@
     [(CompilerRegActiveCons item rest)
       (match item
         [(CompilerRegActive _ _ active-reg)
-          (if (string-eq reg active-reg)
+          (if (string.string-eq reg active-reg)
             true
             (compiler-reg-active-contains-register? (box-get rest) reg))])]))
 
@@ -2846,7 +2847,9 @@
     [(CompilerRegActiveCons item rest)
       (match item
         [(CompilerRegActive active-var _ active-reg)
-          (if (and (string-eq reg active-reg) (not (= active-var except-var)))
+          (if (and
+            (string.string-eq reg active-reg)
+            (not (= active-var except-var)))
             true
             (compiler-reg-active-register-conflicts-except?
               (box-get rest)
@@ -2925,7 +2928,7 @@
     [(CompilerRegActiveCons item rest)
       (match item
         [(CompilerRegActive aid _ areg)
-          (if (string-eq reg areg)
+          (if (string.string-eq reg areg)
             (if (not
               (compiler-reg-vars-interfere-segmented-index? index var aid))
               (compiler-reg-active-register-conflicts?
@@ -3062,12 +3065,14 @@
   (match left
     [(CompilerRegRegister left-reg)
       (match right
-        [(CompilerRegRegister right-reg) (string-eq left-reg right-reg)]
+        [(CompilerRegRegister right-reg) (string.string-eq left-reg right-reg)]
         [_ false])]
     [(CompilerRegRegisterPair left-a left-b)
       (match right
         [(CompilerRegRegisterPair right-a right-b)
-          (and (string-eq left-a right-a) (string-eq left-b right-b))]
+          (and
+            (string.string-eq left-a right-a)
+            (string.string-eq left-b right-b))]
         [_ false])]
     [(CompilerRegSpill left-offset)
       (match right
@@ -5040,8 +5045,8 @@
 
 (define (compiler-reg-loop-depth-block-ids
   [blocks : CompilerIrBlockList]
-  [ids : StringI64Map]
-  [index : i64]) : StringI64Map
+  [ids : hashmap.StringI64Map]
+  [index : i64]) : hashmap.StringI64Map
   (match blocks
     [(IrBlockNil) ids]
     [(IrBlockCons block rest)
@@ -5049,7 +5054,7 @@
         [(IrBlock label _)
           (compiler-reg-loop-depth-block-ids
             (box-get rest)
-            (string-i64-map-put ids label index)
+            (hashmap.string-i64-map-put ids label index)
             (+ index 1))])]
     [(IrBlockArray seq)
       (compiler-reg-loop-depth-block-ids
@@ -5059,21 +5064,21 @@
 
 (define (compiler-reg-loop-depth-record-succ!
   [loop-ends : (Array i64)]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [source-id : i64]
   [label : String]) : unit
-  (match (string-i64-map-get ids label)
-    [(StringI64MapFound target-id)
+  (match (hashmap.string-i64-map-get ids label)
+    [(hashmap.StringI64MapFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
         (if (> source-id (array-ref loop-ends target-id))
           (array-set! loop-ends target-id source-id)
           unit)
         unit)]
-    [(StringI64MapMissing) unit]))
+    [(hashmap.StringI64MapMissing) unit]))
 
 (define (compiler-reg-loop-depth-record-succs!
   [loop-ends : (Array i64)]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [source-id : i64]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
@@ -5089,7 +5094,7 @@
 
 (define (compiler-reg-loop-depth-record-blocks!
   [blocks : CompilerIrBlockList]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (match blocks
@@ -5146,10 +5151,11 @@
     [count : i64 (compiler-ir-block-list-count blocks)]
     [depths : (Array i64) (make-array i64 count)]
     [loop-ends : (Array i64) (make-array i64 count)]
-    [ids : StringI64Map
+    [ids : hashmap.StringI64Map
       (compiler-reg-loop-depth-block-ids
         blocks
-        (string-i64-map-with-capacity (compiler-reg-bits-map-capacity count))
+        (hashmap.string-i64-map-with-capacity
+          (compiler-reg-bits-map-capacity count))
         0)]
     (begin
       (compiler-reg-fill-i64-array depths 0)
@@ -5826,40 +5832,42 @@
 
 (define (compiler-reg-region-label-map-from
   [labels : CompilerRegStringList]
-  [out : StringI64Map]) : StringI64Map
+  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match labels
     [(CompilerRegStringNil) out]
     [(CompilerRegStringCons label rest)
       (compiler-reg-region-label-map-from
         (box-get rest)
-        (string-i64-map-put out label 1))]))
+        (hashmap.string-i64-map-put out label 1))]))
 
-(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : StringI64Map
+(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : hashmap.StringI64Map
   (compiler-reg-region-label-map-from
     labels
-    (string-i64-map-with-capacity
+    (hashmap.string-i64-map-with-capacity
       (compiler-reg-bits-map-capacity (compiler-reg-string-list-count labels)))))
 
-(define (compiler-reg-region-label? [region : StringI64Map] [label : String]) : bool
-  (match (string-i64-map-get region label)
-    [(StringI64MapFound _) true]
-    [(StringI64MapMissing) false]))
+(define (compiler-reg-region-label?
+  [region : hashmap.StringI64Map]
+  [label : String]) : bool
+  (match (hashmap.string-i64-map-get region label)
+    [(hashmap.StringI64MapFound _) true]
+    [(hashmap.StringI64MapMissing) false]))
 
 (define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : String
   (match block
     [(CompilerLiveBlock label _ _ _ _ _ _) label]))
 
 (define (compiler-reg-edge-copy-increment-pred!
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [pred-counts : (Array i64)]
   [label : String]) : unit
-  (match (string-i64-map-get ids label)
-    [(StringI64MapFound index)
+  (match (hashmap.string-i64-map-get ids label)
+    [(hashmap.StringI64MapFound index)
       (array-set! pred-counts index (+ (array-ref pred-counts index) 1))]
-    [(StringI64MapMissing) unit]))
+    [(hashmap.StringI64MapMissing) unit]))
 
 (define (compiler-reg-edge-copy-count-preds-succs!
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [pred-counts : (Array i64)]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
@@ -5873,7 +5881,7 @@
           (box-get rest)))]))
 
 (define (compiler-reg-edge-copy-count-preds-blocks!
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [index : i64]) : unit
@@ -5891,7 +5899,7 @@
         (+ index 1)))))
 
 (define (compiler-reg-edge-copy-pred-counts
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]) : (Array i64)
   (let
     [pred-counts : (Array i64) (make-array i64 (array-length blocks))]
@@ -5903,7 +5911,7 @@
 (define (compiler-reg-edge-copy-refusal
   [from-label : String]
   [to-label : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "regalloc: edge copy from "
     from-label
     " to "
@@ -5933,10 +5941,10 @@
     (compiler-live-set-contains? (compiler-live-block-live-in to-block) var)))
 
 (define (compiler-reg-edge-copy-boundary-one
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : StringI64Map]
+  [region : hashmap.StringI64Map]
   [from-block : CompilerLiveBlock]
   [from-label : String]
   [from-inside : bool]
@@ -5946,8 +5954,8 @@
   [ty : AstType]
   [to-label : String]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
-  (match (string-i64-map-get ids to-label)
-    [(StringI64MapFound to-index)
+  (match (hashmap.string-i64-map-get ids to-label)
+    [(hashmap.StringI64MapFound to-index)
       (let
         [to-block : CompilerLiveBlock (array-ref blocks to-index)]
         [to-inside : bool (compiler-reg-region-label? region to-label)]
@@ -5987,15 +5995,17 @@
                     acc)))]
             [(CompilerRegEdgeCopyPlacementRefused message)
               (CompilerRegEdgeCopyRefused message)])))]
-    [(StringI64MapMissing)
+    [(hashmap.StringI64MapMissing)
       (CompilerRegEdgeCopyRefused
-        (str-cat "regalloc: edge copy target block not found: " to-label))]))
+        (str_cat.str-cat
+          "regalloc: edge copy target block not found: "
+          to-label))]))
 
 (define (compiler-reg-edge-copy-boundary-succs
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : StringI64Map]
+  [region : hashmap.StringI64Map]
   [from-block : CompilerLiveBlock]
   [from-label : String]
   [from-inside : bool]
@@ -6041,10 +6051,10 @@
           (CompilerRegEdgeCopyRefused message)])]))
 
 (define (compiler-reg-edge-copy-boundary-blocks
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : StringI64Map]
+  [region : hashmap.StringI64Map]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -6176,13 +6186,15 @@
   (match blocks
     [(IrBlockNil)
       (CompilerRegEdgeCopyRewriteRefused
-        (str-cat
+        (str_cat.str-cat
           "regalloc: edge copy insertion block not found: "
           (compiler-reg-edge-copy-target-label copy)))]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label _)
-          (if (string-eq label (compiler-reg-edge-copy-target-label copy))
+          (if (string.string-eq
+            label
+            (compiler-reg-edge-copy-target-label copy))
             (CompilerRegEdgeCopyRewrite
               (compiler-ir-block-cons
                 (compiler-reg-edge-copy-insert-in-block block copy)
@@ -6386,21 +6398,21 @@
     (> (* mentions (compiler-reg-loop-depth-weight depth)) copy-count)))
 
 (define (compiler-reg-loop-split-succs-has-backedge?
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [source-index : i64]
   [succs : CompilerLiveLabelSet]) : bool
   (match succs
     [(CompilerLiveLabelNil) false]
     [(CompilerLiveLabelCons label rest)
-      (match (string-i64-map-get ids label)
-        [(StringI64MapFound target-index)
+      (match (hashmap.string-i64-map-get ids label)
+        [(hashmap.StringI64MapFound target-index)
           (if (<= target-index source-index)
             true
             (compiler-reg-loop-split-succs-has-backedge?
               ids
               source-index
               (box-get rest)))]
-        [(StringI64MapMissing)
+        [(hashmap.StringI64MapMissing)
           (compiler-reg-loop-split-succs-has-backedge?
             ids
             source-index
@@ -6408,7 +6420,7 @@
 
 (define (compiler-reg-loop-split-region-remap-blocks
   [blocks : CompilerIrBlockList]
-  [region : StringI64Map]
+  [region : hashmap.StringI64Map]
   [remap : (Array i64)]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) IrBlockNil]
@@ -6571,7 +6583,7 @@
 (define (compiler-reg-loop-split-select-blocks
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [live-blocks : (Array CompilerLiveBlock)]
   [depths : (Array i64)]
   [point : i64]
@@ -6680,7 +6692,7 @@
   [copies : CompilerRegEdgeCopyList]) : CompilerRegCallSaveRewrite
   (let
     [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
-    [region-map : StringI64Map
+    [region-map : hashmap.StringI64Map
       (compiler-reg-region-label-map
         (compiler-reg-string-cons region-label CompilerRegStringNil))]
     (begin
@@ -7292,23 +7304,23 @@
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-row [label : String] [bucket : i64]) : String
-    (str-cat
+    (str_cat.str-cat
       "regalloc-call-span-census|"
       label
       "|"
-      (int->string
+      (string.int->string
         (compiler-reg-call-span-census-count
           compiler-reg-call-span-census-total
           bucket
           (compiler-reg-call-span-outcome-register)))
       "|"
-      (int->string
+      (string.int->string
         (compiler-reg-call-span-census-count
           compiler-reg-call-span-census-total
           bucket
           (compiler-reg-call-span-outcome-spill)))
       "|"
-      (int->string
+      (string.int->string
         (compiler-reg-call-span-census-count
           compiler-reg-call-span-census-total
           bucket
@@ -7319,12 +7331,12 @@
   regalloc-census
   (define (compiler-reg-call-span-census-print!) : unit
     (begin
-      (print-error
+      (io.print-error
         "regalloc-call-span-census|calls_spanned|register|spill|unassigned\n")
-      (print-error (compiler-reg-call-span-census-row "0" 0))
-      (print-error (compiler-reg-call-span-census-row "1" 1))
-      (print-error (compiler-reg-call-span-census-row "2-3" 2))
-      (print-error (compiler-reg-call-span-census-row "4+" 3)))))
+      (io.print-error (compiler-reg-call-span-census-row "0" 0))
+      (io.print-error (compiler-reg-call-span-census-row "1" 1))
+      (io.print-error (compiler-reg-call-span-census-row "2-3" 2))
+      (io.print-error (compiler-reg-call-span-census-row "4+" 3)))))
 
 ;; ---- move census (cfg regalloc-census) ------------------------------------
 ;; Categorise every harvested IR move by why it survived as a reg-reg copy, to
@@ -7454,32 +7466,32 @@
   regalloc-census
   (define (compiler-reg-move-census-print!) : unit
     (begin
-      (print-error
+      (io.print-error
         "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
-      (print-error
-        (str-cat
+      (io.print-error
+        (str_cat.str-cat
           "regalloc-move-census|"
-          (int->string (array-ref compiler-reg-move-census-counts 0))
+          (string.int->string (array-ref compiler-reg-move-census-counts 0))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 1))
+          (string.int->string (array-ref compiler-reg-move-census-counts 1))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 2))
+          (string.int->string (array-ref compiler-reg-move-census-counts 2))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 3))
+          (string.int->string (array-ref compiler-reg-move-census-counts 3))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 4))
+          (string.int->string (array-ref compiler-reg-move-census-counts 4))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 5))
+          (string.int->string (array-ref compiler-reg-move-census-counts 5))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 6))
+          (string.int->string (array-ref compiler-reg-move-census-counts 6))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 7))
+          (string.int->string (array-ref compiler-reg-move-census-counts 7))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 8))
+          (string.int->string (array-ref compiler-reg-move-census-counts 8))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 9))
+          (string.int->string (array-ref compiler-reg-move-census-counts 9))
           "|"
-          (int->string (array-ref compiler-reg-move-census-counts 10))
+          (string.int->string (array-ref compiler-reg-move-census-counts 10))
           "\n")))))
 
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
@@ -7658,15 +7670,15 @@
 ;; these tiny callees are inlined so the standalone pattern rarely survives; at
 ;; -O1 it is pervasive.) Self-tests never set it, so the map stays empty and the
 ;; structural Pack/Word seeding below is unaffected.
-(define compiler-reg-group-counts : StringI64Map
-  (string-i64-map-with-capacity 8))
-(define compiler-reg-group-class-masks : StringI64Map
-  (string-i64-map-with-capacity 8))
+(define compiler-reg-group-counts : hashmap.StringI64Map
+  (hashmap.string-i64-map-with-capacity 8))
+(define compiler-reg-group-class-masks : hashmap.StringI64Map
+  (hashmap.string-i64-map-with-capacity 8))
 
-(define (compiler-reg-set-group-counts! [counts : StringI64Map]) : unit
+(define (compiler-reg-set-group-counts! [counts : hashmap.StringI64Map]) : unit
   (set! compiler-reg-group-counts counts))
 
-(define (compiler-reg-set-group-class-masks! [masks : StringI64Map]) : unit
+(define (compiler-reg-set-group-class-masks! [masks : hashmap.StringI64Map]) : unit
   (set! compiler-reg-group-class-masks masks))
 
 ;; The aggregate type name a value carries (mirror of
@@ -7685,20 +7697,20 @@
 (define (compiler-reg-type-register-group? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
-    (if (string-eq name "")
+    (if (string.string-eq name "")
       false
-      (match (string-i64-map-get compiler-reg-group-counts name)
-        [(StringI64MapFound count) (> count 1)]
-        [(StringI64MapMissing) false]))))
+      (match (hashmap.string-i64-map-get compiler-reg-group-counts name)
+        [(hashmap.StringI64MapFound count) (> count 1)]
+        [(hashmap.StringI64MapMissing) false]))))
 
 (define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
-    (if (string-eq name "")
+    (if (string.string-eq name "")
       false
-      (match (string-i64-map-get compiler-reg-group-class-masks name)
-        [(StringI64MapFound mask) (> mask 0)]
-        [(StringI64MapMissing) false]))))
+      (match (hashmap.string-i64-map-get compiler-reg-group-class-masks name)
+        [(hashmap.StringI64MapFound mask) (> mask 0)]
+        [(hashmap.StringI64MapMissing) false]))))
 
 (define (compiler-reg-var-register-group-has-sse?
   [types : CompilerRegVarTypes]
@@ -8061,8 +8073,9 @@
   (match (compiler-reg-assignment-table-lookup assignments w)
     [(CompilerRegSomeLocation location)
       (match location
-        [(CompilerRegRegister r) (string-eq r reg)]
-        [(CompilerRegRegisterPair a b) (or (string-eq a reg) (string-eq b reg))]
+        [(CompilerRegRegister r) (string.string-eq r reg)]
+        [(CompilerRegRegisterPair a b)
+          (or (string.string-eq a reg) (string.string-eq b reg))]
         [(CompilerRegSpill _) false]
         [(CompilerRegRemat _) false])]
     [(CompilerRegNoLocation) false]))
@@ -8335,7 +8348,7 @@
           hint-regs
           var
           n)]
-      (if (not (string-eq hint ""))
+      (if (not (string.string-eq hint ""))
         (begin
           (compiler-reg-assignment-table-insert
             assignments
@@ -8353,7 +8366,7 @@
               start-idx
               rcount
               n)]
-          (if (not (string-eq free ""))
+          (if (not (string.string-eq free ""))
             (begin
               (compiler-reg-assignment-table-insert
                 assignments
@@ -8376,7 +8389,7 @@
                   start-idx
                   rcount
                   n)]
-              (if (not (string-eq ev ""))
+              (if (not (string.string-eq ev ""))
                 (begin
                   (compiler-reg-greedy-evict-reg!
                     assignments
@@ -9885,7 +9898,7 @@
     [(IrInstrSyscall _ args)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(IrInstrCall _ name args _)
-      (if (string-eq name "tl_memcpy")
+      (if (string.string-eq name "tl_memcpy")
         unit
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(IrInstrCallIndirect _ callee args _)
@@ -11951,8 +11964,9 @@
   (match maybe-location
     [(CompilerRegSomeLocation location)
       (match location
-        [(CompilerRegRegister found) (string-eq found reg)]
-        [(CompilerRegRegisterPair a b) (or (string-eq a reg) (string-eq b reg))]
+        [(CompilerRegRegister found) (string.string-eq found reg)]
+        [(CompilerRegRegisterPair a b)
+          (or (string.string-eq a reg) (string.string-eq b reg))]
         [_ false])]
     [_ false]))
 
@@ -13775,7 +13789,7 @@
           [(IrInstrMov found-dst found-value _)
             (match found-value
               [(IrValueGlobal found-name)
-                (if (and (= found-dst dst) (string-eq found-name name))
+                (if (and (= found-dst dst) (string.string-eq found-name name))
                   true
                   (compiler-reg-instr-list-has-mov-global?
                     (box-get rest)
@@ -13801,7 +13815,7 @@
           [(IrInstrLoad found-dst found-src _)
             (match found-src
               [(IrValueGlobalAddr found-name)
-                (if (and (= found-dst dst) (string-eq found-name name))
+                (if (and (= found-dst dst) (string.string-eq found-name name))
                   true
                   (compiler-reg-instr-list-has-load-global-addr?
                     (box-get rest)
@@ -13838,7 +13852,7 @@
                     (if (and
                       (= found-dst dst)
                       (and
-                        (string-eq found-name name)
+                        (string.string-eq found-name name)
                         (and
                           (= found-offset-value offset)
                           (ast-type-eq? found-ty ty))))
@@ -13884,7 +13898,7 @@
           [(IrInstrStore found-name found-value _)
             (match found-value
               [(IrValueVar found-src)
-                (if (and (string-eq found-name name) (= found-src src))
+                (if (and (string.string-eq found-name name) (= found-src src))
                   true
                   (compiler-reg-instr-list-has-store-var?
                     (box-get rest)
@@ -13965,7 +13979,7 @@
       [(IrBlockCons block rest)
         (match block
           [(IrBlock label instrs)
-            (if (string-eq label want-label)
+            (if (string.string-eq label want-label)
               (compiler-ir-instr-seq-to-list instrs)
               (compiler-reg-block-instr-list (box-get rest) want-label))])]
       [(IrBlockArray seq)
@@ -14639,8 +14653,8 @@
               _
               placement)
             (if (and
-              (string-eq found-from from-label)
-              (string-eq found-to to-label)
+              (string.string-eq found-from from-label)
+              (string.string-eq found-to to-label)
               (= found-src src)
               (= found-dst dst)
               (match placement
@@ -15532,7 +15546,7 @@
             segment-index
             1
             hole-aware)
-            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
             [(CompilerRegNoString) false])]
         [root-hole-reuses : bool
           (match (compiler-reg-first-free-register-holes
@@ -15541,7 +15555,7 @@
             segment-index
             2
             hole-aware)
-            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
             [(CompilerRegNoString) false])]
         ;; overlap still conflicts: var 3's segment [1,3] overlaps var 0's [0,2].
         [root-overlap-conflicts : bool
@@ -15561,7 +15575,7 @@
             segment-index
             4
             hole-aware)
-            [(CompilerRegSomeString reg) (string-eq reg "%r12")]
+            [(CompilerRegSomeString reg) (string.string-eq reg "%r12")]
             [(CompilerRegNoString) false])]
         [roots : CompilerLiveI64Set
           (compiler-reg-coalesce-merged-root-set
@@ -16321,7 +16335,7 @@
     (compiler-regalloc-scalar-self-test?)
     (compiler-regalloc-storage-self-test?))
     42
-    (panic "regalloc: smoke mismatch")))
+    (io.panic "regalloc: smoke mismatch")))
 
 (cfg
   test

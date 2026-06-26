@@ -1,18 +1,18 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
-(import "../stdlib/string.tl")
+(import stdlib.string)
 (import "compiler_object.tl")
 
 (define (compiler-object-elf-string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_length text)
-    (string-length text)))
+    (string.string-length text)))
 
 (define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
-    (string-ref text index)))
+    (string.string-ref text index)))
 
 (defenum ResultCompilerObjectElf
   (OkCompilerObjectElf String)
@@ -422,7 +422,7 @@
         (match (compiler-object-symbol-list-ref symbols slot)
           [(ObjectSymbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
-              (if (string-eq found name)
+              (if (string.string-eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -448,7 +448,7 @@
           [(ObjectSymbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
-              (if (string-eq found name)
+              (if (string.string-eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -487,7 +487,7 @@
             (compiler-object-data-record-list-ref records index)]
           (match record
             [(ObjectDataLabel found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -517,7 +517,7 @@
             (compiler-object-instr-list-ref instrs index)]
           (match instr
             [(ObjectX64Label found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -1405,7 +1405,7 @@
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
           [(ObjectSymbol found _ _ _)
-            (if (string-eq found name)
+            (if (string.string-eq found name)
               (begin
                 (set! result cur-offset)
                 (set! done true))

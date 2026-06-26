@@ -11,9 +11,9 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
-(import "../stdlib/io.tl")
+(import stdlib.io)
 (import "format_tokens.tl")
-(import "../stdlib/string.tl")
+(import stdlib.string)
 
 (defenum DocItemKind
   (DocKindDefine)
@@ -120,7 +120,7 @@
     (begin
       (while keep
         (if (< i n)
-          (if (doc-newline? (string-ref src i))
+          (if (doc-newline? (string.string-ref src i))
             (set! keep false)
             (set! i (+ i 1)))
           (set! keep false)))
@@ -130,11 +130,11 @@
   (begin
     (unless (< line-end n) (return line-end))
     (let
-      [k : char (string-ref src line-end)]
+      [k : char (string.string-ref src line-end)]
       (begin
         (unless (= k '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string-ref src (+ line-end 1)) '\n')
+        (if (= (string.string-ref src (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
@@ -145,7 +145,7 @@
     (begin
       (while keep
         (if (< i end)
-          (if (doc-inline-space? (string-ref src i))
+          (if (doc-inline-space? (string.string-ref src i))
             (set! i (+ i 1))
             (set! keep false))
           (set! keep false)))
@@ -153,8 +153,8 @@
 
 (define (doc-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)]
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
@@ -165,7 +165,9 @@
           (begin
             (while ok
               (if (< i prefix-len)
-                (if (= (string-ref text (+ start i)) (string-ref prefix i))
+                (if (=
+                  (string.string-ref text (+ start i))
+                  (string.string-ref prefix i))
                   (set! i (+ i 1))
                   (set! ok false))
                 (set! ok false)))
@@ -173,8 +175,8 @@
 
 (define (doc-string-contains? [text : String] [needle : String]) : bool
   (let
-    [text-len : i64 (string-length text)]
-    [needle-len : i64 (string-length needle)]
+    [text-len : i64 (string.string-length text)]
+    [needle-len : i64 (string.string-length needle)]
     (if (= needle-len 0)
       true
       (let
@@ -197,7 +199,7 @@
   [has-current : bool]
   [line : String]) : String
   (if has-current
-    (string-append current (string-append "\n" line))
+    (string.string-append current (string.string-append "\n" line))
     line))
 
 (define (doc-comment-body
@@ -209,11 +211,11 @@
     [body-start : i64 (+ line-start prefix-len)]
     (begin
       (if (< body-start line-end)
-        (if (= (string-ref src body-start) ' ')
+        (if (= (string.string-ref src body-start) ' ')
           (set! body-start (+ body-start 1))
           (set! body-start body-start))
         (set! body-start body-start))
-      (substring src body-start (- line-end body-start)))))
+      (string.substring src body-start (- line-end body-start)))))
 
 (define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
   (if (doc-string-prefix-at? src ";#" line-start)
@@ -234,7 +236,7 @@
       (while keep
         (if (< i n)
           (let
-            [c : char (string-ref src i)]
+            [c : char (string.string-ref src i)]
             (cond
               [escaped
                 (begin
@@ -261,18 +263,20 @@
   [n : i64]) : i64
   (if (< (+ start 1) n)
     (let
-      [payload : char (string-ref src (+ start 1))]
+      [payload : char (string.string-ref src (+ start 1))]
       (cond
         [(= payload '\\')
           (if (and
             (< (+ start 3) n)
-            (doc-apostrophe-char-escape? (string-ref src (+ start 2)))
-            (= (string-ref src (+ start 3)) '\''))
+            (doc-apostrophe-char-escape? (string.string-ref src (+ start 2)))
+            (= (string.string-ref src (+ start 3)) '\''))
             (+ start 4)
             (+ start 1))]
         [(or (= payload '\'') (= payload '\n') (= payload '\r')) (+ start 1)]
         [else
-          (if (and (< (+ start 2) n) (= (string-ref src (+ start 2)) '\''))
+          (if (and
+            (< (+ start 2) n)
+            (= (string.string-ref src (+ start 2)) '\''))
             (+ start 3)
             (+ start 1))]))
     (+ start 1)))
@@ -286,7 +290,7 @@
       (while keep
         (if (< i n)
           (let
-            [c : char (string-ref src i)]
+            [c : char (string.string-ref src i)]
             (cond
               [(= c ';')
                 (set! i (doc-next-line-start src (doc-line-end src i n) n))]
@@ -360,10 +364,10 @@
           [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
           (and
             (doc-token-symbol? stream name-idx)
-            (string-eq (doc-symbol-text stream name-idx) "generated")))
+            (string.string-eq (doc-symbol-text stream name-idx) "generated")))
         (and
           (doc-token-symbol? stream first)
-          (string-eq (doc-symbol-text stream first) ":generated"))))
+          (string.string-eq (doc-symbol-text stream first) ":generated"))))
     false))
 
 (define (doc-info-after-name
@@ -406,17 +410,17 @@
           [head : String (doc-symbol-text stream head-idx)]
           [after-head : i64 (+ head-idx 1)]
           (cond
-            [(string-eq head "define")
+            [(string.string-eq head "define")
               (doc-info-after-define stream after-head)]
-            [(string-eq head "extern")
+            [(string.string-eq head "extern")
               (doc-info-after-extern stream after-head)]
-            [(string-eq head "defenum")
+            [(string.string-eq head "defenum")
               (doc-info-after-name (DocKindDefEnum) stream after-head)]
-            [(string-eq head "defstruct")
+            [(string.string-eq head "defstruct")
               (doc-info-after-name (DocKindDefStruct) stream after-head)]
-            [(string-eq head "defmacro")
+            [(string.string-eq head "defmacro")
               (doc-info-after-defmacro stream after-head)]
-            [(string-eq head "comptime-decl")
+            [(string.string-eq head "comptime-decl")
               (doc-info-after-comptime-decl stream after-head)]
             [else (DocNoDeclInfo)]))
         (DocNoDeclInfo)))
@@ -439,7 +443,7 @@
 
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [i : i64 0]
     [module-doc : String ""]
     [module-has : bool false]
@@ -454,7 +458,7 @@
           (if (= line-start line-end)
             (set! i (doc-next-line-start src line-end n))
             (let
-              [c : char (string-ref src line-start)]
+              [c : char (string.string-ref src line-start)]
               (if (= c ';')
                 (let
                   [module-prefix-len : i64
@@ -500,7 +504,7 @@
                   (let
                     [form-end : i64 (doc-scan-form-end src line-start n)]
                     [signature : String
-                      (substring src line-start (- form-end line-start))]
+                      (string.substring src line-start (- form-end line-start))]
                     (begin
                       (if pending-has
                         (match (doc-decl-info signature)
@@ -520,7 +524,7 @@
       (DocExtraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
-  (doc-extract-source (read-file path)))
+  (doc-extract-source (io.read-file path)))
 
 (define (doc-extract-smoke-source) : String
   ";# Module title
@@ -545,7 +549,7 @@
 
 ;# later module
 ;: external doc
-(extern (print [arg0 : String]) : unit)
+(extern (io.print [arg0 : String]) : unit)
 ;: struct doc
 (defstruct Point (x i64) (y i64))
 ;: macro doc
@@ -579,8 +583,8 @@
     [(DocItem kind item-name item-doc signature)
       (begin
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
-        (unless (string-eq item-name name) (return false))
-        (unless (string-eq item-doc doc-text) (return false))
+        (unless (string.string-eq item-name name) (return false))
+        (unless (string.string-eq item-doc doc-text) (return false))
         (doc-string-contains? signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
@@ -627,9 +631,9 @@
                                   (doc-item-ok?
                                     print
                                     3
-                                    "print"
+                                    "io.print"
                                     "external doc"
-                                    "(extern (print")
+                                    "(extern (io.print")
                                   (return false))
                                 (unless
                                   (doc-item-ok?
@@ -684,28 +688,28 @@
     [(DocExtraction module-doc items)
       (begin
         (unless
-          (string-eq
+          (string.string-eq
             module-doc
             "Module title\nsecond module line\nlater module")
-          (return (panic "doc-extract: module doc smoke mismatch")))
+          (return (io.panic "doc-extract: module doc smoke mismatch")))
         (unless
           (= (doc-item-list-count items) 6)
-          (return (panic "doc-extract: item count smoke mismatch")))
+          (return (io.panic "doc-extract: item count smoke mismatch")))
         (unless
           (doc-extract-smoke-items-ok? items)
-          (return (panic "doc-extract: item doc smoke mismatch")))
+          (return (io.panic "doc-extract: item doc smoke mismatch")))
         (unless
           (doc-extract-generated-smoke-ok?)
-          (return (panic "doc-extract: generated item mismatch")))
+          (return (io.panic "doc-extract: generated item mismatch")))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction legacy-module legacy-items)
             (begin
               (unless
-                (string-eq legacy-module "Legacy module")
-                (return (panic "doc-extract: legacy module doc mismatch")))
+                (string.string-eq legacy-module "Legacy module")
+                (return (io.panic "doc-extract: legacy module doc mismatch")))
               (unless
                 (= (doc-item-list-count legacy-items) 1)
-                (return (panic "doc-extract: legacy item count mismatch")))
+                (return (io.panic "doc-extract: legacy item count mismatch")))
               (match legacy-items
                 [(DocItemCons legacy legacy-rest)
                   (match (box-get legacy-rest)
@@ -718,7 +722,8 @@
                             "legacy"
                             "legacy item"
                             "(define legacy : i64 1)")
-                          (return (panic "doc-extract: legacy item mismatch")))
+                          (return
+                            (io.panic "doc-extract: legacy item mismatch")))
                         42)]
                     [_ 0])]
                 [_ 0]))]))]))

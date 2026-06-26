@@ -9281,6 +9281,14 @@
       (if (string-eq index-reg "")
         "%rax"
         index-reg)]
+    ;; Length-load scratch (was hardcoded %r11). Active-scavenge so a pooled %r11
+    ;; value is not clobbered; exclude the index home (the cmp reads index vs
+    ;; length). Falls back to %r11 only via emergency spill.
+    [scav-len : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-scavenge-exclude-with index-reg)
+        6
+        "%r11")]
     (if (string-eq index-reg "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -9304,13 +9312,13 @@
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 length
-                "%r11")
+                scav-len)
                 [(OkCompilerBackend length-asm)
                   (OkCompilerBackend
                     (compiler-backend-bounds-check-asm
                       index-asm
                       length-asm
-                      "%r11"
+                      scav-len
                       index-operand
                       call-space
                       ok-symbol
@@ -9335,13 +9343,13 @@
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             length
-            "%r11")
+            scav-len)
             [(OkCompilerBackend length-asm)
               (OkCompilerBackend
                 (compiler-backend-bounds-check-asm
                   ""
                   length-asm
-                  "%r11"
+                  scav-len
                   index-operand
                   call-space
                   ok-symbol
@@ -10589,7 +10597,8 @@
   [function : String]
   [current-label : String]
   [dst : i64]
-  [to-ty : AstType]) : String
+  [to-ty : AstType]
+  [scratch-reg : String]) : String
   (let
     [op : String (compiler-backend-u64-to-float-cast-op to-ty)]
     [high-label : String
@@ -10607,7 +10616,9 @@
           (string-append
             (str-cat high-symbol ":\n" "")
             (string-append
-              "    movq %rax, %r11\n    andq $1, %r11\n    shrq $1, %rax\n    orq %r11, %rax\n"
+              (string-append
+                (str-cat "    movq %rax, " scratch-reg "\n    andq $1, " scratch-reg "\n")
+                (str-cat "    shrq $1, %rax\n    orq " scratch-reg ", %rax\n"))
               (string-append
                 (str-cat
                   "    cvtsi2"
@@ -10666,11 +10677,20 @@
           load
           (match from-ty
             [(AstTyU64)
+              ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
+              ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
+              ;; actively picks a different register); the freeness query keeps it
+              ;; off live homes. Degrades to %r11 only via emergency spill.
               (compiler-backend-u64-to-float-cast-asm
                 function
                 current-label
                 dst
-                to-ty)]
+                to-ty
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-binop-scavenge-exclude-build)
+                  5
+                  "%r11"))]
             [_ (compiler-backend-int-to-float-cast-asm to-ty)])
           (compiler-backend-emit-store-float-var-with-plan
             assignments

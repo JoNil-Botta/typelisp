@@ -6204,28 +6204,28 @@ Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
 functions, traits, trait objects, vtables, or runtime type-erased dispatch for
 recoverable errors. Reuse comes from module-emitting stdlib macros and
-remaining comptime-generated concrete result declarations: the generator emits
-nominal enum types and helper functions for the requested payload/error type
-keys.
+hand-written monomorphic concrete enums. The stdlib macros emit nominal enum
+types and helper functions for the requested payload/error type keys.
 
 The generated-family identity is a stable key, not a runtime type object:
 
 - Absence-only family key: `stdlib.option.generated.<payload-type-key>`.
 - Recoverable-error family key:
-  `result:<success-type-key>:<error-type-key>`.
-- Module-macro generated option keys include the macro identity and
-  `type-key`, so repeated imports of `(option T)` reuse the same concrete
-  module and type.
+  `stdlib.result.generated.<success-type-key>.<error-type-key>`.
+- Module-macro generated option/result keys include the macro identity and
+  `type-key` arguments, so repeated imports of `(option T)` or `(result T E)`
+  reuse the same concrete module and type.
 - Display names are deterministic ASCII identifiers derived from those keys.
   Options expose module-relative names such as `option_i64.Option`,
   `option_i64.some`, `option_i64.none`, `option_i64.is-some?`,
-  `option_i64.value-or`, and `option_i64.map`; result-family compatibility
-  declarations keep names such as `Result_String_IoError`,
-  `Ok_String_IoError`, and `Err_String_IoError`.
+  `option_i64.value-or`, and `option_i64.map`. Results expose module-relative
+  names such as `result_i64_string.Result`, `result_i64_string.ok`,
+  `result_i64_string.err`, `result_i64_string.is-ok?`,
+  `result_i64_string.value-or`, and `result_i64_string.map`.
 
-Where no stdlib module macro or generated result family is available,
-hand-written monomorphic enums are the source equivalent. Use `Maybe*` or
-`Option*` names for absence-only APIs and `Result*` names for APIs that
+Where no stdlib module macro is available, hand-written monomorphic enums are
+the source equivalent. Use `Maybe*` or `Option*` names for absence-only APIs
+and `Result*` names for APIs that
 distinguish success from an error value. Matches must be exhaustive; omitted
 variants are rejected by the type checker.
 

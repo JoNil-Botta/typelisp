@@ -1,9 +1,12 @@
-; generated_option_result_families.tl - Concrete Option/Result family requests (#902).
+; generated_option_result_families.tl - Generated Option/Result family modules.
 (import "stdlib/string.tl")
 (import "stdlib/option.tl")
+(import "stdlib/result.tl")
 (import (option String) as option_string)
 (import (option i64) as option_i64)
 (import (option i64) as option_i64_again)
+(import (result i64 String) as result_i64_string)
+(import (result i64 String) as result_i64_string_again)
 
 (defstruct Payload
   (value i64))
@@ -12,46 +15,18 @@
   (StatusOk)
   (StatusBad i64))
 
-(comptime-decl
-  (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key
-    (type String)))
-  (defenum Result_I64_String
-    (Ok_I64_String i64)
-    (Err_I64_String String)))
+(import (result Payload Status) as result_payload_status)
+(import (result result_i64_string.Result String) as result_nested)
 
-(comptime-decl
-  (:generated stdlib/result-family result-i64-string-value-or (type-key
-    (type i64)) (type-key (type String)))
-  (define (result-i64-string-value-or
-    [value : Result_I64_String]
-    [fallback : i64]) : i64
-    (match value
-      [(Ok_I64_String n) n]
-      [(Err_I64_String _) fallback])))
-
-(comptime-decl
-  (:generated stdlib/result-family Result_Payload_Status (type-key
-    (type Payload)) (type-key (type Status)))
-  (defenum Result_Payload_Status
-    (Ok_Payload_Status Payload)
-    (Err_Payload_Status Status)))
-
-(comptime-decl
-  (:generated stdlib/result-family Result_Result_I64_String_String (type-key
-    (type Result_I64_String)) (type-key (type String)))
-  (defenum Result_Result_I64_String_String
-    (Ok_Result_I64_String_String Result_I64_String)
-    (Err_Result_I64_String_String String)))
-
-(define (read-i64 [ok : bool]) : Result_I64_String
+(define (read-i64 [ok : bool]) : result_i64_string.Result
   (if ok
-    (Ok_I64_String 41)
-    (Err_I64_String "no")))
+    (result_i64_string.ok 41)
+    (result_i64_string.err "no")))
 
-(define (read-plus [ok : bool]) : Result_I64_String
+(define (read-plus [ok : bool]) : result_i64_string.Result
   (let
     [value : i64 (try (read-i64 ok))]
-    (Ok_I64_String (+ value 1))))
+    (result_i64_string.ok (+ value 1))))
 
 (define (read-option-i64 [ok : bool]) : option_i64.Option
   (if ok
@@ -66,8 +41,14 @@
 (define (option-i64-double [value : i64]) : i64
   (* value 2))
 
+(define (result-i64-double [value : i64]) : i64
+  (* value 2))
+
 (define (option-duplicate-import-score [value : option_i64_again.Option]) : i64
   (option_i64_again.value-or value 0))
+
+(define (result-duplicate-import-score [value : result_i64_string_again.Result]) : i64
+  (result_i64_string_again.value-or value 0))
 
 (define (option-string-some-score) : i64
   (let
@@ -83,21 +64,23 @@
       1
       0)))
 
-(define (payload-score [value : Result_Payload_Status]) : i64
+(define (result-string-score [value : result_i64_string.Result]) : i64
   (match value
-    [(Ok_Payload_Status payload) (struct-get payload value)]
-    [(Err_Payload_Status status)
+    [(result_i64_string.Ok n) n]
+    [(result_i64_string.Err text) (string-length text)]))
+
+(define (payload-score [value : result_payload_status.Result]) : i64
+  (match value
+    [(result_payload_status.Ok payload) (struct-get payload value)]
+    [(result_payload_status.Err status)
       (match status
         [(StatusOk) 10]
         [(StatusBad code) code])]))
 
-(define (nested-score [value : Result_Result_I64_String_String]) : i64
+(define (nested-score [value : result_nested.Result]) : i64
   (match value
-    [(Ok_Result_I64_String_String inner)
-      (match inner
-        [(Ok_I64_String n) n]
-        [(Err_I64_String text) (string-length text)])]
-    [(Err_Result_I64_String_String text) (string-length text)]))
+    [(result_nested.Ok inner) (result-string-score inner)]
+    [(result_nested.Err text) (string-length text)]))
 
 (define (main) : i64
   (let
@@ -112,15 +95,17 @@
       (option_i64.value-or
         (option_i64.map (option_i64.some 2) option-i64-double)
         0)]
-    [result-try : i64
-      (match (read-plus true)
-        [(Ok_I64_String n) n]
-        [(Err_I64_String text) (string-length text)])]
+    [result-try : i64 (result-string-score (read-plus true))]
     [result-fallback : i64
-      (result-i64-string-value-or (Err_I64_String "bad") 5)]
-    [payload : i64 (payload-score (Ok_Payload_Status (Payload 3)))]
-    [nested : i64
-      (nested-score (Ok_Result_I64_String_String (Ok_I64_String 7)))]
+      (result_i64_string.value-or (result_i64_string.err "bad") 5)]
+    [result-duplicate : i64
+      (result-duplicate-import-score (result_i64_string.ok 6))]
+    [result-map : i64
+      (result_i64_string.value-or
+        (result_i64_string.map (result_i64_string.ok 2) result-i64-double)
+        0)]
+    [payload : i64 (payload-score (result_payload_status.ok (Payload 3)))]
+    [nested : i64 (nested-score (result_nested.ok (result_i64_string.ok 7)))]
     (+
       option-some
       (+
@@ -135,4 +120,8 @@
                 option-duplicate
                 (+
                   option-map
-                  (+ result-try (+ result-fallback (+ payload nested))))))))))))
+                  (+
+                    result-try
+                    (+
+                      result-fallback
+                      (+ result-duplicate (+ result-map (+ payload nested))))))))))))))

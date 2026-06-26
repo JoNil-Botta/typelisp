@@ -46,6 +46,7 @@ unimported_string_length_reject|check-fail|tests/safety/unimported_string_length
 unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|unbound name string-ref
 unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|unbound name string-eq
 unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|unbound name string->int
+result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`

@@ -628,6 +628,40 @@
             (- (ctfe-private-string-length payload) start)))))
     name))
 
+(define (ctfe-symbol-module-key [module : String] [name : String]) : String
+  (if (= (ctfe-private-string-length module) 0)
+    name
+    (string.string-append module (string.string-append "/" name))))
+
+(define (ctfe-hygiene-global-symbol-name [module : String] [name : String]) : String
+  (string.string-append
+    (ctfe-hygiene-global-prefix)
+    (ctfe-symbol-module-key module name)))
+
+(define ctfe-module-macro-export-keys : hashmap.StringI64Map
+  (hashmap.string-i64-map-with-capacity 1))
+
+(define (ctfe-module-macro-export-key [module : String] [name : String]) : String
+  (string.string-append module (string.string-append "|" name)))
+
+(define (ctfe-module-macro-export-reset!) : unit
+  (set!
+    ctfe-module-macro-export-keys
+    (hashmap.string-i64-map-with-capacity 256)))
+
+(define (ctfe-module-macro-export-add! [module : String] [name : String]) : unit
+  (set!
+    ctfe-module-macro-export-keys
+    (hashmap.string-i64-map-put
+      ctfe-module-macro-export-keys
+      (ctfe-module-macro-export-key module name)
+      1)))
+
+(define (ctfe-module-macro-export? [module : String] [name : String]) : bool
+  (hashmap.string-i64-map-contains?
+    ctfe-module-macro-export-keys
+    (ctfe-module-macro-export-key module name)))
+
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
     [(CtfeReflectStruct key _ _ _) key]
@@ -3710,6 +3744,12 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
         "expr-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-name")
+        "module-name"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
+        "module-export-macro?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "module-hook")
+        "module-hook"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool?")
         "expr-bool?"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool-value")
@@ -3965,6 +4005,166 @@
     [_
       (ErrCtfe
         (box (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg")))]))
+
+(define (ctfe-eval-module-name-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ctfe-ast-get env arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (ctfe-eval-string-arg arg expr env fuel "module-name")
+              [(OkCtfeStringArg module next-fuel)
+                (OkCtfe (CtfeString module) next-fuel)]
+              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "module-name expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr expr "module-name expects exactly one arg")))]))
+
+(define (ctfe-eval-module-export-macro-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons module-arg tail)
+      (let
+        [module-arg : AstExpr (ctfe-ast-get env module-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons name-arg rest)
+            (let
+              [name-arg : AstExpr (ctfe-ast-get env name-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg
+                    module-arg
+                    expr
+                    env
+                    fuel
+                    "module-export-macro?")
+                    [(OkCtfeStringArg module module-fuel)
+                      (match (ctfe-eval-string-arg
+                        name-arg
+                        expr
+                        env
+                        module-fuel
+                        "module-export-macro?")
+                        [(OkCtfeStringArg name name-fuel)
+                          (OkCtfe
+                            (CtfeBool
+                              (or
+                                (string.string-eq module "")
+                                (ctfe-module-macro-export? module name)))
+                            name-fuel)]
+                        [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "module-export-macro? expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "module-export-macro? expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "module-export-macro? expects exactly two args")))]))
+
+(define (ctfe-eval-module-hook-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons module-arg tail)
+      (let
+        [module-arg : AstExpr (ctfe-ast-get env module-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons name-arg rest)
+            (let
+              [name-arg : AstExpr (ctfe-ast-get env name-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg
+                    module-arg
+                    expr
+                    env
+                    fuel
+                    "module-hook")
+                    [(OkCtfeStringArg module module-fuel)
+                      (match (ctfe-eval-string-arg
+                        name-arg
+                        expr
+                        env
+                        module-fuel
+                        "module-hook")
+                        [(OkCtfeStringArg name name-fuel)
+                          (if (or
+                            (string.string-eq module "")
+                            (ctfe-module-macro-export? module name))
+                            (OkCtfe
+                              (CtfeExpr
+                                (ctfe-ast-push
+                                  env
+                                  (AstExprVar
+                                    (intern
+                                      (ctfe-hygiene-global-symbol-name
+                                        module
+                                        name))))
+                                (ctfe-untyped-expr-type))
+                              name-fuel)
+                            (ErrCtfe
+                              (box
+                                (ctfe-diagnostic-at-expr
+                                  expr
+                                  (string.string-append
+                                    "typecheck: strategy module "
+                                    (string.string-append
+                                      module
+                                      (string.string-append
+                                        " does not export hook "
+                                        name)))))))]
+                        [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "module-hook expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "module-hook expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr expr "module-hook expects exactly two args")))]))
 
 ;; `(expr-struct-get target field)` builds a struct-get Expr whose field name is
 ;; computed at macro CTFE. The expanded program typechecks the field access.
@@ -4911,6 +5111,12 @@
             (ctfe-eval-expr-if-call args expr env fuel)]
           [(string.string-eq call-name "expr-type")
             (ctfe-eval-expr-type-call args expr env fuel)]
+          [(string.string-eq call-name "module-name")
+            (ctfe-eval-module-name-call args expr env fuel)]
+          [(string.string-eq call-name "module-export-macro?")
+            (ctfe-eval-module-export-macro-call args expr env fuel)]
+          [(string.string-eq call-name "module-hook")
+            (ctfe-eval-module-hook-call args expr env fuel)]
           [(ctfe-expr-inspector-name? call-name)
             (ctfe-eval-expr-inspector-call call-name args expr env fuel)]
           [(ctfe-expr-list-inspector-name? call-name)

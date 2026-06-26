@@ -841,6 +841,14 @@ assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp ins
 assert_contains root-package-help "$WORKDIR/root-package-help.err" 'Run `typelisp <command> --help` for command-specific usage.'
 
 set +e
+"$ROOT_PKG_EXE" --version > "$WORKDIR/root-package-version.out" 2> "$WORKDIR/root-package-version.err"
+status=$?
+set -e
+assert_status root-package-version "$status" 0
+assert_empty root-package-version "$WORKDIR/root-package-version.err"
+assert_contains root-package-version "$WORKDIR/root-package-version.out" "typelisp "
+
+set +e
 "$ROOT_PKG_EXE" build --help > "$WORKDIR/root-package-build-help.out" 2> "$WORKDIR/root-package-build-help.err"
 status=$?
 set -e

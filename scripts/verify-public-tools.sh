@@ -321,6 +321,10 @@ if grep -q "typelisp inspect" "$USAGE_ERR"; then
 else
     HAS_INSPECT_COMMAND=0
 fi
+run_cmd version "$COMPILER" --version
+assert_success
+assert_stderr_empty
+assert_contains "$out" "typelisp "
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
     printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"

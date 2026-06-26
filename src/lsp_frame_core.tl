@@ -5517,36 +5517,45 @@
 
 ;; tl/patch - Find and replace text anywhere in the file, then validate
 (define (lsp-patch-text [text : String] [old-text : String] [new-text : String]) : LspEditResult
-  (if (string.string-eq old-text "")
-    (ErrLspEdit "oldText cannot be empty")
-    (let
-      [n : i64 (string.string-length text)]
-      [old-len : i64 (string.string-length old-text)]
-      [limit : i64 (- n old-len)]
-      [i : i64 0]
-      [found-at : i64 -1]
-      [matches : i64 0]
-      (begin
-        (while (<= i limit)
-          (begin
-            (when
-              (string.is-string-prefix-at (& text) (& old-text) i)
-              (begin
-                (when (= found-at -1) (set! found-at i))
-                (set! matches (+ matches 1))))
-            (set! i (+ i 1))))
-        (if (= matches 0)
-          (ErrLspEdit "oldText not found in document")
-          (if (> matches 1)
-            (ErrLspEdit "oldText occurs more than once in document")
+  (let
+    [n : i64 (string.string-length text)]
+    [old-len : i64 (string.string-length old-text)]
+    (if (string.string-eq old-text "")
+      (ErrLspEdit "oldText cannot be empty")
+      (let
+        [first-byte : char (string.string-ref old-text 0)]
+        [i : i64 0]
+        [found-at : i64 -1]
+        [matches : i64 0]
+        [limit : i64 (- n old-len)]
+        (begin
+          (while (and (<= i limit) (<= matches 1))
             (let
-              [replaced : String (string.string-replace text old-text new-text)]
-              (if (not (lsp-text-is-valid-forms replaced))
-                (ErrLspEdit
-                  (str_cat.str-cat
-                    "Patch produces invalid form(s): "
-                    (lsp-validate-forms-error replaced)))
-                (OkLspEdit replaced)))))))))
+              [idx : i64
+                (string.string-index-of-byte (& text) i (cast first-byte : u8))]
+              (if (= idx -1)
+                (set! i (+ limit 1))
+                (if (<= idx limit)
+                  (if (string.is-string-prefix-at (& text) (& old-text) idx)
+                    (begin
+                      (when (= found-at -1) (set! found-at idx))
+                      (set! matches (+ matches 1))
+                      (set! i (+ idx 1)))
+                    (set! i (+ idx 1)))
+                  (set! i (+ limit 1))))))
+          (if (= matches 0)
+            (ErrLspEdit "oldText not found in document")
+            (if (> matches 1)
+              (ErrLspEdit "oldText occurs more than once in document")
+              (let
+                [replaced : String
+                  (string.string-replace text old-text new-text)]
+                (if (not (lsp-text-is-valid-forms replaced))
+                  (ErrLspEdit
+                    (str_cat.str-cat
+                      "Patch produces invalid form(s): "
+                      (lsp-validate-forms-error replaced)))
+                  (OkLspEdit replaced))))))))))
 
 ;; tl/patch - Handler for find-and-replace patch
 (define (lsp-handle-tl-patch
@@ -5613,6 +5622,14 @@
       [(OkLspEdit _) false]
       [(ErrLspEdit message) (string.string-contains (& message) (& needle))])))
 
+(define (lsp-patch-text-first-byte-collisions-ok?) : bool
+  (let
+    [text : String "(define (aaaaa) : i64 1)\n(define (abc) : i64 2)"]
+    [expected : String "(define (aaaaa) : i64 1)\n(define (renamed) : i64 2)"]
+    (match (lsp-patch-text text "abc" "renamed")
+      [(OkLspEdit replaced) (string.string-eq replaced expected)]
+      [(ErrLspEdit _) false])))
+
 (test
   lsp-patch-text-smoke
   (unless (lsp-patch-text-smoke-ok?) (io.panic "lsp-patch-text-smoke failed")))
@@ -5628,6 +5645,12 @@
   (unless
     (lsp-patch-text-invalid-ok?)
     (io.panic "lsp-patch-text-invalid failed")))
+
+(test
+  lsp-patch-text-first-byte-collisions
+  (unless
+    (lsp-patch-text-first-byte-collisions-ok?)
+    (io.panic "lsp-patch-text-first-byte-collisions failed")))
 
 (test
   lsp-validate-forms-smoke

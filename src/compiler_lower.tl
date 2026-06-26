@@ -6093,10 +6093,14 @@
   (if (hashmap.i64-i64-map-contains? used name)
     true
     (let
-      [leaf : String (lower-used-type-name-leaf (intern-str name))]
-      (if (string.string-eq leaf (intern-str name))
-        false
-        (hashmap.i64-i64-map-contains? used (intern leaf))))))
+      [source : String (intern-str name)]
+      (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+        (let
+          [leaf : String (lower-used-type-name-leaf source)]
+          (if (string.string-eq leaf source)
+            false
+            (hashmap.i64-i64-map-contains? used (intern leaf))))
+        false))))
 
 (define (lower-used-type-variant-name-contains?
   [used : hashmap.I64I64Map]

@@ -57,6 +57,31 @@
     "as data)
 (define (main) : i64 (data.value))"))
 
+(define (lint-driver-smoke-redundant-function-name-source) : String
+  "(module sample.vector)
+(define (vector-push [x : i64]) : i64 x)
+(define (push [x : i64]) : i64 x)")
+
+(define (lint-driver-smoke-redundant-generated-function-name-source) : String
+  "(module sample.vector)
+(defmacro (build [module-name : Expr]) : Module
+  `(begin
+    (module ,module-name)
+    (define (vector-push [x : i64]) : i64 x)))")
+
+(define (lint-driver-smoke-clean-function-name-source) : String
+  "(module sample.vector)
+(define (push [x : i64]) : i64 x)
+(defmacro (build [module-name : Expr]) : Module
+  `(begin
+    (module ,module-name)
+    (define (push [x : i64]) : i64 x)))")
+
+(define (lint-driver-smoke-suppressed-redundant-function-name-source) : String
+  "(module sample.vector)
+;; lint-allow: redundant-function-name
+(define (vector-push [x : i64]) : i64 x)")
+
 (define (lint-driver-smoke-no-effect-source) : String
   "(define (main) : i64
   (let
@@ -238,6 +263,22 @@
       source
       (vector.string-vec-new)
       true)))
+
+(define (lint-driver-smoke-source-findings-with-redundant-function-name
+  [source : String]) : LintFindings
+  (selfhost-lint-source-with-roots-and-staged-options
+    "lint_driver_smoke_test.tl"
+    source
+    (vector.string-vec-new)
+    false
+    true))
+
+(define (lint-driver-smoke-source-rule-count-with-redundant-function-name
+  [source : String]
+  [rule : String]) : i64
+  (selfhost-lint-findings-rule-count
+    (lint-driver-smoke-source-findings-with-redundant-function-name source)
+    rule))
 
 (define (lint-driver-smoke-string-concat-finding-ok?
   [findings : LintFindings]
@@ -628,6 +669,50 @@
         74]
       [else 42])))
 
+(define (lint-driver-smoke-redundant-function-name-self-test) : i64
+  (let
+    [rule : String (lint-rule-redundant-function-name-id)]
+    (cond
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-redundant-function-name
+              (lint-driver-smoke-redundant-function-name-source)
+              rule)
+            1))
+        75]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-redundant-function-name
+              (lint-driver-smoke-redundant-generated-function-name-source)
+              rule)
+            1))
+        76]
+      [(not
+          (=
+            (lint-findings-count
+              (lint-driver-smoke-source-findings-with-redundant-function-name
+                (lint-driver-smoke-clean-function-name-source)))
+            0))
+        77]
+      [(not
+          (=
+            (lint-driver-smoke-source-rule-count-with-redundant-function-name
+              (lint-driver-smoke-suppressed-redundant-function-name-source)
+              rule)
+            0))
+        78]
+      [(not
+          (string.string-eq
+            (lint-rule-message rule)
+            (lint-rule-redundant-function-name-message)))
+        79]
+      [(not
+          (string.string-eq
+            (lint-rule-suggestion rule)
+            (lint-rule-redundant-function-name-suggestion)))
+        80]
+      [else 42])))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -644,41 +729,46 @@
                 (lint-driver-smoke-redundant-import-alias-self-test)]
               (if (= redundant-import-result 42)
                 (let
-                  [dead-code-result : i64
-                    (selfhost-lint-package-dead-code-self-test)]
-                  (if (= dead-code-result 42)
+                  [redundant-name-result : i64
+                    (lint-driver-smoke-redundant-function-name-self-test)]
+                  (if (= redundant-name-result 42)
                     (let
-                      [unused-assignment-result : i64
-                        (selfhost-lint-unused-assignment-self-test)]
-                      (if (= unused-assignment-result 42)
+                      [dead-code-result : i64
+                        (selfhost-lint-package-dead-code-self-test)]
+                      (if (= dead-code-result 42)
                         (let
-                          [concat-result : i64
-                            (lint-driver-smoke-deprecated-string-concat-self-test)]
-                          (if (= concat-result 42)
+                          [unused-assignment-result : i64
+                            (selfhost-lint-unused-assignment-self-test)]
+                          (if (= unused-assignment-result 42)
                             (let
-                              [no-effect-result : i64
-                                (lint-driver-smoke-no-effect-self-test)]
-                              (if (= no-effect-result 42)
+                              [concat-result : i64
+                                (lint-driver-smoke-deprecated-string-concat-self-test)]
+                              (if (= concat-result 42)
                                 (let
-                                  [unreachable-result : i64
-                                    (lint-driver-smoke-unreachable-self-test)]
-                                  (if (= unreachable-result 42)
+                                  [no-effect-result : i64
+                                    (lint-driver-smoke-no-effect-self-test)]
+                                  (if (= no-effect-result 42)
                                     (let
-                                      [divergence-result : i64
-                                        (lint-driver-smoke-divergence-padding-self-test)]
-                                      (if (= divergence-result 42)
+                                      [unreachable-result : i64
+                                        (lint-driver-smoke-unreachable-self-test)]
+                                      (if (= unreachable-result 42)
                                         (let
-                                          [unused-variable-result : i64
-                                            (lint-driver-smoke-unused-variable-self-test)]
-                                          (if (= unused-variable-result 42)
-                                            (lint-driver-smoke-unused-unsafe-self-test)
-                                            unused-variable-result))
-                                        divergence-result))
-                                    unreachable-result))
-                                no-effect-result))
-                            concat-result))
-                        unused-assignment-result))
-                    dead-code-result))
+                                          [divergence-result : i64
+                                            (lint-driver-smoke-divergence-padding-self-test)]
+                                          (if (= divergence-result 42)
+                                            (let
+                                              [unused-variable-result : i64
+                                                (lint-driver-smoke-unused-variable-self-test)]
+                                              (if (= unused-variable-result 42)
+                                                (lint-driver-smoke-unused-unsafe-self-test)
+                                                unused-variable-result))
+                                            divergence-result))
+                                        unreachable-result))
+                                    no-effect-result))
+                                concat-result))
+                            unused-assignment-result))
+                        dead-code-result))
+                    redundant-name-result))
                 redundant-import-result))
             unused-import-result))
         core-result))))

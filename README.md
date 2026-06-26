@@ -663,7 +663,8 @@ builders. Legacy path imports can still use unqualified `str-cat`.
 `string-append`/`string-concat` are deprecated low-level compatibility
 primitives kept for legacy code. The staged lint rule is available with
 `typelisp lint --deprecated-string-concat` while the remaining in-tree
-migrations land.
+migrations land. `typelisp lint --redundant-function-name` enables the staged
+rule for functions or macros that repeat their module prefix in the local name.
 
 ### Memory and aliasing
 

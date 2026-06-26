@@ -5184,6 +5184,8 @@ deprecated low-level compatibility plumbing for legacy code, but they are not
 the documented public concatenation surface. The staged lint rule is enabled
 explicitly with `typelisp lint --deprecated-string-concat` until the remaining
 in-tree migrations are complete.
+`typelisp lint --redundant-function-name` similarly stages detection of local
+functions and macros whose names repeat their module prefix.
 
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
@@ -6454,7 +6456,7 @@ Selected Command Forms:
   typelisp inspect <file.tlci>
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name]
   typelisp test [<file.tl>] [--check]
 ```
 
@@ -6473,8 +6475,10 @@ present. Package lint discovers sources from the nearest manifest when no
 explicit file is supplied; dead-code lint keeps all library top-level
 declarations as API roots and reports unreachable binary-package declarations
 from entry/test/generated roots. `lint --deprecated-string-concat` enables the
-staged deprecation rule for user-facing concat primitives. Without explicit
-files, `fmt` and `lint` default to the nearest `typelisp.pkg` upward.
+staged deprecation rule for user-facing concat primitives, and
+`lint --redundant-function-name` enables the staged module-prefix name rule.
+Without explicit files, `fmt` and `lint` default to the nearest
+`typelisp.pkg` upward.
 `test --check` type-checks generated inline test
 harnesses without assembling or running them; `test` defaults to the host target
 unless `--target <target>` is supplied.

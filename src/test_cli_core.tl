@@ -2746,6 +2746,57 @@
     (tltest-package-cfg-inline-load-self-test?)
     (io.panic "test CLI package loader did not enable test cfg")))
 
+(define (tltest-stdlib-io-string-helper-lower-self-test?) : bool
+  (match (source-tool-create-temp-dir "tltest-stdlib-io-lower")
+    [(ErrSourceToolString _) false]
+    [(OkSourceToolString dir)
+      (let
+        [source : String (source-tool-fs-path-join dir "io_run.tl")]
+        [roots : vector.StringVec (tltest-roots-for-self-test)]
+        [target : CompilerBackendTarget (BackendTargetLinux)]
+        (begin
+          (tltest-inline-reset-load-state!)
+          (io.write-file
+            source
+            "(import \"stdlib/io.tl\")
+
+(define (main) : i64
+  (begin
+    (let [text : String \"ok\"] (stdout-write (& text)))
+    0))
+")
+          (match (compiler-driver-load-file-with-runtime
+            source
+            roots
+            (tltest-cfgs target))
+            [(ErrCompilerLoadWithPaths diag)
+              (begin
+                (io.print-error (compiler-diagnostic-render (box-get diag)))
+                false)]
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (match (lower-compiler-program-with-decl-paths-mode-cache
+                source
+                (ast-program decls)
+                paths
+                (CompilerLowerScalar)
+                roots
+                (tltest-typecheck-cache-scope roots target))
+                [(OkCompilerLower _ _) true]
+                [(ErrCompilerLower diag)
+                  (begin
+                    (io.print-error
+                      (compiler-diagnostic-render
+                        (tltest-diagnostic-with-source-fallback
+                          source
+                          (box-get diag))))
+                    false)])])))]))
+
+(test
+  test-cli-stdlib-io-import-lowers-string-helper
+  (unless
+    (tltest-stdlib-io-string-helper-lower-self-test?)
+    (io.panic "stdlib/io imported stdout-write failed to lower string helper")))
+
 (define (tltest-typecheck-cache-scope
   [roots : vector.StringVec]
   [backend-target : CompilerBackendTarget]) : String

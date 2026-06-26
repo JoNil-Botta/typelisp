@@ -6863,6 +6863,47 @@
     (= (intern-qualified-base-id lookup-id) (tc-name-id base))
     (tc-stdlib-string-module-name? (intern-qualified-module lookup-id))))
 
+(define (tc-decl-list-module-imports-stdlib-string?
+  [decls : AstDeclList]
+  [target-module-id : i64]
+  [current-module-id : i64]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (match decl
+          [(AstDeclModule next-module)
+            (tc-decl-list-module-imports-stdlib-string?
+              rest
+              target-module-id
+              next-module)]
+          [(AstDeclImport
+              (AstImportSpec _ _ (AstSomeModuleName import-module) _ _))
+            (if (and
+              (= current-module-id target-module-id)
+              (tc-stdlib-string-module-name? import-module))
+              true
+              (tc-decl-list-module-imports-stdlib-string?
+                rest
+                target-module-id
+                current-module-id))]
+          [_
+            (tc-decl-list-module-imports-stdlib-string?
+              rest
+              target-module-id
+              current-module-id)]))]))
+
+(define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
+  (match ctx
+    [(TcContext program _ _ module _)
+      (match program
+        [(AstProgram decls-box)
+          (tc-decl-list-module-imports-stdlib-string?
+            (box-get decls-box)
+            (intern module)
+            (intern ""))])]))
+
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -6872,8 +6913,10 @@
   (if source-match
     (or
       (tc-context-is-stdlib-string? ctx)
+      (tc-context-imports-stdlib-string? ctx)
       (tc-stdlib-string-helper-bound-wrapper? env base)
-      (tc-stdlib-string-helper-symbol-wrapper? ctx base))
+      (tc-stdlib-string-helper-symbol-wrapper? ctx base)
+      (tc-stdlib-string-qualified-helper-id? lookup-id base))
     (tc-stdlib-string-qualified-helper-id? lookup-id base)))
 
 (define tc-source-dotted-alias-key-cache-capacity : i64

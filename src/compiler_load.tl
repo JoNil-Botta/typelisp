@@ -64,6 +64,118 @@
   (OkCompilerLoadAliasCheck)
   (ErrCompilerLoadAliasCheck (Box CompilerDiagnostic)))
 
+(defenum CompilerLoadSurfaceMaybeString
+  (CompilerLoadSurfaceNoString)
+  (CompilerLoadSurfaceSomeString String))
+
+(defenum CompilerLoadSurfaceImportKind
+  (CompilerLoadSurfaceImportPath)
+  (CompilerLoadSurfaceImportModule)
+  (CompilerLoadSurfaceImportMacro)
+  (CompilerLoadSurfaceImportMacroDecls))
+
+(defstruct CompilerLoadSurfaceImport
+  (kind CompilerLoadSurfaceImportKind)
+  (source-path String)
+  (import-path String)
+  (module-name CompilerLoadSurfaceMaybeString)
+  (alias CompilerLoadSurfaceMaybeString)
+  (default-alias CompilerLoadSurfaceMaybeString)
+  (span AstSourceSpan))
+
+(defenum CompilerLoadSurfaceImportList
+  (CompilerLoadSurfaceImportNil)
+  (CompilerLoadSurfaceImportCons
+    CompilerLoadSurfaceImport
+    (Box CompilerLoadSurfaceImportList)))
+
+(defenum CompilerLoadSurfaceMacroResultKind
+  (CompilerLoadSurfaceMacroExpr)
+  (CompilerLoadSurfaceMacroModule)
+  (CompilerLoadSurfaceMacroDecls)
+  (CompilerLoadSurfaceMacroOther))
+
+(defenum CompilerLoadSurfaceDeclKind
+  (CompilerLoadSurfaceValue)
+  (CompilerLoadSurfaceFunction)
+  (CompilerLoadSurfaceExtern)
+  (CompilerLoadSurfaceStruct)
+  (CompilerLoadSurfaceEnum)
+  (CompilerLoadSurfaceMacro)
+  (CompilerLoadSurfaceDispatch)
+  (CompilerLoadSurfaceTest)
+  (CompilerLoadSurfaceIncludeStr)
+  (CompilerLoadSurfaceIncludeBin))
+
+(defenum CompilerLoadSurfaceSignature
+  (CompilerLoadSurfaceNoSignature)
+  (CompilerLoadSurfaceValueSignature AstMaybeType)
+  (CompilerLoadSurfaceFunctionSignature AstParamList AstType)
+  (CompilerLoadSurfaceExternSignature AstExternKind AstExternMetadata AstType)
+  (CompilerLoadSurfaceStructSignature
+    AstLifetimeList
+    AstStructRepr
+    AstStructCleanup
+    AstFieldDefList)
+  (CompilerLoadSurfaceEnumSignature
+    AstLifetimeList
+    AstEnumCleanup
+    AstVariantDefList)
+  (CompilerLoadSurfaceMacroSignature AstMacroParamList AstType i64)
+  (CompilerLoadSurfaceDispatchSignature AstDispatchVariantList))
+
+(defstruct CompilerLoadSurfaceDecl
+  (kind CompilerLoadSurfaceDeclKind)
+  (name String)
+  (module String)
+  (signature CompilerLoadSurfaceSignature)
+  (macro-result CompilerLoadSurfaceMacroResultKind)
+  (has-cleanup bool)
+  (has-export bool)
+  (has-generated-meta bool)
+  (span AstSourceSpan))
+
+(defenum CompilerLoadSurfaceDeclList
+  (CompilerLoadSurfaceDeclNil)
+  (CompilerLoadSurfaceDeclCons
+    CompilerLoadSurfaceDecl
+    (Box CompilerLoadSurfaceDeclList)))
+
+(defstruct CompilerLoadSurfaceBuild
+  (imports CompilerLoadSurfaceImportList)
+  (decls CompilerLoadSurfaceDeclList)
+  (has-tests bool)
+  (has-export-metadata bool)
+  (has-generated-decls bool)
+  (has-decl-emitting-macro bool))
+
+(defstruct CompilerLoadSurfaceSummary
+  (module-id String)
+  (source-path String)
+  (root-id String)
+  (cfg-key String)
+  (imports CompilerLoadSurfaceImportList)
+  (decls CompilerLoadSurfaceDeclList)
+  (has-tests bool)
+  (has-export-metadata bool)
+  (has-generated-decls bool)
+  (has-decl-emitting-macro bool))
+
+(defenum CompilerLoadSurfaceSummaryList
+  (CompilerLoadSurfaceSummaryNil)
+  (CompilerLoadSurfaceSummaryCons
+    CompilerLoadSurfaceSummary
+    (Box CompilerLoadSurfaceSummaryList)))
+
+(defenum ResultCompilerLoadSurfaceSummary
+  (OkCompilerLoadSurfaceSummary CompilerLoadSurfaceSummary)
+  (ErrCompilerLoadSurfaceSummary (Box CompilerDiagnostic)))
+
+(define compiler-load-active-surface-summaries : CompilerLoadSurfaceSummaryList
+  (CompilerLoadSurfaceSummaryNil))
+(define compiler-load-surface-summary-load-depth : i64
+  0)
+
 (defenum CompilerLoadPreludeCacheLookup
   (CompilerLoadPreludeCacheMiss)
   (CompilerLoadPreludeCacheHit
@@ -1804,6 +1916,509 @@
               "compiler-load: duplicate module import alias "
               alias))))]))
 
+(define (compiler-load-surface-summaries-reset!) : unit
+  (set! compiler-load-active-surface-summaries (CompilerLoadSurfaceSummaryNil)))
+
+(define (compiler-load-surface-summary-load-enter!) : unit
+  (begin
+    (if (= compiler-load-surface-summary-load-depth 0)
+      (compiler-load-surface-summaries-reset!)
+      unit)
+    (set!
+      compiler-load-surface-summary-load-depth
+      (+ compiler-load-surface-summary-load-depth 1))))
+
+(define (compiler-load-surface-summary-load-exit!) : unit
+  (set!
+    compiler-load-surface-summary-load-depth
+    (- compiler-load-surface-summary-load-depth 1)))
+
+(define (compiler-load-surface-summaries) : CompilerLoadSurfaceSummaryList
+  compiler-load-active-surface-summaries)
+
+(define (compiler-load-record-surface-summary!
+  [summary : CompilerLoadSurfaceSummary]) : unit
+  (set!
+    compiler-load-active-surface-summaries
+    (CompilerLoadSurfaceSummaryCons
+      summary
+      (box compiler-load-active-surface-summaries))))
+
+(define (compiler-load-surface-zero-span) : AstSourceSpan
+  (AstSourceSpan 0 0 0 0))
+
+(define (compiler-load-surface-module-maybe [module-name : AstMaybeModuleName]) : CompilerLoadSurfaceMaybeString
+  (match module-name
+    [(AstNoModuleName) (CompilerLoadSurfaceNoString)]
+    [(AstSomeModuleName name) (CompilerLoadSurfaceSomeString name)]))
+
+(define (compiler-load-surface-alias-maybe [alias : AstMaybeImportAlias]) : CompilerLoadSurfaceMaybeString
+  (match alias
+    [(AstNoImportAlias) (CompilerLoadSurfaceNoString)]
+    [(AstSomeImportAlias name) (CompilerLoadSurfaceSomeString name)]))
+
+(define (compiler-load-surface-import-kind [kind : AstImportKind]) : CompilerLoadSurfaceImportKind
+  (match kind
+    [(AstImportPath) (CompilerLoadSurfaceImportPath)]
+    [(AstImportModule) (CompilerLoadSurfaceImportModule)]
+    [(AstImportMacro _ _) (CompilerLoadSurfaceImportMacro)]
+    [(AstImportMacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
+
+(define (compiler-load-surface-import-decl-emitting? [kind : AstImportKind]) : bool
+  (match kind
+    [(AstImportMacroDecls _ _) true]
+    [_ false]))
+
+(define (compiler-load-surface-import-default-alias
+  [kind : AstImportKind]
+  [import-path : String]) : CompilerLoadSurfaceMaybeString
+  (match kind
+    [(AstImportModule)
+      (CompilerLoadSurfaceSomeString
+        (parse-ast-dotted-import-default-alias import-path))]
+    [_ (CompilerLoadSurfaceNoString)]))
+
+(define (compiler-load-surface-macro-result-kind [ret : AstType]) : CompilerLoadSurfaceMacroResultKind
+  (match ret
+    [(AstTyExpr) (CompilerLoadSurfaceMacroExpr)]
+    [(AstTyVar name)
+      (cond
+        [(or (= name (intern "Module")) (= name (intern "module")))
+          (CompilerLoadSurfaceMacroModule)]
+        [(or (= name (intern "Decls")) (= name (intern "decls")))
+          (CompilerLoadSurfaceMacroDecls)]
+        [else (CompilerLoadSurfaceMacroOther)])]
+    [_ (CompilerLoadSurfaceMacroOther)]))
+
+(define (compiler-load-surface-macro-result-decl-emitting? [ret : AstType]) : bool
+  (match (compiler-load-surface-macro-result-kind ret)
+    [(CompilerLoadSurfaceMacroModule) true]
+    [(CompilerLoadSurfaceMacroDecls) true]
+    [_ false]))
+
+(define (compiler-load-surface-fn-export? [export : AstFnExport]) : bool
+  (match export
+    [(AstFnNoExport) false]
+    [(AstFnExport _) true]))
+
+(define (compiler-load-surface-generated-meta? [meta : AstGeneratedDeclMeta]) : bool
+  (match meta
+    [(AstNoGeneratedDeclMeta) false]
+    [(AstSomeGeneratedDeclMeta _ _ _ _) true]))
+
+(define (compiler-load-surface-field-list-cleanup? [fields : AstFieldDefList]) : bool
+  (match fields
+    [(AstFieldDefNil) false]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ _ cleanup)
+            (or
+              (ast-field-cleanup? cleanup)
+              (compiler-load-surface-field-list-cleanup? rest))]))]))
+
+(define (compiler-load-surface-variant-payload-cleanup?
+  [cleanups : AstVariantPayloadCleanupList]) : bool
+  (match cleanups
+    [(AstVariantPayloadCleanupNil) false]
+    [(AstVariantPayloadCleanupCons cleanup rest)
+      (or
+        (ast-variant-payload-cleanup? cleanup)
+        (compiler-load-surface-variant-payload-cleanup? (box-get rest)))]))
+
+(define (compiler-load-surface-variant-list-cleanup?
+  [variants : AstVariantDefList]) : bool
+  (match variants
+    [(AstVariantDefNil) false]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ _ cleanups)
+            (or
+              (compiler-load-surface-variant-payload-cleanup? cleanups)
+              (compiler-load-surface-variant-list-cleanup? rest))]))]))
+
+(define (compiler-load-surface-build-empty) : CompilerLoadSurfaceBuild
+  (CompilerLoadSurfaceBuild
+    CompilerLoadSurfaceImportNil
+    CompilerLoadSurfaceDeclNil
+    false
+    false
+    false
+    false))
+
+(define (compiler-load-surface-build-add-import
+  [build : CompilerLoadSurfaceBuild]
+  [import-edge : CompilerLoadSurfaceImport]
+  [decl-emitting : bool]) : CompilerLoadSurfaceBuild
+  (CompilerLoadSurfaceBuild
+    (CompilerLoadSurfaceImportCons import-edge (box (struct-get build imports)))
+    (struct-get build decls)
+    (struct-get build has-tests)
+    (struct-get build has-export-metadata)
+    (struct-get build has-generated-decls)
+    (or (struct-get build has-decl-emitting-macro) decl-emitting)))
+
+(define (compiler-load-surface-build-add-decl
+  [build : CompilerLoadSurfaceBuild]
+  [decl : CompilerLoadSurfaceDecl]
+  [has-test : bool]
+  [has-export : bool]
+  [has-generated : bool]
+  [decl-emitting : bool]) : CompilerLoadSurfaceBuild
+  (CompilerLoadSurfaceBuild
+    (struct-get build imports)
+    (CompilerLoadSurfaceDeclCons decl (box (struct-get build decls)))
+    (or (struct-get build has-tests) has-test)
+    (or (struct-get build has-export-metadata) has-export)
+    (or (struct-get build has-generated-decls) has-generated)
+    (or (struct-get build has-decl-emitting-macro) decl-emitting)))
+
+(define (compiler-load-surface-build-decl
+  [source-path : String]
+  [module-id : String]
+  [decl : AstDecl]
+  [generated : bool]
+  [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
+  (match decl
+    [(AstDeclImport (AstImportSpec kind import-path module-name alias span))
+      (compiler-load-surface-build-add-import
+        build
+        (CompilerLoadSurfaceImport
+          (compiler-load-surface-import-kind kind)
+          source-path
+          import-path
+          (compiler-load-surface-module-maybe module-name)
+          (compiler-load-surface-alias-maybe alias)
+          (compiler-load-surface-import-default-alias kind import-path)
+          span)
+        (compiler-load-surface-import-decl-emitting? kind))]
+    [(AstDeclDef name maybe-ty _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceValue)
+          (intern-str name)
+          module-id
+          (CompilerLoadSurfaceValueSignature maybe-ty)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
+    [(AstDeclDefFn name params ret _ export)
+      (let
+        [has-export : bool (compiler-load-surface-fn-export? export)]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceFunction)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceFunctionSignature params ret)
+            (CompilerLoadSurfaceMacroOther)
+            false
+            has-export
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          has-export
+          generated
+          false))]
+    [(AstDeclExtern name kind meta ty)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceExtern)
+          (intern-str name)
+          module-id
+          (CompilerLoadSurfaceExternSignature kind meta ty)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
+    [(AstDeclDefStruct name repr cleanup fields)
+      (let
+        [has-cleanup : bool
+          (or
+            (ast-struct-cleanup? cleanup)
+            (compiler-load-surface-field-list-cleanup? fields))]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceStruct)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceStructSignature
+              AstLifetimeNil
+              repr
+              cleanup
+              fields)
+            (CompilerLoadSurfaceMacroOther)
+            has-cleanup
+            false
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          false
+          generated
+          false))]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (let
+        [has-cleanup : bool
+          (or
+            (ast-struct-cleanup? cleanup)
+            (compiler-load-surface-field-list-cleanup? fields))]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceStruct)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceStructSignature lifetimes repr cleanup fields)
+            (CompilerLoadSurfaceMacroOther)
+            has-cleanup
+            false
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          false
+          generated
+          false))]
+    [(AstDeclDefEnum name cleanup variants)
+      (let
+        [has-cleanup : bool
+          (or
+            (ast-enum-cleanup? cleanup)
+            (compiler-load-surface-variant-list-cleanup? variants))]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceEnum)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceEnumSignature AstLifetimeNil cleanup variants)
+            (CompilerLoadSurfaceMacroOther)
+            has-cleanup
+            false
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          false
+          generated
+          false))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (let
+        [has-cleanup : bool
+          (or
+            (ast-enum-cleanup? cleanup)
+            (compiler-load-surface-variant-list-cleanup? variants))]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceEnum)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceEnumSignature lifetimes cleanup variants)
+            (CompilerLoadSurfaceMacroOther)
+            has-cleanup
+            false
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          false
+          generated
+          false))]
+    [(AstDeclDefMacro name params ret body-box)
+      (let
+        [result-kind : CompilerLoadSurfaceMacroResultKind
+          (compiler-load-surface-macro-result-kind ret)]
+        [decl-emitting : bool
+          (compiler-load-surface-macro-result-decl-emitting? ret)]
+        (compiler-load-surface-build-add-decl
+          build
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceMacro)
+            (intern-str name)
+            module-id
+            (CompilerLoadSurfaceMacroSignature params ret body-box)
+            result-kind
+            false
+            false
+            generated
+            (compiler-load-surface-zero-span))
+          false
+          false
+          generated
+          decl-emitting))]
+    [(AstDeclDefDispatch name variants)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceDispatch)
+          (intern-str name)
+          module-id
+          (CompilerLoadSurfaceDispatchSignature variants)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
+    [(AstDeclTest name _ span)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceTest)
+          (intern-str name)
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          span)
+        true
+        false
+        generated
+        false)]
+    [(AstDeclIncludeStr name _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceIncludeStr)
+          name
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
+    [(AstDeclIncludeBin name _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceIncludeBin)
+          name
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
+    [(AstDeclUnsafe inner-box)
+      (compiler-load-surface-build-decl
+        source-path
+        module-id
+        (box-get inner-box)
+        generated
+        build)]
+    [(AstDeclComptimeDecl meta inner-box)
+      (compiler-load-surface-build-decl
+        source-path
+        module-id
+        (box-get inner-box)
+        (or generated (compiler-load-surface-generated-meta? meta))
+        build)]
+    [(AstDeclModule _) build]))
+
+(define (compiler-load-surface-build-decls
+  [source-path : String]
+  [module-id : String]
+  [decls : AstDeclList]) : CompilerLoadSurfaceBuild
+  (match decls
+    [(AstDeclNil) (compiler-load-surface-build-empty)]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (match decl
+          [(AstDeclModule next-module)
+            (compiler-load-surface-build-decls
+              source-path
+              (intern-str next-module)
+              rest)]
+          [_
+            (compiler-load-surface-build-decl
+              source-path
+              module-id
+              decl
+              false
+              (compiler-load-surface-build-decls source-path module-id rest))]))]))
+
+(define (compiler-load-surface-summary-from-decls
+  [path : String]
+  [root-id : String]
+  [cfgs : SymI64Env]
+  [module-id : String]
+  [decls : AstDeclList]) : CompilerLoadSurfaceSummary
+  (let
+    [source-path : String (compiler-load-normalize-path path)]
+    [build : CompilerLoadSurfaceBuild
+      (compiler-load-surface-build-decls source-path module-id decls)]
+    (CompilerLoadSurfaceSummary
+      module-id
+      source-path
+      (compiler-load-normalize-path root-id)
+      (compiler-load-cfg-cache-key cfgs)
+      (struct-get build imports)
+      (struct-get build decls)
+      (struct-get build has-tests)
+      (struct-get build has-export-metadata)
+      (struct-get build has-generated-decls)
+      (struct-get build has-decl-emitting-macro))))
+
+(define (compiler-load-surface-summary-build
+  [path : String]
+  [root-id : String]
+  [cfgs : SymI64Env]
+  [program : AstProgram]) : ResultCompilerLoadSurfaceSummary
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [source-module : String (compiler-load-decls-source-module decls)]
+        (match (compiler-load-decls-module-id path decls)
+          [(OkCompilerLoadModuleId module-id)
+            (match (compiler-load-check-dotted-import-aliases
+              path
+              decls
+              source-module)
+              [(OkCompilerLoadAliasCheck)
+                (OkCompilerLoadSurfaceSummary
+                  (compiler-load-surface-summary-from-decls
+                    path
+                    root-id
+                    cfgs
+                    module-id
+                    decls))]
+              [(ErrCompilerLoadAliasCheck diag)
+                (ErrCompilerLoadSurfaceSummary diag)])]
+          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadSurfaceSummary diag)]))]))
+
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
   [importer-path : String]
@@ -2343,43 +2958,58 @@
   [import-root : String]
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [source-module : String (compiler-load-decls-source-module decls)]
-        (match (compiler-load-decls-module-id path decls)
-          [(OkCompilerLoadModuleId module-id)
-            (match (compiler-load-check-expected-module
-              path
-              expected-module
-              module-id)
-              [(OkCompilerLoadModuleId _)
-                (if (sym-i64-contains seen module-id)
-                  (compiler-load-seen-module-with-paths
-                    path
-                    module-id
-                    decls
-                    seen)
-                  (match (compiler-load-check-dotted-import-aliases
-                    path
-                    decls
-                    source-module)
-                    [(OkCompilerLoadAliasCheck)
-                      (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                        decls
+  (let
+    [_ : unit (compiler-load-surface-summary-load-enter!)]
+    [loaded : ResultCompilerLoadWithPaths
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [source-module : String (compiler-load-decls-source-module decls)]
+            (match (compiler-load-decls-module-id path decls)
+              [(OkCompilerLoadModuleId module-id)
+                (match (compiler-load-check-expected-module
+                  path
+                  expected-module
+                  module-id)
+                  [(OkCompilerLoadModuleId _)
+                    (if (sym-i64-contains seen module-id)
+                      (compiler-load-seen-module-with-paths
                         path
                         module-id
-                        source-module
-                        (sym-i64-bind seen module-id 1)
-                        stdlib-roots
-                        import-root
-                        cfgs
-                        pools)]
-                    [(ErrCompilerLoadAliasCheck diag)
-                      (ErrCompilerLoadWithPaths diag)]))]
-              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
-          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
+                        decls
+                        seen)
+                      (match (compiler-load-check-dotted-import-aliases
+                        path
+                        decls
+                        source-module)
+                        [(OkCompilerLoadAliasCheck)
+                          (begin
+                            (compiler-load-record-surface-summary!
+                              (compiler-load-surface-summary-from-decls
+                                path
+                                import-root
+                                cfgs
+                                module-id
+                                decls))
+                            (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                              decls
+                              path
+                              module-id
+                              source-module
+                              (sym-i64-bind seen module-id 1)
+                              stdlib-roots
+                              import-root
+                              cfgs
+                              pools))]
+                        [(ErrCompilerLoadAliasCheck diag)
+                          (ErrCompilerLoadWithPaths diag)]))]
+                  [(ErrCompilerLoadModuleId diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))])]
+    (begin
+      (compiler-load-surface-summary-load-exit!)
+      loaded)))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
   [path : String]
@@ -4087,43 +4717,58 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (match program
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [source-module : String (compiler-load-decls-source-module decls)]
-        (match (compiler-load-decls-module-id path decls)
-          [(OkCompilerLoadModuleId module-id)
-            (match (compiler-load-check-expected-module
-              path
-              expected-module
-              module-id)
-              [(OkCompilerLoadModuleId _)
-                (if (sym-i64-contains seen module-id)
-                  (compiler-load-seen-module-with-paths
-                    path
-                    module-id
-                    decls
-                    seen)
-                  (match (compiler-load-check-dotted-import-aliases
-                    path
-                    decls
-                    source-module)
-                    [(OkCompilerLoadAliasCheck)
-                      (compiler-load-package-decls-with-module-and-roots
-                        decls
+  (let
+    [_ : unit (compiler-load-surface-summary-load-enter!)]
+    [loaded : ResultCompilerLoadWithPaths
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [source-module : String (compiler-load-decls-source-module decls)]
+            (match (compiler-load-decls-module-id path decls)
+              [(OkCompilerLoadModuleId module-id)
+                (match (compiler-load-check-expected-module
+                  path
+                  expected-module
+                  module-id)
+                  [(OkCompilerLoadModuleId _)
+                    (if (sym-i64-contains seen module-id)
+                      (compiler-load-seen-module-with-paths
                         path
                         module-id
-                        source-module
-                        (sym-i64-bind seen module-id 1)
-                        stdlib-roots
-                        manifest-dir
-                        deps
-                        cfgs)]
-                    [(ErrCompilerLoadAliasCheck diag)
-                      (ErrCompilerLoadWithPaths diag)]))]
-              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
-          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
+                        decls
+                        seen)
+                      (match (compiler-load-check-dotted-import-aliases
+                        path
+                        decls
+                        source-module)
+                        [(OkCompilerLoadAliasCheck)
+                          (begin
+                            (compiler-load-record-surface-summary!
+                              (compiler-load-surface-summary-from-decls
+                                path
+                                manifest-dir
+                                cfgs
+                                module-id
+                                decls))
+                            (compiler-load-package-decls-with-module-and-roots
+                              decls
+                              path
+                              module-id
+                              source-module
+                              (sym-i64-bind seen module-id 1)
+                              stdlib-roots
+                              manifest-dir
+                              deps
+                              cfgs))]
+                        [(ErrCompilerLoadAliasCheck diag)
+                          (ErrCompilerLoadWithPaths diag)]))]
+                  [(ErrCompilerLoadModuleId diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))])]
+    (begin
+      (compiler-load-surface-summary-load-exit!)
+      loaded)))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : String]
@@ -4535,6 +5180,254 @@
 
 (define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
   (compiler-load-entry-cycle-modules-loop modules 0))
+
+(define (compiler-load-surface-maybe-string-eq?
+  [maybe : CompilerLoadSurfaceMaybeString]
+  [want : String]) : bool
+  (match maybe
+    [(CompilerLoadSurfaceSomeString got) (string.string-eq got want)]
+    [(CompilerLoadSurfaceNoString) (string.string-eq want "")]))
+
+(define (compiler-load-surface-import-kind-code
+  [kind : CompilerLoadSurfaceImportKind]) : i64
+  (match kind
+    [(CompilerLoadSurfaceImportPath) 1]
+    [(CompilerLoadSurfaceImportModule) 2]
+    [(CompilerLoadSurfaceImportMacro) 3]
+    [(CompilerLoadSurfaceImportMacroDecls) 4]))
+
+(define (compiler-load-surface-decl-kind-code
+  [kind : CompilerLoadSurfaceDeclKind]) : i64
+  (match kind
+    [(CompilerLoadSurfaceValue) 1]
+    [(CompilerLoadSurfaceFunction) 2]
+    [(CompilerLoadSurfaceExtern) 3]
+    [(CompilerLoadSurfaceStruct) 4]
+    [(CompilerLoadSurfaceEnum) 5]
+    [(CompilerLoadSurfaceMacro) 6]
+    [(CompilerLoadSurfaceDispatch) 7]
+    [(CompilerLoadSurfaceTest) 8]
+    [(CompilerLoadSurfaceIncludeStr) 9]
+    [(CompilerLoadSurfaceIncludeBin) 10]))
+
+(define (compiler-load-surface-macro-result-kind-code
+  [kind : CompilerLoadSurfaceMacroResultKind]) : i64
+  (match kind
+    [(CompilerLoadSurfaceMacroExpr) 1]
+    [(CompilerLoadSurfaceMacroModule) 2]
+    [(CompilerLoadSurfaceMacroDecls) 3]
+    [(CompilerLoadSurfaceMacroOther) 4]))
+
+(define (compiler-load-surface-import-list-count
+  [imports : CompilerLoadSurfaceImportList]) : i64
+  (match imports
+    [(CompilerLoadSurfaceImportNil) 0]
+    [(CompilerLoadSurfaceImportCons _ rest)
+      (+ 1 (compiler-load-surface-import-list-count (box-get rest)))]))
+
+(define (compiler-load-surface-decl-list-count
+  [decls : CompilerLoadSurfaceDeclList]) : i64
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) 0]
+    [(CompilerLoadSurfaceDeclCons _ rest)
+      (+ 1 (compiler-load-surface-decl-list-count (box-get rest)))]))
+
+(define (compiler-load-surface-import-kind-count
+  [imports : CompilerLoadSurfaceImportList]
+  [kind-code : i64]) : i64
+  (match imports
+    [(CompilerLoadSurfaceImportNil) 0]
+    [(CompilerLoadSurfaceImportCons import-edge rest)
+      (let
+        [rest : CompilerLoadSurfaceImportList (box-get rest)]
+        (+
+          (if (=
+            (compiler-load-surface-import-kind-code
+              (struct-get import-edge kind))
+            kind-code)
+            1
+            0)
+          (compiler-load-surface-import-kind-count rest kind-code)))]))
+
+(define (compiler-load-surface-import-has?
+  [imports : CompilerLoadSurfaceImportList]
+  [kind-code : i64]
+  [import-path : String]
+  [alias : String]
+  [default-alias : String]) : bool
+  (match imports
+    [(CompilerLoadSurfaceImportNil) false]
+    [(CompilerLoadSurfaceImportCons import-edge rest)
+      (if (and
+        (=
+          (compiler-load-surface-import-kind-code (struct-get import-edge kind))
+          kind-code)
+        (string.string-eq (struct-get import-edge import-path) import-path)
+        (compiler-load-surface-maybe-string-eq?
+          (struct-get import-edge alias)
+          alias)
+        (compiler-load-surface-maybe-string-eq?
+          (struct-get import-edge default-alias)
+          default-alias))
+        true
+        (compiler-load-surface-import-has?
+          (box-get rest)
+          kind-code
+          import-path
+          alias
+          default-alias))]))
+
+(define (compiler-load-surface-decl-kind-count
+  [decls : CompilerLoadSurfaceDeclList]
+  [kind-code : i64]) : i64
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) 0]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (let
+        [rest : CompilerLoadSurfaceDeclList (box-get rest)]
+        (+
+          (if (=
+            (compiler-load-surface-decl-kind-code (struct-get decl kind))
+            kind-code)
+            1
+            0)
+          (compiler-load-surface-decl-kind-count rest kind-code)))]))
+
+(define (compiler-load-surface-decl-has?
+  [decls : CompilerLoadSurfaceDeclList]
+  [kind-code : i64]
+  [name : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (if (and
+        (=
+          (compiler-load-surface-decl-kind-code (struct-get decl kind))
+          kind-code)
+        (string.string-eq (struct-get decl name) name))
+        true
+        (compiler-load-surface-decl-has? (box-get rest) kind-code name))]))
+
+(define (compiler-load-surface-decl-generated?
+  [decls : CompilerLoadSurfaceDeclList]
+  [name : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (if (and
+        (string.string-eq (struct-get decl name) name)
+        (struct-get decl has-generated-meta))
+        true
+        (compiler-load-surface-decl-generated? (box-get rest) name))]))
+
+(define (compiler-load-surface-decl-cleanup?
+  [decls : CompilerLoadSurfaceDeclList]
+  [name : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (if (and
+        (string.string-eq (struct-get decl name) name)
+        (struct-get decl has-cleanup))
+        true
+        (compiler-load-surface-decl-cleanup? (box-get rest) name))]))
+
+(define (compiler-load-surface-macro-result-count
+  [decls : CompilerLoadSurfaceDeclList]
+  [result-code : i64]) : i64
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) 0]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (let
+        [rest : CompilerLoadSurfaceDeclList (box-get rest)]
+        (+
+          (if (and
+            (= (compiler-load-surface-decl-kind-code (struct-get decl kind)) 6)
+            (=
+              (compiler-load-surface-macro-result-kind-code
+                (struct-get decl macro-result))
+              result-code))
+            1
+            0)
+          (compiler-load-surface-macro-result-count rest result-code)))]))
+
+(define (compiler-load-surface-summary-smoke-source) : String
+  (str_cat.str-cat
+    "(module summary.mod)
+(import \"dep.tl\" module dep.mod as dep)
+(import stdlib.vector as vec)
+(import (vector i64) as vi64)
+(cfg feature (import \"feature.tl\" module feature.mod as feat))
+(emit-generated VecI64)
+(define value : i64 1)
+(define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
+(extern (foreign [x : i64]) : i64)
+(defstruct Resource (:cleanup close-resource) (fd i64 (:cleanup close-fd)))
+(defenum Maybe (:cleanup close-maybe) (None) (Some i64 (:cleanup close-i64)))
+(defmacro (expr-m [x : Expr]) : Expr x)
+(defmacro (module-m [T : type]) : Module (expr-unit))
+(defmacro (decls-m [T : type]) : Decls (expr-unit))
+(comptime-decl (:generated gen-family generated-value \"i64\")
+  (define generated-value : i64 3))
+("
+    "test loader-summary value)
+(include-str text \"data.txt\")
+(include-bin blob \"data.bin\")"))
+
+(define (compiler-load-surface-summary-shape-ok?
+  [summary : CompilerLoadSurfaceSummary]) : bool
+  (let
+    [imports : CompilerLoadSurfaceImportList (struct-get summary imports)]
+    [decls : CompilerLoadSurfaceDeclList (struct-get summary decls)]
+    (and
+      (string.string-eq (struct-get summary module-id) "summary.mod")
+      (string.string-eq (struct-get summary source-path) "src/summary.tl")
+      (string.string-eq (struct-get summary root-id) "src")
+      (= (compiler-load-surface-import-list-count imports) 5)
+      (= (compiler-load-surface-import-kind-count imports 1) 2)
+      (= (compiler-load-surface-import-kind-count imports 2) 1)
+      (= (compiler-load-surface-import-kind-count imports 3) 1)
+      (= (compiler-load-surface-import-kind-count imports 4) 1)
+      (compiler-load-surface-import-has?
+        imports
+        2
+        "stdlib.vector"
+        "vec"
+        "vector")
+      (compiler-load-surface-import-has? imports 1 "feature.tl" "feat" "")
+      (= (compiler-load-surface-decl-list-count decls) 12)
+      (= (compiler-load-surface-decl-kind-count decls 6) 3)
+      (compiler-load-surface-decl-has? decls 1 "value")
+      (compiler-load-surface-decl-has? decls 2 "pub")
+      (compiler-load-surface-decl-has? decls 3 "foreign")
+      (compiler-load-surface-decl-cleanup? decls "Resource")
+      (compiler-load-surface-decl-cleanup? decls "Maybe")
+      (compiler-load-surface-decl-generated? decls "generated-value")
+      (= (compiler-load-surface-macro-result-count decls 1) 1)
+      (= (compiler-load-surface-macro-result-count decls 2) 1)
+      (= (compiler-load-surface-macro-result-count decls 3) 1)
+      (struct-get summary has-tests)
+      (struct-get summary has-export-metadata)
+      (struct-get summary has-generated-decls)
+      (struct-get summary has-decl-emitting-macro))))
+
+(define (compiler-load-surface-summary-smoke-ok?) : bool
+  (let
+    [cfgs : SymI64Env (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+    (match (compiler-load-parse-source-diagnostic-escaping
+      "src\\summary.tl"
+      (compiler-load-surface-summary-smoke-source)
+      cfgs)
+      [(OkAstProgramDiagnostic program)
+        (match (compiler-load-surface-summary-build
+          "src\\summary.tl"
+          "src\\..\\src"
+          cfgs
+          program)
+          [(OkCompilerLoadSurfaceSummary summary)
+            (compiler-load-surface-summary-shape-ok? summary)]
+          [(ErrCompilerLoadSurfaceSummary _) false])]
+      [(ErrAstProgramDiagnostic _) false])))
 
 (define (compiler-load-normalize-ok?) : bool
   (and
@@ -7679,6 +8572,9 @@
     (unless
       (compiler-load-cfg-import-ok?)
       (return (io.panic "compiler-load: cfg import smoke mismatch")))
+    (unless
+      (compiler-load-surface-summary-smoke-ok?)
+      (return (io.panic "compiler-load: surface summary smoke mismatch")))
     (unless
       (compiler-load-session-cache-common-dep-ok?)
       (return

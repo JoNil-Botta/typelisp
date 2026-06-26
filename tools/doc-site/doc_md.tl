@@ -13,14 +13,15 @@
 (import "../../src/doc_html.tl")
 (import "../../stdlib/string.tl")
 (import "../../stdlib/vector.tl")
-(import "../../stdlib/vector_family.tl")
 (import "../../stdlib/str_cat.tl")
 (import (vector String) as svec)
 
 (defenum MdTableRow
   (MdTableRow svec.Vec))
 
-(vector-family MdTableRow MdTableRowList md-table-row-list)
+(defenum MdTableRowList
+  (MdTableRowListNil)
+  (MdTableRowListCons MdTableRow (Box MdTableRowList)))
 
 (defenum MdBlock
   (MdHeading i64 String)
@@ -32,7 +33,9 @@
   (MdTable svec.Vec MdTableRowList)
   (MdBlank))
 
-(vector-family MdBlock MdBlockList md-block-list)
+(defenum MdBlockList
+  (MdBlockListNil)
+  (MdBlockListCons MdBlock (Box MdBlockList)))
 
 (defenum MdScanBlock
   (MdScanBlock i64 MdBlock))
@@ -49,19 +52,70 @@
   (MdSomeString String))
 
 (define (md-table-row-list-empty) : MdTableRowList
-  (md-table-row-list-new))
+  MdTableRowListNil)
+
+(define (md-table-row-list-count-from [items : MdTableRowList] [acc : i64]) : i64
+  (match items
+    [(MdTableRowListNil) acc]
+    [(MdTableRowListCons _ rest)
+      (md-table-row-list-count-from (box-get rest) (+ acc 1))]))
 
 (define (md-table-row-list-count [items : MdTableRowList]) : i64
-  (md-table-row-list-len (& items)))
+  (md-table-row-list-count-from items 0))
 
 (define (md-table-row-list-ref [items : MdTableRowList] [index : i64]) : MdTableRow
-  (md-table-row-list-get (& items) index (MdTableRow (svec.new))))
+  (if (< index 0)
+    (MdTableRow (svec.new))
+    (match items
+      [(MdTableRowListNil) (MdTableRow (svec.new))]
+      [(MdTableRowListCons head rest)
+        (if (= index 0)
+          head
+          (md-table-row-list-ref (box-get rest) (- index 1)))])))
+
+(define (md-table-row-list-push [items : MdTableRowList] [value : MdTableRow]) : MdTableRowList
+  (match items
+    [(MdTableRowListNil) (MdTableRowListCons value (box MdTableRowListNil))]
+    [(MdTableRowListCons head rest)
+      (MdTableRowListCons
+        head
+        (box (md-table-row-list-push (box-get rest) value)))]))
 
 (define (md-block-list-empty) : MdBlockList
-  (md-block-list-new))
+  MdBlockListNil)
+
+(define (md-block-list-count-from [items : MdBlockList] [acc : i64]) : i64
+  (match items
+    [(MdBlockListNil) acc]
+    [(MdBlockListCons _ rest)
+      (md-block-list-count-from (box-get rest) (+ acc 1))]))
 
 (define (md-block-list-count [items : MdBlockList]) : i64
-  (md-block-list-len (& items)))
+  (md-block-list-count-from items 0))
+
+(define (md-block-list-ref [items : MdBlockList] [index : i64]) : MdMaybeBlock
+  (if (< index 0)
+    MdNoBlock
+    (match items
+      [(MdBlockListNil) MdNoBlock]
+      [(MdBlockListCons head rest)
+        (if (= index 0)
+          (MdSomeBlock head)
+          (md-block-list-ref (box-get rest) (- index 1)))])))
+
+(define (md-block-list-get
+  [items : MdBlockList]
+  [index : i64]
+  [fallback : MdBlock]) : MdBlock
+  (match (md-block-list-ref items index)
+    [(MdSomeBlock block) block]
+    [(MdNoBlock) fallback]))
+
+(define (md-block-list-push [items : MdBlockList] [value : MdBlock]) : MdBlockList
+  (match items
+    [(MdBlockListNil) (MdBlockListCons value (box MdBlockListNil))]
+    [(MdBlockListCons head rest)
+      (MdBlockListCons head (box (md-block-list-push (box-get rest) value)))]))
 
 (define (md-string-list-count [items : svec.Vec]) : i64
   (svec.len (& items)))
@@ -104,13 +158,6 @@
   (if (= (md-table-row-list-count rows) 1)
     (md-table-row-eq2? (md-table-row-list-ref rows 0) first second)
     false))
-
-(define (md-block-list-ref [items : MdBlockList] [index : i64]) : MdMaybeBlock
-  (if (if (>= index 0)
-    (< index (md-block-list-count items))
-    false)
-    (MdSomeBlock (md-block-list-get (& items) index MdBlank))
-    MdNoBlock))
 
 (define (md-check-heading?
   [blocks : MdBlockList]
@@ -607,9 +654,11 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-pipe-row-line? line)
             (begin
-              (md-table-row-list-push
-                (&mut rows)
-                (MdTableRow (md-split-pipe-row line)))
+              (set!
+                rows
+                (md-table-row-list-push
+                  rows
+                  (MdTableRow (md-split-pipe-row line))))
               (set! scan-pos next))
             (set! done true))))
       (MdScanRows scan-pos rows))))
@@ -674,7 +723,7 @@
         (match (md-scan-block-at src pos n)
           [(MdScanBlock next block)
             (begin
-              (md-block-list-push (&mut blocks) block)
+              (set! blocks (md-block-list-push blocks block))
               (set! pos next))]))
       blocks)))
 
@@ -923,7 +972,7 @@
   (if (>= index (md-block-list-count blocks))
     ""
     (str-cat
-      (md-render-block (md-block-list-get (& blocks) index MdBlank))
+      (md-render-block (md-block-list-get blocks index MdBlank))
       (md-render-blocks-from blocks (+ index 1)))))
 
 (define (md-render-blocks [blocks : MdBlockList]) : String

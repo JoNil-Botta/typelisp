@@ -970,15 +970,11 @@
         (if (compiler-load-stdlib-import? normalized)
           normalized
           (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
-      (or
-        (string.string-eq stdlib-path "stdlib/vector.tl")
-        (string.string-eq stdlib-path "stdlib/vector_family.tl")))
+      (string.string-eq stdlib-path "stdlib/vector.tl"))
     false))
 
 (define (compiler-load-stdlib-private-module? [module : String]) : bool
-  (or
-    (string.string-eq module "stdlib.vector")
-    (string.string-eq module "stdlib.vector_family")))
+  (string.string-eq module "stdlib.vector"))
 
 (define (compiler-load-stdlib-private-cfgs
   [path : String]

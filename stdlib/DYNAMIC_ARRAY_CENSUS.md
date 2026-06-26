@@ -9,10 +9,6 @@ of a file or module.
 These are the uses that should move to generated vectors or vector/slice-style
 borrowed APIs.
 
-- `stdlib/vector_family.tl`: named generated vector families. This file now
-  emits read helpers that take `&` and mutators that take `&mut`; with
-  compiler-private dynamic-buffer support enabled, its backing `slots` field
-  uses the private dynamic-buffer spelling and remains an implementation detail.
 - `stdlib/vector.tl`: legacy `I64Vec` and `StringVec` helpers are still
   threaded owned-value compatibility APIs, with private dynamic-buffer backing
   selected by compiler cfg where available. New code should prefer
@@ -37,8 +33,8 @@ borrowed APIs.
 These unsized arrays should stay isolated until private-buffer or byte-buffer
 surfaces replace them.
 
-- Collection internals in `stdlib/vector.tl`, `stdlib/vector_family.tl`,
-  `stdlib/vector_slice.tl`, `stdlib/queue.tl`, `stdlib/hashmap.tl`,
+- Collection internals in `stdlib/vector.tl`, `stdlib/vector_slice.tl`,
+  `stdlib/queue.tl`, `stdlib/hashmap.tl`,
   `stdlib/set.tl`, and `stdlib/text_buf*.tl`.
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
   `stdlib/ffi.tl`,

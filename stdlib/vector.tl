@@ -62,30 +62,6 @@
 ;#       (+ (len (& v)) (svec.len (& words))))))
 ;# ```
 ;#
-;# Use `(vector-family T VecName prefix)` when a module needs multiple concrete
-;# vector families with stable names:
-;#
-;# ```typelisp
-;# (import stdlib.vector_family as vf)
-;#
-;# (defstruct Point
-;#   (x i64))
-;#
-;# (defstruct Token
-;#   (id i64))
-;#
-;# (vf.vector-family Point PointVec point-vec)
-;# (vf.vector-family Token TokenVec token-vec)
-;#
-;# (define (main) : i64
-;#   (let
-;#     [points : PointVec (point-vec-new)]
-;#     [tokens : TokenVec (token-vec-new)]
-;#     (begin
-;#       (point-vec-push (&mut points) (Point 1))
-;#       (token-vec-push (&mut tokens) (Token 2))
-;#       (+ (point-vec-len (& points)) (token-vec-len (& tokens))))))
-;# ```
 (module stdlib.vector)
 
 ;: Local string equality fallback used when bootstrapping with a compiler that

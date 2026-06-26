@@ -32,6 +32,7 @@
 (include-str compiler-embedded-stdlib-profile "stdlib/profile.tl")
 (include-str compiler-embedded-stdlib-queue "stdlib/queue.tl")
 (include-str compiler-embedded-stdlib-random "stdlib/random.tl")
+(include-str compiler-embedded-stdlib-result "stdlib/result.tl")
 (include-str compiler-embedded-stdlib-runtime "stdlib/runtime.tl")
 (include-str compiler-embedded-stdlib-sort "stdlib/sort.tl")
 (include-str compiler-embedded-stdlib-sync "stdlib/sync.tl")
@@ -127,6 +128,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-queue)]
     [(embedded-eq? suffix "random.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
+    [(embedded-eq? suffix "result.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-result)]
     [(embedded-eq? suffix "runtime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
     [(embedded-eq? suffix "sort.tl")

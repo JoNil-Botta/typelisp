@@ -185,6 +185,13 @@ use.
   exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
   `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
   for the same payload type share the generated module/type.
+- `result.tl`: module-emitting `(result T E)` macro for recoverable-error
+  results with success payload `T` and error payload `E`. Import it with
+  `(import "stdlib/result.tl")` and instantiate with a module alias such as
+  `(import (result i64 String) as result_i64_string)`. Each generated module
+  exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
+  consuming `value-or`, and same-payload `map`; duplicate imports for the same
+  success/error pair share the generated module/type.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

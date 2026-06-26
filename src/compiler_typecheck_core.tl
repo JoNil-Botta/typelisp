@@ -12697,17 +12697,11 @@
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
     [(CtfeExprList _) (OkTcType (AstTyExprList))]
-    [(CtfeExprArray _) (OkTcType (AstTyDynArray (ty-node-push (AstTyExpr))))]
     [(CtfeExprClause _) (OkTcType (tc-macro-expr-clause-type))]
     [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]
-    [(CtfeExprClauseArray _)
-      (OkTcType (AstTyDynArray (ty-node-push (tc-macro-expr-clause-type))))]
     [(CtfeExprBindingClause _) (OkTcType (tc-macro-expr-binding-clause-type))]
     [(CtfeExprBindingClauseList _)
-      (OkTcType (tc-macro-expr-binding-clause-list-type))]
-    [(CtfeExprBindingClauseArray _)
-      (OkTcType
-        (AstTyDynArray (ty-node-push (tc-macro-expr-binding-clause-type))))]))
+      (OkTcType (tc-macro-expr-binding-clause-list-type))]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value

@@ -9,10 +9,8 @@
 ;# CTFE still intercepts constructor, sequence, and reflection helper calls
 ;# because it cannot yet interpret arbitrary stdlib function calls and several
 ;# constructors attach compiler provenance. Simple `Expr`/`ExprClause`
-;# inspectors and dense sequence accessors below are ordinary source bodies where
-;# the current CTFE model can project the verified public representation. Tail
-;# and conversion helpers keep bridge bodies until CTFE can construct public
-;# sequence values from slices.
+;# inspectors below are ordinary source bodies so macro code can migrate toward
+;# public pattern matching without growing the bridge surface.
 (module stdlib.comptime)
 
 ;# `feature-plain-comptime-well-known` is the end-state source surface. The
@@ -379,52 +377,24 @@
     [_ value]))
 
 ;: Return true when an expression list has no items.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-list-empty? [items : ExprList]) : bool
-    (= (struct-get items len) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-list-empty? [items : ExprList]) : bool
-    (expr-list-empty? items)))
+(define (expr-list-empty? [items : ExprList]) : bool
+  (expr-list-empty? items))
 
 ;: Return the number of items in an expression list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-list-length [items : ExprList]) : i64
-    (struct-get items len)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-list-length [items : ExprList]) : i64
-    (expr-list-length items)))
+(define (expr-list-length [items : ExprList]) : i64
+  (expr-list-length items))
 
 ;: Return the first item in a non-empty expression list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-list-head [items : ExprList]) : Expr
-    (array-ref (struct-get items items) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-list-head [items : ExprList]) : Expr
-    (expr-list-head items)))
+(define (expr-list-head [items : ExprList]) : Expr
+  (expr-list-head items))
 
 ;: Return all but the first item from a non-empty expression list.
 (define (expr-list-tail [items : ExprList]) : ExprList
   (expr-list-tail items))
 
 ;: Return an expression list item by index.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
-    (array-ref (struct-get items items) index)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
-    (expr-list-nth items index)))
+(define (expr-list-nth [items : ExprList] [index : i64]) : Expr
+  (expr-list-nth items index))
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
@@ -437,152 +407,66 @@
     [(ExprClause _ second) second]))
 
 ;: Return true when a clause list has no items.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-clause-list-empty? [items : ExprClauseList]) : bool
-    (= (struct-get items len) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-clause-list-empty? [items : ExprClauseList]) : bool
-    (expr-clause-list-empty? items)))
+(define (expr-clause-list-empty? [items : ExprClauseList]) : bool
+  (expr-clause-list-empty? items))
 
 ;: Return the number of clauses in a clause list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-clause-list-length [items : ExprClauseList]) : i64
-    (struct-get items len)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-clause-list-length [items : ExprClauseList]) : i64
-    (expr-clause-list-length items)))
+(define (expr-clause-list-length [items : ExprClauseList]) : i64
+  (expr-clause-list-length items))
 
 ;: Return the first item in a non-empty clause list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
-    (array-ref (struct-get items items) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
-    (expr-clause-list-head items)))
+(define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
+  (expr-clause-list-head items))
 
 ;: Return all but the first item from a non-empty clause list.
 (define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
   (expr-clause-list-tail items))
 
 ;: Return a clause list item by index.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
-    (array-ref (struct-get items items) index)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
-    (expr-clause-list-nth items index)))
+(define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
+  (expr-clause-list-nth items index))
 
 ;: Convert clause first expressions into an expression list.
 (define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
   (expr-clause-list->expr-list items))
 
 ;: Return the user-facing binding name from a binding clause.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-name [clause : ExprBindingClause]) : String
-    (struct-get clause name)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-name [clause : ExprBindingClause]) : String
-    (expr-binding-clause-name clause)))
+(define (expr-binding-clause-name [clause : ExprBindingClause]) : String
+  (expr-binding-clause-name clause))
 
 ;: Return true when a binding clause includes an explicit type annotation.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
-    (struct-get clause has-type)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
-    (expr-binding-clause-has-type? clause)))
+(define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
+  (expr-binding-clause-has-type? clause))
 
 ;: Return the explicit type annotation syntax from a typed binding clause.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
-    (struct-get clause ty)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
-    (expr-binding-clause-type clause)))
+(define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
+  (expr-binding-clause-type clause))
 
 ;: Return the initializer expression from a binding clause.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
-    (struct-get clause init)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
-    (expr-binding-clause-init clause)))
+(define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
+  (expr-binding-clause-init clause))
 
 ;: Return true when a binding-clause list has no items.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
-    (= (struct-get items len) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
-    (expr-binding-clause-list-empty? items)))
+(define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
+  (expr-binding-clause-list-empty? items))
 
 ;: Return the number of binding clauses in a binding-clause list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
-    (struct-get items len)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
-    (expr-binding-clause-list-length items)))
+(define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
+  (expr-binding-clause-list-length items))
 
 ;: Return the first item in a non-empty binding-clause list.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
-    (array-ref (struct-get items items) 0)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
-    (expr-binding-clause-list-head items)))
+(define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
+  (expr-binding-clause-list-head items))
 
 ;: Return all but the first item from a non-empty binding-clause list.
 (define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
   (expr-binding-clause-list-tail items))
 
 ;: Return a binding-clause list item by index.
-(cfg
-  feature-comptime-public-fields
-  (define (expr-binding-clause-list-nth
-    [items : ExprBindingClauseList]
-    [index : i64]) : ExprBindingClause
-    (array-ref (struct-get items items) index)))
-
-(cfg
-  (not feature-comptime-public-fields)
-  (define (expr-binding-clause-list-nth
-    [items : ExprBindingClauseList]
-    [index : i64]) : ExprBindingClause
-    (expr-binding-clause-list-nth items index)))
+(define (expr-binding-clause-list-nth
+  [items : ExprBindingClauseList]
+  [index : i64]) : ExprBindingClause
+  (expr-binding-clause-list-nth items index))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
 (define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList

@@ -577,13 +577,10 @@
     [(CtfeType ty) (string.string-append "type_" (spec-type-key ty))]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
-    [(CtfeExprArray _) "expr-array"]
     [(CtfeExprClause _) "expr-clause"]
     [(CtfeExprClauseList _) "expr-clause-list"]
-    [(CtfeExprClauseArray _) "expr-clause-array"]
     [(CtfeExprBindingClause _) "expr-binding-clause"]
-    [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]
-    [(CtfeExprBindingClauseArray _) "expr-binding-clause-array"]))
+    [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -6201,23 +6198,13 @@
     [(CtfeType _) false]
     [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
     [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]
-    [(CtfeExprArray _)
-      (ctfe-type-eq ty (AstTyDynArray (ty-node-push (AstTyExpr))))]
     [(CtfeExprClause _) (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
     [(CtfeExprClauseList _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]
-    [(CtfeExprClauseArray _)
-      (ctfe-type-eq
-        ty
-        (AstTyDynArray (ty-node-push (AstTyVar (intern "ExprClause")))))]
     [(CtfeExprBindingClause _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClause")))]
     [(CtfeExprBindingClauseList _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]
-    [(CtfeExprBindingClauseArray _)
-      (ctfe-type-eq
-        ty
-        (AstTyDynArray (ty-node-push (AstTyVar (intern "ExprBindingClause")))))]))
+      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -6231,13 +6218,10 @@
     [(CtfeType _) "type"]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
-    [(CtfeExprArray _) "(Array Expr)"]
     [(CtfeExprClause _) "ExprClause"]
     [(CtfeExprClauseList _) "ExprClauseList"]
-    [(CtfeExprClauseArray _) "(Array ExprClause)"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
-    [(CtfeExprBindingClauseArray _) "(Array ExprBindingClause)"]))
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -6521,12 +6505,6 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(CtfeExprArray _)
-      (ErrSpecSubExpr
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time (Array Expr) value into runtime expression")))]
     [(CtfeExprClause _)
       (ErrSpecSubExpr
         (box
@@ -6539,12 +6517,6 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClauseList value into runtime expression")))]
-    [(CtfeExprClauseArray _)
-      (ErrSpecSubExpr
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time (Array ExprClause) value into runtime expression")))]
     [(CtfeExprBindingClause _)
       (ErrSpecSubExpr
         (box
@@ -6556,13 +6528,7 @@
         (box
           (spec-diagnostic-at-expr
             origin
-            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]
-    [(CtfeExprBindingClauseArray _)
-      (ErrSpecSubExpr
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time (Array ExprBindingClause) value into runtime expression")))]))
+            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)

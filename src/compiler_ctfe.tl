@@ -41,13 +41,10 @@
   ;; type. The type is not part of the source-level Expr type (#1135).
   (CtfeExpr i64 AstType)
   (CtfeExprList AstExprList)
-  (CtfeExprArray AstExprList)
   (CtfeExprClause AstExprClause)
   (CtfeExprClauseList AstExprClauseList)
-  (CtfeExprClauseArray AstExprClauseList)
   (CtfeExprBindingClause AstExprBindingClause)
-  (CtfeExprBindingClauseList AstExprBindingClauseList)
-  (CtfeExprBindingClauseArray AstExprBindingClauseList))
+  (CtfeExprBindingClauseList AstExprBindingClauseList))
 
 (define (ctfe-untyped-expr-type-name) : String
   "__typelisp_untyped_expr")
@@ -1145,13 +1142,10 @@
     [(CtfeType _) "type"]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
-    [(CtfeExprArray _) "(Array Expr)"]
     [(CtfeExprClause _) "ExprClause"]
     [(CtfeExprClauseList _) "ExprClauseList"]
-    [(CtfeExprClauseArray _) "(Array ExprClause)"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
-    [(CtfeExprBindingClauseArray _) "(Array ExprBindingClause)"]))
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1534,12 +1528,6 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprArray _)
-      (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "this operation is not supported on (Array Expr) in compile-time evaluation")))]
     [(CtfeExprClause a)
       (match rv
         [(CtfeExprClause b)
@@ -1584,12 +1572,6 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprClauseArray _)
-      (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "this operation is not supported on (Array ExprClause) in compile-time evaluation")))]
     [(CtfeExprBindingClause a)
       (match rv
         [(CtfeExprBindingClause b)
@@ -1638,13 +1620,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprBindingClauseArray _)
-      (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "this operation is not supported on (Array ExprBindingClause) in compile-time evaluation")))]))
+                "binary operation in comptime requires matching operand types")))])]))
 
 ;; --- unary operators --------------------------------------------------------
 (define (ctfe-apply-unop
@@ -2409,6 +2385,10 @@
           (let
             [scrutinee : AstExpr (ctfe-ast-get env scrutinee-box)]
             (ctfe-eval-match scrutinee arms expr env fuel))])]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (ctfe-ast-get env func-box)]
+        (ctfe-eval-call func args expr env fuel))]
     [(AstExprStructGet inner-box field)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
@@ -2418,10 +2398,6 @@
         [array : AstExpr (ctfe-ast-get env array-box)]
         [index : AstExpr (ctfe-ast-get env index-box)]
         (ctfe-eval-array-ref array index expr env fuel))]
-    [(AstExprCall func-box args)
-      (let
-        [func : AstExpr (ctfe-ast-get env func-box)]
-        (ctfe-eval-call func args expr env fuel))]
     [(AstExprQuote template-box)
       (let
         [template : AstExpr (ctfe-ast-get env template-box)]
@@ -5236,7 +5212,7 @@
     [(CtfeExprList nodes)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprArray nodes) fuel)]
+          (OkCtfe (CtfeExprList nodes) fuel)]
         [(ctfe-comptime-field-name? field "len")
           (OkCtfe (CtfeI64 (ctfe-expr-list-length nodes)) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
@@ -5254,7 +5230,7 @@
     [(CtfeExprClauseList clauses)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprClauseArray clauses) fuel)]
+          (OkCtfe (CtfeExprClauseList clauses) fuel)]
         [(ctfe-comptime-field-name? field "len")
           (OkCtfe (CtfeI64 (ctfe-expr-clause-list-length clauses)) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
@@ -5280,7 +5256,7 @@
     [(CtfeExprBindingClauseList clauses)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprBindingClauseArray clauses) fuel)]
+          (OkCtfe (CtfeExprBindingClauseList clauses) fuel)]
         [(ctfe-comptime-field-name? field "len")
           (OkCtfe (CtfeI64 (ctfe-expr-binding-clause-list-length clauses)) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
@@ -5313,17 +5289,17 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match array
-    [(CtfeExprArray nodes)
+    [(CtfeExprList nodes)
       (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
         (ctfe-comptime-array-index-error expr)
         (OkCtfe
           (CtfeExpr (ctfe-expr-list-nth nodes index) (ctfe-untyped-expr-type))
           fuel))]
-    [(CtfeExprClauseArray clauses)
+    [(CtfeExprClauseList clauses)
       (if (or (< index 0) (>= index (ctfe-expr-clause-list-length clauses)))
         (ctfe-comptime-array-index-error expr)
         (OkCtfe (CtfeExprClause (ctfe-expr-clause-list-nth clauses index)) fuel))]
-    [(CtfeExprBindingClauseArray clauses)
+    [(CtfeExprBindingClauseList clauses)
       (if (or
         (< index 0)
         (>= index (ctfe-expr-binding-clause-list-length clauses)))
@@ -9306,13 +9282,10 @@
     [(CtfeType _) (AstLitUnit)]
     [(CtfeExpr _ _) (AstLitUnit)]
     [(CtfeExprList _) (AstLitUnit)]
-    [(CtfeExprArray _) (AstLitUnit)]
     [(CtfeExprClause _) (AstLitUnit)]
     [(CtfeExprClauseList _) (AstLitUnit)]
-    [(CtfeExprClauseArray _) (AstLitUnit)]
     [(CtfeExprBindingClause _) (AstLitUnit)]
-    [(CtfeExprBindingClauseList _) (AstLitUnit)]
-    [(CtfeExprBindingClauseArray _) (AstLitUnit)]))
+    [(CtfeExprBindingClauseList _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]

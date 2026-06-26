@@ -9724,19 +9724,32 @@
   [value : CompilerIrValue]
   [stack-idx : i64]
   [size : i64]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments value "%r11")
-    [(OkCompilerBackend src-asm)
-      (OkCompilerBackend
-        (string-append
-          src-asm
+  (let
+    [src-reg : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-addr-scavenge-exclude)
+        0
+        "%r11")]
+    [dst-reg : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-one-exclude src-reg)
+        1
+        "%r10")]
+    (match (compiler-backend-emit-load-value-with-plan assignments value src-reg)
+      [(OkCompilerBackend src-asm)
+        (OkCompilerBackend
           (string-append
-            (str-cat
-              "    leaq "
-              (int->string
-                (compiler-backend-outgoing-stack-arg-offset target stack-idx))
-              "(%rsp), %r10\n")
-            (compiler-backend-emit-copy-bytes-chunks "%r10" "%r11" 0 size))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+            src-asm
+            (string-append
+              (str-cat
+                "    leaq "
+                (int->string
+                  (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+                "(%rsp), "
+                dst-reg
+                "\n")
+              (compiler-backend-emit-copy-bytes-chunks dst-reg src-reg 0 size))))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-from-gep
   [assignments : CompilerRegAssignmentList]

@@ -3,7 +3,6 @@
 (import "stdlib/test.tl")
 (import stdlib.json)
 (import stdlib.vector)
-
 (import (vector json.Json) as jvec)
 (import (vector json.JsonMember) as mvec)
 
@@ -24,5 +23,4 @@
         (match (struct-get (array-ref snapshot 0) value)
           [(json.JsonBool value)
             (assert-true value "generated json aggregate payload")]
-          [_
-            (assert-true false "generated json aggregate wrong payload")])))))
+          [_ (assert-true false "generated json aggregate wrong payload")])))))

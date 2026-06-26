@@ -45410,6 +45410,33 @@
               1))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-module-macro-global-init-source) : String
+  "(defmacro (global-module) : Module
+  `(begin
+    (module generated.global_init_user)
+    (define answer : i64 (+ 40 2))
+    (define (read-answer) : i64 answer)))
+(import (global-module) as generated)
+(define (main) : i64 (+ generated.answer (generated.read-answer)))")
+
+(define (compiler-lower-module-macro-global-init-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-module-macro-global-init-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram globals functions _)
+          (and
+            (lower-test-global-list-has-name?
+              globals
+              "generated.global_init_user/answer")
+            (lower-test-function-defined?
+              functions
+              "__global_init_generated.global_init_user/answer")
+            (lower-test-function-defined?
+              functions
+              "generated.global_init_user/read-answer"))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-module-macro-stdlib-vector-import-source) : String
   "(import stdlib.vector)
 (defmacro (vector-user) : Module

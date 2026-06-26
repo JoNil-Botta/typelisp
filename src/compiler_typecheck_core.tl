@@ -43846,17 +43846,37 @@
     cleanup-name
     " type mismatch"))
 
+(define (tc-cleanup-source-slash-alias-helper-name
+  [ctx : TcContext]
+  [cleanup-str : String]
+  [cleanup-name : i64]) : i64
+  (let
+    [qualifier : String (tc-qualified-name-module cleanup-str)]
+    [base : String (tc-qualified-name-base cleanup-str)]
+    (match (tc-context-program ctx)
+      [(AstProgram decls-box)
+        (match (macro-import-alias-target-cached
+          (box-get decls-box)
+          (intern (tc-context-module ctx))
+          qualifier)
+          [(TcSomeString target-module)
+            (intern (compiler-symbol-module-key target-module base))]
+          [(TcNoString) cleanup-name])])))
+
 (define (tc-cleanup-field-helper-name
+  [ctx : TcContext]
   [owner-name : String]
   [cleanup-name : i64]) : i64
   (let
     [cleanup-str : String (intern-str cleanup-name)]
-    (if (tc-name-qualified? cleanup-str)
-      cleanup-name
+    (if (tc-source-slash-qualified-id? cleanup-str cleanup-name)
+      (tc-cleanup-source-slash-alias-helper-name ctx cleanup-str cleanup-name)
       (intern
-        (compiler-symbol-module-key
-          (tc-qualified-name-module owner-name)
-          cleanup-str)))))
+        (if (tc-name-qualified? cleanup-str)
+          cleanup-str
+          (compiler-symbol-module-key
+            (tc-qualified-name-module owner-name)
+            cleanup-str))))))
 
 (define (tc-check-struct-field-cleanup-fn
   [ctx : TcContext]
@@ -43866,7 +43886,8 @@
   [cleanup-name : i64]
   [field-ty : AstType]) : ResultTcUnit
   (let
-    [lookup-name : i64 (tc-cleanup-field-helper-name struct-name cleanup-name)]
+    [lookup-name : i64
+      (tc-cleanup-field-helper-name ctx struct-name cleanup-name)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(OkTcType cleanup-ty)
         (tc-expect
@@ -44051,7 +44072,8 @@
   [cleanup-name : i64]
   [payload-ty : AstType]) : ResultTcUnit
   (let
-    [lookup-name : i64 (tc-cleanup-field-helper-name enum-name cleanup-name)]
+    [lookup-name : i64
+      (tc-cleanup-field-helper-name ctx enum-name cleanup-name)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(OkTcType cleanup-ty)
         (tc-expect

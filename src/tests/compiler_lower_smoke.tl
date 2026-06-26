@@ -1,5 +1,7 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
 (import stdlib.io)
+(import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.vector)
 (import "../compiler_driver_core.tl")
 
@@ -100,6 +102,32 @@
         [(ErrCompilerDriver diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
+(define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
+  (let
+    [path : String "target/lower_direct_no_main_symbols.tl"]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    (begin
+      (io.write-file path "(define (no-main-direct-helper) : i64 7)")
+      (lower-no-main-entry-prune-set! true)
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        path
+        (BackendTargetLinux)
+        true
+        roots
+        0
+        (BackendModeScalar)
+        (compiler-cfg-empty))
+        [(OkCompilerDriverBuffer buf)
+          (let
+            [asm : String (text_buf.text-buf-render buf)]
+            [needle : String
+              "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
+            (string.string-contains (& asm) (& needle)))]
+        [(ErrCompilerDriverBuffer diag)
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
+
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
     (unless
@@ -114,6 +142,9 @@
     (unless
       (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?)
       (panic "lower: no-main module macro vector IR failed"))
+    (unless
+      (compiler-lower-smoke-direct-no-main-keeps-source-symbols?)
+      (panic "lower: direct no-main compile pruned source symbol"))
     true))
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit

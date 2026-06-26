@@ -2710,13 +2710,16 @@
   (lower-spmd-inline-empty-helper-stack))
 (define lower-spmd-inline-next-temp : i64
   0)
+(define lower-no-main-entry-prune-active : bool
+  false)
 
 (define (lower-reset-file-state!) : unit
   (begin
     (set! lower-entry-main-module-active false)
     (set! lower-entry-main-module "")
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
-    (set! lower-spmd-inline-next-temp 0)))
+    (set! lower-spmd-inline-next-temp 0)
+    (set! lower-no-main-entry-prune-active false)))
 
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
@@ -6982,9 +6985,6 @@
 
 (define (lower-comptime-only-module? [module : String]) : bool
   (string.string-eq module "stdlib.comptime"))
-
-(define lower-no-main-entry-prune-active : bool
-  false)
 
 (define (lower-no-main-entry-prune-active?) : bool
   lower-no-main-entry-prune-active)

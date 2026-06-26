@@ -23660,6 +23660,36 @@
           "typecheck: unknown struct field "
           (compiler-struct-field-key struct-name field)))]))
 
+(define (tc-comptime-unknown-field [owner : String] [field : String]) : ResultTcType
+  (ErrTcType
+    (string.string-append
+      "typecheck: unknown struct field "
+      (compiler-struct-field-key owner field))))
+
+(define (tc-comptime-sequence-field-type
+  [owner : String]
+  [elem-ty : AstType]
+  [field : String]) : ResultTcType
+  (cond
+    [(string.string-eq field "items")
+      (OkTcType (AstTyDynArray (ty-node-push elem-ty)))]
+    [(string.string-eq field "len") (OkTcType (AstTyI64))]
+    [else (tc-comptime-unknown-field owner field)]))
+
+(define (tc-comptime-expr-clause-field-type [field : String]) : ResultTcType
+  (cond
+    [(string.string-eq field "first") (OkTcType (AstTyExpr))]
+    [(string.string-eq field "second") (OkTcType (AstTyExpr))]
+    [else (tc-comptime-unknown-field "ExprClause" field)]))
+
+(define (tc-comptime-expr-binding-clause-field-type [field : String]) : ResultTcType
+  (cond
+    [(string.string-eq field "name") (OkTcType (AstTyString))]
+    [(string.string-eq field "has-type") (OkTcType (AstTyBool))]
+    [(string.string-eq field "ty") (OkTcType (AstTyExpr))]
+    [(string.string-eq field "init") (OkTcType (AstTyExpr))]
+    [else (tc-comptime-unknown-field "ExprBindingClause" field)]))
+
 (define (tc-struct-get-result-type
   [ctx : TcContext]
   [receiver-ty : AstType]
@@ -23687,6 +23717,25 @@
       (match (tc-struct-get-result-type ctx (ty-node-get referent-ty) field)
         [(OkTcType field-ty) (OkTcType (tc-tag-region lifetime field-ty))]
         [(ErrTcType message) (ErrTcType message)])]
+    [(AstTyExprList)
+      (tc-comptime-sequence-field-type "ExprList" (AstTyExpr) field)]
+    [(AstTyVar name)
+      (cond
+        [(= name (intern "ExprClause"))
+          (tc-comptime-expr-clause-field-type field)]
+        [(= name (intern "ExprClauseList"))
+          (tc-comptime-sequence-field-type
+            "ExprClauseList"
+            (tc-macro-expr-clause-type)
+            field)]
+        [(= name (intern "ExprBindingClause"))
+          (tc-comptime-expr-binding-clause-field-type field)]
+        [(= name (intern "ExprBindingClauseList"))
+          (tc-comptime-sequence-field-type
+            "ExprBindingClauseList"
+            (tc-macro-expr-binding-clause-type)
+            field)]
+        [else (ErrTcType "typecheck: struct-get requires struct")])]
     [_ (ErrTcType "typecheck: struct-get requires struct")]))
 
 (define (tc-borrow-place-var-by-value [name : String] [ty : AstType]) : ResultTcBorrowPlace

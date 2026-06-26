@@ -44,10 +44,9 @@
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
-        (begin
-          (if (= (cast (string.string-ref name i) : i64) (cast '.' : i64))
-            (set! found true)
-            (set! i (+ i 1)))))
+        (if (= (cast (string.string-ref name i) : i64) (cast '.' : i64))
+          (set! found true)
+          (set! i (+ i 1))))
       found)))
 
 (define (clone-type-name-module [name : String]) : String

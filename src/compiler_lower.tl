@@ -40552,9 +40552,8 @@
     [(AstExprCall func-box args)
       (or
         (lower-source-call-head-import? func-box)
-        (or
-          (lower-source-node-has-import-call? func-box)
-          (lower-source-expr-list-has-import-call? args)))]
+        (lower-source-node-has-import-call? func-box)
+        (lower-source-expr-list-has-import-call? args))]
     [(AstExprBracketClause items)
       (lower-source-expr-list-has-import-call? items)]
     [(AstExprBinary _ left-box right-box)
@@ -40565,9 +40564,8 @@
     [(AstExprIf cond-box then-box else-box)
       (or
         (lower-source-node-has-import-call? cond-box)
-        (or
-          (lower-source-node-has-import-call? then-box)
-          (lower-source-node-has-import-call? else-box)))]
+        (lower-source-node-has-import-call? then-box)
+        (lower-source-node-has-import-call? else-box))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
@@ -40591,9 +40589,8 @@
     [(AstExprArraySet array-box index-box value-box)
       (or
         (lower-source-node-has-import-call? array-box)
-        (or
-          (lower-source-node-has-import-call? index-box)
-          (lower-source-node-has-import-call? value-box)))]
+        (lower-source-node-has-import-call? index-box)
+        (lower-source-node-has-import-call? value-box))]
     [(AstExprArrayPush array-box value-box)
       (or
         (lower-source-node-has-import-call? array-box)
@@ -40624,31 +40621,25 @@
         [(AstForeach _ _ start-box end-box body-box)
           (or
             (lower-source-node-has-import-call? start-box)
-            (or
-              (lower-source-node-has-import-call? end-box)
-              (lower-source-node-has-import-call? body-box)))])]
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? body-box))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
           (or
             (lower-source-node-has-import-call? start-box)
-            (or
-              (lower-source-node-has-import-call? end-box)
-              (or
-                (lower-source-node-has-import-call? init-box)
-                (lower-source-node-has-import-call? value-box))))])]
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? init-box)
+            (lower-source-node-has-import-call? value-box))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan _ _ _ start-box end-box init-box _ value-box body-box _)
           (or
             (lower-source-node-has-import-call? start-box)
-            (or
-              (lower-source-node-has-import-call? end-box)
-              (or
-                (lower-source-node-has-import-call? init-box)
-                (or
-                  (lower-source-node-has-import-call? value-box)
-                  (lower-source-node-has-import-call? body-box)))))])]
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? init-box)
+            (lower-source-node-has-import-call? value-box)
+            (lower-source-node-has-import-call? body-box))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (or
         (lower-source-node-has-import-call? value-box)

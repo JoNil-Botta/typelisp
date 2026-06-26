@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 
@@ -17,7 +18,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! items i (byte-copy-u8 (+ base i)))
+        (array.array-set! items i (byte-copy-u8 (+ base i)))
         (set! i (+ i 1))))))
 
 (define (byte-copy-fill-constant!
@@ -28,7 +29,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array-set! items i (byte-copy-u8 value))
+        (array.array-set! items i (byte-copy-u8 value))
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-at
@@ -36,7 +37,7 @@
   [index : i64]
   [expected : i64]
   [message : String]) : unit
-  (assert-i64-eq (cast (array-ref items index) : i64) expected message))
+  (assert-i64-eq (cast (array.array-ref items index) : i64) expected message))
 
 (define (byte-copy-assert-range
   [items : (Array u8)]
@@ -66,8 +67,8 @@
 
 (define (byte-copy-zero-length-case) : unit
   (let
-    [src : (Array u8) (make-array u8 4)]
-    [dst : (Array u8) (make-array u8 4)]
+    [src : (Array u8) (array.make-array u8 4)]
+    [dst : (Array u8) (array.make-array u8 4)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -83,8 +84,8 @@
 
 (define (byte-copy-unaligned-case) : unit
   (let
-    [src : (Array u8) (make-array u8 20)]
-    [dst : (Array u8) (make-array u8 20)]
+    [src : (Array u8) (array.make-array u8 20)]
+    [dst : (Array u8) (array.make-array u8 20)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 11]
@@ -98,8 +99,8 @@
 
 (define (byte-copy-tail-case [n : i64]) : unit
   (let
-    [src : (Array u8) (make-array u8 12)]
-    [dst : (Array u8) (make-array u8 12)]
+    [src : (Array u8) (array.make-array u8 12)]
+    [dst : (Array u8) (array.make-array u8 12)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -120,8 +121,8 @@
 
 (define (byte-copy-medium-dynamic-case) : unit
   (let
-    [src : (Array u8) (make-array u8 96)]
-    [dst : (Array u8) (make-array u8 96)]
+    [src : (Array u8) (array.make-array u8 96)]
+    [dst : (Array u8) (array.make-array u8 96)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 (+ 64 9)]
@@ -135,7 +136,7 @@
 
 (define (byte-copy-overlap-dst-after-src-case) : unit
   (let
-    [buf : (Array u8) (make-array u8 20)]
+    [buf : (Array u8) (array.make-array u8 20)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 20 0)

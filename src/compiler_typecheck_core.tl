@@ -1,6 +1,7 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import stdlib.io)
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_symbols.tl")
 (import "compiler_load.tl")
@@ -371,7 +372,7 @@
 (define tc-prefix-snapshot-cache-capacity : i64
   64)
 (define tc-prefix-snapshot-cache : (Array TcPrefixSnapshotSlot)
-  (make-array TcPrefixSnapshotSlot 64))
+  (array.make-array TcPrefixSnapshotSlot 64))
 (define tc-prefix-snapshot-cache-arena : i64
   0)
 (define tc-prefix-snapshot-cache-enabled : bool
@@ -389,7 +390,7 @@
   (if (>= index tc-prefix-snapshot-cache-capacity)
     unit
     (begin
-      (array-set! tc-prefix-snapshot-cache index (TcPrefixSnapshotEmpty))
+      (array.array-set! tc-prefix-snapshot-cache index (TcPrefixSnapshotEmpty))
       (tc-prefix-snapshot-cache-fill! (+ index 1)))))
 
 (define (tc-prefix-snapshot-cache-stats-reset!) : unit
@@ -481,7 +482,7 @@
 (define (tc-prefix-snapshot-cache-lookup-from [key : String] [index : i64]) : TcPrefixSnapshotLookup
   (if (>= index tc-prefix-snapshot-cache-capacity)
     (TcPrefixSnapshotMiss)
-    (match (array-ref tc-prefix-snapshot-cache index)
+    (match (array.array-ref tc-prefix-snapshot-cache index)
       [(TcPrefixSnapshotEmpty) (TcPrefixSnapshotMiss)]
       [(TcPrefixSnapshotFull slot-key count module summary)
         (if (string.string-eq slot-key key)
@@ -501,10 +502,10 @@
   [index : i64]) : bool
   (if (>= index tc-prefix-snapshot-cache-capacity)
     false
-    (match (array-ref tc-prefix-snapshot-cache index)
+    (match (array.array-ref tc-prefix-snapshot-cache index)
       [(TcPrefixSnapshotEmpty)
         (begin
-          (array-set!
+          (array.array-set!
             tc-prefix-snapshot-cache
             index
             (TcPrefixSnapshotFull key count module summary))
@@ -513,7 +514,7 @@
       [(TcPrefixSnapshotFull slot-key _ _ _)
         (if (string.string-eq slot-key key)
           (begin
-            (array-set!
+            (array.array-set!
               tc-prefix-snapshot-cache
               index
               (TcPrefixSnapshotFull key count module summary))
@@ -1149,7 +1150,7 @@
 (cfg
   compile-profile
   (define tc-lp-counts : (Array i64)
-    (make-array i64 15)))
+    (array.make-array i64 15)))
 
 (cfg
   compile-profile
@@ -1194,14 +1195,17 @@
   (define (tc-lp-reset [index : i64]) : unit
     (if (< index 15)
       (begin
-        (array-set! tc-lp-counts index 0)
+        (array.array-set! tc-lp-counts index 0)
         (tc-lp-reset (+ index 1)))
       unit)))
 
 (cfg
   compile-profile
   (define (tc-lp-note [index : i64]) : unit
-    (array-set! tc-lp-counts index (+ (array-ref tc-lp-counts index) 1))))
+    (array.array-set!
+      tc-lp-counts
+      index
+      (+ (array.array-ref tc-lp-counts index) 1))))
 
 (cfg
   compile-profile
@@ -1575,7 +1579,7 @@
         (string.string-append
           phase
           (string.string-append
-            (compiler-tc-profile-field (array-ref tc-lp-counts index))
+            (compiler-tc-profile-field (array.array-ref tc-lp-counts index))
             "|0|0|0\n"))))))
 
 (cfg
@@ -2038,7 +2042,7 @@
 ;; builds; the array never grows, so out-of-range ids (>= capacity)
 ;; conservatively report "maybe" and take the exact scan.
 (define tc-topenv-membership-slots : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 (define tc-topenv-membership-gen : i64
   0)
 (define tc-topenv-membership-active : bool
@@ -2046,14 +2050,19 @@
 
 (define (tc-topenv-membership-mark! [name-id : i64]) : unit
   (if (and (>= name-id 0) (< name-id 262144))
-    (array-set! tc-topenv-membership-slots name-id tc-topenv-membership-gen)
+    (array.array-set!
+      tc-topenv-membership-slots
+      name-id
+      tc-topenv-membership-gen)
     unit))
 
 ;; True when the id MIGHT be in the env (marked this generation, or out of
 ;; range); false only when it is provably absent.
 (define (tc-topenv-membership-maybe? [name-id : i64]) : bool
   (if (and (>= name-id 0) (< name-id 262144))
-    (= (array-ref tc-topenv-membership-slots name-id) tc-topenv-membership-gen)
+    (=
+      (array.array-ref tc-topenv-membership-slots name-id)
+      tc-topenv-membership-gen)
     true))
 
 (define (tc-topenv-membership-seed! [env : TcTypeEnv]) : unit
@@ -2147,9 +2156,9 @@
 ;; uncached path. Generation slots store (intern-generation)+1 so the
 ;; zero-initialized arrays are invalid for every generation.
 (define tc-unsafe-decl-marker-id-cache : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 (define tc-unsafe-decl-marker-id-cache-gens : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
   (tc-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
@@ -2159,13 +2168,13 @@
     (tc-unsafe-decl-marker-id-uncached name-id)
     (let
       [gen : i64 (+ (intern-generation) 1)]
-      (if (= (array-ref tc-unsafe-decl-marker-id-cache-gens name-id) gen)
-        (array-ref tc-unsafe-decl-marker-id-cache name-id)
+      (if (= (array.array-ref tc-unsafe-decl-marker-id-cache-gens name-id) gen)
+        (array.array-ref tc-unsafe-decl-marker-id-cache name-id)
         (let
           [id : i64 (tc-unsafe-decl-marker-id-uncached name-id)]
           (begin
-            (array-set! tc-unsafe-decl-marker-id-cache name-id id)
-            (array-set! tc-unsafe-decl-marker-id-cache-gens name-id gen)
+            (array.array-set! tc-unsafe-decl-marker-id-cache name-id id)
+            (array.array-set! tc-unsafe-decl-marker-id-cache-gens name-id gen)
             id))))))
 
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
@@ -2182,9 +2191,9 @@
   (string.string-append " __tl_c_abi_fnptr:" name))
 
 (define tc-c-abi-fnptr-marker-id-cache : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 (define tc-c-abi-fnptr-marker-id-cache-gens : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 
 (define (tc-c-abi-fnptr-marker-id-uncached [name-id : i64]) : i64
   (tc-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
@@ -2194,13 +2203,13 @@
     (tc-c-abi-fnptr-marker-id-uncached name-id)
     (let
       [gen : i64 (+ (intern-generation) 1)]
-      (if (= (array-ref tc-c-abi-fnptr-marker-id-cache-gens name-id) gen)
-        (array-ref tc-c-abi-fnptr-marker-id-cache name-id)
+      (if (= (array.array-ref tc-c-abi-fnptr-marker-id-cache-gens name-id) gen)
+        (array.array-ref tc-c-abi-fnptr-marker-id-cache name-id)
         (let
           [id : i64 (tc-c-abi-fnptr-marker-id-uncached name-id)]
           (begin
-            (array-set! tc-c-abi-fnptr-marker-id-cache name-id id)
-            (array-set! tc-c-abi-fnptr-marker-id-cache-gens name-id gen)
+            (array.array-set! tc-c-abi-fnptr-marker-id-cache name-id id)
+            (array.array-set! tc-c-abi-fnptr-marker-id-cache-gens name-id gen)
             id))))))
 
 (define (tc-bind-c-abi-fnptr-id
@@ -2255,7 +2264,7 @@
     [(TcTypeCache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          (= (array-ref c-abi-fnptr-flags index) 1)]
+          (= (array.array-ref c-abi-fnptr-flags index) 1)]
         [(hashmap.I64I64MapMissing)
           (if partial
             (tc-binding-c-abi-fnptr-id? (box-get below) name-id)
@@ -2281,7 +2290,8 @@
     [(TcTypeNil) false]
     [(TcTypeCache ids _ unsafe-flags _ _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index) (= (array-ref unsafe-flags index) 1)]
+        [(hashmap.I64I64MapFound index)
+          (= (array.array-ref unsafe-flags index) 1)]
         [(hashmap.I64I64MapMissing)
           (if partial
             (tc-binding-unsafe-id? (box-get below) name-id)
@@ -2340,20 +2350,20 @@
       (let
         [next : i64 (hashmap.i64-i64-map-len ids)]
         (begin
-          (array-set! values next ty)
-          (array-set!
+          (array.array-set! values next ty)
+          (array.array-set!
             unsafe-flags
             next
             (if unsafe
               1
               0))
-          (array-set!
+          (array.array-set!
             c-abi-fnptr-flags
             next
             (if c-abi-fnptr
               1
               0))
-          (array-set!
+          (array.array-set!
             shadow-flags
             next
             (if shadow
@@ -2452,10 +2462,10 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count env)]
-      [values : (Array AstType) (make-array AstType count)]
-      [unsafe-flags : (Array i64) (make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
-      [shadow-flags : (Array i64) (make-array i64 count)]
+      [values : (Array AstType) (array.make-array AstType count)]
+      [unsafe-flags : (Array i64) (array.make-array i64 count)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 count)]
+      [shadow-flags : (Array i64) (array.make-array i64 count)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill
           env
@@ -2481,10 +2491,10 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count-prefix env (tc-local-cache-threshold))]
-      [values : (Array AstType) (make-array AstType count)]
-      [unsafe-flags : (Array i64) (make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
-      [shadow-flags : (Array i64) (make-array i64 count)]
+      [values : (Array AstType) (array.make-array AstType count)]
+      [unsafe-flags : (Array i64) (array.make-array i64 count)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 count)]
+      [shadow-flags : (Array i64) (array.make-array i64 count)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill-prefix
           env
@@ -3256,11 +3266,11 @@
 (define tc-unused-unsafe-target-path : String
   "")
 (define tc-unused-unsafe-block-spans : (Array AstSourceSpan)
-  (make-array AstSourceSpan 128))
+  (array.make-array AstSourceSpan 128))
 (define tc-unused-unsafe-block-paths : (Array String)
-  (make-array String 128))
+  (array.make-array String 128))
 (define tc-unused-unsafe-block-used : (Array bool)
-  (make-array bool 128))
+  (array.make-array bool 128))
 (define tc-unused-unsafe-block-len : i64
   0)
 
@@ -3287,17 +3297,17 @@
 
 (define (tc-unused-unsafe-block-path [index : i64]) : String
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-paths index)
+    (array.array-ref tc-unused-unsafe-block-paths index)
     ""))
 
 (define (tc-unused-unsafe-block-span [index : i64]) : AstSourceSpan
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-spans index)
+    (array.array-ref tc-unused-unsafe-block-spans index)
     (tc-unused-unsafe-no-span)))
 
 (define (tc-unused-unsafe-block-used? [index : i64]) : bool
   (if (and (>= index 0) (< index tc-unused-unsafe-block-len))
-    (array-ref tc-unused-unsafe-block-used index)
+    (array.array-ref tc-unused-unsafe-block-used index)
     false))
 
 (define (tc-unused-unsafe-set-current-path! [path : String]) : String
@@ -3328,9 +3338,11 @@
   (if (>= index tc-unused-unsafe-block-len)
     -1
     (if (and
-      (string.string-eq (array-ref tc-unused-unsafe-block-paths index) path)
+      (string.string-eq
+        (array.array-ref tc-unused-unsafe-block-paths index)
+        path)
       (tc-unused-unsafe-span-eq?
-        (array-ref tc-unused-unsafe-block-spans index)
+        (array.array-ref tc-unused-unsafe-block-spans index)
         span))
       index
       (tc-unused-unsafe-find-existing path span (+ index 1)))))
@@ -3343,24 +3355,27 @@
   (if (>= index tc-unused-unsafe-block-len)
     unit
     (begin
-      (array-set!
+      (array.array-set!
         new-spans
         index
-        (array-ref tc-unused-unsafe-block-spans index))
-      (array-set!
+        (array.array-ref tc-unused-unsafe-block-spans index))
+      (array.array-set!
         new-paths
         index
-        (array-ref tc-unused-unsafe-block-paths index))
-      (array-set! new-used index (array-ref tc-unused-unsafe-block-used index))
+        (array.array-ref tc-unused-unsafe-block-paths index))
+      (array.array-set!
+        new-used
+        index
+        (array.array-ref tc-unused-unsafe-block-used index))
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used (+ index 1)))))
 
 (define (tc-unused-unsafe-grow!) : unit
   (let
-    [old-cap : i64 (array-length tc-unused-unsafe-block-spans)]
+    [old-cap : i64 (array.array-length tc-unused-unsafe-block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [new-spans : (Array AstSourceSpan) (make-array AstSourceSpan new-cap)]
-    [new-paths : (Array String) (make-array String new-cap)]
-    [new-used : (Array bool) (make-array bool new-cap)]
+    [new-spans : (Array AstSourceSpan) (array.make-array AstSourceSpan new-cap)]
+    [new-paths : (Array String) (array.make-array String new-cap)]
+    [new-used : (Array bool) (array.make-array bool new-cap)]
     (begin
       (tc-unused-unsafe-grow-copy new-spans new-paths new-used 0)
       (set! tc-unused-unsafe-block-spans new-spans)
@@ -3376,15 +3391,15 @@
       (let
         [slot : i64 tc-unused-unsafe-block-len]
         (begin
-          (if (>= slot (array-length tc-unused-unsafe-block-spans))
+          (if (>= slot (array.array-length tc-unused-unsafe-block-spans))
             (tc-unused-unsafe-grow!)
             unit)
-          (array-set! tc-unused-unsafe-block-spans slot span)
-          (array-set!
+          (array.array-set! tc-unused-unsafe-block-spans slot span)
+          (array.array-set!
             tc-unused-unsafe-block-paths
             slot
             tc-unused-unsafe-current-path)
-          (array-set! tc-unused-unsafe-block-used slot false)
+          (array.array-set! tc-unused-unsafe-block-used slot false)
           (set! tc-unused-unsafe-block-len (+ tc-unused-unsafe-block-len 1))
           slot)))))
 
@@ -3416,7 +3431,10 @@
     tc-unused-unsafe-tracking-enabled
     (>= tc-unused-unsafe-current-block 0)
     (< tc-unused-unsafe-current-block tc-unused-unsafe-block-len))
-    (array-set! tc-unused-unsafe-block-used tc-unused-unsafe-current-block true)
+    (array.array-set!
+      tc-unused-unsafe-block-used
+      tc-unused-unsafe-current-block
+      true)
     unit))
 
 (define (tc-unsafe-begin-list-with-expected
@@ -4722,7 +4740,8 @@
           ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
           ;; a multi-word value and the raw ptr-offset/ptr-read path mis-scales the
           ;; element stride, reading garbage.
-          [(hashmap.I64I64MapFound index) (OkTcType (array-ref values index))]
+          [(hashmap.I64I64MapFound index)
+            (OkTcType (array.array-ref values index))]
           [(hashmap.I64I64MapMissing)
             (if partial
               (tc-lookup-id (box-get below) name-id)
@@ -4767,7 +4786,7 @@
           ;; is still sound there.
           [(hashmap.I64I64MapFound index)
             (OkTcTypeUnsafe
-              (array-ref values index)
+              (array.array-ref values index)
               (=
                 (unsafe
                   (ptr-read
@@ -6397,11 +6416,11 @@
 (define tc-imported-module-identity-cache-capacity : i64
   8192)
 (define tc-imported-module-identity-cache-module-keys : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-imported-module-identity-cache-target-keys : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-imported-module-identity-cache-values : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-imported-module-identity-cache-count : i64
   0)
 (define tc-imported-module-identity-cache-generation : i64
@@ -6422,7 +6441,7 @@
       (begin
         (while (< i tc-imported-module-identity-cache-capacity)
           (begin
-            (array-set! tc-imported-module-identity-cache-module-keys i 0)
+            (array.array-set! tc-imported-module-identity-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! tc-imported-module-identity-cache-count 0)
         (set! tc-imported-module-identity-cache-generation (intern-generation))
@@ -6453,18 +6472,24 @@
         (< steps tc-imported-module-identity-cache-capacity))
         (let
           [slot : i64
-            (array-ref tc-imported-module-identity-cache-module-keys cursor)]
+            (array.array-ref
+              tc-imported-module-identity-cache-module-keys
+              cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
               (=
-                (array-ref tc-imported-module-identity-cache-target-keys cursor)
+                (array.array-ref
+                  tc-imported-module-identity-cache-target-keys
+                  cursor)
                 target-key))
               (begin
                 (set!
                   out
-                  (array-ref tc-imported-module-identity-cache-values cursor))
+                  (array.array-ref
+                    tc-imported-module-identity-cache-values
+                    cursor))
                 (set! done true))
               (begin
                 (set!
@@ -6496,18 +6521,20 @@
           (< steps tc-imported-module-identity-cache-capacity))
           (let
             [slot : i64
-              (array-ref tc-imported-module-identity-cache-module-keys cursor)]
+              (array.array-ref
+                tc-imported-module-identity-cache-module-keys
+                cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
+                (array.array-set!
                   tc-imported-module-identity-cache-module-keys
                   cursor
                   module-key)
-                (array-set!
+                (array.array-set!
                   tc-imported-module-identity-cache-target-keys
                   cursor
                   target-key)
-                (array-set!
+                (array.array-set!
                   tc-imported-module-identity-cache-values
                   cursor
                   (if value
@@ -6520,7 +6547,7 @@
               (if (and
                 (= slot module-key)
                 (=
-                  (array-ref
+                  (array.array-ref
                     tc-imported-module-identity-cache-target-keys
                     cursor)
                   target-key))
@@ -6852,10 +6879,10 @@
           (let
             [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
             [index : i64 (compiler-symbol-handle-index handle)]
-            (if (or (< index 0) (>= index (array-length decls)))
+            (if (or (< index 0) (>= index (array.array-length decls)))
               false
               (let
-                [decl : AstDecl (array-ref decls index)]
+                [decl : AstDecl (array.array-ref decls index)]
                 (cond
                   [(string.string-eq base "string-length")
                     (tc-stdlib-string-length-wrapper-decl? ctx base decl)]
@@ -6937,11 +6964,11 @@
 (define tc-source-dotted-alias-key-cache-capacity : i64
   8192)
 (define tc-source-dotted-alias-key-cache-module-keys : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-source-dotted-alias-key-cache-name-keys : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-source-dotted-alias-key-cache-values : (Array i64)
-  (make-array i64 8192))
+  (array.make-array i64 8192))
 (define tc-source-dotted-alias-key-cache-generation : i64
   -1)
 (define tc-source-dotted-alias-key-cache-ready : bool
@@ -6960,7 +6987,7 @@
       (begin
         (while (< i tc-source-dotted-alias-key-cache-capacity)
           (begin
-            (array-set! tc-source-dotted-alias-key-cache-module-keys i 0)
+            (array.array-set! tc-source-dotted-alias-key-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! tc-source-dotted-alias-key-cache-generation (intern-generation))
         (set! tc-source-dotted-alias-key-cache-ready true)))))
@@ -6982,12 +7009,12 @@
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-dotted-alias-key-cache-module-keys cursor)
+          (array.array-ref tc-source-dotted-alias-key-cache-module-keys cursor)
           module-key)
         (=
-          (array-ref tc-source-dotted-alias-key-cache-name-keys cursor)
+          (array.array-ref tc-source-dotted-alias-key-cache-name-keys cursor)
           name-key))
-        (array-ref tc-source-dotted-alias-key-cache-values cursor)
+        (array.array-ref tc-source-dotted-alias-key-cache-values cursor)
         -2))))
 
 (define (tc-source-dotted-alias-key-cache-put!
@@ -6999,15 +7026,15 @@
     (let
       [cursor : i64 (tc-source-dotted-alias-key-cache-bucket module-id name-id)]
       (begin
-        (array-set!
+        (array.array-set!
           tc-source-dotted-alias-key-cache-module-keys
           cursor
           (+ module-id 1))
-        (array-set!
+        (array.array-set!
           tc-source-dotted-alias-key-cache-name-keys
           cursor
           (+ name-id 1))
-        (array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
+        (array.array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
 
 (define (tc-call-builtin-lookup-name
   [ctx : TcContext]
@@ -10170,7 +10197,7 @@
     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
 
 (define (tc-spmd-env-empty) : TcSpmdEnv
-  (TcSpmdEnv (make-array TcSpmdBinding 0) 0))
+  (TcSpmdEnv (array.make-array TcSpmdBinding 0) 0))
 
 (define (tc-spmd-binding
   [name : String]
@@ -10197,7 +10224,7 @@
       (tc-spmd-env-fill-from-type-env (box-get rest) bindings index)]
     [(TcTypeBind name-id ty rest)
       (begin
-        (array-set!
+        (array.array-set!
           bindings
           index
           (tc-spmd-binding
@@ -10211,7 +10238,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (let
     [count : i64 (tc-spmd-env-binding-count env)]
-    [bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding count)]
+    [bindings : (Array TcSpmdBinding) (array.make-array TcSpmdBinding count)]
     (begin
       (tc-spmd-env-fill-from-type-env env bindings (- count 1))
       (TcSpmdEnv bindings count))))
@@ -10245,7 +10272,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (array.array-set! dst index (array.array-ref src index))
       (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
 (define (tc-spmd-env-bind
@@ -10267,10 +10294,11 @@
     [old-len : i64 (tc-spmd-env-len env)]
     [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
     [new-len : i64 (+ old-len 1)]
-    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding new-len)]
+    [new-bindings : (Array TcSpmdBinding)
+      (array.make-array TcSpmdBinding new-len)]
     (begin
       (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
-      (array-set!
+      (array.array-set!
         new-bindings
         old-len
         (tc-spmd-binding name ty class scope role))
@@ -10283,7 +10311,7 @@
   (if (< index 0)
     TcSpmdMissing
     (let
-      [binding : TcSpmdBinding (array-ref bindings index)]
+      [binding : TcSpmdBinding (array.array-ref bindings index)]
       (if (string.string-eq (struct-get binding name) name)
         (TcSpmdFound
           (struct-get binding ty)
@@ -10305,7 +10333,7 @@
   (if (< index 0)
     false
     (let
-      [binding : TcSpmdBinding (array-ref bindings index)]
+      [binding : TcSpmdBinding (array.array-ref bindings index)]
       (if (string.string-eq (struct-get binding name) name)
         (match (struct-get binding scope)
           [(TcSpmdLocal) true]
@@ -10326,7 +10354,7 @@
   (if (< index 0)
     false
     (let
-      [binding : TcSpmdBinding (array-ref bindings index)]
+      [binding : TcSpmdBinding (array.array-ref bindings index)]
       (if (string.string-eq (struct-get binding name) name)
         (match (struct-get binding scope)
           [(TcSpmdOuter) true]
@@ -10347,7 +10375,7 @@
   (if (< index 0)
     -1
     (let
-      [binding : TcSpmdBinding (array-ref bindings index)]
+      [binding : TcSpmdBinding (array.array-ref bindings index)]
       (if (string.string-eq (struct-get binding name) name)
         (match (struct-get binding scope)
           [(TcSpmdLocal) index]
@@ -10367,11 +10395,11 @@
       env
       (let
         [new-bindings : (Array TcSpmdBinding)
-          (make-array TcSpmdBinding old-len)]
-        [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
+          (array.make-array TcSpmdBinding old-len)]
+        [old-binding : TcSpmdBinding (array.array-ref old-bindings local-index)]
         (begin
           (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
-          (array-set!
+          (array.array-set!
             new-bindings
             local-index
             (tc-spmd-binding
@@ -10395,9 +10423,9 @@
   (if (>= index count)
     unit
     (let
-      [binding : TcSpmdBinding (array-ref src index)]
+      [binding : TcSpmdBinding (array.array-ref src index)]
       (begin
-        (array-set!
+        (array.array-set!
           dst
           index
           (tc-spmd-binding
@@ -10412,7 +10440,8 @@
   (let
     [old-len : i64 (tc-spmd-env-len env)]
     [old-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings env)]
-    [new-bindings : (Array TcSpmdBinding) (make-array TcSpmdBinding old-len)]
+    [new-bindings : (Array TcSpmdBinding)
+      (array.make-array TcSpmdBinding old-len)]
     (begin
       (tc-spmd-env-mark-outer-into new-bindings old-bindings 0 old-len)
       (TcSpmdEnv new-bindings old-len))))
@@ -10425,7 +10454,7 @@
   (if (>= index right-len)
     (struct-get left class)
     (let
-      [right : TcSpmdBinding (array-ref right-bindings index)]
+      [right : TcSpmdBinding (array.array-ref right-bindings index)]
       (tc-spmd-merge-class (struct-get left class) (struct-get right class)))))
 
 (define (tc-spmd-env-merge-classes-into
@@ -10438,9 +10467,9 @@
   (if (>= index left-len)
     unit
     (let
-      [left : TcSpmdBinding (array-ref left-bindings index)]
+      [left : TcSpmdBinding (array.array-ref left-bindings index)]
       (begin
-        (array-set!
+        (array.array-set!
           dst
           index
           (tc-spmd-binding
@@ -10467,7 +10496,7 @@
     [right-len : i64 (tc-spmd-env-len right)]
     [left-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings left)]
     [right-bindings : (Array TcSpmdBinding) (tc-spmd-env-bindings right)]
-    [merged : (Array TcSpmdBinding) (make-array TcSpmdBinding left-len)]
+    [merged : (Array TcSpmdBinding) (array.make-array TcSpmdBinding left-len)]
     (begin
       ;; Branch merge is index-aligned: both branches start from the same
       ;; snapshot and local lets restore to that mark before the merge.
@@ -13020,7 +13049,7 @@
     [(TcTypeCache ids _ _ _ shadow-flags _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          (not (= (array-ref shadow-flags index) 1))]
+          (not (= (array.array-ref shadow-flags index) 1))]
         [(hashmap.I64I64MapMissing)
           (if partial
             (tc-default-builtin-unshadowed-scan-id? (box-get below) name-id)
@@ -16987,11 +17016,11 @@
 (define tc-inlay-hint-count : i64
   0)
 (define tc-inlay-hint-lines : (Array i64)
-  (make-array i64 65536))
+  (array.make-array i64 65536))
 (define tc-inlay-hint-cols : (Array i64)
-  (make-array i64 65536))
+  (array.make-array i64 65536))
 (define tc-inlay-hint-types : (Array String)
-  (make-array String 65536))
+  (array.make-array String 65536))
 
 (define (tc-inlay-hints-enable!) : unit
   (begin
@@ -17007,21 +17036,21 @@
     tc-inlay-hint-capacity))
 
 (define (tc-inlay-hint-line-at [i : i64]) : i64
-  (array-ref tc-inlay-hint-lines i))
+  (array.array-ref tc-inlay-hint-lines i))
 
 (define (tc-inlay-hint-col-at [i : i64]) : i64
-  (array-ref tc-inlay-hint-cols i))
+  (array.array-ref tc-inlay-hint-cols i))
 
 (define (tc-inlay-hint-type-at [i : i64]) : String
-  (array-ref tc-inlay-hint-types i))
+  (array.array-ref tc-inlay-hint-types i))
 
 (define (tc-inlay-hint-record! [line : i64] [col : i64] [ty : String]) : unit
   (let
     [slot : i64 (% tc-inlay-hint-count tc-inlay-hint-capacity)]
     (begin
-      (array-set! tc-inlay-hint-lines slot line)
-      (array-set! tc-inlay-hint-cols slot col)
-      (array-set! tc-inlay-hint-types slot ty)
+      (array.array-set! tc-inlay-hint-lines slot line)
+      (array.array-set! tc-inlay-hint-cols slot col)
+      (array.array-set! tc-inlay-hint-types slot ty)
       (set! tc-inlay-hint-count (+ tc-inlay-hint-count 1)))))
 
 ;; Record the inferred type of an un-annotated let binding value, if collection
@@ -22394,7 +22423,7 @@
 (define tc-agg-layout-cache-capacity : i64
   65536)
 (define tc-agg-layout-cache : (Array TcAggLayoutCacheSlot)
-  (make-array TcAggLayoutCacheSlot 65536))
+  (array.make-array TcAggLayoutCacheSlot 65536))
 (define tc-agg-layout-cache-generation : i64
   -1)
 
@@ -22408,7 +22437,7 @@
       (begin
         (while (< i tc-agg-layout-cache-capacity)
           (begin
-            (array-set! tc-agg-layout-cache i (TcAggLayoutCacheEmpty))
+            (array.array-set! tc-agg-layout-cache i (TcAggLayoutCacheEmpty))
             (set! i (+ i 1))))
         (set! tc-agg-layout-cache-generation (intern-generation))))))
 
@@ -22442,7 +22471,10 @@
         (begin
           (unsafe
             (tl_arena_set prev))
-          (array-set! tc-agg-layout-cache key (TcAggLayoutCacheFull persistent)))))))
+          (array.array-set!
+            tc-agg-layout-cache
+            key
+            (TcAggLayoutCacheFull persistent)))))))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
   [ctx : TcContext]
@@ -22468,7 +22500,7 @@
     [(OkTcInlineAggregateLayout layout)
       (begin
         (tc-agg-layout-cache-store! key layout)
-        (match (array-ref tc-agg-layout-cache key)
+        (match (array.array-ref tc-agg-layout-cache key)
           [(TcAggLayoutCacheFull cached) (OkTcInlineAggregateLayout cached)]
           [(TcAggLayoutCacheEmpty)
             ;; Unreachable: the slot was just stored. Recompute defensively.
@@ -22489,7 +22521,7 @@
             (begin
               (cfg compile-profile (tc-lp-note 14))
               (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack))
-            (match (array-ref tc-agg-layout-cache key)
+            (match (array.array-ref tc-agg-layout-cache key)
               [(TcAggLayoutCacheFull layout)
                 (begin
                   (cfg compile-profile (tc-lp-note 12))
@@ -22632,7 +22664,7 @@
 (define tc-agg-scalar-cache-capacity : i64
   400000)
 (define tc-agg-size-cache : (Array i64)
-  (make-array i64 400000))
+  (array.make-array i64 400000))
 
 ;; #2624: these scalar caches used to be keyed by symbol-handle INDEX, which is
 ;; only meaningful for one snapshot of a program's symbol table. Specialization
@@ -22653,7 +22685,7 @@
       (begin
         (while (< i tc-agg-scalar-cache-capacity)
           (begin
-            (array-set! tc-agg-size-cache i 0)
+            (array.array-set! tc-agg-size-cache i 0)
             (set! i (+ i 1))))
         (set! tc-agg-size-cache-generation (intern-generation))))))
 
@@ -22676,7 +22708,7 @@
             (tc-inline-aggregate-layout-size layout)]
           [(ErrTcInlineAggregateLayout _) fallback])
         (let
-          [cached : i64 (array-ref tc-agg-size-cache key)]
+          [cached : i64 (array.array-ref tc-agg-size-cache key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
@@ -22684,7 +22716,7 @@
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
                   (begin
-                    (array-set! tc-agg-size-cache key (+ size 1))
+                    (array.array-set! tc-agg-size-cache key (+ size 1))
                     size))]
               [(ErrTcInlineAggregateLayout _) fallback])))))))
 
@@ -22692,7 +22724,7 @@
 ;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
 (define tc-agg-align-cache : (Array i64)
-  (make-array i64 400000))
+  (array.make-array i64 400000))
 (define tc-agg-align-cache-generation : i64
   -1)
 
@@ -22704,7 +22736,7 @@
       (begin
         (while (< i tc-agg-scalar-cache-capacity)
           (begin
-            (array-set! tc-agg-align-cache i 0)
+            (array.array-set! tc-agg-align-cache i 0)
             (set! i (+ i 1))))
         (set! tc-agg-align-cache-generation (intern-generation))))))
 
@@ -22722,7 +22754,7 @@
             (tc-inline-aggregate-layout-align layout)]
           [(ErrTcInlineAggregateLayout _) fallback])
         (let
-          [cached : i64 (array-ref tc-agg-align-cache key)]
+          [cached : i64 (array.array-ref tc-agg-align-cache key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
@@ -22730,7 +22762,7 @@
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
                   (begin
-                    (array-set! tc-agg-align-cache key (+ align 1))
+                    (array.array-set! tc-agg-align-cache key (+ align 1))
                     align))]
               [(ErrTcInlineAggregateLayout _) fallback])))))))
 
@@ -22740,7 +22772,7 @@
 ;; construct / struct-get / copy (lower-name-register-words). Encoded as
 ;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
 (define tc-agg-regwords-cache : (Array i64)
-  (make-array i64 400000))
+  (array.make-array i64 400000))
 
 ;; Same per-program keying as tc-agg-size-cache, so it is gated on
 ;; intern-generation and explicitly invalidated at lower boundaries.
@@ -22762,7 +22794,7 @@
       (begin
         (while (< i tc-agg-scalar-cache-capacity)
           (begin
-            (array-set! tc-agg-regwords-cache i 0)
+            (array.array-set! tc-agg-regwords-cache i 0)
             (set! i (+ i 1))))
         (set! tc-agg-regwords-cache-generation (intern-generation))))))
 
@@ -22782,7 +22814,7 @@
       (if (< key 0)
         (tc-inline-aggregate-regwords-compute ctx name-id)
         (let
-          [cached : i64 (array-ref tc-agg-regwords-cache key)]
+          [cached : i64 (array.array-ref tc-agg-regwords-cache key)]
           (if (> cached 0)
             (- cached 1)
             (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
@@ -22793,7 +22825,7 @@
                       (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                       0)]
                   (begin
-                    (array-set! tc-agg-regwords-cache key (+ words 1))
+                    (array.array-set! tc-agg-regwords-cache key (+ words 1))
                     words))]
               [(ErrTcInlineAggregateLayout _) 0])))))))
 
@@ -29308,14 +29340,14 @@
       [index : i64 (compiler-symbol-handle-index handle)]
       [decls : (Array AstDecl)
         (compiler-symbols-decls (tc-context-symbols ctx))]
-      (if (or (< index 0) (>= index (array-length decls)))
+      (if (or (< index 0) (>= index (array.array-length decls)))
         OkTcUnit
         (tc-comptime-purity-decl
           ctx
           env
           (tc-comptime-purity-chain-push chain name)
           (tc-string-list-add seen name)
-          (array-ref decls index))))))
+          (array.array-ref decls index))))))
 
 (define (tc-comptime-purity-decl
   [ctx : TcContext]
@@ -35333,6 +35365,7 @@
 
 (define (macro-identity-key-params
   [ctx : TcContext]
+  [fallback-module : String]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -35388,7 +35421,10 @@
                     [head-expr : AstExpr (ast-node-get head)]
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (if (tc-macro-type-param-kind? ty)
-                      (match (macro-type-arg ctx head-expr)
+                      (match (macro-type-arg-with-fallback
+                        ctx
+                        fallback-module
+                        head-expr)
                         [(OkMacroTypeArg resolved-ty)
                           (OkGenKey
                             (str_cat.str-cat
@@ -35397,7 +35433,10 @@
                             fuel)]
                         [(ErrMacroTypeArg diag) (ErrGenKey diag)])
                       (if (tc-macro-module-param-kind? ty)
-                        (match (macro-module-strategy-arg ctx head-expr)
+                        (match (macro-module-strategy-arg-with-fallback
+                          ctx
+                          fallback-module
+                          head-expr)
                           [(OkMacroModuleArg module)
                             (OkGenKey
                               (str_cat.str-cat
@@ -35415,6 +35454,7 @@
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
+                          fallback-module
                           rest-params
                           rest-args
                           env
@@ -35429,6 +35469,7 @@
 
 (define (macro-module-identity
   [ctx : TcContext]
+  [fallback-module : String]
   [macro-name : String]
   [definition-module : String]
   [params : AstMacroParamList]
@@ -35437,6 +35478,7 @@
   [call-expr : AstExpr]) : ResultGenKey
   (match (macro-identity-key-params
     ctx
+    fallback-module
     params
     args
     env
@@ -35834,7 +35876,7 @@
       span)))
 
 ;; Serialize an AstType back to a spanned sexpr so type positions embedded in
-;; expression nodes (make-array, cast, ann, typed let bindings) round-trip.
+;; expression nodes (array.make-array, cast, ann, typed let bindings) round-trip.
 (define (macro-type-to-spanned-sexpr
   [ty : AstType]
   [span : SourceSpan]
@@ -37599,11 +37641,11 @@
 (define macro-alias-cache-capacity : i64
   4096)
 (define macro-alias-cache-module-keys : (Array i64)
-  (make-array i64 4096))
+  (array.make-array i64 4096))
 (define macro-alias-cache-qualifier-keys : (Array i64)
-  (make-array i64 4096))
+  (array.make-array i64 4096))
 (define macro-alias-cache-values : (Array i64)
-  (make-array i64 4096))
+  (array.make-array i64 4096))
 (define macro-alias-cache-count : i64
   0)
 (define macro-alias-cache-generation : i64
@@ -37613,11 +37655,11 @@
 (define macro-unqualified-import-cache-capacity : i64
   65536)
 (define macro-unqualified-import-cache-module-keys : (Array i64)
-  (make-array i64 65536))
+  (array.make-array i64 65536))
 (define macro-unqualified-import-cache-name-keys : (Array i64)
-  (make-array i64 65536))
+  (array.make-array i64 65536))
 (define macro-unqualified-import-cache-values : (Array i64)
-  (make-array i64 65536))
+  (array.make-array i64 65536))
 (define macro-unqualified-import-cache-count : i64
   0)
 (define macro-unqualified-import-cache-generation : i64
@@ -37627,10 +37669,10 @@
 (define macro-flat-import-target-cache-capacity : i64
   1024)
 (define macro-flat-import-target-cache-module-keys : (Array i64)
-  (make-array i64 1024))
+  (array.make-array i64 1024))
 (define macro-flat-import-target-cache-values : (Array
     MacroFlatImportTargetList)
-  (make-array MacroFlatImportTargetList 1024))
+  (array.make-array MacroFlatImportTargetList 1024))
 (define macro-flat-import-target-cache-count : i64
   0)
 (define macro-flat-import-target-cache-generation : i64
@@ -37661,7 +37703,7 @@
       (begin
         (while (< i macro-unqualified-import-cache-capacity)
           (begin
-            (array-set! macro-unqualified-import-cache-module-keys i 0)
+            (array.array-set! macro-unqualified-import-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! macro-unqualified-import-cache-count 0)
         (set! macro-unqualified-import-cache-generation (intern-generation))
@@ -37690,18 +37732,20 @@
         (< steps macro-unqualified-import-cache-capacity))
         (let
           [slot : i64
-            (array-ref macro-unqualified-import-cache-module-keys cursor)]
+            (array.array-ref macro-unqualified-import-cache-module-keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
               (=
-                (array-ref macro-unqualified-import-cache-name-keys cursor)
+                (array.array-ref
+                  macro-unqualified-import-cache-name-keys
+                  cursor)
                 name-key))
               (begin
                 (set!
                   out
-                  (array-ref macro-unqualified-import-cache-values cursor))
+                  (array.array-ref macro-unqualified-import-cache-values cursor))
                 (set! done true))
               (begin
                 (set!
@@ -37732,18 +37776,23 @@
           (< steps macro-unqualified-import-cache-capacity))
           (let
             [slot : i64
-              (array-ref macro-unqualified-import-cache-module-keys cursor)]
+              (array.array-ref
+                macro-unqualified-import-cache-module-keys
+                cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
+                (array.array-set!
                   macro-unqualified-import-cache-module-keys
                   cursor
                   module-key)
-                (array-set!
+                (array.array-set!
                   macro-unqualified-import-cache-name-keys
                   cursor
                   name-key)
-                (array-set! macro-unqualified-import-cache-values cursor value)
+                (array.array-set!
+                  macro-unqualified-import-cache-values
+                  cursor
+                  value)
                 (set!
                   macro-unqualified-import-cache-count
                   (+ macro-unqualified-import-cache-count 1))
@@ -37751,7 +37800,9 @@
               (if (and
                 (= slot module-key)
                 (=
-                  (array-ref macro-unqualified-import-cache-name-keys cursor)
+                  (array.array-ref
+                    macro-unqualified-import-cache-name-keys
+                    cursor)
                   name-key))
                 (set! done true)
                 (begin
@@ -37773,7 +37824,7 @@
       (begin
         (while (< i macro-flat-import-target-cache-capacity)
           (begin
-            (array-set! macro-flat-import-target-cache-module-keys i 0)
+            (array.array-set! macro-flat-import-target-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! macro-flat-import-target-cache-count 0)
         (set! macro-flat-import-target-cache-generation (intern-generation))
@@ -37797,7 +37848,7 @@
         (< steps macro-flat-import-target-cache-capacity))
         (let
           [slot : i64
-            (array-ref macro-flat-import-target-cache-module-keys cursor)]
+            (array.array-ref macro-flat-import-target-cache-module-keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (= slot module-key)
@@ -37805,7 +37856,9 @@
                 (set!
                   out
                   (MacroFlatImportTargetCacheHit
-                    (array-ref macro-flat-import-target-cache-values cursor)))
+                    (array.array-ref
+                      macro-flat-import-target-cache-values
+                      cursor)))
                 (set! done true))
               (begin
                 (set!
@@ -37834,14 +37887,16 @@
           (< steps macro-flat-import-target-cache-capacity))
           (let
             [slot : i64
-              (array-ref macro-flat-import-target-cache-module-keys cursor)]
+              (array.array-ref
+                macro-flat-import-target-cache-module-keys
+                cursor)]
             (if (= slot 0)
               (begin
-                (array-set!
+                (array.array-set!
                   macro-flat-import-target-cache-module-keys
                   cursor
                   module-key)
-                (array-set!
+                (array.array-set!
                   macro-flat-import-target-cache-values
                   cursor
                   targets)
@@ -37982,7 +38037,7 @@
       (begin
         (while (< i macro-alias-cache-capacity)
           (begin
-            (array-set! macro-alias-cache-module-keys i 0)
+            (array.array-set! macro-alias-cache-module-keys i 0)
             (set! i (+ i 1))))
         (set! macro-alias-cache-count 0)
         (set! macro-alias-cache-generation (intern-generation))
@@ -38007,16 +38062,16 @@
         false
         (< steps macro-alias-cache-capacity))
         (let
-          [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
+          [slot : i64 (array.array-ref macro-alias-cache-module-keys cursor)]
           (if (= slot 0)
             (set! done true)
             (if (and
               (= slot module-key)
               (=
-                (array-ref macro-alias-cache-qualifier-keys cursor)
+                (array.array-ref macro-alias-cache-qualifier-keys cursor)
                 qualifier-key))
               (begin
-                (set! out (array-ref macro-alias-cache-values cursor))
+                (set! out (array.array-ref macro-alias-cache-values cursor))
                 (set! done true))
               (begin
                 (set!
@@ -38042,21 +38097,24 @@
           false
           (< steps macro-alias-cache-capacity))
           (let
-            [slot : i64 (array-ref macro-alias-cache-module-keys cursor)]
+            [slot : i64 (array.array-ref macro-alias-cache-module-keys cursor)]
             (if (= slot 0)
               (begin
-                (array-set! macro-alias-cache-module-keys cursor module-key)
-                (array-set!
+                (array.array-set!
+                  macro-alias-cache-module-keys
+                  cursor
+                  module-key)
+                (array.array-set!
                   macro-alias-cache-qualifier-keys
                   cursor
                   qualifier-key)
-                (array-set! macro-alias-cache-values cursor value)
+                (array.array-set! macro-alias-cache-values cursor value)
                 (set! macro-alias-cache-count (+ macro-alias-cache-count 1))
                 (set! done true))
               (if (and
                 (= slot module-key)
                 (=
-                  (array-ref macro-alias-cache-qualifier-keys cursor)
+                  (array.array-ref macro-alias-cache-qualifier-keys cursor)
                   qualifier-key))
                 (set! done true)
                 (begin
@@ -38605,6 +38663,19 @@
           (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
 
+(define (macro-type-arg-with-fallback
+  [ctx : TcContext]
+  [fallback-module : String]
+  [arg : AstExpr]) : ResultMacroTypeArg
+  (match (macro-type-arg ctx arg)
+    [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
+    [(ErrMacroTypeArg primary-diag)
+      (if (string.string-eq fallback-module (tc-context-module ctx))
+        (ErrMacroTypeArg primary-diag)
+        (match (macro-type-arg (tc-context-with-module ctx fallback-module) arg)
+          [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
+          [(ErrMacroTypeArg _) (ErrMacroTypeArg primary-diag)]))]))
+
 (define (macro-module-strategy-unknown-message [name : String]) : String
   (str_cat.str-cat
     "typecheck: unknown module strategy "
@@ -38647,6 +38718,21 @@
           (ctfe-diagnostic-at-expr
             arg
             "typecheck: Module macro operand expects a module name")))]))
+
+(define (macro-module-strategy-arg-with-fallback
+  [ctx : TcContext]
+  [fallback-module : String]
+  [arg : AstExpr]) : ResultMacroModuleArg
+  (match (macro-module-strategy-arg ctx arg)
+    [(OkMacroModuleArg module) (OkMacroModuleArg module)]
+    [(ErrMacroModuleArg primary-diag)
+      (if (string.string-eq fallback-module (tc-context-module ctx))
+        (ErrMacroModuleArg primary-diag)
+        (match (macro-module-strategy-arg
+          (tc-context-with-module ctx fallback-module)
+          arg)
+          [(OkMacroModuleArg module) (OkMacroModuleArg module)]
+          [(ErrMacroModuleArg _) (ErrMacroModuleArg primary-diag)]))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
   (match items
@@ -38928,6 +39014,7 @@
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [name : i64]
   [ty : AstType]
@@ -38937,13 +39024,16 @@
   [env : CtfeEnv]) : ResultMacroEnv
   (cond
     [(tc-macro-type-param-kind? ty)
-      (match (macro-type-arg ctx arg-expr)
+      (match (macro-type-arg-with-fallback ctx fallback-module arg-expr)
         [(OkMacroTypeArg resolved-ty)
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
         [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])]
     [(tc-macro-module-param-kind? ty)
-      (match (macro-module-strategy-arg ctx arg-expr)
+      (match (macro-module-strategy-arg-with-fallback
+        ctx
+        fallback-module
+        arg-expr)
         [(OkMacroModuleArg module)
           (OkMacroEnv
             (ctfe-env-extend-typed
@@ -38991,6 +39081,7 @@
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
 (define (macro-bind-params
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [params : AstMacroParamList]
   [args : AstExprList]
@@ -39027,6 +39118,7 @@
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (macro-bind-fixed-param
                       ctx
+                      fallback-module
                       type-env
                       pname
                       pty
@@ -39037,6 +39129,7 @@
                       [(OkMacroEnv next-env)
                         (macro-bind-params
                           ctx
+                          fallback-module
                           type-env
                           rest-params
                           rest-args
@@ -39049,6 +39142,7 @@
 ;; returned syntax value for expression, module, or declaration positions.
 (define (macro-eval-transformer-expanded
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [macro-name : String]
   [params : AstMacroParamList]
@@ -39059,6 +39153,7 @@
     (tc-context-capture-active-pools! ctx)
     (match (macro-bind-params
       ctx
+      fallback-module
       type-env
       params
       expanded-args
@@ -39105,6 +39200,7 @@
     [(OkMacroExprList expanded-args)
       (macro-eval-transformer-expanded
         ctx
+        (tc-context-module ctx)
         type-env
         macro-name
         params
@@ -39524,6 +39620,7 @@
 
 (define (macro-vector-family-fast-decls
   [ctx : TcContext]
+  [fallback-module : String]
   [args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
   (match args
@@ -39540,7 +39637,10 @@
                 [(AstExprCons prefix-id rest3-box)
                   (match (box-get rest3-box)
                     [(AstExprNil)
-                      (match (macro-type-arg ctx type-expr)
+                      (match (macro-type-arg-with-fallback
+                        ctx
+                        fallback-module
+                        type-expr)
                         [(OkMacroTypeArg elem-ty)
                           (match (macro-vf-name-expr vec-expr)
                             [(TcSomeString vec-name)
@@ -39700,6 +39800,7 @@
               (tc-context-capture-active-pools! ctx)
               (match (macro-bind-params
                 ctx
+                (tc-context-module ctx)
                 type-env
                 params
                 expanded-args
@@ -40811,7 +40912,7 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(OkMacroCallDeclModule maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
@@ -40826,6 +40927,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            call-module
                             macro-name
                             definition-module
                             params
@@ -40838,6 +40940,7 @@
                                 definition-module)
                                 (match (macro-vector-family-fast-decls
                                   call-ctx
+                                  call-module
                                   expanded-args
                                   call-expr)
                                   [(OkMacroParsedDecls generated)
@@ -40860,6 +40963,7 @@
                                     (ErrMacroDeclExpansion diag)])
                                 (match (macro-eval-transformer-expanded
                                   call-ctx
+                                  call-module
                                   global-env
                                   macro-name
                                   params
@@ -40945,7 +41049,7 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(OkMacroCallDeclModule maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
@@ -40960,6 +41064,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            call-module
                             macro-name
                             definition-module
                             params
@@ -40969,6 +41074,7 @@
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer-expanded
                                 call-ctx
+                                call-module
                                 global-env
                                 macro-name
                                 params

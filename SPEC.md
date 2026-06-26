@@ -1387,8 +1387,10 @@ places whose owner/provenance is statically known:
 - Local bindings and function parameters.
 - Aggregate field and element projections rooted in a borrowable place. In a
   borrow expression, forms such as `(struct-get p field)`, local dotted field
-  sugar `p.field`, `(tuple-ref t 0)`, and `(array-ref items i)` are treated as
-  projections, not by-value reads.
+  sugar `p.field`, `(tuple-ref t 0)`, and the transitional `(array-ref items i)`
+  compatibility form are treated as projections, not by-value reads. Qualified
+  `stdlib.array` macro calls become borrow places in the #3772 alias-removal
+  slice.
 - Arena-owned aggregate handles: `String`, compatibility dynamic-array,
   struct, enum, and tuple handles allocated in the active arena. Handles with
   type `(in phase T)` infer lifetime `phase`; untagged heap handles allocated
@@ -3563,6 +3565,8 @@ They require explicit constructors until a cleanup-aware default policy is
 specified.
 
 ```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
+(import stdlib.array)
+
 (defstruct Point (x i64) (y i64))
 (defenum MaybeI64 (None) (Some i64))
 
@@ -3572,8 +3576,8 @@ specified.
   (let
     [p : Point (init)]                 ; (Point 0 0)
     [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
-    [xs : (Array i64) (make-array i64 4)]
-    (+ zero (+ (struct-get p x) (array-ref xs 0)))))
+    [xs : (Array i64) (array.make-array i64 4)]
+    (+ zero (+ (struct-get p x) (array.array-ref xs 0)))))
 ```
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -3674,12 +3678,14 @@ and is separate from the safe task-threading APIs specified in section 6.5.
 Initial syntax:
 
 ```lisp test=ignore name=spmd-foreach-map reason="illustrative function; integration tests cover executable foreach programs"
+(import stdlib.array)
+
 (define (add-arrays [a : (Array i64)]
                     [b : (Array i64)]
                     [out : (Array i64)]
                     [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 ```
 
 Semantics:
@@ -3805,13 +3811,15 @@ Lane identity forms:
   SIMD backend modes.
 
 ```lisp test=check name=spmd-program-index-foreach
+(import stdlib.array)
+
 (define (write-lane-ids [idxs : (Array i64)]
                         [counts : (Array i64)]
                         [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (begin
-      (array-set! idxs i (program-index))
-      (array-set! counts i (program-count)))))
+      (array.array-set! idxs i (program-index))
+      (array.array-set! counts i (program-count)))))
 ```
 
 In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element and
@@ -3820,15 +3828,19 @@ full gang stores indexes `0` through `W - 1` and count `W`; a non-divisible tail
 stores only the active prefix of those lane indexes.
 
 ```lisp test=check name=spmd-program-index-empty-range
+(import stdlib.array)
+
 (define (empty-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 0])
-    (array-set! out i (+ (program-index) (program-count)))))
+    (array.array-set! out i (+ (program-index) (program-count)))))
 ```
 
 ```lisp test=check name=spmd-program-index-tail
+(import stdlib.array)
+
 (define (write-tail-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 13])
-    (array-set! out i (+ (* (program-count) 100) (program-index)))))
+    (array.array-set! out i (+ (* (program-count) 100) (program-index)))))
 ```
 
 ```lisp test=check name=spmd-program-index-reduce
@@ -3978,53 +3990,73 @@ Explicit SPMD atomic scatter:
   there along with other function calls and side effects.
 
 ```lisp test=check name=spmd-masked-if-scalar-fallback
+(import stdlib.array)
+
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (if (< (array-ref xs i) 0)
-        (array-set! out i 0)
-        (array-set! out i (array-ref xs i)))))
+    (if (< (array.array-ref xs i) 0)
+        (array.array-set! out i 0)
+        (array.array-set! out i (array.array-ref xs i)))))
 ```
 
 ```lisp test=check name=spmd-masked-if-tail
+(import stdlib.array)
+
 (define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
-        (array-set! out i (array-ref xs i))
-        (array-set! out i 0))))
+        (array.array-set! out i (array.array-ref xs i))
+        (array.array-set! out i 0))))
 ```
 
 ```lisp test=check name=spmd-masked-if-nested
+(import stdlib.array)
+
 (define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [x : i64 (array-ref xs i)]
+      [x : i64 (array.array-ref xs i)]
       (if (< x 0)
-          (array-set! out i -1)
+          (array.array-set! out i -1)
           (if (= x 0)
-              (array-set! out i 0)
-              (array-set! out i 1))))))
+              (array.array-set! out i 0)
+              (array.array-set! out i 1))))))
 ```
 
 SPMD reductions and scans:
 
 The first reduction surface is an explicit expression form:
 
+Compatibility note for the in-progress array helper migration: SPMD
+reduction/scan value operands and direct scan body writes still use the bare
+array helper aliases until #3772 teaches the purity checker to recognize
+qualified `stdlib.array` macro calls as compiler array ASTs. Ordinary SPMD reads
+and writes outside those positions use the `stdlib.array` macro surface.
+
 ```lisp test=check name=spmd-reduce-sum-i64
+(import stdlib.array)
+
 (define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-reduce-any-bool
+(import stdlib.array)
+
 (define (contains-zero [xs : (Array i64)] [n : i64]) : bool
   (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
 ```
 
 ```lisp test=check name=spmd-reduce-max-seeded
+(import stdlib.array)
+
 (define (max-i64-seeded [xs : (Array i64)] [n : i64] [seed : i64]) : i64
   (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-scan-sum-i64
+(import stdlib.array)
+
 (define (scan-prefix-sum [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (spmd-scan
     sum
@@ -4166,26 +4198,28 @@ name is the callable API; each variant names an ordinary top-level function
 compiled for one backend mode.
 
 ```lisp test=ignore name=simd-dispatch-declaration reason="runtime SIMD dispatch declarations are specified before parser/lowerer implementation"
+(import stdlib.array)
+
 (define (add-arrays-scalar [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (add-arrays-avx2 [a : (Array i64)]
                          [b : (Array i64)]
                          [out : (Array i64)]
                          [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (add-arrays-avx512 [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (defdispatch add-arrays
   (scalar add-arrays-scalar)
@@ -4269,51 +4303,63 @@ Unsupported in the current SPMD implementation:
 Negative examples for later parser/typechecker tests:
 
 ```lisp test=ignore name=spmd-reject-varying-while reason="varying while remains deferred after masked varying if"
+(import stdlib.array)
+
 (define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (while (< (array-ref xs i) 0)
-      (array-set! out i 0))))
+    (while (< (array.array-ref xs i) 0)
+      (array.array-set! out i 0))))
 ```
 
 ```lisp test=ignore name=spmd-reject-non-atomic-scatter reason="scatter writes remain deferred after masked varying if"
+(import stdlib.array)
+
 (define (permute [xs : (Array i64)]
                  [index : (Array i64)]
                  [out : (Array i64)]
                  [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [j : i64 (array-ref index i)]
-      (array-set! out j (array-ref xs j)))))
+      [j : i64 (array.array-ref index i)]
+      (array.array-set! out j (array.array-ref xs j)))))
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
+(import stdlib.array)
+
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let
     [sum : i64 0]
     (begin
       (foreach ([i : i64 0 n])
-        (set! sum (+ sum (array-ref xs i))))
+        (set! sum (+ sum (array.array-ref xs i))))
       sum)))
 ```
 
 ```lisp test=ignore name=spmd-reject-f64-min reason="covered by tests/safety/spmd_reduce_f64_min_reject.tl"
+(import stdlib.array)
+
 (define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-shuffle reason="rejected by the parser; the spec example harness only asserts positive check/compile/run"
+(import stdlib.array)
+
 (define (bad-cross-lane [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-indirect-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
+(import stdlib.array)
+
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (let
     [f : (-> i64 i64) inc]
     (foreach ([i : i64 0 n])
-      (array-set! out i (f (array-ref xs i))))))
+      (array.array-set! out i (f (array.array-ref xs i))))))
 ```
 
 ```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="covered by tests/safety/spmd_program_index_outside_reject.tl"
@@ -4344,7 +4390,8 @@ nesting `with-arena` forms.
 `(in r T)` (see §3.9). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
-- As the result of the `with-arena` form (`(with-arena r (make-array i64 5))`).
+- As the result of the `with-arena` form after importing `stdlib.array`
+  (`(with-arena r (array.make-array i64 5))`).
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
 - Returned from an enclosing function.
@@ -5683,13 +5730,15 @@ preferred v1 surface for long-running tools that want deterministic, safe
 reclamation between phases.
 
 ```lisp test=check name=with-arena-example
+(import stdlib.array)
+
 (define (process-phase [input : String]) : i64
   (with-arena phase
     (let
-      [buf : (Array i64) (make-array i64 100)]
+      [buf : (Array i64) (array.make-array i64 100)]
       (begin
-        (array-set! buf 0 42)
-        (array-ref buf 0)))))
+        (array.array-set! buf 0 42)
+        (array.array-ref buf 0)))))
 ```
 
 This example uses the current compatibility dynamic-buffer surface. The
@@ -6055,14 +6104,16 @@ not the future safe reference/borrow model (#182), not a replacement for
   values, and named aggregate shapes containing non-cloneable fields.
 
 ```lisp test=ignore name=dynamic-array-aliasing reason="current compatibility aliasing behavior; future move checker rejects copied array handles"
+(import stdlib.array)
+
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 1)]
+    [a : (Array i64) (array.make-array i64 1)]
     (let
       [b : (Array i64) a]
       (begin
-        (array-set! a 0 42)
-        (array-ref b 0)))))
+        (array.array-set! a 0 42)
+        (array.array-ref b 0)))))
 ```
 
 ---
@@ -6568,13 +6619,15 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### Compatibility dynamic array
 
 ```lisp test=run name=dynamic-array exit=30 stdout=""
+(import stdlib.array)
+
 (define (main) : i64
   (let
-    [arr : (Array i64) (make-array i64 5)]
+    [arr : (Array i64) (array.make-array i64 5)]
     (begin
-      (array-set! arr 0 10)
-      (array-set! arr 1 20)
-      (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
+      (array.array-set! arr 0 10)
+      (array.array-set! arr 1 20)
+      (+ (array.array-ref arr 0) (array.array-ref arr 1)))))  ; returns 30
 ```
 
 This remains a runnable compatibility example for today's compiler. New public

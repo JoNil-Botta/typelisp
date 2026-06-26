@@ -1,4 +1,5 @@
 ;; stdlib_json.tl - Integration witness for canonical stdlib JSON support.
+(import stdlib.array)
 (import "stdlib/json.tl")
 (import "stdlib/string.tl")
 
@@ -77,17 +78,17 @@
 
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
-    [buf : (Array u64) (make-array u64 1)]
+    [buf : (Array u64) (array.make-array u64 1)]
     (begin
-      (array-set! buf 0 bits)
+      (array.array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
 
 (define (json-test-f32-from-bits [bits : u32]) : f32
   (let
-    [buf : (Array u32) (make-array u32 1)]
+    [buf : (Array u32) (array.make-array u32 1)]
     (begin
-      (array-set! buf 0 bits)
+      (array.array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
 

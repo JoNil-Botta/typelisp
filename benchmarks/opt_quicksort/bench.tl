@@ -8,6 +8,7 @@
 ;# in-place swaps. The array size and round count are runtime arguments, so the
 ;# whole computation cannot be constant-folded. Results stay in `[0, prime)` so
 ;# the printed decimal matches the C baseline's `%lld`.
+(import stdlib.array)
 (import "stdlib/io.tl")
 (import "stdlib/string.tl")
 
@@ -18,20 +19,20 @@
 
 (define (qs-swap [xs : (Array i64)] [i : i64] [j : i64]) : unit
   (let
-    [tmp : i64 (array-ref xs i)]
+    [tmp : i64 (array.array-ref xs i)]
     (begin
-      (array-set! xs i (array-ref xs j))
-      (array-set! xs j tmp))))
+      (array.array-set! xs i (array.array-ref xs j))
+      (array.array-set! xs j tmp))))
 
 (define (qs-partition [xs : (Array i64)] [lo : i64] [hi : i64]) : i64
   (let
-    [pivot : i64 (array-ref xs hi)]
+    [pivot : i64 (array.array-ref xs hi)]
     [store : i64 lo]
     [scan : i64 lo]
     (begin
       (while (< scan hi)
         (begin
-          (if (< (array-ref xs scan) pivot)
+          (if (< (array.array-ref xs scan) pivot)
             (begin
               (qs-swap xs store scan)
               (set! store (+ store 1)))
@@ -57,7 +58,7 @@
       (while (< i n)
         (begin
           (set! state (bit-and (+ (* state 1103515245) 12345) qs-mask))
-          (array-set! xs i state)
+          (array.array-set! xs i state)
           (set! i (+ i 1))))
       state)))
 
@@ -68,13 +69,13 @@
     (begin
       (while (< i n)
         (begin
-          (set! hash (% (+ (* hash 131) (array-ref xs i)) qs-modulus))
+          (set! hash (% (+ (* hash 131) (array.array-ref xs i)) qs-modulus))
           (set! i (+ i 1))))
       hash)))
 
 (define (qs-bench [n : i64] [rounds : i64]) : i64
   (let
-    [xs : (Array i64) (make-array i64 n)]
+    [xs : (Array i64) (array.make-array i64 n)]
     [round : i64 0]
     [acc : i64 0]
     [seed : i64 1]

@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/thread.tl")
 
@@ -6,13 +7,13 @@
 ;; non-array thread results or vector-backed APIs.
 (define (thread-safe-array-i64-build [base : i64]) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 5)]
+    [items : (Array i64) (array.make-array i64 5)]
     (begin
-      (array-set! items 0 base)
-      (array-set! items 1 (+ base 1))
-      (array-set! items 2 (+ base 2))
-      (array-set! items 3 (+ base 3))
-      (array-set! items 4 (+ base 4))
+      (array.array-set! items 0 base)
+      (array.array-set! items 1 (+ base 1))
+      (array.array-set! items 2 (+ base 2))
+      (array.array-set! items 3 (+ base 3))
+      (array.array-set! items 4 (+ base 4))
       items)))
 
 (define (thread-safe-array-i64-sum [items : (Array i64)]) : i64
@@ -20,9 +21,9 @@
     [i : i64 0]
     [sum : i64 0]
     (begin
-      (while (< i (array-length items))
+      (while (< i (array.array-length items))
         (begin
-          (set! sum (+ sum (array-ref items i)))
+          (set! sum (+ sum (array.array-ref items i)))
           (set! i (+ i 1))))
       sum)))
 
@@ -33,7 +34,7 @@
   (match (thread-join-array-i64 thread)
     [(ThreadArrayI64JoinOk items)
       (if (and
-        (= (array-length items) 5)
+        (= (array.array-length items) 5)
         (= (thread-safe-array-i64-sum items) expected))
         42
         failure)]

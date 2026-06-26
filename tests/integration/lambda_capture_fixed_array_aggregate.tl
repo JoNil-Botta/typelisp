@@ -2,6 +2,7 @@
 ; (#631). Returned closures read after the creator frame has gone away, so each
 ; case only passes if capture snapshots fixed-array storage and rewrites nested
 ; aggregate handles onto the heap.
+(import stdlib.array)
 (import "stdlib/string.tl")
 
 (defstruct Point
@@ -19,8 +20,8 @@
     [names : (Array String 2) (array "hello" "world!")]
     (lambda () : i64
       (+
-        (string-length (array-ref names 0))
-        (string-length (array-ref names 1))))))
+        (string-length (array.array-ref names 0))
+        (string-length (array.array-ref names 1))))))
 
 (define (case-string-array) : bool
   (= ((make-string-array-reader)) 11))
@@ -30,12 +31,12 @@
     [points : (Array Point 2) (array (Point 10 11) (Point 20 1))]
     (lambda () : i64
       (+
-        (struct-get (array-ref points 0) x)
+        (struct-get (array.array-ref points 0) x)
         (+
-          (struct-get (array-ref points 0) y)
+          (struct-get (array.array-ref points 0) y)
           (+
-            (struct-get (array-ref points 1) x)
-            (struct-get (array-ref points 1) y)))))))
+            (struct-get (array.array-ref points 1) x)
+            (struct-get (array.array-ref points 1) y)))))))
 
 (define (case-point-array) : bool
   (= ((make-point-array-reader)) 42))
@@ -46,12 +47,12 @@
       (array (array "ab" "c") (array "def" "ghij"))]
     (lambda () : i64
       (+
-        (string-length (array-ref (array-ref grid 0) 0))
+        (string-length (array.array-ref (array.array-ref grid 0) 0))
         (+
-          (string-length (array-ref (array-ref grid 0) 1))
+          (string-length (array.array-ref (array.array-ref grid 0) 1))
           (+
-            (string-length (array-ref (array-ref grid 1) 0))
-            (string-length (array-ref (array-ref grid 1) 1))))))))
+            (string-length (array.array-ref (array.array-ref grid 1) 0))
+            (string-length (array.array-ref (array.array-ref grid 1) 1))))))))
 
 (define (case-nested-array) : bool
   (= ((make-nested-array-reader)) 10))
@@ -61,10 +62,10 @@
     [chunk : Chunk (Chunk (array 40 1 1))]
     (lambda () : i64
       (+
-        (array-ref (struct-get chunk items) 0)
+        (array.array-ref (struct-get chunk items) 0)
         (+
-          (array-ref (struct-get chunk items) 1)
-          (array-ref (struct-get chunk items) 2))))))
+          (array.array-ref (struct-get chunk items) 1)
+          (array.array-ref (struct-get chunk items) 2))))))
 
 (define (case-fixed-array-field) : bool
   (= ((make-chunk-reader)) 42))
@@ -74,9 +75,9 @@
     [chunk : Chunk (Chunk (array 42 1 1))]
     [f : (-> i64)
       (lambda () : i64
-        (array-ref (struct-get chunk items) 0))]
+        (array.array-ref (struct-get chunk items) 0))]
     (begin
-      (array-set! (struct-get chunk items) 0 5)
+      (array.array-set! (struct-get chunk items) 0 5)
       (= (f) 42))))
 
 (define (make-names-reader) : (-> i64)
@@ -84,8 +85,8 @@
     [names : Names (Names (array "four" "letters"))]
     (lambda () : i64
       (+
-        (string-length (array-ref (struct-get names items) 0))
-        (string-length (array-ref (struct-get names items) 1))))))
+        (string-length (array.array-ref (struct-get names items) 0))
+        (string-length (array.array-ref (struct-get names items) 1))))))
 
 (define (case-aggregate-array-field) : bool
   (= ((make-names-reader)) 11))

@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
@@ -7,12 +8,12 @@
 
 (define (make-i64-items) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 64)]
+    [items : (Array i64) (array.make-array i64 64)]
     [i : i64 0]
     (begin
       (while (< i 64)
         (begin
-          (array-set! items i (+ i 1))
+          (array.array-set! items i (+ i 1))
           (set! i (+ i 1))))
       items)))
 
@@ -20,13 +21,13 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    [n : i64 (array-length items)]
+    [n : i64 (array.array-length items)]
     (begin
       (while (< i rounds)
         (let
           [copy : (Array i64) (clone items)]
           (begin
-            (set! acc (+ acc (array-ref copy (% i n))))
+            (set! acc (+ acc (array.array-ref copy (% i n))))
             (set! i (+ i 1)))))
       acc)))
 
@@ -35,15 +36,15 @@
     [items : (Array i64) (make-i64-items)]
     [copy : (Array i64) (clone items)]
     (begin
-      (array-set! copy 0 999)
-      (and (= (array-ref items 0) 1) (= (array-ref copy 0) 999)))))
+      (array.array-set! copy 0 999)
+      (and (= (array.array-ref items 0) 1) (= (array.array-ref copy 0) 999)))))
 
 (define (make-pairs) : (Array Pair)
   (let
-    [items : (Array Pair) (make-array Pair 2)]
+    [items : (Array Pair) (array.make-array Pair 2)]
     (begin
-      (array-set! items 0 (Pair 1 2))
-      (array-set! items 1 (Pair 3 4))
+      (array.array-set! items 0 (Pair 1 2))
+      (array.array-set! items 1 (Pair 3 4))
       items)))
 
 (define (pair-score [p : Pair]) : i64
@@ -54,10 +55,10 @@
     [items : (Array Pair) (make-pairs)]
     [copy : (Array Pair) (clone items)]
     (begin
-      (array-set! copy 1 (Pair 70 80))
+      (array.array-set! copy 1 (Pair 70 80))
       (and
-        (= (pair-score (array-ref items 1)) 7)
-        (= (pair-score (array-ref copy 1)) 150)))))
+        (= (pair-score (array.array-ref items 1)) 7)
+        (= (pair-score (array.array-ref copy 1)) 150)))))
 
 (define (scratch-string-array-copy-ok?) : bool
   (let
@@ -67,10 +68,10 @@
       (unsafe
         (arena-set! scratch))
       (let
-        [items : (Array String) (make-array String 2)]
+        [items : (Array String) (array.make-array String 2)]
         (begin
-          (array-set! items 0 (string-append "s" "0"))
-          (array-set! items 1 (string-append "s" "1"))
+          (array.array-set! items 0 (string-append "s" "0"))
+          (array.array-set! items 1 (string-append "s" "1"))
           (unsafe
             (arena-set! home))
           (let
@@ -79,8 +80,8 @@
               (unsafe
                 (arena-destroy scratch))
               (and
-                (string-eq (array-ref copy 0) "s0")
-                (string-eq (array-ref copy 1) "s1")))))))))
+                (string-eq (array.array-ref copy 0) "s0")
+                (string-eq (array.array-ref copy 1) "s1")))))))))
 
 (define (main) : i64
   (let

@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
 (import "stdlib/thread.tl")
@@ -22,12 +23,12 @@
 
 (define (sync-integration-channel-from-ctx [ctx : i64] [offset : i64]) : channel_i64.Channel
   (let
-    [raw : (Array i64) (make-array i64 (channel_i64.raw-field-count))]
+    [raw : (Array i64) (array.make-array i64 (channel_i64.raw-field-count))]
     [i : i64 0]
     (begin
       (while (< i (channel_i64.raw-field-count))
         (begin
-          (array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
+          (array.array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
           (set! i (+ i 1))))
       (channel_i64.load-raw raw 0))))
 
@@ -88,8 +89,8 @@
   [count : i64]) : unit
   (begin
     (channel_i64.store-raw! channel ctx 0)
-    (array-set! ctx (channel_i64.raw-field-count) base)
-    (array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
+    (array.array-set! ctx (channel_i64.raw-field-count) base)
+    (array.array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
 
 (define (sync-integration-receive-sum
   [channel : channel_i64.Channel]
@@ -133,8 +134,10 @@
 
 (define (sync-integration-run [channel : channel_i64.Channel]) : i64
   (let
-    [ctx-a : (Array i64) (make-array i64 (+ (channel_i64.raw-field-count) 2))]
-    [ctx-b : (Array i64) (make-array i64 (+ (channel_i64.raw-field-count) 2))]
+    [ctx-a : (Array i64)
+      (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
+    [ctx-b : (Array i64)
+      (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
     (begin
       (sync-integration-pack-context! ctx-a channel 100 sync-integration-count)
       (sync-integration-pack-context! ctx-b channel 1000 sync-integration-count)

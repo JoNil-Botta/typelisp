@@ -518,6 +518,8 @@
       (i64vec.push (&mut items) 1)
       (i64vec.len (& items)))))")
 
+;; Compatibility alias fixture for #3772. The qualified stdlib.array path is
+;; covered by compiler-check-implicit-core-prelude-source above.
 (define (compiler-check-private-dynamic-buffer-public-source) : String
   "(define (main) : i64
   (let

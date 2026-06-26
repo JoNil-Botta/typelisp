@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/thread.tl")
 (import (thread-handle i64) as thread_i64)
 
@@ -28,9 +29,9 @@
           (+
             (struct-get pair right)
             (+
-              (array-ref items 0)
+              (array.array-ref items 0)
               (+
-                (array-ref items 1)
+                (array.array-ref items 1)
                 (+
                   (thread-transfer-choice-score choice)
                   (+ (tuple-ref coords 0) (tuple-ref coords 1)))))))))

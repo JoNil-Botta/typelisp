@@ -3,6 +3,7 @@
 ; - level state lives inside one lexical with-arena scope
 ; - frame-only temporaries live inside a nested lexical with-arena scope
 ; - one frame result is cloned out of a first-class scratch arena with with-escape
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/profile.tl")
 (import "stdlib/string.tl")
@@ -62,7 +63,7 @@
                 [score : i64 (frame-temp-score frame-index)]
                 [summary : String (frame-summary scratch frame-index score)]
                 (begin
-                  (array-set! frame-scores frame-index score)
+                  (array.array-set! frame-scores frame-index score)
                   (assert-i64-eq
                     (string-length (& summary))
                     15
@@ -76,12 +77,12 @@
                 (frame-summary
                   scratch
                   0
-                  (array-ref (struct-get state frame-scores) 0))]
+                  (array.array-ref (struct-get state frame-scores) 0))]
               [last : String
                 (frame-summary
                   scratch
                   2
-                  (array-ref (struct-get state frame-scores) 2))]
+                  (array.array-ref (struct-get state frame-scores) 2))]
               [want-title : String "arena-cookbook"]
               [want-first : String "frame:0/score:9"]
               [want-last : String "frame:2/score:9"]

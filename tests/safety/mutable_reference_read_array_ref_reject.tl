@@ -1,10 +1,12 @@
 ;: SPEC borrow contract: element reads conflict with an overlapping live
 ;: mutable owner borrow.
+(import stdlib.array)
+
 (define (main) : i64
   (let
-    [items : (Array i64) (make-array i64 1)]
+    [items : (Array i64) (array.make-array i64 1)]
     [borrowed : (&mut items (Array i64)) (&mut items)]
-    [n : i64 (array-ref items 0)]
+    [n : i64 (array.array-ref items 0)]
     (begin
-      (array-set! borrowed 0 41)
+      (array.array-set! borrowed 0 41)
       n)))

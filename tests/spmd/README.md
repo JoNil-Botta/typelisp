@@ -68,6 +68,9 @@ falling back to scalar code.
 - `varying_match_i64.tl` - AVX-512-only value-producing varying `match` over
   scalar i64 literal patterns, wildcard fallback, and catch-all lane binding.
   Exit 42.
+- `varying_match_enum_payload.tl` - AVX-512/scalar reference varying `match`
+  over enum tag arms and supported i64 payload bindings, including mixed arms
+  and a tail. AVX2 reports the staged varying-match diagnostic. Exit 42.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
@@ -124,8 +127,10 @@ Coverage map:
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
   `masked_if_i16_u16.tl`.
 - AVX-512 scalar-lane varying `match` coverage lives in
-  `varying_match_i64.tl` and `masked_if_match_i64.tl`; AVX2 keeps explicit
-  staged diagnostics for these shapes.
+  `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
+  varying-match coverage lives in `varying_match_enum_payload.tl` through the
+  scalar reference path. AVX2 keeps explicit staged diagnostics for these
+  shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified

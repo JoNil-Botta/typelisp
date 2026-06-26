@@ -28162,6 +28162,361 @@
     (lower-masked-vector-empty-lane-locals)
     expr))
 
+(define (lower-spmd-enum-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ false]))
+
+(define (lower-masked-vector-array-ref-varying-enum?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [arr : AstExpr]
+  [idx : AstExpr]) : bool
+  (and
+    (>= (lower-masked-vector-index-offset index idx) 0)
+    (match (lower-dynamic-array-var env type-env arr)
+      [(LowerSomeArrayVar _ elem-ty) (lower-spmd-enum-type? elem-ty)]
+      [LowerNoArrayVar false])))
+
+(define (lower-masked-vector-expr-varying-enum-with-locals?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-masked-vector-expr-varying-enum-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-masked-vector-expr-varying-enum-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-masked-vector-expr-varying-enum-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprVar name)
+      (lower-string-set-contains? enum-locals (intern-str name))]
+    [(AstExprArrayRef arr-box idx-box)
+      (lower-masked-vector-array-ref-varying-enum?
+        env
+        type-env
+        index
+        (ast-node-get arr-box)
+        (ast-node-get idx-box))]
+    [_ false]))
+
+(define (lower-masked-vector-enum-let-locals
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [bindings : AstLetBindingList]) : LowerStringSet
+  (match bindings
+    [(AstLetBindingNil) enum-locals]
+    [(AstLetBindingCons binding rest)
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ init-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              [next-locals : LowerStringSet
+                (if (lower-masked-vector-expr-varying-enum-with-locals?
+                  env
+                  type-env
+                  index
+                  enum-locals
+                  init)
+                  (lower-string-set-insert enum-locals (intern-str name))
+                  enum-locals)]
+              (lower-masked-vector-enum-let-locals
+                env
+                type-env
+                index
+                next-locals
+                rest))]))]))
+
+(define (lower-masked-vector-body-has-varying-enum-match-with-locals?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprUnary _ inner-box)
+      (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        (ast-node-get inner-box))]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get left-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get right-box)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+              env
+              type-env
+              index
+              enum-locals
+              bindings)
+            (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              env
+              type-env
+              index
+              (lower-masked-vector-enum-let-locals
+                env
+                type-env
+                index
+                enum-locals
+                bindings)
+              (ast-node-get body-box)))])]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get cond-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get then-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get else-box)))]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
+            (or
+              (lower-masked-vector-expr-varying-enum-with-locals?
+                env
+                type-env
+                index
+                enum-locals
+                scrutinee)
+              (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                env
+                type-env
+                index
+                enum-locals
+                scrutinee)
+              (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+                env
+                type-env
+                index
+                enum-locals
+                arms)))])]
+    [(AstExprBegin exprs)
+      (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+        env
+        type-env
+        index
+        enum-locals
+        exprs)]
+    [(AstExprArrayRef arr-box idx-box)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get idx-box)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get idx-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get value-box)))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get receiver-box))
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get value-box)))]
+    [_ false]))
+
+(define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (ast-node-get expr))
+        (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+          env
+          type-env
+          index
+          enum-locals
+          (box-get rest)))]))
+
+(define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ init-box)
+          (let
+            [init : AstExpr (ast-node-get init-box)]
+            [next-locals : LowerStringSet
+              (if (lower-masked-vector-expr-varying-enum-with-locals?
+                env
+                type-env
+                index
+                enum-locals
+                init)
+                (lower-string-set-insert enum-locals (intern-str name))
+                enum-locals)]
+            (or
+              (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                env
+                type-env
+                index
+                enum-locals
+                init)
+              (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+                env
+                type-env
+                index
+                next-locals
+                (box-get rest))))])]))
+
+(define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [enum-locals : LowerStringSet]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body-box)
+          (or
+            (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              env
+              type-env
+              index
+              enum-locals
+              (ast-node-get body-box))
+            (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+              env
+              type-env
+              index
+              enum-locals
+              (box-get rest)))])]))
+
+(define (lower-masked-vector-body-has-varying-enum-match?
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (lower-masked-vector-body-has-varying-enum-match-with-locals?
+    env
+    type-env
+    index
+    LowerStringNil
+    expr))
+
 (define (lower-masked-vector-bool-array-lane?
   [env : SymI64Env]
   [type-env : TcTypeEnv]
@@ -33264,6 +33619,27 @@
                         (if (lower-mode-avx2? (lower-state-mode state))
                           (lower-avx2-masked-if-diagnostic)
                           "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
+                [(lower-masked-vector-body-has-varying-enum-match?
+                    env
+                    type-env
+                    index
+                    body)
+                  (if (lower-mode-avx2? (lower-state-mode state))
+                    (ErrLowerExpr
+                      (box
+                        (lower-diagnostic-at-expr
+                          body
+                          (lower-avx2-varying-match-diagnostic))))
+                    (lower-scalar-foreach-lowered
+                      ctx
+                      state
+                      env
+                      type-env
+                      index
+                      index-ty
+                      start-value
+                      end-value
+                      body))]
                 [(lower-masked-vector-body-has-varying-match?
                     (lower-state-mode state)
                     env

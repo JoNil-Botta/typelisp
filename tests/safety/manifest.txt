@@ -144,6 +144,7 @@ spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
 spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String
+spmd_varying_match_enum_string_payload_reject|check-fail|tests/safety/spmd_varying_match_enum_string_payload_reject.tl|-|foreach varying match pattern binding type is not supported: String
 spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
 spmd_masked_if_scatter_index_reject|check-fail|tests/safety/spmd_masked_if_scatter_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_masked_if_gather_read_reject|check-fail|tests/safety/spmd_masked_if_gather_read_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes

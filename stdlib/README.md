@@ -156,11 +156,10 @@ use.
   `(import "stdlib/sort.tl")`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
   `(channel i64)` emits a bounded `channel_i64.Channel` module whose queued
-  scalar messages live in runtime-owned OS memory; the flat `ChannelI64` names
-  remain compatibility plumbing for now. `ChannelI64PairChannel` moves two-field
-  `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned string
-  messages through the same bounded channel surface; `MutexI64` protects a
-  shared scalar through a cleanup-owned lexical guard and rejects close while
+  scalar messages live in runtime-owned OS memory. `ChannelI64PairChannel` moves
+  two-field `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned
+  string messages through the same bounded channel surface; `MutexI64` protects
+  a shared scalar through a cleanup-owned lexical guard and rejects close while
   guards or lock attempts are live. It also exposes raw `i64` pointer atomic
   load/store/add/fetch-add/CAS wrappers for synchronization internals. Import it
   with `(import stdlib.sync)` and instantiate with

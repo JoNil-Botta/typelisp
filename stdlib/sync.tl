@@ -35,8 +35,8 @@
 ;: Emit a generated bounded channel module for copyable scalar messages.
 ;:
 ;: The first generated surface supports `i64` and uses the same seven-field
-;: runtime handle, allocation, semaphore, and ring-buffer protocol as the legacy
-;: flat `ChannelI64` substrate.
+;: runtime handle, allocation, semaphore, and ring-buffer protocol as the raw
+;: `SyncI64Channel` substrate.
 (defmacro (channel [T : type]) : Module
   (let
     [module-name : Expr
@@ -67,10 +67,10 @@
             1048576)
           (define (raw-field-count) : i64
             7)
-          (define (empty-legacy) : sync.ChannelI64
-            (sync.ChannelI64 0 0 0 0 0 0 0))
-          (define (to-legacy [channel : Channel]) : sync.ChannelI64
-            (sync.ChannelI64
+          (define (empty-raw) : sync.SyncI64Channel
+            (sync.SyncI64Channel 0 0 0 0 0 0 0))
+          (define (to-raw [channel : Channel]) : sync.SyncI64Channel
+            (sync.SyncI64Channel
               (struct-get channel slots-addr)
               (struct-get channel state-addr)
               (struct-get channel capacity)
@@ -79,13 +79,15 @@
               (struct-get channel items-handle)
               (struct-get channel spaces-handle)))
           (define (create-capacity-ok? [capacity : i64]) : bool
-            (sync.channel-i64-create-capacity-ok? capacity))
+            (sync.sync-i64-channel-create-capacity-ok? capacity))
           (define (create [capacity : i64]) : CreateResult
             (if (not (create-capacity-ok? capacity))
               (CreateErr 1)
               (let
-                [raw : sync.ChannelI64
-                  (sync.channel-i64-create-capacity-or capacity (empty-legacy))]
+                [raw : sync.SyncI64Channel
+                  (sync.sync-i64-channel-create-capacity-or
+                    capacity
+                    (empty-raw))]
                 (if (= (struct-get raw spaces-handle) 0)
                   (CreateErr 1)
                   (CreateOk
@@ -102,23 +104,23 @@
               [(CreateOk channel) channel]
               [(CreateErr _) fallback]))
           (define (send [channel : Channel] [value : i64]) : SendResult
-            (match (sync.channel-i64-send (to-legacy channel) value)
-              [(sync.ChannelI64SendOk) (SendOk)]
-              [(sync.ChannelI64SendErr code) (SendErr code)]))
+            (match (sync.sync-i64-channel-send (to-raw channel) value)
+              [(sync.SyncI64ChannelSendOk) (SendOk)]
+              [(sync.SyncI64ChannelSendErr code) (SendErr code)]))
           (define (send-value-ok? [channel : Channel] [value : i64]) : bool
             (match (send channel value)
               [(SendOk) true]
               [(SendErr _) false]))
           (define (recv [channel : Channel]) : RecvResult
-            (match (sync.channel-i64-recv (to-legacy channel))
-              [(sync.ChannelI64RecvOk value) (RecvOk value)]
-              [(sync.ChannelI64RecvErr code) (RecvErr code)]))
+            (match (sync.sync-i64-channel-recv (to-raw channel))
+              [(sync.SyncI64ChannelRecvOk value) (RecvOk value)]
+              [(sync.SyncI64ChannelRecvErr code) (RecvErr code)]))
           (define (recv-or [channel : Channel] [fallback : i64]) : i64
             (match (recv channel)
               [(RecvOk value) value]
               [(RecvErr _) fallback]))
           (define (close [channel : Channel]) : bool
-            (sync.channel-i64-close (to-legacy channel)))
+            (sync.sync-i64-channel-close (to-raw channel)))
           (define (store-raw!
             [channel : Channel]
             [dst : (Array i64)]
@@ -145,11 +147,11 @@
           (module ,module-name))])))
 
 ;: Maximum supported channel capacity for this first concrete channel surface.
-(define channel-i64-max-capacity : i64
+(define sync-channel-max-capacity : i64
   1048576)
 
-;: Number of raw `i64` fields needed to serialize a `ChannelI64` handle.
-(define channel-i64-raw-field-count : i64
+;: Number of raw `i64` fields needed to serialize a `SyncI64Channel` handle.
+(define sync-i64-channel-raw-field-count : i64
   7)
 
 ;: Number of raw `i64` fields needed to serialize a `ChannelI64PairChannel`.
@@ -191,7 +193,7 @@
   (control-addr i64))
 
 ;: Runtime-owned bounded channel handle for `i64` messages.
-(defstruct ChannelI64
+(defstruct SyncI64Channel
   (slots-addr i64)
   (state-addr i64)
   (capacity i64)
@@ -225,10 +227,10 @@
   (items-handle i64)
   (spaces-handle i64))
 
-;: Result returned by `channel-i64-create`.
-(defenum ChannelI64CreateResult
-  (ChannelI64CreateOk ChannelI64)
-  (ChannelI64CreateErr i64))
+;: Result returned by `sync-i64-channel-create`.
+(defenum SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateOk SyncI64Channel)
+  (SyncI64ChannelCreateErr i64))
 
 ;: Result returned by `channel-i64-pair-create`.
 (defenum ChannelI64PairCreateResult
@@ -245,10 +247,10 @@
   (MutexI64CreateOk MutexI64)
   (MutexI64CreateErr i64))
 
-;: Result returned by `channel-i64-send`.
-(defenum ChannelI64SendResult
-  (ChannelI64SendOk)
-  (ChannelI64SendErr i64))
+;: Result returned by `sync-i64-channel-send`.
+(defenum SyncI64ChannelSendResult
+  (SyncI64ChannelSendOk)
+  (SyncI64ChannelSendErr i64))
 
 ;: Result returned by `channel-i64-pair-send`.
 (defenum ChannelI64PairSendResult
@@ -260,10 +262,10 @@
   (ChannelStringSendOk)
   (ChannelStringSendErr i64))
 
-;: Result returned by `channel-i64-recv`.
-(defenum ChannelI64RecvResult
-  (ChannelI64RecvOk i64)
-  (ChannelI64RecvErr i64))
+;: Result returned by `sync-i64-channel-recv`.
+(defenum SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvOk i64)
+  (SyncI64ChannelRecvErr i64))
 
 ;: Result returned by `channel-i64-pair-recv`.
 (defenum ChannelI64PairRecvResult
@@ -275,13 +277,13 @@
   (ChannelStringRecvOk String)
   (ChannelStringRecvErr i64))
 
-;: Construct a successful `channel-i64-send` result.
-(define (channel-i64-send-ok-result) : ChannelI64SendResult
-  ChannelI64SendOk)
+;: Construct a successful `sync-i64-channel-send` result.
+(define (sync-i64-channel-send-ok-result) : SyncI64ChannelSendResult
+  SyncI64ChannelSendOk)
 
-;: Construct a failed `channel-i64-send` result.
-(define (channel-i64-send-err-result [_message : String]) : ChannelI64SendResult
-  (ChannelI64SendErr 1))
+;: Construct a failed `sync-i64-channel-send` result.
+(define (sync-i64-channel-send-err-result [_message : String]) : SyncI64ChannelSendResult
+  (SyncI64ChannelSendErr 1))
 
 ;: Construct a successful `channel-i64-pair-send` result.
 (define (channel-i64-pair-send-ok-result) : ChannelI64PairSendResult
@@ -299,13 +301,13 @@
 (define (channel-string-send-err-result [_message : String]) : ChannelStringSendResult
   (ChannelStringSendErr 1))
 
-;: Construct a successful `channel-i64-recv` result.
-(define (channel-i64-recv-ok-result [value : i64]) : ChannelI64RecvResult
-  (ChannelI64RecvOk value))
+;: Construct a successful `sync-i64-channel-recv` result.
+(define (sync-i64-channel-recv-ok-result [value : i64]) : SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvOk value))
 
-;: Construct a failed `channel-i64-recv` result.
-(define (channel-i64-recv-err-result [_message : String]) : ChannelI64RecvResult
-  (ChannelI64RecvErr 1))
+;: Construct a failed `sync-i64-channel-recv` result.
+(define (sync-i64-channel-recv-err-result [_message : String]) : SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvErr 1))
 
 ;: Construct a successful `channel-i64-pair-recv` result.
 (define (channel-i64-pair-recv-ok-result [value : ChannelI64Pair]) : ChannelI64PairRecvResult
@@ -319,13 +321,13 @@
 (define (channel-string-recv-err-result [_message : String]) : ChannelStringRecvResult
   (ChannelStringRecvErr 1))
 
-;: Construct a successful `channel-i64-create` result.
-(define (channel-i64-create-ok-result [value : ChannelI64]) : ChannelI64CreateResult
-  (ChannelI64CreateOk value))
+;: Construct a successful `sync-i64-channel-create` result.
+(define (sync-i64-channel-create-ok-result [value : SyncI64Channel]) : SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateOk value))
 
-;: Construct a failed `channel-i64-create` result.
-(define (channel-i64-create-err-result [_message : String]) : ChannelI64CreateResult
-  (ChannelI64CreateErr 1))
+;: Construct a failed `sync-i64-channel-create` result.
+(define (sync-i64-channel-create-err-result [_message : String]) : SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateErr 1))
 
 ;: Construct a successful `channel-i64-pair-create` result.
 (define (channel-i64-pair-create-ok-result [value : ChannelI64PairChannel]) : ChannelI64PairCreateResult
@@ -684,7 +686,7 @@
     (array-ref src (+ offset 2))))
 
 ;: Return the next ring index for a channel with `capacity`.
-(define (channel-i64-next-index [capacity : i64] [index : i64]) : i64
+(define (sync-i64-channel-next-index [capacity : i64] [index : i64]) : i64
   (let
     [next : i64 (+ index 1)]
     (if (>= next capacity)
@@ -692,15 +694,15 @@
       next)))
 
 ;: Build a channel handle from allocated storage and semaphore handles.
-(define (channel-i64-handle
+(define (sync-i64-channel-handle
   [slots-addr : i64]
   [state-addr : i64]
   [capacity : i64]
   [slots-bytes : i64]
   [mutex : thread.ThreadSemaphore]
   [items : thread.ThreadSemaphore]
-  [spaces : thread.ThreadSemaphore]) : ChannelI64
-  (ChannelI64
+  [spaces : thread.ThreadSemaphore]) : SyncI64Channel
+  (SyncI64Channel
     slots-addr
     state-addr
     capacity
@@ -710,18 +712,18 @@
     (struct-get spaces handle)))
 
 ;: Finish channel creation after storage allocation.
-(define (channel-i64-create-semaphores
+(define (sync-i64-channel-create-semaphores
   [slots-addr : i64]
   [state-addr : i64]
   [capacity : i64]
-  [slots-bytes : i64]) : ChannelI64CreateResult
+  [slots-bytes : i64]) : SyncI64ChannelCreateResult
   (let
     [mutex-handle : i64 (thread.thread-semaphore-create-handle-or 1 -1)]
     (if (= mutex-handle -1)
       (begin
         (sync-runtime-free slots-addr slots-bytes)
         (sync-runtime-free state-addr 16)
-        (channel-i64-create-err-result "sync: semaphore create failed"))
+        (sync-i64-channel-create-err-result "sync: semaphore create failed"))
       (let
         [items-handle : i64 (thread.thread-semaphore-create-handle-or 0 -1)]
         (if (= items-handle -1)
@@ -729,7 +731,7 @@
             (sync-semaphore-close mutex-handle)
             (sync-runtime-free slots-addr slots-bytes)
             (sync-runtime-free state-addr 16)
-            (channel-i64-create-err-result "sync: semaphore create failed"))
+            (sync-i64-channel-create-err-result "sync: semaphore create failed"))
           (let
             [spaces-handle : i64
               (thread.thread-semaphore-create-handle-or capacity -1)]
@@ -739,12 +741,13 @@
                 (sync-semaphore-close items-handle)
                 (sync-runtime-free slots-addr slots-bytes)
                 (sync-runtime-free state-addr 16)
-                (channel-i64-create-err-result "sync: semaphore create failed"))
+                (sync-i64-channel-create-err-result
+                  "sync: semaphore create failed"))
               (begin
                 (sync-write-i64! state-addr 0 0)
                 (sync-write-i64! state-addr 1 0)
-                (channel-i64-create-ok-result
-                  (ChannelI64
+                (sync-i64-channel-create-ok-result
+                  (SyncI64Channel
                     slots-addr
                     state-addr
                     capacity
@@ -754,37 +757,39 @@
                     spaces-handle))))))))))
 
 ;: Create a bounded `i64` channel with `capacity` queued messages.
-(define (channel-i64-create [capacity : i64]) : ChannelI64CreateResult
+(define (sync-i64-channel-create [capacity : i64]) : SyncI64ChannelCreateResult
   (if (<= capacity 0)
-    (channel-i64-create-err-result "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
-      (channel-i64-create-err-result "sync: channel capacity exceeds maximum")
+    (sync-i64-channel-create-err-result
+      "sync: channel capacity must be positive")
+    (if (> capacity sync-channel-max-capacity)
+      (sync-i64-channel-create-err-result
+        "sync: channel capacity exceeds maximum")
       (let
         [slots-bytes : i64 (* capacity 8)]
         [slots-addr : i64 (sync-runtime-alloc slots-bytes)]
         (if (= slots-addr 0)
-          (channel-i64-create-err-result "sync: channel allocation failed")
+          (sync-i64-channel-create-err-result "sync: channel allocation failed")
           (let
             [state-addr : i64 (sync-runtime-alloc 16)]
             (if (= state-addr 0)
               (begin
                 (sync-runtime-free slots-addr slots-bytes)
-                (channel-i64-create-err-result
+                (sync-i64-channel-create-err-result
                   "sync: channel allocation failed"))
-              (channel-i64-create-semaphores
+              (sync-i64-channel-create-semaphores
                 slots-addr
                 state-addr
                 capacity
                 slots-bytes))))))))
 
 ;: Send `value`, blocking until one slot is available.
-(define (channel-i64-send [channel : ChannelI64] [value : i64]) : ChannelI64SendResult
+(define (sync-i64-channel-send [channel : SyncI64Channel] [value : i64]) : SyncI64ChannelSendResult
   (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
-    (channel-i64-send-err-result "sync: channel send wait failed")
+    (sync-i64-channel-send-err-result "sync: channel send wait failed")
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
         (sync-semaphore-post (struct-get channel spaces-handle))
-        (channel-i64-send-err-result "sync: channel lock failed"))
+        (sync-i64-channel-send-err-result "sync: channel lock failed"))
       (let
         [tail : i64 (sync-read-i64 (struct-get channel state-addr) 1)]
         (begin
@@ -792,21 +797,22 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             1
-            (channel-i64-next-index (struct-get channel capacity) tail))
+            (sync-i64-channel-next-index (struct-get channel capacity) tail))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
-            (channel-i64-send-err-result "sync: channel unlock failed")
+            (sync-i64-channel-send-err-result "sync: channel unlock failed")
             (if (sync-semaphore-post (struct-get channel items-handle))
-              (channel-i64-send-ok-result)
-              (channel-i64-send-err-result "sync: channel send signal failed"))))))))
+              (sync-i64-channel-send-ok-result)
+              (sync-i64-channel-send-err-result
+                "sync: channel send signal failed"))))))))
 
 ;: Receive one value, blocking until one queued message is available.
-(define (channel-i64-recv [channel : ChannelI64]) : ChannelI64RecvResult
+(define (sync-i64-channel-recv [channel : SyncI64Channel]) : SyncI64ChannelRecvResult
   (if (not (sync-semaphore-wait (struct-get channel items-handle)))
-    (channel-i64-recv-err-result "sync: channel recv wait failed")
+    (sync-i64-channel-recv-err-result "sync: channel recv wait failed")
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
         (sync-semaphore-post (struct-get channel items-handle))
-        (channel-i64-recv-err-result "sync: channel lock failed"))
+        (sync-i64-channel-recv-err-result "sync: channel lock failed"))
       (let
         [head : i64 (sync-read-i64 (struct-get channel state-addr) 0)]
         [value : i64 (sync-read-i64 (struct-get channel slots-addr) head)]
@@ -814,15 +820,16 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             0
-            (channel-i64-next-index (struct-get channel capacity) head))
+            (sync-i64-channel-next-index (struct-get channel capacity) head))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
-            (channel-i64-recv-err-result "sync: channel unlock failed")
+            (sync-i64-channel-recv-err-result "sync: channel unlock failed")
             (if (sync-semaphore-post (struct-get channel spaces-handle))
-              (channel-i64-recv-ok-result value)
-              (channel-i64-recv-err-result "sync: channel recv signal failed"))))))))
+              (sync-i64-channel-recv-ok-result value)
+              (sync-i64-channel-recv-err-result
+                "sync: channel recv signal failed"))))))))
 
 ;: Close channel resources after all senders/receivers are done.
-(define (channel-i64-close [channel : ChannelI64]) : bool
+(define (sync-i64-channel-close [channel : SyncI64Channel]) : bool
   (let
     [ok : bool true]
     (begin
@@ -856,8 +863,8 @@
       ok)))
 
 ;: Store a channel handle into a raw `i64` array at `offset`.
-(define (channel-i64-store-raw!
-  [channel : ChannelI64]
+(define (sync-i64-channel-store-raw!
+  [channel : SyncI64Channel]
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
@@ -870,8 +877,8 @@
     (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
-(define (channel-i64-load-raw [src : (Array i64)] [offset : i64]) : ChannelI64
-  (ChannelI64
+(define (sync-i64-channel-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Channel
+  (SyncI64Channel
     (array-ref src offset)
     (array-ref src (+ offset 1))
     (array-ref src (+ offset 2))
@@ -958,7 +965,7 @@
   (if (<= capacity 0)
     (channel-i64-pair-create-err-result
       "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
+    (if (> capacity sync-channel-max-capacity)
       (channel-i64-pair-create-err-result
         "sync: channel capacity exceeds maximum")
       (let
@@ -1171,7 +1178,7 @@
 (define (channel-string-create [capacity : i64]) : ChannelStringCreateResult
   (if (<= capacity 0)
     (channel-string-create-err-result "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
+    (if (> capacity sync-channel-max-capacity)
       (channel-string-create-err-result
         "sync: channel capacity exceeds maximum")
       (let
@@ -1298,16 +1305,16 @@
     (array-ref src (+ offset 6))))
 
 ;: Return true when creating an i64 channel with `capacity` succeeds.
-(define (channel-i64-create-capacity-ok? [capacity : i64]) : bool
+(define (sync-i64-channel-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create an i64 channel with `capacity`, or return `fallback` on error.
-(define (channel-i64-create-capacity-or
+(define (sync-i64-channel-create-capacity-or
   [capacity : i64]
-  [fallback : ChannelI64]) : ChannelI64
-  (if (not (channel-i64-create-capacity-ok? capacity))
+  [fallback : SyncI64Channel]) : SyncI64Channel
+  (if (not (sync-i64-channel-create-capacity-ok? capacity))
     fallback
     (let
       [slots-bytes : i64 (* capacity 8)]
@@ -1350,7 +1357,7 @@
                         (begin
                           (sync-write-i64! state-addr 0 0)
                           (sync-write-i64! state-addr 1 0)
-                          (ChannelI64
+                          (SyncI64Channel
                             slots-addr
                             state-addr
                             capacity
@@ -1360,7 +1367,9 @@
                             spaces-handle))))))))))))))
 
 ;: Send one i64 value and return whether the send succeeded.
-(define (channel-i64-send-value-ok? [channel : ChannelI64] [value : i64]) : bool
+(define (sync-i64-channel-send-value-ok?
+  [channel : SyncI64Channel]
+  [value : i64]) : bool
   (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
     false
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
@@ -1374,13 +1383,13 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             1
-            (channel-i64-next-index (struct-get channel capacity) tail))
+            (sync-i64-channel-next-index (struct-get channel capacity) tail))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
             false
             (sync-semaphore-post (struct-get channel items-handle))))))))
 
 ;: Receive one i64 value, or return `fallback` on error.
-(define (channel-i64-recv-or [channel : ChannelI64] [fallback : i64]) : i64
+(define (sync-i64-channel-recv-or [channel : SyncI64Channel] [fallback : i64]) : i64
   (if (not (sync-semaphore-wait (struct-get channel items-handle)))
     fallback
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
@@ -1394,7 +1403,7 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             0
-            (channel-i64-next-index (struct-get channel capacity) head))
+            (sync-i64-channel-next-index (struct-get channel capacity) head))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
             fallback
             (if (sync-semaphore-post (struct-get channel spaces-handle))
@@ -1404,7 +1413,7 @@
 ;: Return true when creating a pair channel with `capacity` succeeds.
 (define (channel-i64-pair-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create a pair channel with `capacity`, or return `fallback` on error.
@@ -1522,7 +1531,7 @@
 ;: Return true when creating a string channel with `capacity` succeeds.
 (define (channel-string-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create a string channel with `capacity`, or return `fallback` on error.
@@ -1678,17 +1687,18 @@
 (test
   sync-api
   (begin
-    (sync-test-assert (= channel-i64-raw-field-count 7))
+    (sync-test-assert (= sync-i64-channel-raw-field-count 7))
     (sync-test-assert (= channel-i64-pair-raw-field-count 7))
     (sync-test-assert (= channel-string-raw-field-count 7))
     (sync-test-assert (= mutex-i64-raw-field-count 3))
-    (sync-test-assert (not (channel-i64-create-capacity-ok? 0)))
+    (sync-test-assert (not (sync-i64-channel-create-capacity-ok? 0)))
     (sync-test-assert
-      (not (channel-i64-create-capacity-ok? (+ channel-i64-max-capacity 1))))
+      (not
+        (sync-i64-channel-create-capacity-ok? (+ sync-channel-max-capacity 1))))
     (sync-test-assert (not (channel-i64-pair-create-capacity-ok? 0)))
     (sync-test-assert
       (not
-        (channel-i64-pair-create-capacity-ok? (+ channel-i64-max-capacity 1))))
+        (channel-i64-pair-create-capacity-ok? (+ sync-channel-max-capacity 1))))
     (sync-test-assert (not (channel-string-create-capacity-ok? 0)))
     (sync-test-assert
-      (not (channel-string-create-capacity-ok? (+ channel-i64-max-capacity 1))))))
+      (not (channel-string-create-capacity-ok? (+ sync-channel-max-capacity 1))))))

@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define args-api-specs : args.ArgsOptionSpecList
   (args.args-option-spec-cons
@@ -96,30 +97,30 @@
     [(args.ErrArgsParsed error) error]))
 
 (define (args-api-assert-vec-empty
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [message : String]) : unit
-  (args-api-assert-i64-eq (vector.string-vec-len items) 0 message))
+  (args-api-assert-i64-eq (svec.len items) 0 message))
 
 (define (args-api-assert-vec2
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [first : String]
   [second : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (vector.string-vec-to-array items)]
+    [values : (Array String) (svec.to-array items)]
     (begin
       (args-api-assert-i64-eq (array-length values) 2 message)
       (args-api-assert-string-eq (array-ref values 0) first message)
       (args-api-assert-string-eq (array-ref values 1) second message))))
 
 (define (args-api-assert-vec3
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (let
-    [values : (Array String) (vector.string-vec-to-array items)]
+    [values : (Array String) (svec.to-array items)]
     (begin
       (args-api-assert-i64-eq (array-length values) 3 message)
       (args-api-assert-string-eq (array-ref values 0) first message)
@@ -135,7 +136,7 @@
         "empty argv should parse")]
     (begin
       (args-api-assert-vec-empty
-        (args.args-parsed-positionals parsed)
+        (args.args-parsed-positionals (& parsed))
         "empty argv has no positionals")
       (args-api-assert-i64-eq
         (args.args-option-count parsed "verbose")
@@ -152,7 +153,7 @@
           (args-api-array3 "src.tl" "out.s" "-"))
         "positional-only argv should parse")]
     (args-api-assert-vec3
-      (args.args-parsed-positionals parsed)
+      (args.args-parsed-positionals (& parsed))
       "src.tl"
       "out.s"
       "-"
@@ -180,7 +181,7 @@
         "out.s"
         "short value flag consumes next argv")
       (args-api-assert-vec2
-        (args.args-parsed-positionals parsed)
+        (args.args-parsed-positionals (& parsed))
         "input.tl"
         "rest"
         "positionals before and after flags preserved"))))
@@ -200,7 +201,7 @@
         0
         "tokens after -- are positionals")
       (args-api-assert-vec2
-        (args.args-parsed-positionals parsed)
+        (args.args-parsed-positionals (& parsed))
         "--verbose"
         "-o"
         "end-of-options preserves later tokens"))))

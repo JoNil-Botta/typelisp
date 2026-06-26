@@ -36,5 +36,3 @@
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)]))))
-
-

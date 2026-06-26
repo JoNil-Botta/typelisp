@@ -454,5 +454,3 @@
       (compiler-lower-smoke-issue3494-ok?)
       (panic "lower: issue3494 smoke failed"))
     42))
-
-

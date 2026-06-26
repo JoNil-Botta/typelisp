@@ -860,7 +860,9 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string.string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (string.string-eq
+          (compiler-diagnostic-message (box-get diag))
+          want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -879,7 +881,9 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string.string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (string.string-eq
+          (compiler-diagnostic-message (box-get diag))
+          want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -1821,5 +1825,3 @@
       (io.panic "typecheck: macro dependency context smoke failed"))
     (macro-alias-cache-reset!)
     42))
-
-

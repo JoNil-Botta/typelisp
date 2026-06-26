@@ -33,7 +33,7 @@
 (define doc-site-status-ok : i64
   0)
 (define doc-site-stdlib-manifest-size : i64
-  19)
+  20)
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -135,6 +135,9 @@
       (doc-site-module-list-push
         (&mut modules)
         (DocSiteModule "stdlib/io.tl" "stdlib-io.html"))
+      (doc-site-module-list-push
+        (&mut modules)
+        (DocSiteModule "stdlib/byte_buf_core.tl" "stdlib-byte-buf-core.html"))
       (doc-site-module-list-push
         (&mut modules)
         (DocSiteModule "stdlib/json.tl" "stdlib-json.html"))

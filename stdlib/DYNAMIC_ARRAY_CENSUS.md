@@ -40,7 +40,8 @@ surfaces replace them.
 - Collection internals in `stdlib/vector.tl`, `stdlib/vector_family.tl`,
   `stdlib/vector_slice.tl`, `stdlib/queue.tl`, `stdlib/hashmap.tl`,
   `stdlib/set.tl`, and `stdlib/text_buf*.tl`.
-- Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/ffi.tl`,
+- Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
+  `stdlib/ffi.tl`,
   `stdlib/io.tl`, `stdlib/fs.tl`, `stdlib/process_runtime.tl`,
   `src/tlci_core.tl`, `src/compiler_object_elf.tl`,
   `src/compiler_object_coff.tl`, and object-byte paths in

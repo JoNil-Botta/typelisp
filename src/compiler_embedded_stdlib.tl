@@ -13,6 +13,7 @@
 (include-str compiler-embedded-stdlib-args "stdlib/args.tl")
 (include-str compiler-embedded-stdlib-array "stdlib/array.tl")
 (include-str compiler-embedded-stdlib-byte-buf "stdlib/byte_buf.tl")
+(include-str compiler-embedded-stdlib-byte-buf-core "stdlib/byte_buf_core.tl")
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
 (include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
@@ -45,6 +46,7 @@
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-text-buf-borrowed "stdlib/tests/arena_policy_escape_text_buf_borrowed.tl")
 (include-str compiler-embedded-stdlib-tests-args-api "stdlib/tests/args_api.tl")
 (include-str compiler-embedded-stdlib-tests-byte-buf-api "stdlib/tests/byte_buf_api.tl")
+(include-str compiler-embedded-stdlib-tests-byte-buf-core-api "stdlib/tests/byte_buf_core_api.tl")
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
 (include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 (include-str compiler-embedded-stdlib-tests-comptime-api "stdlib/tests/comptime_api.tl")
@@ -86,6 +88,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-array)]
     [(embedded-eq? suffix "byte_buf.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-byte-buf)]
+    [(embedded-eq? suffix "byte_buf_core.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-byte-buf-core)]
     [(embedded-eq? suffix "cpu.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)]
     [(embedded-eq? suffix "comptime.tl")
@@ -195,6 +199,12 @@
           source
           (CompilerEmbeddedStdlibSomeSource
             compiler-embedded-stdlib-tests-byte-buf-api))
+        unit)
+      (if (embedded-eq? suffix "tests/byte_buf_core_api.tl")
+        (set!
+          source
+          (CompilerEmbeddedStdlibSomeSource
+            compiler-embedded-stdlib-tests-byte-buf-core-api))
         unit)
       (if (embedded-eq? suffix "tests/cpu_api.tl")
         (set!

@@ -43,6 +43,10 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   reserve, push, set/ref/get, array/string/borrowed-bytes append and copy
   boundaries, borrowed and mutable byte views, binary NUL/high-byte storage,
   snapshot independence, string round trips, and clear/reuse behavior.
+- `byte_buf_core_api.tl` covers the narrow append-only builder import path used
+  by hot compiler/runtime modules, including reserve, push, array and string
+  append, binary NUL/high-byte preservation, and explicit array/string finish
+  boundaries.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.

@@ -9403,6 +9403,18 @@
         (str-cat "    addq $" (int->string disp) ", %r10\n" ""))
       (CompilerBackendNoAsm))))
 
+;; Generic (base-reg-parameterized) form of gep-immediate-r10-asm: fold a constant
+;; displacement into base-reg in place, so a scavenged base works like %r10 did.
+(define (compiler-backend-gep-immediate-base-asm
+  [base-reg : String]
+  [disp : i64]) : CompilerBackendMaybeAsm
+  (if (= disp 0)
+    (CompilerBackendSomeAsm "")
+    (if (compiler-backend-imm32? disp)
+      (CompilerBackendSomeAsm
+        (str-cat "    addq $" (int->string disp) ", " base-reg "\n" ""))
+      (CompilerBackendNoAsm))))
+
 (define (compiler-backend-emit-gep
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -9622,6 +9634,44 @@
       (array-set! a 5 extra)
       a)))
 
+;; Like scavenge-exclude-with but ALSO reserves %r8. Used at the 3-scratch
+;; copy-bytes-from-gep site, where the index scratch falls back to %r8: an active
+;; base/src scavenge must not pick %r8 (a candidate) or, under register pressure,
+;; the index's %r8 fallback would collide with it. Keeps the three fixed fallbacks
+;; (base=%r10, index=%r8, src=%r11) mutually distinct, as the hardcoded form was.
+(define (compiler-backend-scavenge-exclude-with-r8 [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 7)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r8")
+      (array-set! a 4 "%r10")
+      (array-set! a 5 "%r11")
+      (array-set! a 6 extra)
+      a)))
+
+;; Like scavenge-exclude-ops2 but also reserves %r8 (see scavenge-exclude-with-r8).
+(define (compiler-backend-scavenge-exclude-ops2-r8
+  [assignments : CompilerRegAssignmentList]
+  [v1 : CompilerIrValue]
+  [v2 : CompilerIrValue]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 8)]
+    [h1 : String (compiler-backend-value-scalar-register assignments v1)]
+    [h2 : String (compiler-backend-value-scalar-register assignments v2)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r8")
+      (array-set! a 4 "%r10")
+      (array-set! a 5 "%r11")
+      (array-set! a 6 (if (string-eq h1 "") "%rax" h1))
+      (array-set! a 7 (if (string-eq h2 "") "%rax" h2))
+      a)))
+
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
   (if (= disp 0)
     (str-cat "(" reg ")" "")
@@ -9757,75 +9807,100 @@
   [size : i64]) : ResultCompilerBackend
   (if (<= size 0)
     (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
-      [(OkCompilerBackend base-asm)
-        (let
-          [scale : i64 (compiler-backend-type-size elem-ty)]
-          ;; Exclude base + src homes: src (and a loop-invariant base) are live
-          ;; across this copy but the liveness query may not see their registers
-          ;; occupied at the scavenge point, so the index scratch could clobber them.
-          [scav-idx : String
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-scavenge-exclude-ops2 assignments base src)
-              7
-              "%r8")]
-          (match (compiler-backend-value-as-i64 offset)
-            [(CompilerBackendSomeI64 n)
-              (match (compiler-backend-gep-immediate-r10-asm (* n scale))
-                [(CompilerBackendSomeAsm offset-asm)
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    src
-                    "%r11")
-                    [(OkCompilerBackend src-asm)
-                      (OkCompilerBackend
-                        (string-append
-                          base-asm
+    ;; 3-scratch GEP-addressed copy (was hardcoded base=%r10, src=%r11):
+    ;;   scav-base : the address being computed (live through the copy)
+    ;;   scav-idx  : the scaled index, folded into scav-base then dead (NoI64 only)
+    ;;   scav-src  : the source pointer (live through the copy)
+    ;; The copy chunks clobber %rax/%xmm15 (excluded by the active sets).
+    (let
+      ;; base excludes src + offset homes (both still live when base loads) + the
+      ;; active set (off %r10/%r11). Base's own home need not be excluded -- base is
+      ;; moved into scav-base, freeing it.
+      [scav-base : String
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-ops2-r8 assignments src offset)
+          8
+          "%r10")]
+      (match (compiler-backend-emit-load-value-with-plan assignments base scav-base)
+        [(OkCompilerBackend base-asm)
+          (let
+            [scale : i64 (compiler-backend-type-size elem-ty)]
+            ;; src pointer: avoid scav-base (live base addr) + the active set. scav-idx
+            ;; is dead before src loads (folded into scav-base), so no exclude vs it.
+            [scav-src : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-scavenge-exclude-with-r8 scav-base)
+                7
+                "%r11")]
+            (match (compiler-backend-value-as-i64 offset)
+              [(CompilerBackendSomeI64 n)
+                (match (compiler-backend-gep-immediate-base-asm scav-base (* n scale))
+                  [(CompilerBackendSomeAsm offset-asm)
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      src
+                      scav-src)
+                      [(OkCompilerBackend src-asm)
+                        (OkCompilerBackend
                           (string-append
-                            offset-asm
+                            base-asm
                             (string-append
-                              src-asm
-                              (compiler-backend-emit-copy-bytes-chunks
-                                "%r10"
-                                "%r11"
-                                0
-                                size)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(CompilerBackendNoAsm)
-                  (ErrCompilerBackend
-                    (compiler-diagnostic-at-start
-                      ""
-                      "backend: fused gep copy displacement out of range"))])]
-            [(CompilerBackendNoI64)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                offset
-                scav-idx)
-                [(OkCompilerBackend offset-asm)
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    src
-                    "%r11")
-                    [(OkCompilerBackend src-asm)
-                      (OkCompilerBackend
-                        (string-append
-                          base-asm
-                          (string-append
-                            offset-asm
-                            (string-append
-                              (compiler-backend-gep-index-r10-asm
-                                scale
-                                scav-idx)
+                              offset-asm
                               (string-append
                                 src-asm
                                 (compiler-backend-emit-copy-bytes-chunks
-                                  "%r10"
-                                  "%r11"
+                                  scav-base
+                                  scav-src
                                   0
-                                  size))))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                                  size)))))]
+                      [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                  [(CompilerBackendNoAsm)
+                    (ErrCompilerBackend
+                      (compiler-diagnostic-at-start
+                        ""
+                        "backend: fused gep copy displacement out of range"))])]
+              [(CompilerBackendNoI64)
+                ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
+                ;; the active set. Scavenged only here (unused in SomeI64) so an
+                ;; emergency-spill is never triggered for a dead scratch.
+                (let
+                  [scav-idx : String
+                    (compiler-backend-scavenge-reg-here
+                      (compiler-backend-scavenge-exclude-regs2
+                        scav-base
+                        (compiler-backend-value-scalar-register assignments src))
+                      7
+                      "%r8")]
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    offset
+                    scav-idx)
+                    [(OkCompilerBackend offset-asm)
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        src
+                        scav-src)
+                        [(OkCompilerBackend src-asm)
+                          (OkCompilerBackend
+                            (string-append
+                              base-asm
+                              (string-append
+                                offset-asm
+                                (string-append
+                                  (compiler-backend-gep-index-base-asm
+                                    scav-base
+                                    scale
+                                    scav-idx)
+                                  (string-append
+                                    src-asm
+                                    (compiler-backend-emit-copy-bytes-chunks
+                                      scav-base
+                                      scav-src
+                                      0
+                                      size))))))]
+                        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-c-memory-stack-arg
   [target : CompilerBackendTarget]

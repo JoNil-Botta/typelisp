@@ -5,10 +5,10 @@
 ;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
-(import "../stdlib/fs.tl")
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.fs)
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.str_cat)
 
 (defenum PackageCachePinKind
   (PackageCachePinRev)
@@ -73,48 +73,54 @@
 
 (define (package-cache-parse-pin-kind [value : String]) : ResultPackageCachePinKind
   (cond
-    [(string-eq value "rev") (OkPackageCachePinKind (PackageCachePinRev))]
-    [(string-eq value "tag") (OkPackageCachePinKind (PackageCachePinTag))]
-    [(string-eq value "branch") (OkPackageCachePinKind (PackageCachePinBranch))]
+    [(string.string-eq value "rev")
+      (OkPackageCachePinKind (PackageCachePinRev))]
+    [(string.string-eq value "tag")
+      (OkPackageCachePinKind (PackageCachePinTag))]
+    [(string.string-eq value "branch")
+      (OkPackageCachePinKind (PackageCachePinBranch))]
     [else
       (ErrPackageCachePinKind
-        (str-cat "package-cache: unsupported remote pin kind '" value "'"))]))
+        (str_cat.str-cat
+          "package-cache: unsupported remote pin kind '"
+          value
+          "'"))]))
 
 (define (package-cache-find-code-from
   [text : String]
   [needle : i64]
   [start : i64]) : i64
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     [i : i64 start]
     [found : i64 -1]
     (begin
       (while (and (= found -1) (< i n))
-        (if (= (cast (string-ref text i) : i64) needle)
+        (if (= (cast (string.string-ref text i) : i64) needle)
           (set! found i)
           (set! i (+ i 1))))
       found)))
 
 (define (package-cache-parse-normalized-remote [dep : String]) : ResultPackageCacheRemoteSpec
   (let
-    [n : i64 (string-length dep)]
+    [n : i64 (string.string-length dep)]
     [hash : i64 (package-cache-find-code-from dep 35 0)]
     (if (or (<= hash 0) (>= hash (- n 1)))
       (ErrPackageCacheRemoteSpec
         "package-cache: remote dependency must be URL#rev|tag|branch=value")
       (let
-        [url : String (substring dep 0 hash)]
-        [fragment : String (substring dep (+ hash 1) (- n (+ hash 1)))]
+        [url : String (string.substring dep 0 hash)]
+        [fragment : String (string.substring dep (+ hash 1) (- n (+ hash 1)))]
         [eq : i64 (package-cache-find-code-from fragment 61 0)]
-        [fragment-len : i64 (string-length fragment)]
+        [fragment-len : i64 (string.string-length fragment)]
         (if (or (<= eq 0) (>= eq (- fragment-len 1)))
           (ErrPackageCacheRemoteSpec
             "package-cache: remote dependency pin must be rev|tag|branch=value")
           (let
-            [kind-text : String (substring fragment 0 eq)]
+            [kind-text : String (string.substring fragment 0 eq)]
             [pin-value : String
-              (substring fragment (+ eq 1) (- fragment-len (+ eq 1)))]
-            (if (= (string-length pin-value) 0)
+              (string.substring fragment (+ eq 1) (- fragment-len (+ eq 1)))]
+            (if (= (string.string-length pin-value) 0)
               (ErrPackageCacheRemoteSpec
                 "package-cache: remote dependency pin must not be empty")
               (match (package-cache-parse-pin-kind kind-text)
@@ -131,12 +137,12 @@
       [(PackageCachePinRev)
         (let
           [commit : String (struct-get spec pin-value)]
-          (if (= (string-length commit) 0)
+          (if (= (string.string-length commit) 0)
             (ErrPackageCacheKey "package-cache: exact commit must not be empty")
             (OkPackageCacheKey (PackageCacheKey (struct-get spec url) commit))))]
       [_
         (ErrPackageCacheKey
-          (str-cat
+          (str_cat.str-cat
             "package-cache: cache key requires exact rev pin, got "
             (package-cache-pin-kind-name kind)
             ""))])))
@@ -178,56 +184,59 @@
     [byte : i64 (% code 256)]
     [hi : i64 (/ byte 16)]
     [lo : i64 (% byte 16)]
-    (str-cat
+    (str_cat.str-cat
       "_x"
       (package-cache-hex-digit hi)
-      (string-append (package-cache-hex-digit lo) "_"))))
+      (string.string-append (package-cache-hex-digit lo) "_"))))
 
 (define (package-cache-escape-component [text : (& text str)]) : String
   (let
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     [i : i64 0]
     [out : String ""]
     (begin
       (while (< i n)
         (let
-          [code : i64 (cast (string-ref text i) : i64)]
+          [code : i64 (cast (string.string-ref text i) : i64)]
           (begin
             (if (package-cache-safe-code? code)
-              (set! out (string-concat3 out (substring text i 1) ""))
               (set!
                 out
-                (string-concat3 out (package-cache-escape-code code) "")))
+                (string.string-concat3 out (string.substring text i 1) ""))
+              (set!
+                out
+                (string.string-concat3 out (package-cache-escape-code code) "")))
             (set! i (+ i 1)))))
       out)))
 
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
   (let
     [target : String
-      (fs-path-join-owned-pair (string-copy package-root) "target")]
-    [typelisp : String (fs-path-join-owned-pair target "typelisp")]
-    [cache : String (fs-path-join-owned-pair typelisp "cache")]
-    (fs-path-join-owned-pair cache "packages")))
+      (fs.fs-path-join-owned-pair (string.string-copy package-root) "target")]
+    [typelisp : String (fs.fs-path-join-owned-pair target "typelisp")]
+    [cache : String (fs.fs-path-join-owned-pair typelisp "cache")]
+    (fs.fs-path-join-owned-pair cache "packages")))
 
 (define (package-cache-default-root [package-root : (& package-root str)]) : String
   (let
     [root : String (package-cache-unversioned-root package-root)]
-    (fs-path-join-owned-pair root package-cache-version)))
+    (fs.fs-path-join-owned-pair root package-cache-version)))
 
 (define (package-cache-entry-url-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
-    [git-dir : String (fs-path-join-owned-pair (string-copy root) "git")]
+    [git-dir : String
+      (fs.fs-path-join-owned-pair (string.string-copy root) "git")]
     [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
-    (fs-path-join-owned-pair git-dir url-dir)))
+    (fs.fs-path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-entry-rev-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [url-dir : String (package-cache-entry-url-dir root key)]
-    (fs-path-join-owned-pair url-dir "rev")))
+    (fs.fs-path-join-owned-pair url-dir "rev")))
 
 (define (package-cache-entry-path
   [root : (& root str)]
@@ -236,26 +245,26 @@
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     [commit-dir : String
       (package-cache-escape-component (& (struct-get key commit)))]
-    (fs-path-join-owned-pair rev-dir commit-dir)))
+    (fs.fs-path-join-owned-pair rev-dir commit-dir)))
 
 (define (package-cache-staging-root [root : (& root str)]) : String
-  (fs-path-join-owned-pair (string-copy root) "_staging"))
+  (fs.fs-path-join-owned-pair (string.string-copy root) "_staging"))
 
 (define (package-cache-staging-url-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [staging-root : String (package-cache-staging-root root)]
-    [git-dir : String (fs-path-join-owned-pair staging-root "git")]
+    [git-dir : String (fs.fs-path-join-owned-pair staging-root "git")]
     [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
-    (fs-path-join-owned-pair git-dir url-dir)))
+    (fs.fs-path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-staging-rev-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [url-dir : String (package-cache-staging-url-dir root key)]
-    (fs-path-join-owned-pair url-dir "rev")))
+    (fs.fs-path-join-owned-pair url-dir "rev")))
 
 (define (package-cache-staging-path
   [root : (& root str)]
@@ -266,34 +275,38 @@
     [commit-dir : String
       (package-cache-escape-component (& (struct-get key commit)))]
     [staged-name : String
-      (string-append commit-dir (string-append ".tmp." (int->string attempt)))]
-    (fs-path-join-owned-pair rev-dir staged-name)))
+      (string.string-append
+        commit-dir
+        (string.string-append ".tmp." (string.int->string attempt)))]
+    (fs.fs-path-join-owned-pair rev-dir staged-name)))
 
 (define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
-  (fs-path-join-owned-pair (string-copy entry-path) package-cache-metadata-name))
+  (fs.fs-path-join-owned-pair
+    (string.string-copy entry-path)
+    package-cache-metadata-name))
 
 (define (package-cache-complete-marker-path [entry-path : (& entry_path str)]) : String
-  (fs-path-join-owned-pair
-    (string-copy entry-path)
+  (fs.fs-path-join-owned-pair
+    (string.string-copy entry-path)
     package-cache-complete-marker-name))
 
 (define (package-cache-metadata-content [key : (& key PackageCacheKey)]) : String
   (let
-    [url : String (string-copy (& (struct-get key url)))]
-    [commit : String (string-copy (& (struct-get key commit)))]
-    (string-append
+    [url : String (string.string-copy (& (struct-get key url)))]
+    [commit : String (string.string-copy (& (struct-get key commit)))]
+    (string.string-append
       "typelisp-package-cache-v1\nurl="
-      (string-append
+      (string.string-append
         url
-        (string-append "\ncommit=" (string-append commit "\n"))))))
+        (string.string-append "\ncommit=" (string.string-append commit "\n"))))))
 
 (define (package-cache-complete-marker-content) : String
   "typelisp-package-cache-v1 complete\n")
 
 (define (package-cache-file-exists? [path : (& path str)]) : bool
-  (match (try-file-exists? path)
-    [(OkIoBool exists) exists]
-    [(ErrIoBool _) false]))
+  (match (io.try-file-exists? path)
+    [(io.OkIoBool exists) exists]
+    [(io.ErrIoBool _) false]))
 
 (define (package-cache-entry-state
   [entry-path : (& entry_path str)]
@@ -306,38 +319,43 @@
     [has-marker : bool (package-cache-file-exists? marker-path)]
     (cond
       [(and (not has-entry) (not has-metadata) (not has-marker))
-        (PackageCacheMiss (string-copy entry-path))]
+        (PackageCacheMiss (string.string-copy entry-path))]
       [(not has-metadata)
         (PackageCachePartialOrCorrupt
-          (string-copy entry-path)
+          (string.string-copy entry-path)
           "missing metadata")]
       [(not has-marker)
         (PackageCachePartialOrCorrupt
-          (string-copy entry-path)
+          (string.string-copy entry-path)
           "missing completion marker")]
       [else
-        (match (try-read-file (& metadata-path))
-          [(ErrIoString error)
+        (match (io.try-read-file (& metadata-path))
+          [(io.ErrIoString error)
             (PackageCachePartialOrCorrupt
-              (string-copy entry-path)
-              (string-append "metadata read failed: " (io-error-message error)))]
-          [(OkIoString metadata)
-            (if (not (string-eq metadata (package-cache-metadata-content key)))
+              (string.string-copy entry-path)
+              (string.string-append
+                "metadata read failed: "
+                (io.io-error-message error)))]
+          [(io.OkIoString metadata)
+            (if (not
+              (string.string-eq metadata (package-cache-metadata-content key)))
               (PackageCachePartialOrCorrupt
-                (string-copy entry-path)
+                (string.string-copy entry-path)
                 "metadata mismatch")
-              (match (try-read-file (& marker-path))
-                [(ErrIoString error)
+              (match (io.try-read-file (& marker-path))
+                [(io.ErrIoString error)
                   (PackageCachePartialOrCorrupt
-                    (string-copy entry-path)
-                    (string-append
+                    (string.string-copy entry-path)
+                    (string.string-append
                       "completion marker read failed: "
-                      (io-error-message error)))]
-                [(OkIoString marker)
-                  (if (string-eq marker (package-cache-complete-marker-content))
-                    (PackageCacheCompleteHit (string-copy entry-path))
+                      (io.io-error-message error)))]
+                [(io.OkIoString marker)
+                  (if (string.string-eq
+                    marker
+                    (package-cache-complete-marker-content))
+                    (PackageCacheCompleteHit (string.string-copy entry-path))
                     (PackageCachePartialOrCorrupt
-                      (string-copy entry-path)
+                      (string.string-copy entry-path)
                       "completion marker mismatch"))]))])])))
 
 (define (package-cache-entry-reusable? [state : PackageCacheEntryState]) : bool
@@ -345,27 +363,28 @@
     [(PackageCacheCompleteHit _) true]
     [_ false]))
 
-(define (package-cache-then-mkdir [result : ResultIoUnit] [path : String]) : ResultIoUnit
+(define (package-cache-then-mkdir [result : io.ResultIoUnit] [path : String]) : io.ResultIoUnit
   (match result
-    [(ErrIoUnit error) (ErrIoUnit error)]
-    [(OkIoUnit) (try-mkdir-if-missing (& path))]))
+    [(io.ErrIoUnit error) (io.ErrIoUnit error)]
+    [(io.OkIoUnit) (fs.try-mkdir-if-missing (& path))]))
 
 (define (package-cache-prepare-entry-parents
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : ResultIoUnit
+  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
   (let
-    [git-dir : String (fs-path-join-owned-pair (string-copy root) "git")]
+    [git-dir : String
+      (fs.fs-path-join-owned-pair (string.string-copy root) "git")]
     [url-dir : String (package-cache-entry-url-dir root key)]
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     (package-cache-then-mkdir
       (package-cache-then-mkdir
-        (package-cache-then-mkdir (try-mkdir-if-missing root) git-dir)
+        (package-cache-then-mkdir (fs.try-mkdir-if-missing root) git-dir)
         url-dir)
       rev-dir)))
 
 (define (package-cache-prepare-entry-dir
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : ResultIoUnit
+  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
   (let
     [entry : String (package-cache-entry-path root key)]
     (package-cache-then-mkdir
@@ -374,37 +393,37 @@
 
 (define (package-cache-prepare-staging-parents
   [root : (& root str)]
-  [key : (& key PackageCacheKey)]) : ResultIoUnit
+  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String
-      (fs-path-join-owned-pair (string-copy (& staging-root)) "git")]
+      (fs.fs-path-join-owned-pair (string.string-copy (& staging-root)) "git")]
     [url-dir : String (package-cache-staging-url-dir root key)]
     [rev-dir : String (package-cache-staging-rev-dir root key)]
     (package-cache-then-mkdir
       (package-cache-then-mkdir
         (package-cache-then-mkdir
-          (package-cache-then-mkdir (try-mkdir-if-missing root) staging-root)
+          (package-cache-then-mkdir (fs.try-mkdir-if-missing root) staging-root)
           git-dir)
         url-dir)
       rev-dir)))
 
 (define (package-cache-finalize-staged
   [staged-path : String]
-  [entry-path : String]) : ResultIoUnit
-  (try-rename (& staged-path) (& entry-path)))
+  [entry-path : String]) : io.ResultIoUnit
+  (fs.try-rename (& staged-path) (& entry-path)))
 
 (define (package-cache-write-complete-marker
   [entry-path : (& entry_path str)]
-  [key : (& key PackageCacheKey)]) : ResultIoUnit
+  [key : (& key PackageCacheKey)]) : io.ResultIoUnit
   (let
     [metadata-path : String (package-cache-metadata-path entry-path)]
     [marker-path : String (package-cache-complete-marker-path entry-path)]
     [metadata : String (package-cache-metadata-content key)]
     [marker : String (package-cache-complete-marker-content)]
-    (match (try-write-file (& metadata-path) (& metadata))
-      [(ErrIoUnit error) (ErrIoUnit error)]
-      [(OkIoUnit) (try-write-file (& marker-path) (& marker))])))
+    (match (io.try-write-file (& metadata-path) (& metadata))
+      [(io.ErrIoUnit error) (io.ErrIoUnit error)]
+      [(io.OkIoUnit) (io.try-write-file (& marker-path) (& marker))])))
 
 (define (package-cache-parse-ok?
   [dep : String]
@@ -415,9 +434,9 @@
     [(ErrPackageCacheRemoteSpec _) false]
     [(OkPackageCacheRemoteSpec spec)
       (and
-        (string-eq (struct-get spec url) expected-url)
+        (string.string-eq (struct-get spec url) expected-url)
         (package-cache-pin-kind-eq? (struct-get spec pin-kind) expected-kind)
-        (string-eq (struct-get spec pin-value) expected-pin))]))
+        (string.string-eq (struct-get spec pin-value) expected-pin))]))
 
 (define (package-cache-parse-rejects? [dep : String]) : bool
   (match (package-cache-parse-normalized-remote dep)
@@ -428,7 +447,7 @@
   (match (package-cache-key-from-normalized-remote dep)
     [(ErrPackageCacheKey _) false]
     [(OkPackageCacheKey key)
-      (string-eq (struct-get key commit) expected-commit)]))
+      (string.string-eq (struct-get key commit) expected-commit)]))
 
 (define (package-cache-key-rejects? [dep : String]) : bool
   (match (package-cache-key-from-normalized-remote dep)
@@ -453,21 +472,22 @@
 (define (package-cache-expect-key [dep : String]) : PackageCacheKey
   (match (package-cache-key-from-normalized-remote dep)
     [(OkPackageCacheKey key) key]
-    [(ErrPackageCacheKey message) (panic message)]))
+    [(ErrPackageCacheKey message) (io.panic message)]))
 
-(define (package-cache-expect-ok [result : ResultIoUnit] [message : String]) : unit
+(define (package-cache-expect-ok [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(OkIoUnit) unit]
-    [(ErrIoUnit error) (panic (string-append message (io-error-message error)))]))
+    [(io.OkIoUnit) unit]
+    [(io.ErrIoUnit error)
+      (io.panic (string.string-append message (io.io-error-message error)))]))
 
-(define (package-cache-expect-temp [result : ResultIoString]) : String
+(define (package-cache-expect-temp [result : io.ResultIoString]) : String
   (match result
-    [(OkIoString value) value]
-    [(ErrIoString error)
-      (panic
-        (string-append
+    [(io.OkIoString value) value]
+    [(io.ErrIoString error)
+      (io.panic
+        (string.string-append
           "package-cache: temp dir failed: "
-          (io-error-message error)))]))
+          (io.io-error-message error)))]))
 
 (define (package-cache-pure-self-test-ok?) : bool
   (let
@@ -510,17 +530,17 @@
       (package-cache-key-ok? dep-a "abc123")
       (package-cache-key-rejects?
         "https://github.com/owner/repo.git#tag=v1.0.0")
-      (string-eq path-a path-a-again)
-      (not (string-eq path-a path-b))
-      (not (string-eq path-a path-c))
-      (not (string-contains (& path-dot) (& parent-segment)))
-      (string-eq stage-a stage-a-again))))
+      (string.string-eq path-a path-a-again)
+      (not (string.string-eq path-a path-b))
+      (not (string.string-eq path-a path-c))
+      (not (string.string-contains (& path-dot) (& parent-segment)))
+      (string.string-eq stage-a stage-a-again))))
 
 (define (package-cache-filesystem-self-test-ok?) : bool
   (let
     [temp-prefix : String "typelisp-package-cache"]
     [root : String
-      (package-cache-expect-temp (try-create-temp-dir (& temp-prefix)))]
+      (package-cache-expect-temp (fs.try-create-temp-dir (& temp-prefix)))]
     [key : PackageCacheKey
       (package-cache-expect-key "https://github.com/owner/repo.git#rev=abc123")]
     [missing : String (package-cache-entry-path root (& key))]
@@ -553,16 +573,16 @@
         (package-cache-prepare-entry-dir root (& partial-key))
         "prepare partial entry: ")
       (package-cache-expect-ok
-        (try-write-file (& partial-metadata-path) (& partial-metadata))
+        (io.try-write-file (& partial-metadata-path) (& partial-metadata))
         "write partial metadata: ")
       (package-cache-expect-ok
         (package-cache-prepare-entry-dir root (& mismatch-key))
         "prepare mismatch entry: ")
       (package-cache-expect-ok
-        (try-write-file (& mismatch-metadata-path) (& wrong-metadata))
+        (io.try-write-file (& mismatch-metadata-path) (& wrong-metadata))
         "write mismatch metadata: ")
       (package-cache-expect-ok
-        (try-write-file (& mismatch-marker-path) (& marker))
+        (io.try-write-file (& mismatch-marker-path) (& marker))
         "write mismatch marker: ")
       (and
         (package-cache-state-miss? (package-cache-entry-state missing (& key)))
@@ -583,10 +603,10 @@
     (package-cache-pure-self-test-ok?)
     (package-cache-filesystem-self-test-ok?))
     42
-    (panic "package-cache: self-test mismatch")))
+    (io.panic "package-cache: self-test mismatch")))
 
 (test
   package-cache-parse-key-and-paths
   (if (package-cache-pure-self-test-ok?)
     unit
-    (panic "package-cache: pure inline test mismatch")))
+    (io.panic "package-cache: pure inline test mismatch")))

@@ -1,5 +1,5 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
-(import "../stdlib/string.tl")
+(import stdlib.string)
 
 (defenum CompilerObjectSectionKind
   (ObjectSectionText)
@@ -587,7 +587,7 @@
         (match (compiler-object-symbol-list-ref symbols index)
           [(ObjectSymbol found-name found-binding found-kind _)
             (if (and
-              (string-eq found-name name)
+              (string.string-eq found-name name)
               (compiler-object-symbol-binding-eq? found-binding binding)
               (compiler-object-symbol-kind-eq? found-kind kind))
               (set! found true)
@@ -608,7 +608,7 @@
           [(ObjectRelocation _ _ found-kind found-target)
             (if (and
               (compiler-object-relocation-kind-eq? found-kind kind)
-              (string-eq found-target target))
+              (string.string-eq found-target target))
               (set! found true)
               (set! index (+ index 1)))]))
       found)))
@@ -624,7 +624,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(ObjectDataString value)
-            (if (string-eq value text)
+            (if (string.string-eq value text)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -675,7 +675,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(ObjectDataLabel value)
-            (if (string-eq value label)
+            (if (string.string-eq value label)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -728,7 +728,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(ObjectDataLabel value)
-            (if (and (string-eq value label) (< (+ index 2) count))
+            (if (and (string.string-eq value label) (< (+ index 2) count))
               (match (compiler-object-data-record-list-ref records (+ index 1))
                 [(ObjectDataI64 first-found)
                   (if (= first-found first)
@@ -819,7 +819,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
           [(ObjectX64Call value)
-            (if (string-eq value target)
+            (if (string.string-eq value target)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -838,9 +838,11 @@
   [start : i64]
   [index : i64]) : bool
   (cond
-    [(>= index (string-length needle)) true]
-    [(>= (+ start index) (string-length haystack)) false]
-    [(= (string-ref haystack (+ start index)) (string-ref needle index))
+    [(>= index (string.string-length needle)) true]
+    [(>= (+ start index) (string.string-length haystack)) false]
+    [(=
+        (string.string-ref haystack (+ start index))
+        (string.string-ref needle index))
       (compiler-object-string-prefix-at? haystack needle start (+ index 1))]
     [else false]))
 
@@ -849,8 +851,9 @@
   [needle : String]
   [start : i64]) : bool
   (cond
-    [(= (string-length needle) 0) true]
-    [(> (+ start (string-length needle)) (string-length haystack)) false]
+    [(= (string.string-length needle) 0) true]
+    [(> (+ start (string.string-length needle)) (string.string-length haystack))
+      false]
     [(compiler-object-string-prefix-at? haystack needle start 0) true]
     [else (compiler-object-string-contains? haystack needle (+ start 1))]))
 
@@ -893,7 +896,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
           [(ObjectX64XorpdRip value)
-            (if (string-eq value target)
+            (if (string.string-eq value target)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))

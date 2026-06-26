@@ -3,9 +3,9 @@
 ;; The #387 extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records yet, so this
 ;; renderer emits exactly the declarations present in the extracted model.
-(import "../stdlib/io.tl")
+(import stdlib.io)
 (import "doc_extract.tl")
-(import "../stdlib/string.tl")
+(import stdlib.string)
 
 (defenum DocModule
   (DocModule String DocExtraction))
@@ -37,24 +37,29 @@
 (define (doc-render-anchor [name : String]) : String
   (let
     [i : i64 0]
-    [n : i64 (string-length name)]
+    [n : i64 (string.string-length name)]
     [out : String "tl-"]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref name i)]
+          [c : char (string.string-ref name i)]
           (begin
             (if (doc-render-anchor-char? c)
-              (set! out (string-concat3 out (substring name i 1) ""))
               (set!
                 out
-                (string-concat3 out "-" (int->string (doc-render-code c)))))
+                (string.string-concat3 out (string.substring name i 1) ""))
+              (set!
+                out
+                (string.string-concat3
+                  out
+                  "-"
+                  (string.int->string (doc-render-code c)))))
             (set! i (+ i 1)))))
       out)))
 
 (define (doc-render-escape-one [text : String] [idx : i64]) : String
   (let
-    [c : char (string-ref text idx)]
+    [c : char (string.string-ref text idx)]
     (cond
       [(= c '&') "&amp;"]
       [(= c '<') "&lt;"]
@@ -67,65 +72,69 @@
       [(= c '_') "\\_"]
       [(= c '#') "\\#"]
       [(= c '|') "\\|"]
-      [else (substring text idx 1)])))
+      [else (string.substring text idx 1)])))
 
 (define (doc-render-escape-markdown [text : String]) : String
   (let
     [i : i64 0]
-    [n : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
     [out : String ""]
     (begin
       (while (< i n)
         (begin
-          (set! out (string-concat3 out (doc-render-escape-one text i) ""))
+          (set!
+            out
+            (string.string-concat3 out (doc-render-escape-one text i) ""))
           (set! i (+ i 1))))
       out)))
 
 (define (doc-render-code-block [source : String]) : String
-  (string-append "```typelisp\n" (string-append source "\n```\n")))
+  (string.string-append "```typelisp\n" (string.string-append source "\n```\n")))
 
 (define (doc-render-module-doc [module-doc : String]) : String
-  (if (= (string-length module-doc) 0)
+  (if (= (string.string-length module-doc) 0)
     "_No module docs._\n\n"
-    (string-append (doc-render-escape-markdown module-doc) "\n\n")))
+    (string.string-append (doc-render-escape-markdown module-doc) "\n\n")))
 
 (define (doc-render-item-doc [doc-text : String]) : String
-  (if (= (string-length doc-text) 0)
+  (if (= (string.string-length doc-text) 0)
     "_No item docs._\n"
-    (string-append (doc-render-escape-markdown doc-text) "\n")))
+    (string.string-append (doc-render-escape-markdown doc-text) "\n")))
 
 (define (doc-render-item-heading [item : DocItem]) : String
   (let
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
-    (string-append
+    (string.string-append
       "<a id=\""
-      (string-append
+      (string.string-append
         anchor
-        (string-append
+        (string.string-append
           "\"></a>\n\n### "
-          (string-append (doc-render-escape-markdown name) "\n\n"))))))
+          (string.string-append (doc-render-escape-markdown name) "\n\n"))))))
 
 (define (doc-render-item [item : DocItem]) : String
-  (string-append
+  (string.string-append
     (doc-render-item-heading item)
-    (string-append
+    (string.string-append
       "Kind: "
-      (string-append
+      (string.string-append
         (doc-kind-name (doc-item-kind item))
-        (string-append
+        (string.string-append
           "\n\n"
-          (string-append
+          (string.string-append
             (doc-render-code-block (doc-item-signature item))
-            (string-append
+            (string.string-append
               "\n"
-              (string-append (doc-render-item-doc (doc-item-doc item)) "\n"))))))))
+              (string.string-append
+                (doc-render-item-doc (doc-item-doc item))
+                "\n"))))))))
 
 (define (doc-render-item-list [items : DocItemList]) : String
   (match items
     [(DocItemNil) ""]
     [(DocItemCons item rest)
-      (string-append
+      (string.string-append
         (doc-render-item item)
         (doc-render-item-list (box-get rest)))]))
 
@@ -135,28 +144,30 @@
     [_ (doc-render-item-list items)]))
 
 (define (doc-render-markdown [docs : DocExtraction]) : String
-  (string-append
+  (string.string-append
     "# TypeLisp Documentation\n\n"
-    (string-append
+    (string.string-append
       (doc-render-module-doc (doc-extraction-module-doc docs))
-      (string-append
+      (string.string-append
         "## Items\n\n"
         (doc-render-items (doc-extraction-items docs))))))
 
 (define (doc-render-module-nav-item [module : DocModule]) : String
   (let
     [path : String (doc-module-path module)]
-    (string-append
+    (string.string-append
       "- ["
-      (string-append
+      (string.string-append
         (doc-render-escape-markdown path)
-        (string-append "](#" (string-append (doc-render-anchor path) ")\n"))))))
+        (string.string-append
+          "](#"
+          (string.string-append (doc-render-anchor path) ")\n"))))))
 
 (define (doc-render-module-nav [modules : DocModuleList]) : String
   (match modules
     [(DocModuleNil) ""]
     [(DocModuleCons module rest)
-      (string-append
+      (string.string-append
         (doc-render-module-nav-item module)
         (doc-render-module-nav (box-get rest)))]))
 
@@ -164,21 +175,21 @@
   (let
     [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)]
-    (string-append
+    (string.string-append
       "<a id=\""
-      (string-append
+      (string.string-append
         (doc-render-anchor path)
-        (string-append
+        (string.string-append
           "\"></a>\n\n## "
-          (string-append
+          (string.string-append
             (doc-render-escape-markdown path)
-            (string-append
+            (string.string-append
               "\n\nSource: `"
-              (string-append
+              (string.string-append
                 (doc-render-escape-markdown path)
-                (string-append
+                (string.string-append
                   "`\n\n"
-                  (string-append
+                  (string.string-append
                     (doc-render-module-doc (doc-extraction-module-doc docs))
                     (doc-render-items (doc-extraction-items docs))))))))))))
 
@@ -186,18 +197,18 @@
   (match modules
     [(DocModuleNil) ""]
     [(DocModuleCons module rest)
-      (string-append
+      (string.string-append
         (doc-render-module-section module)
         (doc-render-module-sections (box-get rest)))]))
 
 (define (doc-render-module-graph-markdown [modules : DocModuleList]) : String
-  (string-append
+  (string.string-append
     "# TypeLisp Documentation\n\n"
-    (string-append
+    (string.string-append
       "## Modules\n\n"
-      (string-append
+      (string.string-append
         (doc-render-module-nav modules)
-        (string-append "\n" (doc-render-module-sections modules))))))
+        (string.string-append "\n" (doc-render-module-sections modules))))))
 
 (define (doc-render-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.
@@ -311,8 +322,8 @@ _No documented declarations._
       (doc-render-markdown (doc-extract-source (doc-render-smoke-source)))]
     [empty-rendered : String
       (doc-render-markdown (doc-extract-source "(define hidden : i64 1)\n"))]
-    (if (string-eq rendered (doc-render-smoke-expected))
-      (if (string-eq empty-rendered (doc-render-empty-expected))
+    (if (string.string-eq rendered (doc-render-smoke-expected))
+      (if (string.string-eq empty-rendered (doc-render-empty-expected))
         42
-        (panic "doc-render: empty markdown smoke mismatch"))
-      (panic "doc-render: markdown smoke mismatch"))))
+        (io.panic "doc-render: empty markdown smoke mismatch"))
+      (io.panic "doc-render: markdown smoke mismatch"))))

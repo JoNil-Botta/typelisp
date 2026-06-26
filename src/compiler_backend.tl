@@ -6098,7 +6098,10 @@
         [scratch : String
           (if sse?
             "%xmm15"
-            "%r11")]
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-c-abi-stage-exclude)
+              4
+              "%r11"))]
         (match (compiler-backend-group-word-operand
           assignments
           v
@@ -9761,6 +9764,36 @@
       (array-set! a 5 extra)
       a)))
 
+;; c-abi arg marshalling stages stack/group args through a scratch register WHILE
+;; integer args are being placed into the arg registers. The freeness query does
+;; NOT model these transient arg-register fills (the marshalling moves values into
+;; them outside the allocator's tracking), so a scavenge could pick an arg-register
+;; CANDIDATE (rcx/rdx/r8/r9 -- the four arg regs that are also scavenge candidates)
+;; and clobber an already-placed arg. Exclude all four; the scavenge then uses the
+;; fallback (freeness-checked, so pool-safe) or a plan-saved callee register, never
+;; an in-flight arg register. (rdi/rsi are not candidates, so need no exclude.)
+(define (compiler-backend-c-abi-stage-exclude) : (Array String)
+  (let
+    [a : (Array String) (make-array String 4)]
+    (begin
+      (array-set! a 0 "%rcx")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%r8")
+      (array-set! a 3 "%r9")
+      a)))
+
+;; c-abi-stage-exclude plus one already-chosen scratch (so a 2nd scavenge differs).
+(define (compiler-backend-c-abi-stage-exclude-with [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 5)]
+    (begin
+      (array-set! a 0 "%rcx")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%r8")
+      (array-set! a 3 "%r9")
+      (array-set! a 4 extra)
+      a)))
+
 ;; Like scavenge-exclude-with but ALSO reserves %r8. Used at the 3-scratch
 ;; copy-bytes-from-gep site, where the index scratch falls back to %r8: an active
 ;; base/src scavenge must not pick %r8 (a candidate) or, under register pressure,
@@ -10038,13 +10071,13 @@
   (let
     [src-reg : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-addr-scavenge-exclude)
-        0
+        (compiler-backend-c-abi-stage-exclude)
+        4
         "%r11")]
     [dst-reg : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-one-exclude src-reg)
-        1
+        (compiler-backend-c-abi-stage-exclude-with src-reg)
+        5
         "%r10")]
     (match (compiler-backend-emit-load-value-with-plan assignments value src-reg)
       [(OkCompilerBackend src-asm)
@@ -13191,13 +13224,19 @@
         [(CompilerBackendSomeImmediate imm)
           (OkCompilerBackend (str-cat "    movq " imm ", " slot))]
         [(CompilerBackendNoImmediate)
+          (let
+            [scav : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-c-abi-stage-exclude)
+                4
+                "%r11")]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
-            "%r11")
+            scav)
             [(OkCompilerBackend head)
-              (OkCompilerBackend (str-cat head "    movq %r11, " slot ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+              (OkCompilerBackend (str-cat head "    movq " scav ", " slot ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))))
 
 (define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
@@ -13539,13 +13578,19 @@
         [(CompilerBackendSomeImmediate imm)
           (OkCompilerBackend (str-cat "    movq " imm ", " slot "\n"))]
         [(CompilerBackendNoImmediate)
+          (let
+            [scav : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-c-abi-stage-exclude)
+                4
+                "%r11")]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
-            "%r11")
+            scav)
             [(OkCompilerBackend head)
-              (OkCompilerBackend (str-cat head "    movq %r11, " slot "\n" ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+              (OkCompilerBackend (str-cat head "    movq " scav ", " slot "\n" ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))))
 
 (define (compiler-backend-emit-direct-tail-call-args-from
   [target : CompilerBackendTarget]
@@ -16048,8 +16093,8 @@
   (let
     [base-reg : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-addr-scavenge-exclude)
-        0
+        (compiler-backend-c-abi-stage-exclude)
+        4
         "%r11")]
   (match (compiler-backend-emit-load-value-with-plan assignments base base-reg)
     [(OkCompilerBackend base-asm)

@@ -9631,10 +9631,13 @@
       [dst-home : String (compiler-backend-value-register-home assignments dst)]
       [dst-reg : String
         (if (string-eq dst-home "")
-          "%r10"
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r10")
           dst-home)]
       (match (if (string-eq dst-home "")
-        (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
+        (compiler-backend-emit-load-value-with-plan assignments dst dst-reg)
         (OkCompilerBackend ""))
         [(OkCompilerBackend dst-asm)
           (let
@@ -9642,13 +9645,16 @@
               (compiler-backend-value-register-home assignments src)]
             [src-reg : String
               (if (string-eq src-home "")
-                "%r11"
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-with dst-reg)
+                  6
+                  "%r11")
                 src-home)]
             (match (if (string-eq src-home "")
               (compiler-backend-emit-load-value-with-plan
                 assignments
                 src
-                "%r11")
+                src-reg)
               (OkCompilerBackend ""))
               [(OkCompilerBackend src-asm)
                 (OkCompilerBackend
@@ -10097,7 +10103,13 @@
   [src : CompilerIrValue]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-address-base assignments dst "%r10")
+  (let
+    [scav-base : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r10")]
+  (match (compiler-backend-emit-address-base assignments dst scav-base)
     [(OkCompilerBackendAddressBase base)
       (let
         [ptr-asm : String (struct-get base asm)]
@@ -10111,7 +10123,7 @@
           [(OkCompilerBackend store-asm)
             (OkCompilerBackend (string-append ptr-asm store-asm))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
+    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-store-to-gep
   [assignments : CompilerRegAssignmentList]
@@ -10125,7 +10137,12 @@
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-        (match (compiler-backend-emit-address-base assignments base "%r10")
+        [scav-base : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r10")]
+        (match (compiler-backend-emit-address-base assignments base scav-base)
           [(OkCompilerBackendAddressBase base-plan)
             (let
               [base-asm : String (struct-get base-plan asm)]
@@ -10202,7 +10219,13 @@
   [value1 : CompilerIrValue]
   [ty1 : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-address-base assignments ptr "%r10")
+  (let
+    [scav-base : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r10")]
+  (match (compiler-backend-emit-address-base assignments ptr scav-base)
     [(OkCompilerBackendAddressBase base-plan)
       (let
         [base-asm : String (struct-get base-plan asm)]
@@ -10227,7 +10250,7 @@
                   (string-append base-asm (string-append store0 store1)))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
+    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-float-precision-cast-asm
   [from-ty : AstType]

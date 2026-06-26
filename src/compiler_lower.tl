@@ -17861,6 +17861,12 @@
                     (lower-diagnostic-at-expr
                       origin
                       "ExprList value is compile-time only")))]
+              [(CtfeExprArray _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "(Array Expr) value is compile-time only")))]
               [(CtfeExprClause _)
                 (ErrLowerExpr
                   (box
@@ -17873,6 +17879,12 @@
                     (lower-diagnostic-at-expr
                       origin
                       "ExprClauseList value is compile-time only")))]
+              [(CtfeExprClauseArray _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "(Array ExprClause) value is compile-time only")))]
               [(CtfeExprBindingClause _)
                 (ErrLowerExpr
                   (box
@@ -17885,6 +17897,12 @@
                     (lower-diagnostic-at-expr
                       origin
                       "ExprBindingClauseList value is compile-time only")))]
+              [(CtfeExprBindingClauseArray _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "(Array ExprBindingClause) value is compile-time only")))]
               [_
                 (lower-materialize
                   state

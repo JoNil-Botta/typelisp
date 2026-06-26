@@ -41,10 +41,13 @@
   ;; type. The type is not part of the source-level Expr type (#1135).
   (CtfeExpr i64 AstType)
   (CtfeExprList AstExprList)
+  (CtfeExprArray AstExprList)
   (CtfeExprClause AstExprClause)
   (CtfeExprClauseList AstExprClauseList)
+  (CtfeExprClauseArray AstExprClauseList)
   (CtfeExprBindingClause AstExprBindingClause)
-  (CtfeExprBindingClauseList AstExprBindingClauseList))
+  (CtfeExprBindingClauseList AstExprBindingClauseList)
+  (CtfeExprBindingClauseArray AstExprBindingClauseList))
 
 (define (ctfe-untyped-expr-type-name) : String
   "__typelisp_untyped_expr")
@@ -1142,10 +1145,13 @@
     [(CtfeType _) "type"]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
+    [(CtfeExprArray _) "(Array Expr)"]
     [(CtfeExprClause _) "ExprClause"]
     [(CtfeExprClauseList _) "ExprClauseList"]
+    [(CtfeExprClauseArray _) "(Array ExprClause)"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CtfeExprBindingClauseArray _) "(Array ExprBindingClause)"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1528,6 +1534,12 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CtfeExprArray _)
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "this operation is not supported on (Array Expr) in compile-time evaluation")))]
     [(CtfeExprClause a)
       (match rv
         [(CtfeExprClause b)
@@ -1572,6 +1584,12 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CtfeExprClauseArray _)
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "this operation is not supported on (Array ExprClause) in compile-time evaluation")))]
     [(CtfeExprBindingClause a)
       (match rv
         [(CtfeExprBindingClause b)
@@ -1620,7 +1638,13 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                "binary operation in comptime requires matching operand types")))])]))
+                "binary operation in comptime requires matching operand types")))])]
+    [(CtfeExprBindingClauseArray _)
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "this operation is not supported on (Array ExprBindingClause) in compile-time evaluation")))]))
 
 ;; --- unary operators --------------------------------------------------------
 (define (ctfe-apply-unop
@@ -2385,6 +2409,15 @@
           (let
             [scrutinee : AstExpr (ctfe-ast-get env scrutinee-box)]
             (ctfe-eval-match scrutinee arms expr env fuel))])]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-struct-get inner field expr env fuel))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ctfe-ast-get env array-box)]
+        [index : AstExpr (ctfe-ast-get env index-box)]
+        (ctfe-eval-array-ref array index expr env fuel))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ctfe-ast-get env func-box)]
@@ -5174,6 +5207,154 @@
             (string.string-append
               "compile-time evaluation cannot reference runtime variable '"
               (string.string-append name "'")))))]))
+
+(define (ctfe-comptime-field-name? [field : i64] [want : String]) : bool
+  (string.string-eq (intern-str field) want))
+
+(define (ctfe-comptime-field-error [field : i64] [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        (string.string-append
+          "unsupported stdlib.comptime field '"
+          (string.string-append (intern-str field) "'"))))))
+
+(define (ctfe-comptime-struct-get-type-error [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "struct-get in compile-time evaluation requires a stdlib.comptime well-known value"))))
+
+(define (ctfe-eval-struct-get-value
+  [value : CompilerCtfeValue]
+  [field : i64]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match value
+    [(CtfeExprList nodes)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeExprArray nodes) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-expr-list-length nodes)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeExprClause clause)
+      (cond
+        [(ctfe-comptime-field-name? field "first")
+          (OkCtfe
+            (CtfeExpr (ctfe-expr-clause-first clause) (ctfe-untyped-expr-type))
+            fuel)]
+        [(ctfe-comptime-field-name? field "second")
+          (OkCtfe
+            (CtfeExpr (ctfe-expr-clause-second clause) (ctfe-untyped-expr-type))
+            fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeExprClauseList clauses)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeExprClauseArray clauses) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-expr-clause-list-length clauses)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeExprBindingClause clause)
+      (cond
+        [(ctfe-comptime-field-name? field "name")
+          (OkCtfe (CtfeString (ctfe-expr-binding-clause-name clause)) fuel)]
+        [(ctfe-comptime-field-name? field "has-type")
+          (OkCtfe (CtfeBool (ctfe-expr-binding-clause-has-type? clause)) fuel)]
+        [(ctfe-comptime-field-name? field "ty")
+          (OkCtfe
+            (CtfeExpr
+              (ctfe-expr-binding-clause-type clause)
+              (ctfe-untyped-expr-type))
+            fuel)]
+        [(ctfe-comptime-field-name? field "init")
+          (OkCtfe
+            (CtfeExpr
+              (ctfe-expr-binding-clause-init clause)
+              (ctfe-untyped-expr-type))
+            fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeExprBindingClauseList clauses)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeExprBindingClauseArray clauses) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-expr-binding-clause-list-length clauses)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [_ (ctfe-comptime-struct-get-type-error expr)]))
+
+(define (ctfe-eval-struct-get
+  [inner : AstExpr]
+  [field : i64]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval inner env fuel)
+    [(OkCtfe value next-fuel)
+      (ctfe-eval-struct-get-value value field expr next-fuel)]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
+
+(define (ctfe-comptime-array-index-error [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe (box (ctfe-diagnostic-at-expr expr "array-ref index out of range"))))
+
+(define (ctfe-comptime-array-type-error [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "array-ref in compile-time evaluation requires stdlib.comptime sequence items"))))
+
+(define (ctfe-eval-array-ref-value
+  [array : CompilerCtfeValue]
+  [index : i64]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match array
+    [(CtfeExprArray nodes)
+      (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
+        (ctfe-comptime-array-index-error expr)
+        (OkCtfe
+          (CtfeExpr (ctfe-expr-list-nth nodes index) (ctfe-untyped-expr-type))
+          fuel))]
+    [(CtfeExprClauseArray clauses)
+      (if (or (< index 0) (>= index (ctfe-expr-clause-list-length clauses)))
+        (ctfe-comptime-array-index-error expr)
+        (OkCtfe (CtfeExprClause (ctfe-expr-clause-list-nth clauses index)) fuel))]
+    [(CtfeExprBindingClauseArray clauses)
+      (if (or
+        (< index 0)
+        (>= index (ctfe-expr-binding-clause-list-length clauses)))
+        (ctfe-comptime-array-index-error expr)
+        (OkCtfe
+          (CtfeExprBindingClause
+            (ctfe-expr-binding-clause-list-nth clauses index))
+          fuel))]
+    [_ (ctfe-comptime-array-type-error expr)]))
+
+(define (ctfe-eval-array-ref
+  [array : AstExpr]
+  [index : AstExpr]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval array env fuel)
+    [(OkCtfe array-value array-fuel)
+      (match (compiler-ctfe-eval index env array-fuel)
+        [(OkCtfe index-value index-fuel)
+          (match index-value
+            [(CtfeI64 index)
+              (ctfe-eval-array-ref-value array-value index expr index-fuel)]
+            [_
+              (ErrCtfe
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "array-ref index must be i64 in compile-time evaluation")))])]
+        [(ErrCtfe diag) (ErrCtfe diag)])]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
 
 (define (ctfe-eval-binary
   [op : AstBinOp]
@@ -9125,10 +9306,13 @@
     [(CtfeType _) (AstLitUnit)]
     [(CtfeExpr _ _) (AstLitUnit)]
     [(CtfeExprList _) (AstLitUnit)]
+    [(CtfeExprArray _) (AstLitUnit)]
     [(CtfeExprClause _) (AstLitUnit)]
     [(CtfeExprClauseList _) (AstLitUnit)]
+    [(CtfeExprClauseArray _) (AstLitUnit)]
     [(CtfeExprBindingClause _) (AstLitUnit)]
-    [(CtfeExprBindingClauseList _) (AstLitUnit)]))
+    [(CtfeExprBindingClauseList _) (AstLitUnit)]
+    [(CtfeExprBindingClauseArray _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]

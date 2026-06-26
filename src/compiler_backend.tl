@@ -16382,22 +16382,37 @@
   [case-count : i64]
   [default-label : String]
   [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
-    [(OkCompilerBackend load-index)
-      (OkCompilerBackend
-        (str-cat
-          load-index
-          (if (= base 0)
-            ""
-            (str-cat "    subq $" (int->string base) ", %rax\n" ""))
-          "    cmpq $"
-          (int->string (- case-count 1))
-          ", %rax\n    ja "
-          (compiler-backend-asm-label function default-label)
-          "\n    leaq "
-          (compiler-backend-switch-table-label function current-label)
-          "(%rip), %r11\n    jmp *(%r11,%rax,8)\n"))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  ;; Active-scavenge the jump-table base (was hardcoded %r11). The case index
+  ;; lives in %rax across the jmp (jmp *(base,%rax,8)), so the base must exclude
+  ;; %rax; the standard exclude {rax,rdx,rcx,r10,r11} also reserves the %r11
+  ;; fallback so the base actively picks a free candidate. The base is loaded
+  ;; (leaq) then read once in the jmp -- no other backend scratch is live here.
+  (let
+    [scav-tbl : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r11")]
+    (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+      [(OkCompilerBackend load-index)
+        (OkCompilerBackend
+          (str-cat
+            load-index
+            (if (= base 0)
+              ""
+              (str-cat "    subq $" (int->string base) ", %rax\n" ""))
+            "    cmpq $"
+            (int->string (- case-count 1))
+            ", %rax\n    ja "
+            (compiler-backend-asm-label function default-label)
+            "\n    leaq "
+            (compiler-backend-switch-table-label function current-label)
+            "(%rip), "
+            scav-tbl
+            "\n    jmp *("
+            scav-tbl
+            ",%rax,8)\n"))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-switch
   [function : String]
@@ -19489,32 +19504,51 @@
                                 result-store)
                               "")))))]
                   [_
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      func
-                      "%r11")
-                      [(OkCompilerBackend func-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            (compiler-backend-emit-call-space-sub call-space)
+                    ;; Active-scavenge the closure pointer (was hardcoded %r11).
+                    ;; The closure is loaded AFTER arg marshalling and read at
+                    ;; `movq 8(clo),env` + `call *(clo)`, so it must dodge the
+                    ;; in-flight arg registers among the candidates (rdx/rcx/r8/r9)
+                    ;; -- env-reg is %rdi, not a candidate. Exclude
+                    ;; {rax,rdx,rcx,r8,r9,r10,r11}; remaining candidates are the
+                    ;; plan-saved callee-saved (free per the query, dead after the
+                    ;; call). Falls back to %r11 via the emergency tier (which
+                    ;; wraps the whole call instruction -> save/restore is sound).
+                    (let
+                      [scav-clo : String
+                        (compiler-backend-scavenge-reg-here
+                          (compiler-backend-scavenge-exclude-with-r8 "%r9")
+                          7
+                          "%r11")]
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        func
+                        scav-clo)
+                        [(OkCompilerBackend func-asm)
+                          (OkCompilerBackend
                             (string-append
-                              args-asm
+                              (compiler-backend-emit-call-space-sub call-space)
                               (string-append
-                                func-asm
-                                (str-cat
-                                  "    movq 8(%r11), "
-                                  env-reg
-                                  "\n    call *(%r11)\n"
-                                  (string-append
-                                    (compiler-backend-emit-call-space-add
-                                      call-space)
-                                    result-store)
-                                  "")))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend
-                          (compiler-backend-apply-instr-diagnostic
-                            message
-                            instr-diag))])])]
+                                args-asm
+                                (string-append
+                                  func-asm
+                                  (str-cat
+                                    "    movq 8("
+                                    scav-clo
+                                    "), "
+                                    env-reg
+                                    "\n    call *("
+                                    scav-clo
+                                    ")\n"
+                                    (string-append
+                                      (compiler-backend-emit-call-space-add
+                                        call-space)
+                                      result-store)
+                                    "")))))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend
+                            (compiler-backend-apply-instr-diagnostic
+                              message
+                              instr-diag))]))])]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]

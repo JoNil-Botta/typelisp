@@ -328,6 +328,18 @@
 (define (expr-type [value : Expr]) : Expr
   value)
 
+;: Return the canonical identity string for a module strategy operand.
+(define (module-name [module : String]) : String
+  module)
+
+;: Return true when a module strategy exports a macro hook with `name`.
+(define (module-export-macro? [_module : String] [_name : String]) : bool
+  false)
+
+;: Build an expression that calls a macro hook exported by a module strategy.
+(define (module-hook [module : String] [name : String]) : Expr
+  (expr-var (string-concat (string-concat module ".") name)))
+
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
   (match value

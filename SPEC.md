@@ -830,6 +830,13 @@ not resolved before macro expansion. These operands are distinct from
 `ExprClause`: `[x : i64 1]` is accepted only for `ExprBindingClause`, while
 `ExprClause` remains exactly `[expr expr]`.
 
+A fixed slot declared `Module` is a by-name module strategy operand. The
+operand must be an imported module alias visible at the call site or a visible
+dotted module identity; unresolved names and legacy slash-qualified names are
+diagnostics at the operand span. The macro body receives the resolved canonical
+module identity as a compile-time `String`. `Module` operands are not runtime
+values, are not first-class macro values, and cannot be variadic.
+
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro body
 receives the remaining operands as an `ExprList`; for `Expr ...`, they are
 captured without per-operand produced-type checks. For `ExprClause ...`, every
@@ -853,6 +860,14 @@ They can inspect binding-clause captures with `expr-binding-clause-name`,
 `expr-binding-clause-list-tail`, and `expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back into
 bracket-clause operand syntax for explicit splicing into macro calls.
+
+Macro bodies can inspect module strategy operands with `module-name` and
+`module-export-macro?`. `module-hook` validates that the strategy module exports
+the named hook macro and builds an `Expr` that calls that hook by its canonical
+module identity; a missing hook is diagnosed as
+`typecheck: strategy module <module> does not export hook <name>`. This is
+by-name hook dispatch for generated code, not a macro value that can be stored
+or called indirectly.
 
 `Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`, and
 `ExprBindingClauseList` are compile-time-only types. They are valid in macro
@@ -905,6 +920,7 @@ bool)`, `(macro (bool bool ...) bool)`, and
 body's compile-time parameters and their call-site produced types. Fixed
 ordinary operands bind as `Expr`, fixed `ExprClause` operands bind as
 `ExprClause`, fixed `ExprBindingClause` operands bind as `ExprBindingClause`,
+fixed `Module` operands bind as canonical module identity `String` values,
 variadic ordinary operands bind as `ExprList`, variadic `ExprClause` operands
 bind as `ExprClauseList`, and variadic `ExprBindingClause` operands bind as
 `ExprBindingClauseList`. The macro body must typecheck as `Expr`, and the
@@ -973,10 +989,13 @@ hand-written imports. The diagnostic should name both generated module identitie
 qualified access through an explicit alias.
 
 Generated module identity and deduplication are keyed by the canonical macro
-module identity, macro name, and evaluated argument-key strings. Repeating the
-same macro call with the same keys reuses the generated module when the emitted
-module is structurally identical; incompatible output for the same identity is a
-compiler diagnostic.
+module identity, macro name, and evaluated argument-key strings. Type operands
+key by resolved type identity; `Module` operands key by the resolved canonical
+strategy module identity, so an alias and the corresponding visible full module
+path deduplicate to the same generated module. Repeating the same macro call
+with the same keys reuses the generated module when the emitted module is
+structurally identical; incompatible output for the same identity is a compiler
+diagnostic.
 
 #### 3.7.2.1 Comptime purity for macros and generated declarations
 
@@ -4720,6 +4739,8 @@ operations; IDs `100` and above mirror the current exported
 | 141 | `expr-binding-clause-list-tail` |
 | 142 | `expr-binding-clause-list-nth` |
 | 143 | `expr-binding-clause-list->expr-list` |
+| 144 | `module-name` |
+| 145 | `module-hook` |
 
 The operation catalog deliberately does not assign `TypeInfo` constructor or
 reflection helper operations yet. `TypeInfo` value shapes are public, but the

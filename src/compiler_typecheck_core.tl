@@ -3678,6 +3678,9 @@
     [(AstTyVar name) (= name (intern "type"))]
     [_ false]))
 
+(define (tc-macro-module-param-kind? [ty : AstType]) : bool
+  (tc-macro-result-name? ty "Module" "module"))
+
 (define (tc-type-unquote-marker? [ty : AstType]) : bool
   (match ty
     [(AstTyVarArgs name _) (= name (intern "unquote"))]
@@ -4541,6 +4544,18 @@
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind out "module-name" (tc-fn1 (AstTyString) (AstTyString))))
+      (set!
+        out
+        (tc-bind
+          out
+          "module-export-macro?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
+        (tc-bind out "module-hook" (tc-fn2 (AstTyString) (AstTyString) expr)))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
@@ -7154,6 +7169,9 @@
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
+    (string.string-eq name "module-name")
+    (string.string-eq name "module-export-macro?")
+    (string.string-eq name "module-hook")
     (ctfe-expr-inspector-name? name)
     (ctfe-expr-list-inspector-name? name)
     (ctfe-expr-clause-inspector-name? name)
@@ -8018,9 +8036,14 @@
               (if variadic
                 (ErrTcUnit "typecheck: type macro operand cannot be variadic")
                 (tc-source-macro-param-list-policy-ok ctx rest))
-              (match (tc-source-type-policy-ok ctx ty)
-                [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
-                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
+              (if (tc-macro-module-param-kind? ty)
+                (if variadic
+                  (ErrTcUnit
+                    "typecheck: Module macro operand cannot be variadic")
+                  (tc-source-macro-param-list-policy-ok ctx rest))
+                (match (tc-source-type-policy-ok ctx ty)
+                  [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])))]))]))
 
 (define (tc-macro-result-name? [ty : AstType] [upper : String] [lower : String]) : bool
   (match ty
@@ -10865,6 +10888,7 @@
                 name
                 (cond
                   [(tc-macro-type-param-kind? ty) (AstTyExpr)]
+                  [(tc-macro-module-param-kind? ty) (AstTyString)]
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
@@ -10903,6 +10927,7 @@
                 (intern-str name)
                 (cond
                   [(tc-macro-type-param-kind? ty) (CtfeType (AstTyVar name))]
+                  [(tc-macro-module-param-kind? ty) (CtfeString "")]
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
@@ -34841,6 +34866,10 @@
   (OkMacroCheck)
   (ErrMacroCheck (Box CompilerDiagnostic)))
 
+(defenum ResultMacroModuleArg
+  (OkMacroModuleArg String)
+  (ErrMacroModuleArg (Box CompilerDiagnostic)))
+
 (defenum ResultMacroClause
   (OkMacroClause AstExprClause)
   (ErrMacroClause (Box CompilerDiagnostic)))
@@ -35197,21 +35226,28 @@
         (match param
           [(AstMacroParam _ ty variadic)
             (if variadic
-              (if (tc-macro-type-param-kind? ty)
-                (ErrGenKey
-                  (box
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "typecheck: type macro operand cannot be variadic")))
-                (if (macro-identity-syntax-param-type? ctx ty)
+              (cond
+                [(tc-macro-type-param-kind? ty)
+                  (ErrGenKey
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: type macro operand cannot be variadic")))]
+                [(tc-macro-module-param-kind? ty)
+                  (ErrGenKey
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: Module macro operand cannot be variadic")))]
+                [(macro-identity-syntax-param-type? ctx ty)
                   (macro-identity-key-param-exprs
                     ctx
                     ty
                     args
                     env
                     fuel
-                    call-expr)
-                  (macro-identity-key-string-exprs args env fuel)))
+                    call-expr)]
+                [else (macro-identity-key-string-exprs args env fuel)])
               (match args
                 [(AstExprNil)
                   (ErrGenKey
@@ -35232,13 +35268,22 @@
                               (ctfe-type-key resolved-ty))
                             fuel)]
                         [(ErrMacroTypeArg diag) (ErrGenKey diag)])
-                      (macro-identity-key-param-expr
-                        ctx
-                        ty
-                        head-expr
-                        env
-                        fuel
-                        call-expr))
+                      (if (tc-macro-module-param-kind? ty)
+                        (match (macro-module-strategy-arg ctx head-expr)
+                          [(OkMacroModuleArg module)
+                            (OkGenKey
+                              (str_cat.str-cat
+                                "module_"
+                                (spec-string-key module))
+                              fuel)]
+                          [(ErrMacroModuleArg diag) (ErrGenKey diag)])
+                        (macro-identity-key-param-expr
+                          ctx
+                          ty
+                          head-expr
+                          env
+                          fuel
+                          call-expr)))
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
@@ -36391,18 +36436,25 @@
             origin
             "typecheck: Decls macro transformer did not produce Expr")))]))
 
-(define (macro-collect-decl-name [decl : AstDecl] [acc : TcStringList]) : TcStringList
+(define (macro-collect-decl-name
+  [decl : AstDecl]
+  [module : String]
+  [acc : TcStringList]) : TcStringList
   (match decl
-    [(AstDeclDefMacro name _ _ _) (tc-string-list-add acc (intern-str name))]
+    [(AstDeclDefMacro name _ _ _)
+      (begin
+        (ctfe-module-macro-export-add! module (intern-str name))
+        (tc-string-list-add acc (intern-str name)))]
     [(AstDeclUnsafe inner-box)
-      (macro-collect-decl-name (box-get inner-box) acc)]
+      (macro-collect-decl-name (box-get inner-box) module acc)]
     [(AstDeclComptimeDecl _ template-box)
-      (macro-collect-decl-name (box-get template-box) acc)]
+      (macro-collect-decl-name (box-get template-box) module acc)]
     [_ acc]))
 
 (define (macro-collect-macro-names [decls : AstDeclList] [acc : TcStringList]) : TcStringList
   (let
     [cur : AstDeclList decls]
+    [cur-module : String ""]
     [out : TcStringList acc]
     (begin
       (while (match cur
@@ -36412,7 +36464,10 @@
           [(AstDeclNil) unit]
           [(AstDeclCons decl rest)
             (begin
-              (set! out (macro-collect-decl-name decl out))
+              (match decl
+                [(AstDeclModule next-module)
+                  (set! cur-module (intern-str next-module))]
+                [_ (set! out (macro-collect-decl-name decl cur-module out))])
               (set! cur (box-get rest)))]))
       out)))
 
@@ -38126,7 +38181,9 @@
   [module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if (tc-name-qualified? lookup-name)
+  (if (or
+    (tc-name-qualified? lookup-name)
+    (tc-source-slash-qualified? lookup-name))
     (macro-qualified-call-decl
       (tc-context-with-module ctx module)
       decls
@@ -38163,7 +38220,8 @@
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (if (and
     (>= (tc-name-first-dot lookup-name) 0)
-    (not (tc-name-qualified? lookup-name)))
+    (not (tc-name-qualified? lookup-name))
+    (not (tc-source-slash-qualified? lookup-name)))
     (macro-call-decl-from-source-name
       ctx
       decls
@@ -38326,6 +38384,49 @@
         [(ErrTcUnit message)
           (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
+
+(define (macro-module-strategy-unknown-message [name : String]) : String
+  (str_cat.str-cat
+    "typecheck: unknown module strategy "
+    name
+    "; import the module or use a visible dotted module alias"))
+
+(define (macro-module-strategy-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroModuleArg
+  (match (ast-expr-unspan arg)
+    [(AstExprVar name-id)
+      (let
+        [name : String (intern-str name-id)]
+        (if (tc-source-slash-qualified-id? name name-id)
+          (ErrMacroModuleArg
+            (box
+              (ctfe-diagnostic-at-expr
+                arg
+                (tc-source-slash-qualified-message name))))
+          (match ctx
+            [(TcContext program _ _ current-module _)
+              (match program
+                [(AstProgram decls-box)
+                  (match (macro-import-alias-target-cached
+                    (box-get decls-box)
+                    (intern current-module)
+                    name)
+                    [(TcSomeString target) (OkMacroModuleArg target)]
+                    [(TcNoString)
+                      (if (or
+                        (string.string-eq name current-module)
+                        (tc-imported-module-identity? ctx name))
+                        (OkMacroModuleArg name)
+                        (ErrMacroModuleArg
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              arg
+                              (macro-module-strategy-unknown-message name)))))])])])))]
+    [_
+      (ErrMacroModuleArg
+        (box
+          (ctfe-diagnostic-at-expr
+            arg
+            "typecheck: Module macro operand expects a module name")))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
   (match items
@@ -38577,6 +38678,12 @@
           (ctfe-diagnostic-at-expr
             (AstExprVar name)
             "typecheck: type macro operand cannot be variadic")))]
+    [(tc-macro-module-param-kind? ty)
+      (ErrMacroEnv
+        (box
+          (ctfe-diagnostic-at-expr
+            (AstExprVar name)
+            "typecheck: Module macro operand cannot be variadic")))]
     [(macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-list-from-args args)
         [(OkMacroClauseList clauses)
@@ -38615,6 +38722,16 @@
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
         [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])]
+    [(tc-macro-module-param-kind? ty)
+      (match (macro-module-strategy-arg ctx arg-expr)
+        [(OkMacroModuleArg module)
+          (OkMacroEnv
+            (ctfe-env-extend-typed
+              env
+              (intern-str name)
+              (CtfeString module)
+              (AstTyString)))]
+        [(ErrMacroModuleArg diag) (ErrMacroEnv diag)])]
     [(macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-from-arg arg-expr)
         [(OkMacroClause clause)
@@ -40224,7 +40341,7 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match template
@@ -40253,7 +40370,17 @@
                     decl-path)]
                 [_ (macro-single-decl-expansion decl decl-path)])
               (macro-single-decl-expansion decl decl-path))]
-          [_ (macro-single-decl-expansion decl decl-path)]))]
+          [_
+            (let
+              [decl-ctx : TcContext (tc-context-with-module ctx module)]
+              (if (not (macro-decl-uses-macro? decl-ctx orig-decls template))
+                (macro-single-decl-expansion decl decl-path)
+                (match (macro-expand-decl decl-ctx top-env orig-decls template)
+                  [(OkMacroDecl expanded)
+                    (macro-single-decl-expansion
+                      (ast-decl-comptime-decl-with-meta meta expanded)
+                      decl-path)]
+                  [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))]
     [(AstDeclImport (AstImportSpec kind _ _ alias span))
       (match kind
         [(AstImportMacro call-id context)
@@ -40410,7 +40537,9 @@
     (begin
       (while (< i n)
         (begin
-          (if (string.char-eq (string.string-ref name i) '.')
+          (if (or
+            (string.char-eq (string.string-ref name i) '.')
+            (string.char-eq (string.string-ref name i) '/'))
             (set! last-dot i)
             unit)
           (set! i (+ i 1))))
@@ -40418,10 +40547,11 @@
 
 (define (macro-call-callee-base-name [name : String]) : String
   (let
-    [source : String
-      (if (tc-name-qualified? name)
-        (tc-qualified-name-base name)
+    [lookup : String
+      (if (tc-hygiene-global-name? name)
+        (tc-hygiene-global-call-name name)
         name)]
+    [source : String lookup]
     [last-dot : i64 (macro-call-callee-last-dot source)]
     [n : i64 (string.string-length source)]
     (if (and (>= last-dot 0) (< last-dot (- n 1)))
@@ -40680,6 +40810,8 @@
         [_ false])]
     [(AstDeclUnsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-uses-macro? ctx decls (box-get template-box))]
     [_ false]))
 
 ;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
@@ -41467,6 +41599,7 @@
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
             (macro-alias-cache-reset!)
+            (ctfe-module-macro-export-reset!)
             (set! macro-expand-expr-type-macro-names expr-type-macro-names)
             ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
             ;; the program actually contains a `(type T)` literal -- the sole entry
@@ -43383,4 +43516,5 @@
     (set! macro-expand-expr-type-macro-names (TcStringNil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))
+    (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))

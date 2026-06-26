@@ -139,6 +139,9 @@
 (defenum LowerPrunedProgram
   (LowerPrunedProgram AstProgram AstDeclPathList))
 
+(defenum LowerFilteredReachable
+  (LowerFilteredReachable AstDeclList AstDeclPathList))
+
 (defenum LowerEntryMainScan
   (LowerEntryMainScan i64 String bool))
 
@@ -3783,6 +3786,35 @@
           (compiler-symbol-module-key "stdlib.string" base)))
       state)))
 
+(define (lower-reach-used-type-name-add-source! [source : String] [name : i64]) : unit
+  (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+    (set!
+      lower-reach-active-body-used-types
+      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+    unit))
+
+(define (lower-reach-used-types-add-pattern-roots! [pattern : AstPattern]) : unit
+  (match pattern
+    [(AstPatVar _ _) unit]
+    [(AstPatTuple patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box))]
+    [(AstPatWildcard) unit]
+    [(AstPatBinding _) unit]
+    [(AstPatVariant name patterns-box)
+      (begin
+        (lower-reach-used-type-name-add-source! (intern-str name) name)
+        (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box)))]
+    [(AstPatLiteral _) unit]))
+
+(define (lower-reach-used-types-add-pattern-list-roots!
+  [patterns : AstPatternList]) : unit
+  (match patterns
+    [(AstPatternNil) unit]
+    [(AstPatternCons pattern rest)
+      (begin
+        (lower-reach-used-types-add-pattern-roots! (box-get pattern))
+        (lower-reach-used-types-add-pattern-list-roots! (box-get rest)))]))
+
 (define (lower-reach-expr-list
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
@@ -3811,21 +3843,14 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ maybe-ty value-box)
+          [(AstLetBinding _ _ value-box)
             (let
               [value : AstExpr (ast-node-get value-box)]
-              (begin
-                (set!
-                  lower-reach-active-body-used-types
-                  (lower-used-types-add-maybe-type
-                    lower-reach-active-body-used-types
-                    ""
-                    maybe-ty))
-                (lower-reach-let-bindings
-                  all-functions
-                  names
-                  (lower-reach-expr all-functions names state value)
-                  rest)))]))]))
+              (lower-reach-let-bindings
+                all-functions
+                names
+                (lower-reach-expr all-functions names state value)
+                rest))]))]))
 
 (define (lower-reach-match-arms
   [all-functions : hashmap.StringI64Map]
@@ -3842,12 +3867,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (begin
-                (set!
-                  lower-reach-active-body-used-types
-                  (lower-used-types-add-pattern
-                    lower-reach-active-body-used-types
-                    ""
-                    pattern))
+                (lower-reach-used-types-add-pattern-roots! pattern)
                 (lower-reach-match-arms
                   all-functions
                   names
@@ -4972,27 +4992,17 @@
               body))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda params ret body-box)
+        [(AstLambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (begin
-              (set!
-                lower-reach-active-body-used-types
-                (lower-used-types-add-maybe-type
-                  (lower-used-types-add-param-list
-                    lower-reach-active-body-used-types
-                    ""
-                    params)
-                  ""
-                  ret))
-              (lower-reach-expr
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-add-string-snapshot-runtime
                 all-functions
                 names
-                (lower-reach-add-string-snapshot-runtime
-                  all-functions
-                  names
-                  state)
-                body)))])]
+                state)
+              body))])]
     [(AstExprTuple values)
       (lower-reach-expr-list all-functions names state values)]
     [(AstExprTupleRef value-box _)
@@ -5001,14 +5011,10 @@
         (lower-reach-expr all-functions names state value))]
     [(AstExprArray values)
       (lower-reach-expr-list all-functions names state values)]
-    [(AstExprMakeArray ty len-box)
+    [(AstExprMakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
-        (begin
-          (set!
-            lower-reach-active-body-used-types
-            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-          (lower-reach-expr all-functions names state len)))]
+        (lower-reach-expr all-functions names state len))]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -5067,22 +5073,14 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lower-reach-expr all-functions names state value))]
-    [(AstExprAnn inner-box ty)
+    [(AstExprAnn inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (begin
-          (set!
-            lower-reach-active-body-used-types
-            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-          (lower-reach-expr all-functions names state inner)))]
-    [(AstExprCast inner-box ty)
+        (lower-reach-expr all-functions names state inner))]
+    [(AstExprCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (begin
-          (set!
-            lower-reach-active-body-used-types
-            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-          (lower-reach-expr all-functions names state inner)))]
+        (lower-reach-expr all-functions names state inner))]
     [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5099,18 +5097,31 @@
               arms))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ index-ty source-box init-box body-box)
+        [(AstForeach _ _ source-box init-box body-box)
           (let
             [source : AstExpr (ast-node-get source-box)]
             [init : AstExpr (ast-node-get init-box)]
             [body : AstExpr (ast-node-get body-box)]
-            (begin
-              (set!
-                lower-reach-active-body-used-types
-                (lower-used-types-add-type
-                  lower-reach-active-body-used-types
-                  ""
-                  index-ty))
+            (lower-reach-expr
+              all-functions
+              names
+              (lower-reach-expr
+                all-functions
+                names
+                (lower-reach-expr all-functions names state source)
+                init)
+              body))])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ source-box init-box map-expr-box reduce-expr-box)
+          (let
+            [source : AstExpr (ast-node-get source-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [map-expr : AstExpr (ast-node-get map-expr-box)]
+            [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
+            (lower-reach-expr
+              all-functions
+              names
               (lower-reach-expr
                 all-functions
                 names
@@ -5119,71 +5130,20 @@
                   names
                   (lower-reach-expr all-functions names state source)
                   init)
-                body)))])]
-    [(AstExprSpmdReduce reduce-box)
-      (match (box-get reduce-box)
-        [(AstSpmdReduce
-            _
-            _
-            index-ty
-            source-box
-            init-box
-            map-expr-box
-            reduce-expr-box)
-          (let
-            [source : AstExpr (ast-node-get source-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [map-expr : AstExpr (ast-node-get map-expr-box)]
-            [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
-            (begin
-              (set!
-                lower-reach-active-body-used-types
-                (lower-used-types-add-type
-                  lower-reach-active-body-used-types
-                  ""
-                  index-ty))
-              (lower-reach-expr
-                all-functions
-                names
-                (lower-reach-expr
-                  all-functions
-                  names
-                  (lower-reach-expr
-                    all-functions
-                    names
-                    (lower-reach-expr all-functions names state source)
-                    init)
-                  map-expr)
-                reduce-expr)))])]
+                map-expr)
+              reduce-expr))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan
-            _
-            _
-            index-ty
-            start-box
-            end-box
-            _
-            prefix-ty
-            init-box
-            value-box
-            body-box)
+        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
-            (begin
-              (set!
-                lower-reach-active-body-used-types
-                (lower-used-types-add-type
-                  (lower-used-types-add-type
-                    lower-reach-active-body-used-types
-                    ""
-                    index-ty)
-                  ""
-                  prefix-ty))
+            (lower-reach-expr
+              all-functions
+              names
               (lower-reach-expr
                 all-functions
                 names
@@ -5193,14 +5153,11 @@
                   (lower-reach-expr
                     all-functions
                     names
-                    (lower-reach-expr
-                      all-functions
-                      names
-                      (lower-reach-expr all-functions names state start)
-                      end)
-                    init)
-                  value)
-                body)))])]
+                    (lower-reach-expr all-functions names state start)
+                    end)
+                  init)
+                value)
+              body))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -5289,21 +5246,8 @@
           names
           (lower-reach-expr all-functions names state inner)
           value))]
-    [(AstExprTypeLiteral ty)
-      (begin
-        (set!
-          lower-reach-active-body-used-types
-          (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-        state)]
-    [(AstExprInit maybe-ty)
-      (begin
-        (set!
-          lower-reach-active-body-used-types
-          (lower-used-types-add-maybe-type
-            lower-reach-active-body-used-types
-            ""
-            maybe-ty))
-        state)]
+    [(AstExprTypeLiteral _) state]
+    [(AstExprInit _) state]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5328,12 +5272,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
-    [(AstExprPtrNull ty)
-      (begin
-        (set!
-          lower-reach-active-body-used-types
-          (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-        state)]
+    [(AstExprPtrNull _) state]
     [(AstExprPtrNullCheck value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -5361,26 +5300,18 @@
           names
           (lower-reach-expr all-functions names state ptr)
           offset))]
-    [(AstExprPtrCast ptr-box ty)
+    [(AstExprPtrCast ptr-box _)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
-        (begin
-          (set!
-            lower-reach-active-body-used-types
-            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-          (lower-reach-expr all-functions names state ptr)))]
+        (lower-reach-expr all-functions names state ptr))]
     [(AstExprPtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lower-reach-expr all-functions names state ptr))]
-    [(AstExprIntToPtr value-box ty)
+    [(AstExprIntToPtr value-box _)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (begin
-          (set!
-            lower-reach-active-body-used-types
-            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
-          (lower-reach-expr all-functions names state value)))]
+        (lower-reach-expr all-functions names state value))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -6912,34 +6843,6 @@
                   used)
                 (and covered (or (not is-type-decl) path-covered))))]))]))
 
-(define (lower-type-decl-paths-covered?
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
-  [reachable-paths : hashmap.I64I64Map]) : bool
-  (match decls
-    [(AstDeclNil) true]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (and
-          (or
-            (not (lower-type-decl? decl))
-            (hashmap.i64-i64-map-contains? reachable-paths (intern decl-path)))
-          (lower-type-decl-paths-covered?
-            rest
-            rest-paths
-            entry-path
-            reachable-paths)))]))
-
 (define (lower-used-types-from-kept-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -7102,18 +7005,17 @@
         dispatch-variants
         decl))))
 
-(define (lower-filter-reachable-decls-in-module
+(define (lower-filter-reachable-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [names : LowerNameCache]
   [all-functions : hashmap.StringI64Map]
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
-  [used-types : hashmap.I64I64Map]) : AstDeclList
+  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
   (match decls
-    [(AstDeclNil) AstDeclNil]
+    [(AstDeclNil) (LowerFilteredReachable AstDeclNil AstDeclPathNil)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -7130,119 +7032,63 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (ast-decl-cons
-              decl
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                (intern-str next-module)
-                names
-                all-functions
-                reachable
-                dispatch-variants
-                used-types))]
-          [_
-            (if (lower-decl-kept-by-reach-or-dispatch?
+            (match (lower-filter-reachable-in-module
+              rest
+              rest-paths
               entry-path
-              decl-path
+              (intern-str next-module)
+              all-functions
+              reachable
+              dispatch-variants
+              used-types)
+              [(LowerFilteredReachable rest-decls rest-paths)
+                (LowerFilteredReachable
+                  (ast-decl-cons decl rest-decls)
+                  (ast-decl-path-cons decl-path rest-paths))])]
+          [_
+            (match (lower-filter-reachable-in-module
+              rest
+              rest-paths
+              entry-path
               module
               all-functions
               reachable
               dispatch-variants
-              used-types
-              decl)
-              (ast-decl-cons
-                decl
-                (lower-filter-reachable-decls-in-module
-                  rest
-                  rest-paths
+              used-types)
+              [(LowerFilteredReachable rest-decls rest-paths)
+                (if (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
+                  decl-path
                   module
-                  names
                   all-functions
                   reachable
                   dispatch-variants
-                  used-types))
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                names
-                all-functions
-                reachable
-                dispatch-variants
-                used-types))]))]))
+                  used-types
+                  decl)
+                  (LowerFilteredReachable
+                    (ast-decl-cons decl rest-decls)
+                    (ast-decl-path-cons decl-path rest-paths))
+                  (LowerFilteredReachable rest-decls rest-paths))])]))]))
 
-(define (lower-filter-reachable-paths-in-module
+;; Keep decls and paths in lockstep so pruning does not repeat the same
+;; reachability predicate walk over the whole declaration list.
+(define (lower-filter-reachable-decls-and-paths
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
-  [module : String]
   [all-functions : hashmap.StringI64Map]
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
-  [used-types : hashmap.I64I64Map]) : AstDeclPathList
-  (match decls
-    [(AstDeclNil) AstDeclPathNil]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (ast-decl-path-cons
-              decl-path
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                (intern-str next-module)
-                all-functions
-                reachable
-                dispatch-variants
-                used-types))]
-          [_
-            (if (lower-decl-kept-by-reach-or-dispatch?
-              entry-path
-              decl-path
-              module
-              all-functions
-              reachable
-              dispatch-variants
-              used-types
-              decl)
-              (ast-decl-path-cons
-                decl-path
-                (lower-filter-reachable-paths-in-module
-                  rest
-                  rest-paths
-                  entry-path
-                  module
-                  all-functions
-                  reachable
-                  dispatch-variants
-                  used-types))
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                all-functions
-                reachable
-                dispatch-variants
-                used-types))]))]))
+  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
+  (lower-filter-reachable-in-module
+    decls
+    paths
+    entry-path
+    ""
+    all-functions
+    reachable
+    dispatch-variants
+    used-types))
 
 ;; The synthesized clone$<T> helpers (compiler_clone.tl) are referenced by
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
@@ -7468,26 +7314,22 @@
                       (let
                         [reachable-runtime-paths : hashmap.I64I64Map
                           lower-reach-active-runtime-paths]
-                        [type-paths-covered : bool
-                          (lower-type-decl-paths-covered?
+                        [type-path-seed : LowerUsedTypePathSeed
+                          (lower-used-types-path-seed-in-module
                             decls
                             paths
                             entry-path
-                            reachable-runtime-paths)]
+                            ""
+                            reachable-runtime-paths
+                            lower-reach-active-body-used-types
+                            true)]
                         [used-types : hashmap.I64I64Map
-                          (if type-paths-covered
-                            (hashmap.i64-i64-map-with-capacity 8)
-                            (match (lower-used-types-path-seed-in-module
-                              decls
-                              paths
-                              entry-path
-                              ""
-                              reachable-runtime-paths
-                              lower-reach-active-body-used-types
-                              true)
-                              [(LowerUsedTypePathSeed
-                                  reachable-path-type-names
-                                  _covered)
+                          (match type-path-seed
+                            [(LowerUsedTypePathSeed
+                                reachable-path-type-names
+                                type-paths-covered)
+                              (if type-paths-covered
+                                (hashmap.i64-i64-map-with-capacity 8)
                                 (lower-used-types-expand-fixed
                                   decls
                                   (lower-used-types-from-kept-decls-in-module
@@ -7498,7 +7340,7 @@
                                     all-functions
                                     reachable
                                     dispatch-variants
-                                    reachable-path-type-names))]))]
+                                    reachable-path-type-names)))])]
                         [scratch-head : i64 (tl_arena_current)]
                         (begin
                           ;; Materialize the pruned program back in the persistent
@@ -7506,28 +7348,23 @@
                           (unsafe
                             (tl_arena_set prev-arena))
                           (let
+                            [filtered : LowerFilteredReachable
+                              (lower-filter-reachable-decls-and-paths
+                                decls
+                                paths
+                                entry-path
+                                all-functions
+                                reachable
+                                dispatch-variants
+                                used-types)]
                             [pruned : LowerPrunedProgram
-                              (LowerPrunedProgram
-                                (ast-program
-                                  (lower-filter-reachable-decls-in-module
-                                    decls
-                                    paths
-                                    entry-path
-                                    ""
-                                    name-cache
-                                    all-functions
-                                    reachable
-                                    dispatch-variants
-                                    used-types))
-                                (lower-filter-reachable-paths-in-module
-                                  decls
-                                  paths
-                                  entry-path
-                                  ""
-                                  all-functions
-                                  reachable
-                                  dispatch-variants
-                                  used-types))]
+                              (match filtered
+                                [(LowerFilteredReachable
+                                    filtered-decls
+                                    filtered-paths)
+                                  (LowerPrunedProgram
+                                    (ast-program filtered-decls)
+                                    filtered-paths)])]
                             [new-prev-arena : i64 (tl_arena_current)]
                             (begin
                               (unsafe

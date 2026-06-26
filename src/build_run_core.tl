@@ -797,16 +797,16 @@
   [image : CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-linux-direct-object-linkable? image)
     (match (compiler-object-elf-render image)
-      [(OkCompilerObjectElf obj) (OkSourceToolString obj)]
-      [(ErrCompilerObjectElf message) (ErrSourceToolString message)])
+      [(ResultCompilerObjectElf.Ok obj) (OkSourceToolString obj)]
+      [(ResultCompilerObjectElf.Err message) (ErrSourceToolString message)])
     (ErrSourceToolString (source-tool-linux-direct-object-unavailable-message))))
 
 (define (source-tool-render-archivable-linux-elf-object
   [image : CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-linux-direct-object-archivable? image)
     (match (compiler-object-elf-render image)
-      [(OkCompilerObjectElf obj) (OkSourceToolString obj)]
-      [(ErrCompilerObjectElf message) (ErrSourceToolString message)])
+      [(ResultCompilerObjectElf.Ok obj) (OkSourceToolString obj)]
+      [(ResultCompilerObjectElf.Err message) (ErrSourceToolString message)])
     (ErrSourceToolString
       (source-tool-linux-direct-object-archive-unavailable-message))))
 

@@ -1197,7 +1197,7 @@
     (BackendTargetLinux))
     [(OkCompilerBackendObject image)
       (match (compiler-object-elf-render image)
-        [(OkCompilerObjectElf obj)
+        [(ResultCompilerObjectElf.Ok obj)
           (let
             [text-size : i64
               (compiler-object-elf-section-header-size-at
@@ -1214,7 +1214,7 @@
               (> rela-text-size 0)
               (= (% rela-text-size compiler-object-elf-relocation-size) 0)
               (compiler-object-elf-contains? obj "foreign_exact")))]
-        [(ErrCompilerObjectElf _) false])]
+        [(ResultCompilerObjectElf.Err _) false])]
     [(ErrCompilerBackendObject _) false]))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
@@ -9852,8 +9852,8 @@
   (match target
     [(BackendTargetLinux)
       (match (compiler-object-elf-render image)
-        [(OkCompilerObjectElf _) true]
-        [(ErrCompilerObjectElf _) false])]
+        [(ResultCompilerObjectElf.Ok _) true]
+        [(ResultCompilerObjectElf.Err _) false])]
     [(BackendTargetWindows)
       (match (compiler-object-coff-render image)
         [(ResultCompilerObjectCoff.Ok _) true]

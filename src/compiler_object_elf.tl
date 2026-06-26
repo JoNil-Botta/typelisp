@@ -15,8 +15,8 @@
     (string.string-ref text index)))
 
 (defenum ResultCompilerObjectElf
-  (OkCompilerObjectElf String)
-  (ErrCompilerObjectElf String))
+  (Ok String)
+  (Err String))
 
 (define compiler-object-elf-header-size : i64
   64)
@@ -1785,8 +1785,8 @@
         (compiler-object-elf-render-symbol-table! out image)
         (compiler-object-elf-render-string-tables! out image)
         (compiler-object-elf-push-section-headers! out image)
-        (OkCompilerObjectElf (compiler-object-elf-bytes-string out))))
-    (ErrCompilerObjectElf
+        (ResultCompilerObjectElf.Ok (compiler-object-elf-bytes-string out))))
+    (ResultCompilerObjectElf.Err
       "elf: object image contains unsupported text instructions or relocation records")))
 
 (define (compiler-object-elf-u16-at [text : String] [offset : i64]) : i64
@@ -2143,7 +2143,7 @@
 
 (define (compiler-object-elf-smoke-ok?) : bool
   (match (compiler-object-elf-render (compiler-object-elf-smoke-image))
-    [(OkCompilerObjectElf obj)
+    [(ResultCompilerObjectElf.Ok obj)
       (and
         (=
           (compiler-object-elf-string-length obj)
@@ -2166,13 +2166,13 @@
         (compiler-object-elf-contains? obj ".note.GNU-stack")
         (compiler-object-elf-contains? obj "_tl_message")
         (compiler-object-elf-contains? obj "foreign_exact"))]
-    [(ErrCompilerObjectElf _) false]))
+    [(ResultCompilerObjectElf.Err _) false]))
 
 (define (compiler-object-elf-text-smoke-ok?) : bool
   (let
     [image : CompilerObjectImage (compiler-object-elf-text-smoke-image)]
     (match (compiler-object-elf-render image)
-      [(OkCompilerObjectElf obj)
+      [(ResultCompilerObjectElf.Ok obj)
         (let
           [text-offset : i64 (compiler-object-elf-text-offset image)]
           [rela-offset : i64 (compiler-object-elf-rela-text-offset image)]
@@ -2210,4 +2210,4 @@
             (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
             (compiler-object-elf-contains? obj "_tl_cell")
             (compiler-object-elf-contains? obj "foreign_exact")))]
-      [(ErrCompilerObjectElf _) false])))
+      [(ResultCompilerObjectElf.Err _) false])))

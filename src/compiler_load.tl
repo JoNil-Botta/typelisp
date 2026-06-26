@@ -711,27 +711,36 @@
     0))
 
 (define (compiler-load-session-reset-pools!) : unit
-  (if (compiler-load-session-cache-enabled?)
-    (begin
-      (ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
-      (ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
-    (begin
-      (ast-node-pool-reset!)
-      (ty-node-pool-reset!))))
+  (begin
+    (compiler-load-surface-summaries-reset!)
+    (set! compiler-load-surface-summary-load-depth 0)
+    (if (compiler-load-session-cache-enabled?)
+      (begin
+        (ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
+        (ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
+      (begin
+        (ast-node-pool-reset!)
+        (ty-node-pool-reset!)))))
 
 (define (compiler-load-session-reset-pools-with-pools!
   [pools : AstNodePoolContext]) : unit
-  (if (compiler-load-session-cache-enabled?)
-    (ast-node-pool-context-reset-to!
-      pools
-      (compiler-load-session-ast-floor-value)
-      (compiler-load-session-ty-floor-value))
-    (ast-node-pool-context-reset-to! pools 0 0)))
+  (begin
+    (compiler-load-surface-summaries-reset!)
+    (set! compiler-load-surface-summary-load-depth 0)
+    (if (compiler-load-session-cache-enabled?)
+      (ast-node-pool-context-reset-to!
+        pools
+        (compiler-load-session-ast-floor-value)
+        (compiler-load-session-ty-floor-value))
+      (ast-node-pool-context-reset-to! pools 0 0))))
 
 (define (compiler-load-session-reset-interns!) : unit
-  (if (compiler-load-session-cache-enabled?)
-    (intern-reset-to! (compiler-load-session-intern-floor-value))
-    (intern-reset!)))
+  (begin
+    (compiler-load-surface-summaries-reset!)
+    (set! compiler-load-surface-summary-load-depth 0)
+    (if (compiler-load-session-cache-enabled?)
+      (intern-reset-to! (compiler-load-session-intern-floor-value))
+      (intern-reset!))))
 
 (define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)

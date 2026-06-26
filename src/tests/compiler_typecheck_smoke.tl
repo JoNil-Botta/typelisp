@@ -1885,6 +1885,59 @@
       (compiler-load-session-reset-interns!)
       (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
 
+(define (compiler-typecheck-smoke-surface-macro-provider-source) : String
+  "(module tc.surface.macro.provider)
+(defmacro (hook) : Expr `42)
+(define value : i64 1)")
+
+(define (compiler-typecheck-smoke-surface-macro-entry-source) : String
+  "(import \"tc_surface_macro_provider.tl\" module tc.surface.macro.provider as provider)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-surface-macro-summary-ok?) : bool
+  (let
+    [provider : String "target/tc_surface_macro_provider.tl"]
+    [entry : String "target/tc_surface_macro_entry.tl"]
+    [roots : vector.StringVec (vector.string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    (begin
+      (io.write-file
+        provider
+        (compiler-typecheck-smoke-surface-macro-provider-source))
+      (io.write-file
+        entry
+        (compiler-typecheck-smoke-surface-macro-entry-source))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        entry
+        (sym-i64-empty)
+        roots
+        cfgs)
+        [(OkCompilerLoadWithPaths _ _ _ _)
+          (begin
+            (ctfe-module-macro-export-reset!)
+            (let
+              [names : TcStringList
+                (macro-collect-surface-summary-macro-names
+                  (compiler-load-surface-summaries)
+                  TcStringNil)]
+              (and
+                (tc-string-list-contains names "hook")
+                (macro-surface-macro-in-module?
+                  "tc.surface.macro.provider"
+                  "hook")
+                (not
+                  (macro-surface-macro-in-module?
+                    "tc.surface.macro.provider"
+                    "missing"))
+                (ctfe-module-macro-export? "tc.surface.macro.provider" "hook")
+                (not
+                  (ctfe-module-macro-export?
+                    "tc.surface.macro.provider"
+                    "missing")))))]
+        [(ErrCompilerLoadWithPaths _) false]))))
+
 (define (compiler-typecheck-smoke-qualified-array-source) : String
   "(import stdlib.array)
 (define (main) : i64
@@ -1950,5 +2003,8 @@
     (unless
       (compiler-typecheck-smoke-macro-dependency-context-ok?)
       (io.panic "typecheck: macro dependency context smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-surface-macro-summary-ok?)
+      (io.panic "typecheck: surface summary macro export smoke failed"))
     (macro-alias-cache-reset!)
     42))

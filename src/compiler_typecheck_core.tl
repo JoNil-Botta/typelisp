@@ -36641,6 +36641,93 @@
               (set! cur (box-get rest)))]))
       out)))
 
+(define (macro-collect-surface-decl-name
+  [decl : CompilerLoadSurfaceDecl]
+  [acc : TcStringList]) : TcStringList
+  (match (struct-get decl kind)
+    [(CompilerLoadSurfaceMacro)
+      (let
+        [module : String (struct-get decl module)]
+        [name : String (struct-get decl name)]
+        (begin
+          (ctfe-module-macro-export-add! module name)
+          (tc-string-list-add acc name)))]
+    [_ acc]))
+
+(define (macro-collect-surface-decl-names
+  [decls : CompilerLoadSurfaceDeclList]
+  [acc : TcStringList]) : TcStringList
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) acc]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (macro-collect-surface-decl-names
+        (box-get rest)
+        (macro-collect-surface-decl-name decl acc))]))
+
+(define (macro-collect-surface-summary-macro-names
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [acc : TcStringList]) : TcStringList
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) acc]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (macro-collect-surface-summary-macro-names
+        (box-get rest)
+        (macro-collect-surface-decl-names (struct-get summary decls) acc))]))
+
+(define (macro-collect-visible-macro-names [decls : AstDeclList]) : TcStringList
+  (macro-collect-surface-summary-macro-names
+    (compiler-load-surface-summaries)
+    (macro-collect-macro-names
+      decls
+      (tc-string-list-add (tc-string-list-add (TcStringNil) "when") "unless"))))
+
+(define (macro-surface-decl-macro-in-module?
+  [decl : CompilerLoadSurfaceDecl]
+  [target-module : String]
+  [base : String]) : bool
+  (and
+    (string.string-eq (struct-get decl module) target-module)
+    (string.string-eq (struct-get decl name) base)
+    (match (struct-get decl kind)
+      [(CompilerLoadSurfaceMacro) true]
+      [_ false])))
+
+(define (macro-surface-decls-macro-in-module?
+  [decls : CompilerLoadSurfaceDeclList]
+  [target-module : String]
+  [base : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (or
+        (macro-surface-decl-macro-in-module? decl target-module base)
+        (macro-surface-decls-macro-in-module? (box-get rest) target-module base))]))
+
+(define (macro-surface-summaries-macro-in-module?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]
+  [base : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (or
+        (macro-surface-decls-macro-in-module?
+          (struct-get summary decls)
+          target-module
+          base)
+        (macro-surface-summaries-macro-in-module?
+          (box-get rest)
+          target-module
+          base))]))
+
+(define (macro-surface-macro-in-module?
+  [target-module : String]
+  [base : String]) : bool
+  (macro-surface-summaries-macro-in-module?
+    (compiler-load-surface-summaries)
+    target-module
+    base))
+
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
     (tc-expr-uses-free-name? expr "expr-type" TcStringNil)
@@ -38224,7 +38311,12 @@
     lookup-name-id)
     ;; Any macro present in the target module is a resolution candidate.
     [(SomeI64 _) target-module-id]
-    [(NoneI64) -1]))
+    [(NoneI64)
+      (if (macro-surface-macro-in-module?
+        (intern-str target-module-id)
+        (intern-str lookup-name-id))
+        target-module-id
+        -1)]))
 
 (define (macro-unqualified-imported-call-target-from-imports
   [ctx : TcContext]
@@ -42383,11 +42475,7 @@
                           (set! macro-expand-active-module "")
                           (set!
                             macro-expand-macro-names
-                            (macro-collect-macro-names
-                              decls
-                              (tc-string-list-add
-                                (tc-string-list-add (TcStringNil) "when")
-                                "unless")))
+                            (macro-collect-visible-macro-names decls))
                           (let
                             [ctx : TcContext
                               (TcContext program symbols registries "" pools)]

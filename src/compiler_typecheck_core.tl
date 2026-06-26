@@ -10016,6 +10016,27 @@
     [(AstTyBool) true]
     [_ false]))
 
+(define (tc-spmd-varying-expr-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [_ (tc-spmd-varying-value-type-supported? ty)]))
+
+(define (tc-spmd-varying-enum-type-supported? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
+    [(AstTyVar name)
+      (match (tc-context-enum-variants ctx (intern-str name))
+        [(OkAstVariantDefList _) true]
+        [(ErrAstVariantDefList _)
+          (match (tc-program-enum-variants
+            (tc-context-program ctx)
+            (intern-str name))
+            [(OkAstVariantDefList _) true]
+            [(ErrAstVariantDefList _) false])])]
+    [_ false]))
+
 (define (tc-spmd-lane-type-supported? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyI64) true]
@@ -10086,23 +10107,45 @@
 (define (tc-spmd-finish [ty : AstType] [class : TcSpmdClass] [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
   (if (and
     (tc-spmd-varying? class)
-    (not (tc-spmd-varying-value-type-supported? ty)))
+    (not (tc-spmd-varying-expr-type-supported? ty)))
     (ErrTcSpmdExprInfo
       (string.string-append
         "typecheck: foreach varying value type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))
     (OkTcSpmdExprInfo (TcSpmdExprInfo ty class env))))
 
-(define (tc-spmd-finish-lane
+(define (tc-spmd-finish-ctx
+  [ctx : TcContext]
   [ty : AstType]
   [class : TcSpmdClass]
   [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
-  (if (and (tc-spmd-varying? class) (not (tc-spmd-lane-type-supported? ty)))
-    (ErrTcSpmdExprInfo
-      (string.string-append
-        "typecheck: foreach varying array lane type is not supported: "
-        (tc-type-render (tc-type-strip-region ty))))
-    (tc-spmd-finish ty class env)))
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    (if (and
+      (tc-spmd-varying? class)
+      (tc-spmd-varying-enum-type-supported? ctx resolved))
+      (OkTcSpmdExprInfo (TcSpmdExprInfo resolved class env))
+      (tc-spmd-finish resolved class env))))
+
+(define (tc-spmd-finish-lane
+  [ctx : TcContext]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    [supported-enum : bool (tc-spmd-varying-enum-type-supported? ctx resolved)]
+    (if (and
+      (tc-spmd-varying? class)
+      (not (tc-spmd-lane-type-supported? resolved))
+      (not supported-enum))
+      (ErrTcSpmdExprInfo
+        (string.string-append
+          "typecheck: foreach varying array lane type is not supported: "
+          (tc-type-render (tc-type-strip-region resolved))))
+      (if (and (tc-spmd-varying? class) supported-enum)
+        (OkTcSpmdExprInfo (TcSpmdExprInfo resolved class env))
+        (tc-spmd-finish-ctx ctx resolved class env)))))
 
 (define (tc-spmd-cpuid-like
   [ctx : TcContext]
@@ -18328,6 +18371,23 @@
     "typecheck: foreach varying match pattern binding type is not supported: "
     (tc-type-render (tc-type-strip-region ty))))
 
+(define (tc-spmd-pattern-bound-names
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : TcStringList
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatVariant _ args-box)
+          (tc-pattern-list-add-bound-names (box-get args-box) TcStringNil)]
+        [_ TcStringNil])]
+    [(AstTyEnumArgs _ _)
+      (match pattern
+        [(AstPatVariant _ args-box)
+          (tc-pattern-list-add-bound-names (box-get args-box) TcStringNil)]
+        [_ TcStringNil])]
+    [_ (tc-pattern-add-bound-names pattern TcStringNil)]))
+
 (define (tc-spmd-match-bind-pattern-names
   [arm-env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
@@ -18368,7 +18428,7 @@
                   (match (tc-spmd-match-bind-pattern-names
                     arm-env
                     spmd-env
-                    (tc-pattern-add-bound-names pattern TcStringNil)
+                    (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
                     scrut-class)
                     [(OkTcSpmdEnv arm-spmd-env)
                       (match (tc-spmd-masked-if-expr
@@ -18434,7 +18494,7 @@
                   (match (tc-spmd-match-bind-pattern-names
                     arm-env
                     spmd-env
-                    (tc-pattern-add-bound-names pattern TcStringNil)
+                    (tc-spmd-pattern-bound-names ctx scrut-ty pattern)
                     scrut-class)
                     [(OkTcSpmdEnv arm-spmd-env)
                       (match (tc-spmd-expr ctx arm-env arm-spmd-env body)
@@ -19152,8 +19212,10 @@
                 expr-ty)]
             [(ErrTcExprId message) (ErrTcSpmdExprInfo message)])
           (match (tc-spmd-env-lookup spmd-env name-text)
-            [(TcSpmdFound _ class _ _) (tc-spmd-finish expr-ty class spmd-env)]
-            [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])))]
+            [(TcSpmdFound _ class _ _)
+              (tc-spmd-finish-ctx ctx expr-ty class spmd-env)]
+            [(TcSpmdMissing)
+              (tc-spmd-finish-ctx ctx expr-ty TcSpmdUniform spmd-env)])))]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprInit _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprAnn inner-box _)
@@ -19163,7 +19225,7 @@
           [(OkTcSpmdExprInfo info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
+                (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprCast inner-box _)
       (let
@@ -19172,7 +19234,7 @@
           [(OkTcSpmdExprInfo info)
             (match info
               [(TcSpmdExprInfo _ class next-spmd-env)
-                (tc-spmd-finish expr-ty class next-spmd-env)])]
+                (tc-spmd-finish-ctx ctx expr-ty class next-spmd-env)])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprUnary _ inner-box)
       (let
@@ -19317,6 +19379,7 @@
                     (match index-info
                       [(TcSpmdExprInfo _ index-class index-env)
                         (tc-spmd-finish-lane
+                          ctx
                           expr-ty
                           (tc-spmd-merge-class array-class index-class)
                           index-env)])]

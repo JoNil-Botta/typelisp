@@ -9426,14 +9426,21 @@
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments src "%r10")
+  (let
+    [base : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-addr-scavenge-exclude)
+        0
+        "%r10")]
+    [base-mem : String (compiler-backend-base-deref base)]
+  (match (compiler-backend-emit-load-value-with-plan assignments src base)
     [(OkCompilerBackend ptr-asm)
       (OkCompilerBackend
         (if (compiler-backend-float-type? ty)
           (string-append
             ptr-asm
             (string-append
-              (compiler-backend-emit-load-float-memory "(%r10)" "%xmm0" ty)
+              (compiler-backend-emit-load-float-memory base-mem "%xmm0" ty)
               (compiler-backend-emit-store-float-var-with-plan
                 assignments
                 dst
@@ -9452,21 +9459,45 @@
               (<= (compiler-backend-type-size ty) 8))
               (string-append
                 ptr-asm
-                (compiler-backend-emit-load-memory-to-reg "(%r10)" ty dst-home))
+                (compiler-backend-emit-load-memory-to-reg base-mem ty dst-home))
               (string-append
                 ptr-asm
                 (string-append
-                  (compiler-backend-emit-load-memory "(%r10)" ty)
+                  (compiler-backend-emit-load-memory base-mem ty)
                   (compiler-backend-emit-store-var-with-plan
                     assignments
                     dst
                     "%rax")))))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-r10-address [disp : i64]) : String
   (if (= disp 0)
     "(%r10)"
     (str-cat (int->string disp) "(%r10)" "" "")))
+
+;; Base-register-parameterized address: scavenged-register-aware variant of
+;; r10-address so addressing-base scratch is not hardcoded to %r10.
+(define (compiler-backend-base-address [disp : i64] [base : String]) : String
+  (if (= disp 0)
+    (str-cat "(" base ")")
+    (str-cat (int->string disp) "(" base ")" "")))
+
+;; "(base)" memory operand for a scavenged base register.
+(define (compiler-backend-base-deref [base : String]) : String
+  (str-cat "(" base ")"))
+
+;; Minimal exclude for an addressing-base scavenge: the base register only holds
+;; a pointer that is immediately dereferenced and dead after, so nothing extra
+;; needs excluding (and crucially it must NOT exclude %r10/%r11, the fallbacks).
+(define (compiler-backend-addr-scavenge-exclude) : (Array String)
+  (make-array String 0))
+
+;; Exclude an already-chosen register R (so a second scavenge at the same point
+;; cannot collide with it).
+(define (compiler-backend-one-exclude [r : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 1)]
+    (begin (array-set! a 0 r) a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
   (if (= disp 0)
@@ -9698,11 +9729,17 @@
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-        [addr : String (compiler-backend-r10-address disp)]
+        [base-reg : String
+          (compiler-backend-scavenge-reg
+            dst
+            (compiler-backend-addr-scavenge-exclude)
+            0
+            "%r10")]
+        [addr : String (compiler-backend-base-address disp base-reg)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           base
-          "%r10")
+          base-reg)
           [(OkCompilerBackend base-asm)
             (OkCompilerBackend
               (if (compiler-backend-float-type? load-ty)
@@ -9901,16 +9938,23 @@
   (let
     [_first-dst : i64 first-dst]
     (if (= (compiler-backend-type-size first-ty) 8)
-      (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
+      (let
+        [base : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-addr-scavenge-exclude)
+            0
+            "%r10")]
+        [base-mem : String (compiler-backend-base-deref base)]
+      (match (compiler-backend-emit-load-value-with-plan assignments ptr base)
         [(OkCompilerBackend ptr-asm)
           (OkCompilerBackend
             (str-cat
               ptr-asm
-              "    movq (%r10), %r10\n"
+              (str-cat "    movq " base-mem ", " base "\n")
               (if (compiler-backend-float-type? second-ty)
                 (str-cat
                   (compiler-backend-emit-load-float-memory
-                    "(%r10)"
+                    base-mem
                     "%xmm0"
                     second-ty)
                   (compiler-backend-emit-store-float-var-with-plan
@@ -9925,16 +9969,16 @@
                     false
                     (<= (compiler-backend-type-size second-ty) 8))
                     (compiler-backend-emit-load-memory-to-reg
-                      "(%r10)"
+                      base-mem
                       second-ty
                       dst-home)
                     (str-cat
-                      (compiler-backend-emit-load-memory "(%r10)" second-ty)
+                      (compiler-backend-emit-load-memory base-mem second-ty)
                       (compiler-backend-emit-store-var-with-plan
                         assignments
                         second-dst
                         "%rax")))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
 
 (define (compiler-backend-emit-store-value-to-address
@@ -15571,13 +15615,19 @@
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [save-offset : i64]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments base "%r11")
+  (let
+    [base-reg : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-addr-scavenge-exclude)
+        0
+        "%r11")]
+  (match (compiler-backend-emit-load-value-with-plan assignments base base-reg)
     [(OkCompilerBackend base-asm)
       (OkCompilerBackend
         (string-append
           base-asm
-          (str-cat "    movq %r11, " (int->string save-offset) "(%rsp)\n")))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+          (str-cat "    movq " base-reg ", " (int->string save-offset) "(%rsp)\n")))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-c-abi-return-stores
   [save-offset : i64]

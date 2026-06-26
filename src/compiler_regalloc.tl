@@ -8554,15 +8554,13 @@
 ;; prepass-partition + caller-saved-overflow into ONE allocation pass.
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
   (compiler-reg-string-cons
-    "%r8"
+    "%r9"
     (compiler-reg-string-cons
-      "%r9"
-      (compiler-reg-string-cons
-        "%rcx"
-        (compiler-reg-string-cons "%rdx" (compiler-reg-sysv-integer-registers))))))
+      "%rcx"
+      (compiler-reg-string-cons "%rdx" (compiler-reg-sysv-integer-registers)))))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  4)
+  3)
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check

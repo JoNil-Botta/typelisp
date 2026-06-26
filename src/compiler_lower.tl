@@ -87,8 +87,19 @@
   (LowerSpmdInlineSubstNil)
   (LowerSpmdInlineSubstCons String AstExpr (Box LowerSpmdInlineSubst)))
 
+;; #3792: the prune reachability `reachable` set is keyed on each function's
+;; dense `all-functions` slot (the value `lower-function-set-from-decls` now
+;; assigns name -> 0..N-1) rather than on the function-name string. The dedup /
+;; membership in lower-reach-add-logical -- run once per name reference in every
+;; reachable body, the single biggest caller of string_eq (lower_reach_process,
+;; ~50K samples / ~6% of an opt1 self-compile) -- is then an i64 compare instead
+;; of re-hashing and string_eq-ing the name. One name->slot `all-functions` probe
+;; per reference stays (it already gated membership), so the slot is a bijection
+;; over the indexed names and the reachable set is identical -> byte-identical
+;; output. The worklist still carries the name string so lower-reach-process can
+;; resolve a popped function through the (string-keyed) body index unchanged.
 (defenum LowerReachState
-  (LowerReachState hashmap.StringI64Map LowerStringSet))
+  (LowerReachState hashmap.I64I64Map LowerStringSet))
 
 (defenum LowerMaybeFunctionBody
   (LowerNoFunctionBody)
@@ -3405,8 +3416,18 @@
                 decl-path
                 module
                 decl)
+                ;; #3792: assign each distinct function name a dense slot
+                ;; (0..N-1, its insertion order) instead of a constant 1, so the
+                ;; prune reachability `reachable` set can key on that i64 slot.
+                ;; Skip names already present so the slot stays a bijection
+                ;; (string-i64-map-len is the live-entry count == next free slot).
                 [(TcSomeString logical-name)
-                  (hashmap.string-i64-map-put out logical-name 1)]
+                  (if (hashmap.string-i64-map-contains? out logical-name)
+                    out
+                    (hashmap.string-i64-map-put
+                      out
+                      logical-name
+                      (hashmap.string-i64-map-len out)))]
                 [(TcNoString) out]))]))]))
 
 (define (lower-function-set-from-decls
@@ -3560,19 +3581,24 @@
         (lower-clone-root-add-named ctx decls able roots (intern-str name))]
       [_ roots])))
 
+;; Resolve `logical-name` to its dense `all-functions` slot with a single probe
+;; (the membership gate this always did), then dedup / insert into `reachable` by
+;; that i64 slot -- no per-reference string_eq on the reachable set. The worklist
+;; still carries the name so lower-reach-process can resolve the body by name.
 (define (lower-reach-add-logical
   [all-functions : hashmap.StringI64Map]
   [state : LowerReachState]
   [logical-name : String]) : LowerReachState
-  (match state
-    [(LowerReachState reachable worklist)
-      (if (hashmap.string-i64-map-contains? all-functions logical-name)
-        (if (hashmap.string-i64-map-contains? reachable logical-name)
-          state
-          (LowerReachState
-            (hashmap.string-i64-map-put reachable logical-name 1)
-            (LowerStringCons logical-name (box worklist))))
-        state)]))
+  (match (hashmap.string-i64-map-get all-functions logical-name)
+    [(hashmap.StringI64MapMissing) state]
+    [(hashmap.StringI64MapFound slot)
+      (match state
+        [(LowerReachState reachable worklist)
+          (if (hashmap.i64-i64-map-contains? reachable slot)
+            state
+            (LowerReachState
+              (hashmap.i64-i64-map-put reachable slot 1)
+              (LowerStringCons logical-name (box worklist))))])]))
 
 (define (lower-runtime-prelude-string-helper-name [source-name : String]) : String
   (let
@@ -6001,12 +6027,24 @@
     names
     state))
 
+;; #3792: `reachable` is keyed by dense `all-functions` slot; resolve a name's
+;; slot through the same map the reach walk used and test membership by i64.
+(define (lower-reach-slot-set-contains-name?
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
+  [logical-name : String]) : bool
+  (match (hashmap.string-i64-map-get all-functions logical-name)
+    [(hashmap.StringI64MapMissing) false]
+    [(hashmap.StringI64MapFound slot)
+      (hashmap.i64-i64-map-contains? reachable slot)]))
+
 (define (lower-function-kept-by-reach-or-dispatch?
-  [reachable : hashmap.StringI64Map]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [logical-name : String]) : bool
   (or
-    (hashmap.string-i64-map-contains? reachable logical-name)
+    (lower-reach-slot-set-contains-name? all-functions reachable logical-name)
     (hashmap.string-i64-map-contains? dispatch-variants logical-name)))
 
 (define (lower-comptime-only-module? [module : String]) : bool
@@ -6016,7 +6054,8 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
-  [reachable : hashmap.StringI64Map]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [decl : AstDecl]) : bool
   (if (lower-comptime-only-module? module)
@@ -6028,6 +6067,7 @@
       decl)
       [(TcSomeString logical-name)
         (lower-function-kept-by-reach-or-dispatch?
+          all-functions
           reachable
           dispatch-variants
           logical-name)]
@@ -6040,7 +6080,7 @@
   [module : String]
   [names : LowerNameCache]
   [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]) : AstDeclList
   (match decls
     [(AstDeclNil) AstDeclNil]
@@ -6076,6 +6116,7 @@
               entry-path
               decl-path
               module
+              all-functions
               reachable
               dispatch-variants
               decl)
@@ -6105,7 +6146,8 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable : hashmap.StringI64Map]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]) : AstDeclPathList
   (match decls
     [(AstDeclNil) AstDeclPathNil]
@@ -6132,6 +6174,7 @@
                 rest-paths
                 entry-path
                 (intern-str next-module)
+                all-functions
                 reachable
                 dispatch-variants))]
           [_
@@ -6139,6 +6182,7 @@
               entry-path
               decl-path
               module
+              all-functions
               reachable
               dispatch-variants
               decl)
@@ -6149,6 +6193,7 @@
                   rest-paths
                   entry-path
                   module
+                  all-functions
                   reachable
                   dispatch-variants))
               (lower-filter-reachable-paths-in-module
@@ -6156,6 +6201,7 @@
                 rest-paths
                 entry-path
                 module
+                all-functions
                 reachable
                 dispatch-variants))]))]))
 
@@ -6368,7 +6414,7 @@
                             (lower-reach-add-logical
                               all-functions
                               (LowerReachState
-                                (hashmap.string-i64-map-with-capacity 8192)
+                                (hashmap.i64-i64-map-with-capacity 8192)
                                 LowerStringNil)
                               "main")))))
                     decls))
@@ -6398,6 +6444,7 @@
                                 paths
                                 entry-path
                                 ""
+                                all-functions
                                 reachable
                                 dispatch-variants))]
                           [new-prev-arena : i64 (tl_arena_current)]

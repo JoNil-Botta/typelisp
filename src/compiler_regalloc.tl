@@ -8557,15 +8557,27 @@
 ;; (compiler-backend-binop-*divmod* ~6924-7097), emit-address-base callers,
 ;; c-abi return-slot %r11, and the indirect-call env/target %r11. The div overflow
 ;; guard and the constant-offset gep-pair are already scavenged.
+;; r10/r11 are caller-saved pool members. They are de-hardcoded in the backend
+;; (active-scavenge across GEP/copy/div/c-abi/jump/indirect-call/phi-temp) and the
+;; scavenge avoids them (superset exclude + the #23 freeness-based emergency picks
+;; a non-pool-occupied candidate). The kind-0 clobber model forbids them across
+;; calls/syscall (covering tail-indirect-call closure %r11, c-abi return-stores,
+;; syscall arg-4 %r10); idiv no longer clobbers them (guard de-hardcoded).
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r9"
     (compiler-reg-string-cons
       "%rcx"
-      (compiler-reg-string-cons "%rdx" (compiler-reg-sysv-integer-registers)))))
+      (compiler-reg-string-cons
+        "%rdx"
+        (compiler-reg-string-cons
+          "%r10"
+          (compiler-reg-string-cons
+            "%r11"
+            (compiler-reg-sysv-integer-registers)))))))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  3)
+  5)
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check

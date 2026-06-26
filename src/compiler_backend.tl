@@ -10192,8 +10192,16 @@
           (if (string-eq base-reg-in "")
             (compiler-backend-scavenge-reg
               dst
-              (compiler-backend-one-exclude scav-idx)
-              1
+              ;; Exclude scav-idx AND the offset operand's home. scav-base loads the
+              ;; base BEFORE the offset loads into scav-idx, so picking the offset's
+              ;; register home here clobbers the index before it is read. The freeness
+              ;; query alone is insufficient: the #23 emergency tier bypasses it (picks
+              ;; the first non-excluded candidate regardless of occupancy), so the
+              ;; operand home MUST be in the exclude, not merely read OCCUPIED.
+              (compiler-backend-scavenge-exclude-regs2
+                scav-idx
+                (compiler-backend-value-register-home assignments offset))
+              7
               "%r10")
             base-reg-in)]
         [addr : String

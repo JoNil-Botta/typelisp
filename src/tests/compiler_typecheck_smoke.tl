@@ -1356,41 +1356,43 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
-;; struct-get, make-array, array-ref/array-set!, let, while, and set! back to
+;; struct-get, array.make-array, array.array-ref/array.array-set!, let, while,
+;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".
 (define (compiler-typecheck-smoke-decls-macro-body-source) : String
-  "(defmacro (int-stack) : Decls
+  "(import stdlib.array)
+(defmacro (int-stack) : Decls
   `(begin
     (defstruct Stack
       (slots (Array i64))
       (len i64)
       (cap i64))
     (define (stack-new) : Stack
-      (Stack (make-array i64 4) 0 4))
+      (Stack (array.make-array i64 4) 0 4))
     (define (stack-grow [s : Stack]) : Stack
       (let
         [new-cap : i64 (* (struct-get s cap) 2)]
-        [bigger : (Array i64) (make-array i64 new-cap)]
+        [bigger : (Array i64) (array.make-array i64 new-cap)]
         [i : i64 0]
         (begin
           (while (< i (struct-get s len))
             (begin
-              (array-set! bigger i (array-ref (struct-get s slots) i))
+              (array.array-set! bigger i (array.array-ref (struct-get s slots) i))
               (set! i (+ i 1))))
           (Stack bigger (struct-get s len) new-cap))))
     (define (stack-push [s : Stack] [value : i64]) : Stack
       (if (< (struct-get s len) (struct-get s cap))
         (begin
-          (array-set! (struct-get s slots) (struct-get s len) value)
+          (array.array-set! (struct-get s slots) (struct-get s len) value)
           (Stack (struct-get s slots) (+ (struct-get s len) 1) (struct-get s cap)))
         (stack-push (stack-grow s) value)))
     (define (stack-top [s : Stack]) : i64
-      (array-ref (struct-get s slots) (- (struct-get s len) 1)))
+      (array.array-ref (struct-get s slots) (- (struct-get s len) 1)))
     (define (stack-fixed-array-probe) : i64
       (let
         [items : (Array i64 3) (array 11 22 33)]
-        (array-ref items 1)))
+        (array.array-ref items 1)))
     (define (stack-never-probe [x : i64]) : i64
       (ann (return x) : never))))
 (int-stack)
@@ -1448,16 +1450,17 @@
     (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
-  "(defstruct Pair (value i64))
+  "(import stdlib.array)
+(defstruct Pair (value i64))
 (defmacro (emit-pair [T : type]) : Decls
   `(begin
     (define (typed-id [v : ,T]) : ,T
       (let [x : ,T v] (ann x : ,T)))
     (define (typed-init) : ,T (init : ,T))
     (define (typed-array [v : ,T]) : (Array ,T)
-      (let [items : (Array ,T) (make-array ,T 1)]
+      (let [items : (Array ,T) (array.make-array ,T 1)]
         (begin
-          (array-set! items 0 v)
+          (array.array-set! items 0 v)
           items)))))
 (defmacro (emit-cast [T : type]) : Decls
   `(define (typed-cast [v : i64]) : ,T (cast v : ,T)))
@@ -1865,6 +1868,20 @@
       (compiler-load-session-reset-interns!)
       (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
 
+(define (compiler-typecheck-smoke-qualified-array-source) : String
+  "(import stdlib.array)
+(define (main) : i64
+  (let
+    [items : (Array i64) (array.make-array i64 1)]
+    [fixed : (Array i64 2) (array 3 4)]
+    (begin
+      (array.array-set! items 0 (array.array-ref fixed 1))
+      (array.array-push! items 9)
+      (+ (array.array-length items) (array.array-ref items 0)))))")
+
+(define (compiler-typecheck-smoke-qualified-array-ok?) : bool
+  (compiler-typecheck-ok? (compiler-typecheck-smoke-qualified-array-source)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -1895,6 +1912,9 @@
     (unless
       (compiler-typecheck-smoke-type-macro-param-tests-ok?)
       (io.panic "typecheck: type macro param smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-qualified-array-ok?)
+      (io.panic "typecheck: qualified array smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (io.panic "typecheck: prefix cache root smoke failed"))

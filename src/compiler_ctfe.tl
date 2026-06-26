@@ -9,6 +9,7 @@
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
 (import stdlib.hashmap)
+(import stdlib.array)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
@@ -232,13 +233,13 @@
   (CtfeEnvCons name value ty (box env)))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
-  (CtfeLayoutFieldList (make-array CtfeLayoutField capacity) 0))
+  (CtfeLayoutFieldList (array.make-array CtfeLayoutField capacity) 0))
 
 (define (ctfe-layout-field-list-empty) : CtfeLayoutFieldList
   (ctfe-layout-field-list-with-capacity 0))
 
 (define (ctfe-layout-field-list-ref [items : CtfeLayoutFieldList] [index : i64]) : CtfeLayoutField
-  (array-ref (struct-get items slots) index))
+  (array.array-ref (struct-get items slots) index))
 
 (define (ctfe-layout-field-list-push
   [items : CtfeLayoutFieldList]
@@ -247,17 +248,17 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeLayoutField) (struct-get items slots)]
     (begin
-      (array-set! slots n value)
+      (array.array-set! slots n value)
       (CtfeLayoutFieldList slots (+ n 1)))))
 
 (define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
-  (CtfeLayoutInfoList (make-array CtfeLayoutInfo capacity) 0))
+  (CtfeLayoutInfoList (array.make-array CtfeLayoutInfo capacity) 0))
 
 (define (ctfe-layout-info-list-empty) : CtfeLayoutInfoList
   (ctfe-layout-info-list-with-capacity 0))
 
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
-  (array-ref (struct-get items slots) index))
+  (array.array-ref (struct-get items slots) index))
 
 (define (ctfe-layout-info-list-push
   [items : CtfeLayoutInfoList]
@@ -266,11 +267,11 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeLayoutInfo) (struct-get items slots)]
     (begin
-      (array-set! slots n value)
+      (array.array-set! slots n value)
       (CtfeLayoutInfoList slots (+ n 1)))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
-  (CtfeReflectFieldList (make-array CtfeReflectField capacity) 0))
+  (CtfeReflectFieldList (array.make-array CtfeReflectField capacity) 0))
 
 (define (ctfe-reflect-field-list-empty) : CtfeReflectFieldList
   (ctfe-reflect-field-list-with-capacity 0))
@@ -278,7 +279,7 @@
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
-  (array-ref (struct-get items slots) index))
+  (array.array-ref (struct-get items slots) index))
 
 (define (ctfe-reflect-field-list-push
   [items : CtfeReflectFieldList]
@@ -287,11 +288,11 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectField) (struct-get items slots)]
     (begin
-      (array-set! slots n value)
+      (array.array-set! slots n value)
       (CtfeReflectFieldList slots (+ n 1)))))
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
-  (CtfeReflectVariantList (make-array CtfeReflectVariant capacity) 0))
+  (CtfeReflectVariantList (array.make-array CtfeReflectVariant capacity) 0))
 
 (define (ctfe-reflect-variant-list-empty) : CtfeReflectVariantList
   (ctfe-reflect-variant-list-with-capacity 0))
@@ -299,7 +300,7 @@
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
   [index : i64]) : CtfeReflectVariant
-  (array-ref (struct-get items slots) index))
+  (array.array-ref (struct-get items slots) index))
 
 (define (ctfe-reflect-variant-list-push
   [items : CtfeReflectVariantList]
@@ -308,17 +309,17 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectVariant) (struct-get items slots)]
     (begin
-      (array-set! slots n value)
+      (array.array-set! slots n value)
       (CtfeReflectVariantList slots (+ n 1)))))
 
 (define (ctfe-reflect-info-list-with-capacity [capacity : i64]) : CtfeReflectInfoList
-  (CtfeReflectInfoList (make-array CtfeReflectInfo capacity) 0))
+  (CtfeReflectInfoList (array.make-array CtfeReflectInfo capacity) 0))
 
 (define (ctfe-reflect-info-list-empty) : CtfeReflectInfoList
   (ctfe-reflect-info-list-with-capacity 0))
 
 (define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
-  (array-ref (struct-get items slots) index))
+  (array.array-ref (struct-get items slots) index))
 
 (define (ctfe-reflect-info-list-push
   [items : CtfeReflectInfoList]
@@ -327,7 +328,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectInfo) (struct-get items slots)]
     (begin
-      (array-set! slots n value)
+      (array.array-set! slots n value)
       (CtfeReflectInfoList slots (+ n 1)))))
 
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String

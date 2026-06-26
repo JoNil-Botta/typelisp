@@ -1108,7 +1108,7 @@ echo "[host-action-cli] lint"
 run_capture lint-help "$COMPILER" lint --help
 assert_empty "$WORKDIR/lint-help.stdout"
 assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
-assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
 assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")

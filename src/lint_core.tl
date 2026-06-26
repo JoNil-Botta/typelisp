@@ -145,6 +145,15 @@
 (define (lint-rule-redundant-import-alias-suggestion) : String
   "remove the explicit as clause")
 
+(define (lint-rule-redundant-function-name-id) : String
+  "redundant-function-name")
+
+(define (lint-rule-redundant-function-name-message) : String
+  "redundant function name: local function or macro repeats the module prefix")
+
+(define (lint-rule-redundant-function-name-suggestion) : String
+  "drop the module prefix from the local function or macro name")
+
 (define (lint-rule-dead-code-id) : String
   "dead-code")
 
@@ -276,6 +285,12 @@
     (lint-rule-redundant-import-alias-message)
     (lint-rule-redundant-import-alias-suggestion)))
 
+(define (lint-rule-redundant-function-name) : LintRule
+  (LintRule
+    (lint-rule-redundant-function-name-id)
+    (lint-rule-redundant-function-name-message)
+    (lint-rule-redundant-function-name-suggestion)))
+
 (define (lint-rule-dead-code) : LintRule
   (LintRule
     (lint-rule-dead-code-id)
@@ -333,14 +348,16 @@
                           (lint-rule-cons
                             (lint-rule-redundant-import-alias)
                             (lint-rule-cons
-                              (lint-rule-dead-code)
+                              (lint-rule-redundant-function-name)
                               (lint-rule-cons
-                                (lint-rule-unused-assignment)
+                                (lint-rule-dead-code)
                                 (lint-rule-cons
-                                  (lint-rule-unused-variable)
+                                  (lint-rule-unused-assignment)
                                   (lint-rule-cons
-                                    (lint-rule-unused-unsafe)
-                                    LintRuleNil))))))))))))))))))
+                                    (lint-rule-unused-variable)
+                                    (lint-rule-cons
+                                      (lint-rule-unused-unsafe)
+                                      LintRuleNil)))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -661,6 +678,31 @@
     (lint-rule-unused-unsafe-id)
     0
     span))
+
+(define (lint-redundant-function-name-finding
+  [module-name : String]
+  [name : String]
+  [span : AstSourceSpan]) : LintFinding
+  (let
+    [module-len : i64 (string.string-length module-name)]
+    [name-len : i64 (string.string-length name)]
+    [short-name : String
+      (if (> name-len (+ module-len 1))
+        (string.substring name (+ module-len 1) (- name-len (+ module-len 1)))
+        name)]
+    (LintFinding
+      (string.string-append
+        "redundant function name: "
+        (string.string-append
+          name
+          (string.string-append
+            " repeats module prefix "
+            (string.string-append
+              module-name
+              (string.string-append "; use " short-name)))))
+      (lint-rule-redundant-function-name-id)
+      0
+      span)))
 
 (define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
   (match expr
@@ -2021,7 +2063,9 @@
     (begin
       (while (< i n)
         (begin
-          (if (= (string.string-ref module-name i) '.')
+          (if (or
+            (= (string.string-ref module-name i) '.')
+            (= (string.string-ref module-name i) '/'))
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
@@ -2920,6 +2964,323 @@
       (LintSourceNameSpan
         (lint-source-index-span source found width fallback)
         (+ found width)))))
+
+(defstruct LintRedundantFunctionNameState
+  (source String)
+  (module-name String)
+  (cursor i64)
+  (findings LintFindings))
+
+(define (lint-redundant-function-name-state
+  [source : String]
+  [module-name : String]
+  [cursor : i64]
+  [findings : LintFindings]) : LintRedundantFunctionNameState
+  (LintRedundantFunctionNameState source module-name cursor findings))
+
+(define (lint-redundant-function-name-state-with-module
+  [state : LintRedundantFunctionNameState]
+  [module-name : String]) : LintRedundantFunctionNameState
+  (lint-redundant-function-name-state
+    (struct-get state source)
+    module-name
+    (struct-get state cursor)
+    (struct-get state findings)))
+
+(define (lint-redundant-function-name-state-with-results
+  [state : LintRedundantFunctionNameState]
+  [cursor : i64]
+  [findings : LintFindings]) : LintRedundantFunctionNameState
+  (lint-redundant-function-name-state
+    (struct-get state source)
+    (struct-get state module-name)
+    cursor
+    findings))
+
+(define (lint-redundant-function-module-char-eq?
+  [module-char : char]
+  [name-char : char]) : bool
+  (or (= module-char name-char) (and (= module-char '_') (= name-char '-'))))
+
+(define (lint-redundant-function-module-prefix-at?
+  [name : String]
+  [module-name : String]
+  [idx : i64]) : bool
+  (let
+    [module-len : i64 (string.string-length module-name)]
+    (if (>= idx module-len)
+      true
+      (if (lint-redundant-function-module-char-eq?
+        (string.string-ref module-name idx)
+        (string.string-ref name idx))
+        (lint-redundant-function-module-prefix-at? name module-name (+ idx 1))
+        false))))
+
+(define (lint-redundant-function-name? [module-name : String] [name : String]) : bool
+  (let
+    [module-len : i64 (string.string-length module-name)]
+    [name-len : i64 (string.string-length name)]
+    (and
+      (> module-len 0)
+      (> name-len (+ module-len 1))
+      (lint-redundant-function-module-prefix-at? name module-name 0)
+      (= (string.string-ref name module-len) '-'))))
+
+(define (lint-redundant-function-name-add
+  [state : LintRedundantFunctionNameState]
+  [name : String]
+  [fallback : AstSourceSpan]) : LintRedundantFunctionNameState
+  (let
+    [module-name : String (struct-get state module-name)]
+    (if (lint-redundant-function-name? module-name name)
+      (let
+        [found : LintSourceNameSpan
+          (lint-source-name-span-from
+            (struct-get state source)
+            name
+            (struct-get state cursor)
+            fallback)]
+        (lint-redundant-function-name-state-with-results
+          state
+          (struct-get found next-index)
+          (lint-findings-add
+            (lint-redundant-function-name-finding
+              module-name
+              name
+              (struct-get found span))
+            (struct-get state findings))))
+      state)))
+
+(define (lint-redundant-function-name-callee [expr : AstExpr]) : String
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name) (intern-str name)]
+    [_ ""]))
+
+(define (lint-redundant-function-name-generated-head [args : AstExprList]) : String
+  (match args
+    [(AstExprNil) ""]
+    [(AstExprCons head _)
+      (match (ast-expr-unspan (ast-node-get head))
+        [(AstExprCall fn-head _)
+          (lint-redundant-function-name-callee (ast-node-get fn-head))]
+        [_ ""])]))
+
+(define (lint-redundant-function-name-literal-module [args : AstExprList]) : String
+  (match args
+    [(AstExprNil) ""]
+    [(AstExprCons head _)
+      (match (ast-expr-unspan (ast-node-get head))
+        [(AstExprVar name) (lint-module-default-alias (intern-str name))]
+        [_ ""])]))
+
+(define (lint-redundant-function-name-quoted-expr-list
+  [exprs : AstExprList]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (lint-redundant-function-name-quoted-expr-list
+        (box-get rest)
+        (lint-redundant-function-name-quoted-expr (ast-node-get head) state))]))
+
+(define (lint-redundant-function-name-macro-expr-list
+  [exprs : AstExprList]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match exprs
+    [(AstExprNil) state]
+    [(AstExprCons head rest)
+      (lint-redundant-function-name-macro-expr-list
+        (box-get rest)
+        (lint-redundant-function-name-macro-expr (ast-node-get head) state))]))
+
+(define (lint-redundant-function-name-quoted-call
+  [callee : String]
+  [args : AstExprList]
+  [span : AstSourceSpan]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (cond
+    [(string.string-eq callee "module")
+      (let
+        [module-name : String
+          (lint-redundant-function-name-literal-module args)]
+        (if (string.string-eq module-name "")
+          (lint-redundant-function-name-quoted-expr-list args state)
+          (lint-redundant-function-name-quoted-expr-list
+            args
+            (lint-redundant-function-name-state-with-module state module-name))))]
+    [(or
+        (string.string-eq callee "define")
+        (string.string-eq callee "defmacro"))
+      (lint-redundant-function-name-quoted-expr-list
+        args
+        (lint-redundant-function-name-add
+          state
+          (lint-redundant-function-name-generated-head args)
+          span))]
+    [else (lint-redundant-function-name-quoted-expr-list args state)]))
+
+(define (lint-redundant-function-name-quoted-expr
+  [expr : AstExpr]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match expr
+    [(AstExprSpanned inner span)
+      (match (ast-node-get inner)
+        [(AstExprCall func args)
+          (lint-redundant-function-name-quoted-call
+            (lint-redundant-function-name-callee (ast-node-get func))
+            args
+            span
+            state)]
+        [_
+          (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)])]
+    [(AstExprCall func args)
+      (lint-redundant-function-name-quoted-call
+        (lint-redundant-function-name-callee (ast-node-get func))
+        args
+        (lint-no-span)
+        state)]
+    [(AstExprBegin exprs)
+      (lint-redundant-function-name-quoted-expr-list exprs state)]
+    [(AstExprUnsafe exprs)
+      (lint-redundant-function-name-quoted-expr-list exprs state)]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-redundant-function-name-quoted-expr
+        (ast-node-get else-branch)
+        (lint-redundant-function-name-quoted-expr
+          (ast-node-get then-branch)
+          (lint-redundant-function-name-quoted-expr (ast-node-get cond) state)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet _ body)
+          (lint-redundant-function-name-quoted-expr (ast-node-get body) state)])]
+    [(AstExprQuote inner)
+      (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
+    [(AstExprQuasiquote inner)
+      (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
+    [(AstExprUnquote _) state]
+    [(AstExprUnquoteSplicing _) state]
+    [_ state]))
+
+(define (lint-redundant-function-name-macro-expr
+  [expr : AstExpr]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match expr
+    [(AstExprSpanned inner _)
+      (lint-redundant-function-name-macro-expr (ast-node-get inner) state)]
+    [(AstExprQuote inner)
+      (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
+    [(AstExprQuasiquote inner)
+      (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
+    [(AstExprCall func args)
+      (lint-redundant-function-name-macro-expr-list
+        args
+        (lint-redundant-function-name-macro-expr (ast-node-get func) state))]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-redundant-function-name-macro-expr
+        (ast-node-get else-branch)
+        (lint-redundant-function-name-macro-expr
+          (ast-node-get then-branch)
+          (lint-redundant-function-name-macro-expr (ast-node-get cond) state)))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body)
+          (lint-redundant-function-name-macro-expr
+            (ast-node-get body)
+            (lint-redundant-function-name-macro-let-bindings bindings state))])]
+    [(AstExprBegin exprs)
+      (lint-redundant-function-name-macro-expr-list exprs state)]
+    [(AstExprUnsafe exprs)
+      (lint-redundant-function-name-macro-expr-list exprs state)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee arms)
+          (lint-redundant-function-name-macro-match-arms
+            arms
+            (lint-redundant-function-name-macro-expr
+              (ast-node-get scrutinee)
+              state))])]
+    [_ state]))
+
+(define (lint-redundant-function-name-macro-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match bindings
+    [(AstLetBindingNil) state]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (lint-redundant-function-name-macro-let-bindings
+            (box-get rest)
+            (lint-redundant-function-name-macro-expr (ast-node-get init) state))])]))
+
+(define (lint-redundant-function-name-macro-match-arms
+  [arms : AstMatchArmList]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match arms
+    [(AstMatchArmNil) state]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (lint-redundant-function-name-macro-match-arms
+            (box-get rest)
+            (lint-redundant-function-name-macro-expr (ast-node-get body) state))])]))
+
+(define (lint-redundant-function-name-decl
+  [decl : AstDecl]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match decl
+    [(AstDeclModule name)
+      (lint-redundant-function-name-state-with-module
+        state
+        (lint-module-default-alias (intern-str name)))]
+    [(AstDeclDefFn name _ _ body _)
+      (lint-redundant-function-name-add
+        state
+        (intern-qualified-base name)
+        (lint-no-effect-span (ast-node-get body)))]
+    [(AstDeclDefMacro name _ _ body)
+      (lint-redundant-function-name-macro-expr
+        (ast-node-get body)
+        (lint-redundant-function-name-add
+          state
+          (intern-qualified-base name)
+          (lint-no-effect-span (ast-node-get body))))]
+    [(AstDeclUnsafe inner)
+      (lint-redundant-function-name-decl (box-get inner) state)]
+    [(AstDeclComptimeDecl _ inner)
+      (lint-redundant-function-name-decl (box-get inner) state)]
+    [_ state]))
+
+(define (lint-redundant-function-names-in-decl-list-state
+  [decls : AstDeclList]
+  [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (lint-redundant-function-names-in-decl-list-state
+        (box-get rest)
+        (lint-redundant-function-name-decl decl state))]))
+
+(define (lint-redundant-function-names-in-decl-list
+  [source : String]
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (struct-get
+    (lint-redundant-function-names-in-decl-list-state
+      decls
+      (lint-redundant-function-name-state source "" 0 acc))
+    findings))
+
+(define (lint-redundant-function-names-in-program
+  [source : String]
+  [program : AstProgram]
+  [acc : LintFindings]) : LintFindings
+  (match program
+    [(AstProgram decls-box)
+      (lint-redundant-function-names-in-decl-list
+        source
+        (box-get decls-box)
+        acc)]))
 
 (define (lint-unused-variable-binding
   [name : String]

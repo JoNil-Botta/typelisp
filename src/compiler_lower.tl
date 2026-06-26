@@ -149,11 +149,11 @@
     i64
     i64
     String
-    CompilerIrInstrList
-    CompilerIrBlockList
-    CompilerIrFunctionList
+    (Box CompilerIrInstrList)
+    (Box CompilerIrBlockList)
+    (Box CompilerIrFunctionList)
     String
-    CompilerSourceSpans
+    (Box CompilerSourceSpans)
     LowerNameCache
     LowerTypeCache
     CompilerLowerMode
@@ -6494,7 +6494,7 @@
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _ _ _) spans]))
+    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _ _ _) (box-get spans)]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
@@ -6506,7 +6506,7 @@
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _ _ _) functions]))
+    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _ _ _) (box-get functions)]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
@@ -6693,7 +6693,7 @@
         next-label
         next-lambda
         current-label
-        (compiler-ir-instr-cons instr current-instrs)
+        (box (compiler-ir-instr-cons instr (box-get current-instrs)))
         blocks
         functions
         function
@@ -6733,7 +6733,12 @@
         blocks
         functions
         function
-        (compiler-source-spans-insert-instr spans function instr span)
+        (box
+          (compiler-source-spans-insert-instr
+            (box-get spans)
+            function
+            instr
+            span))
         names
         type-cache
         mode
@@ -6771,12 +6776,13 @@
         next-label-id
         next-lambda
         next-label
-        IrInstrNil
-        (compiler-ir-block-cons
-          (IrBlock
-            current-label
-            (lower-instr-seq-from-reversed-list current-instrs))
-          blocks)
+        (box IrInstrNil)
+        (box
+          (compiler-ir-block-cons
+            (IrBlock
+              current-label
+              (lower-instr-seq-from-reversed-list (box-get current-instrs)))
+            (box-get blocks)))
         functions
         function
         spans
@@ -6793,9 +6799,9 @@
         [current-block : CompilerIrBlock
           (IrBlock
             current-label
-            (lower-instr-seq-from-reversed-list current-instrs))]
+            (lower-instr-seq-from-reversed-list (box-get current-instrs)))]
         (lower-block-list-reverse-onto
-          blocks
+          (box-get blocks)
           (compiler-ir-block-cons current-block IrBlockNil)))]))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : CompilerIrBlockList
@@ -6828,9 +6834,9 @@
         current-label
         current-instrs
         blocks
-        (lower-function-list-append new-functions functions)
+        (box (lower-function-list-append new-functions (box-get functions)))
         function
-        new-spans
+        (box new-spans)
         names
         type-cache
         mode
@@ -12105,11 +12111,11 @@
           0
           0
           "entry"
-          IrInstrNil
-          IrBlockNil
-          IrFunctionNil
+          (box IrInstrNil)
+          (box IrBlockNil)
+          (box IrFunctionNil)
           logical-name
-          function-spans
+          (box function-spans)
           names
           type-cache
           mode
@@ -36483,11 +36489,11 @@
           0
           0
           "entry"
-          IrInstrNil
-          IrBlockNil
-          IrFunctionNil
+          (box IrInstrNil)
+          (box IrBlockNil)
+          (box IrFunctionNil)
           logical-name
-          function-spans
+          (box function-spans)
           names
           type-cache
           mode

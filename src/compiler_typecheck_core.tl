@@ -138,6 +138,15 @@
   (TcStringNil)
   (TcStringCons String (Box TcStringList)))
 
+(defenum TcLazyImportStubList
+  (TcLazyImportStubNil)
+  (TcLazyImportStubCons i64 i64 String bool (Box TcLazyImportStubList)))
+
+(defenum TcLazySurfaceMemberLookup
+  (TcLazySurfaceMemberNoSummary)
+  (TcLazySurfaceMemberFound)
+  (TcLazySurfaceMemberMissing))
+
 (defenum TcThreadTransferClass
   (TcThreadTransferable)
   (TcThreadShareable)
@@ -7050,6 +7059,200 @@
           (+ name-id 1))
         (array.array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
 
+(define tc-lazy-import-stubs : TcLazyImportStubList
+  (TcLazyImportStubNil))
+(define tc-lazy-import-stub-record-count : i64
+  0)
+(define tc-lazy-import-summary-backed-count : i64
+  0)
+(define tc-lazy-import-summary-member-lookup-count : i64
+  0)
+(define tc-lazy-import-summary-member-hit-count : i64
+  0)
+
+(define (tc-lazy-import-stubs-reset!) : unit
+  (begin
+    (set! tc-lazy-import-stubs (TcLazyImportStubNil))
+    (set! tc-lazy-import-stub-record-count 0)
+    (set! tc-lazy-import-summary-backed-count 0)
+    (set! tc-lazy-import-summary-member-lookup-count 0)
+    (set! tc-lazy-import-summary-member-hit-count 0)
+    (tc-source-dotted-alias-key-cache-reset!)))
+
+(define (tc-lazy-import-stub-count) : i64
+  tc-lazy-import-stub-record-count)
+
+(define (tc-lazy-import-summary-backed-stub-count) : i64
+  tc-lazy-import-summary-backed-count)
+
+(define (tc-lazy-import-summary-member-lookup-count-value) : i64
+  tc-lazy-import-summary-member-lookup-count)
+
+(define (tc-lazy-import-summary-member-hit-count-value) : i64
+  tc-lazy-import-summary-member-hit-count)
+
+(define (tc-lazy-import-summary-has-module-in?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (if (string.string-eq (struct-get summary module-id) target-module)
+        true
+        (tc-lazy-import-summary-has-module-in? (box-get rest) target-module))]))
+
+(define (tc-lazy-import-summary-has-module? [target-module : String]) : bool
+  (tc-lazy-import-summary-has-module-in?
+    (compiler-load-surface-summaries)
+    target-module))
+
+(define (tc-lazy-import-surface-variant-member?
+  [enum-name : String]
+  [variants : AstVariantDefList]
+  [member : String]) : bool
+  (match variants
+    [(AstVariantDefNil) false]
+    [(AstVariantDefCons variant rest-box)
+      (match variant
+        [(AstVariantDef name _ _)
+          (if (string.string-eq
+            member
+            (compiler-enum-qualified-variant-name enum-name (intern-str name)))
+            true
+            (tc-lazy-import-surface-variant-member?
+              enum-name
+              (box-get rest-box)
+              member))])]))
+
+(define (tc-lazy-import-surface-decl-member?
+  [decl : CompilerLoadSurfaceDecl]
+  [member : String]) : bool
+  (if (string.string-eq (struct-get decl name) member)
+    true
+    (match (struct-get decl signature)
+      [(CompilerLoadSurfaceEnumSignature _ _ variants)
+        (tc-lazy-import-surface-variant-member?
+          (struct-get decl name)
+          variants
+          member)]
+      [_ false])))
+
+(define (tc-lazy-import-surface-decls-member?
+  [decls : CompilerLoadSurfaceDeclList]
+  [member : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest-box)
+      (if (tc-lazy-import-surface-decl-member? decl member)
+        true
+        (tc-lazy-import-surface-decls-member? (box-get rest-box) member))]))
+
+(define (tc-lazy-import-surface-summary-member
+  [summary : CompilerLoadSurfaceSummary]
+  [member : String]) : TcLazySurfaceMemberLookup
+  (if (tc-lazy-import-surface-decls-member? (struct-get summary decls) member)
+    (TcLazySurfaceMemberFound)
+    (TcLazySurfaceMemberMissing)))
+
+(define (tc-lazy-import-summary-member-status-in
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]
+  [member : String]) : TcLazySurfaceMemberLookup
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (TcLazySurfaceMemberNoSummary)]
+    [(CompilerLoadSurfaceSummaryCons summary rest-box)
+      (if (string.string-eq (struct-get summary module-id) target-module)
+        (tc-lazy-import-surface-summary-member summary member)
+        (tc-lazy-import-summary-member-status-in
+          (box-get rest-box)
+          target-module
+          member))]))
+
+(define (tc-lazy-import-summary-member-status
+  [target-module : String]
+  [member : String]) : TcLazySurfaceMemberLookup
+  (tc-lazy-import-summary-member-status-in
+    (compiler-load-surface-summaries)
+    target-module
+    member))
+
+(define (tc-lazy-import-note-summary-member!
+  [target-module : String]
+  [member : String]) : unit
+  (match (tc-lazy-import-summary-member-status target-module member)
+    [(TcLazySurfaceMemberNoSummary) unit]
+    [(TcLazySurfaceMemberFound)
+      (begin
+        (set!
+          tc-lazy-import-summary-member-lookup-count
+          (+ tc-lazy-import-summary-member-lookup-count 1))
+        (set!
+          tc-lazy-import-summary-member-hit-count
+          (+ tc-lazy-import-summary-member-hit-count 1)))]
+    [(TcLazySurfaceMemberMissing)
+      (set!
+        tc-lazy-import-summary-member-lookup-count
+        (+ tc-lazy-import-summary-member-lookup-count 1))]))
+
+(define (tc-lazy-import-stub-record!
+  [importer-module-id : i64]
+  [alias : String]
+  [target-module : String]) : unit
+  (let
+    [summary-backed : bool (tc-lazy-import-summary-has-module? target-module)]
+    (begin
+      (set!
+        tc-lazy-import-stubs
+        (TcLazyImportStubCons
+          importer-module-id
+          (intern alias)
+          target-module
+          summary-backed
+          (box tc-lazy-import-stubs)))
+      (set!
+        tc-lazy-import-stub-record-count
+        (+ tc-lazy-import-stub-record-count 1))
+      (if summary-backed
+        (set!
+          tc-lazy-import-summary-backed-count
+          (+ tc-lazy-import-summary-backed-count 1))
+        unit)
+      (tc-source-dotted-alias-key-cache-reset!))))
+
+(define (tc-lazy-import-stub-target-in
+  [stubs : TcLazyImportStubList]
+  [importer-module-id : i64]
+  [alias-id : i64]) : TcMaybeString
+  (match stubs
+    [(TcLazyImportStubNil) (TcNoString)]
+    [(TcLazyImportStubCons
+        stub-module-id
+        stub-alias-id
+        target-module
+        _
+        rest-box)
+      (if (and (= stub-module-id importer-module-id) (= stub-alias-id alias-id))
+        (TcSomeString target-module)
+        (tc-lazy-import-stub-target-in
+          (box-get rest-box)
+          importer-module-id
+          alias-id))]))
+
+(define (tc-lazy-import-stub-target [importer-module-id : i64] [alias : String]) : TcMaybeString
+  (tc-lazy-import-stub-target-in
+    tc-lazy-import-stubs
+    importer-module-id
+    (intern alias)))
+
+(define (tc-source-dotted-alias-target
+  [decls : AstDeclList]
+  [current-module-id : i64]
+  [alias : String]) : TcMaybeString
+  (match (tc-lazy-import-stub-target current-module-id alias)
+    [(TcSomeString target-module) (TcSomeString target-module)]
+    [(TcNoString)
+      (macro-import-alias-target-cached decls current-module-id alias)]))
+
 (define (tc-call-builtin-lookup-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -7097,7 +7300,7 @@
             [base : String (string.substring name base-start (- n base-start))]
             (match (tc-context-program ctx)
               [(AstProgram decls-box)
-                (match (macro-import-alias-target-cached
+                (match (tc-source-dotted-alias-target
                   (box-get decls-box)
                   current-module-id
                   alias)
@@ -7106,6 +7309,7 @@
                       [lookup-name : String
                         (compiler-symbol-module-key target-module base)]
                       (begin
+                        (tc-lazy-import-note-summary-member! target-module base)
                         (tc-source-dotted-alias-key-cache-put!
                           current-module-id
                           name-id
@@ -12546,23 +12750,30 @@
                         (set!
                           seen-aliases
                           (hashmap.i64-i64-map-put seen-aliases seen-key 1))
-                        (match (tc-bind-import-alias-module-with-index
-                          ctx
-                          summary-index
-                          all-decls
-                          cur-env
-                          target-module
-                          alias-key
-                          importer-module
-                          (string.string-eq alias ""))
-                          [(OkTcEnv next-env)
-                            (begin
-                              (set! cur-env next-env)
-                              (set! cur rest))]
-                          [(ErrTcEnv step-message)
-                            (begin
-                              (set! message step-message)
-                              (set! ok false))]))))]
+                        (if (string.string-eq alias "")
+                          (match (tc-bind-import-alias-module-with-index
+                            ctx
+                            summary-index
+                            all-decls
+                            cur-env
+                            target-module
+                            alias-key
+                            importer-module
+                            true)
+                            [(OkTcEnv next-env)
+                              (begin
+                                (set! cur-env next-env)
+                                (set! cur rest))]
+                            [(ErrTcEnv step-message)
+                              (begin
+                                (set! message step-message)
+                                (set! ok false))])
+                          (begin
+                            (tc-lazy-import-stub-record!
+                              cur-module-id
+                              alias-key
+                              target-module)
+                            (set! cur rest))))))]
                 [_ (set! cur rest)]))]))
       (if (string.string-eq message "")
         (OkTcEnv cur-env)
@@ -12572,6 +12783,7 @@
   (begin
     (tc-nominal-owner-cache-reset!)
     (tc-unqualified-import-ambiguity-reset!)
+    (tc-lazy-import-stubs-reset!)
     (match program
       [(AstProgram decls-box)
         (let
@@ -12740,18 +12952,18 @@
           (AstSomeModuleName target-module)
           (AstSomeImportAlias alias)
           _))
-      (match (tc-context-program ctx)
-        [(AstProgram decls-box)
-          (tc-bind-import-alias-module
-            ctx
-            (box-get decls-box)
-            env
-            target-module
-            (if (string.string-eq alias "")
+      (if (string.string-eq alias "")
+        (match (tc-context-program ctx)
+          [(AstProgram decls-box)
+            (tc-bind-import-alias-module
+              ctx
+              (box-get decls-box)
+              env
+              target-module
               ""
-              (compiler-symbols-import-alias-key module alias))
-            module
-            (string.string-eq alias ""))])]
+              module
+              true)])
+        (OkTcEnv env))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -38284,6 +38496,7 @@
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
+    (tc-lazy-import-stubs-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
@@ -44956,6 +45169,7 @@
     (tc-nominal-owner-cache-reset!)
     (tc-unqualified-import-ambiguity-reset!)
     (macro-alias-cache-reset!)
+    (compiler-load-surface-summaries-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)
     (set! tc-hygiene-active-top-env (tc-empty-type-env))

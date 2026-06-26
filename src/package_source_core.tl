@@ -6,13 +6,11 @@
 ;; `tests` directories are reserved for `typelisp test` and fixture corpora, so
 ;; ordinary package source discovery skips them. Hosts without directory
 ;; enumeration fall back to the manifest entry source.
-(import "../stdlib/fs.tl")
-(import "../stdlib/io.tl")
+(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.vector)
-(import "../stdlib/vector.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.string)
+(import stdlib.str_cat)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
 
@@ -20,23 +18,23 @@
   (manifest-path String)
   (manifest-dir String)
   (manifest CompilerPkgManifest)
-  (sources StringVec))
+  (sources vector.StringVec))
 
 (defenum ResultPackageSourceSet
   (OkPackageSourceSet PackageSourceSet)
   (ErrPackageSourceSet String))
 
 (defenum ResultPackageSourceList
-  (OkPackageSourceList StringVec)
+  (OkPackageSourceList vector.StringVec)
   (ErrPackageSourceList String))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
+  (cast (string.string-ref text idx) : i64))
 
 (define (package-source-string-less? [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (string-length left)]
-    [right-len : i64 (string-length right)]
+    [left-len : i64 (string.string-length left)]
+    [right-len : i64 (string.string-length right)]
     [limit : i64
       (if (< left-len right-len)
         left-len
@@ -59,27 +57,27 @@
         (< left-len right-len)))))
 
 (define (package-source-vec-insert-slot-from
-  [items : StringVec]
+  [items : vector.StringVec]
   [value : String]
   [index : i64]) : i64
-  (if (>= index (string-vec-len items))
+  (if (>= index (vector.string-vec-len items))
     index
     (let
-      [head : String (string-vec-get items index "")]
-      (if (string-eq head value)
+      [head : String (vector.string-vec-get items index "")]
+      (if (string.string-eq head value)
         -1
         (if (package-source-string-less? value head)
           index
           (package-source-vec-insert-slot-from items value (+ index 1)))))))
 
 (define (package-source-vec-insert-at
-  [items : StringVec]
+  [items : vector.StringVec]
   [value : String]
-  [slot : i64]) : StringVec
+  [slot : i64]) : vector.StringVec
   (let
-    [out : StringVec (string-vec-push items value)]
-    [slots : (Array String) (string-vec-slots out)]
-    [i : i64 (- (string-vec-len out) 1)]
+    [out : vector.StringVec (vector.string-vec-push items value)]
+    [slots : (Array String) (vector.string-vec-slots out)]
+    [i : i64 (- (vector.string-vec-len out) 1)]
     (begin
       (while (> i slot)
         (begin
@@ -88,7 +86,7 @@
       (array-set! slots slot value)
       out)))
 
-(define (package-source-vec-insert [items : StringVec] [value : String]) : StringVec
+(define (package-source-vec-insert [items : vector.StringVec] [value : String]) : vector.StringVec
   (let
     [slot : i64 (package-source-vec-insert-slot-from items value 0)]
     (if (< slot 0)
@@ -98,7 +96,7 @@
 (define (package-source-manifest-dir [manifest-path : String]) : String
   (let
     [dir : String (compiler-load-dirname manifest-path)]
-    (if (= (string-length dir) 0)
+    (if (= (string.string-length dir) 0)
       "."
       dir)))
 
@@ -106,32 +104,35 @@
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
-      [candidate : String (string-append prefix "typelisp.pkg")]
-      (if (file-exists? candidate)
+      [candidate : String (string.string-append prefix "typelisp.pkg")]
+      (if (io.file-exists? candidate)
         (CompilerLoadSomePath candidate)
         (package-source-discover-manifest-up
-          (string-append prefix "../")
+          (string.string-append prefix "../")
           (- fuel 1))))))
 
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
-  (if (file-exists? path)
+  (if (io.file-exists? path)
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       path
-      (read-file path))
+      (io.read-file path))
       [(ErrCompilerPkgManifestDiagnostic diag)
         (ErrPackageSourceSet
-          (str-cat
+          (str_cat.str-cat
             "invalid package manifest '"
             (compiler-diagnostic-path (box-get diag))
-            (string-append "': " (compiler-diagnostic-message (box-get diag)))))]
+            (string.string-append
+              "': "
+              (compiler-diagnostic-message (box-get diag)))))]
       [(OkCompilerPkgManifestDiagnostic manifest)
         (OkPackageSourceSet
           (PackageSourceSet
             path
             (package-source-manifest-dir path)
             manifest
-            (string-vec-new)))])
-    (ErrPackageSourceSet (str-cat "cannot read package manifest '" path "'"))))
+            (vector.string-vec-new)))])
+    (ErrPackageSourceSet
+      (str_cat.str-cat "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
   [command : String]
@@ -145,31 +146,31 @@
     (match resolved
       [(CompilerLoadNoPath)
         (ErrPackageSourceSet
-          (string-append
+          (string.string-append
             command
             ": could not find typelisp.pkg from '.' or any parent directory"))]
       [(CompilerLoadSomePath path) (package-source-load-manifest path)])))
 
 (define (package-source-relative-join [prefix : String] [name : String]) : String
-  (if (= (string-length prefix) 0)
+  (if (= (string.string-length prefix) 0)
     name
     (compiler-load-join-root-path prefix name)))
 
 (define (package-source-root-join [root : String] [relative : String]) : String
-  (if (= (string-length relative) 0)
+  (if (= (string.string-length relative) 0)
     root
     (compiler-load-join-root-path root relative)))
 
 (define (package-source-internal-dir? [name : String]) : bool
   (or
-    (string-eq name "target")
-    (string-eq name ".git")
-    (string-eq name ".hg")
-    (string-eq name ".svn")
-    (string-eq name ".jj")))
+    (string.string-eq name "target")
+    (string.string-eq name ".git")
+    (string.string-eq name ".hg")
+    (string.string-eq name ".svn")
+    (string.string-eq name ".jj")))
 
 (define (package-source-test-dir? [name : String]) : bool
-  (string-eq name "tests"))
+  (string.string-eq name "tests"))
 
 (define (package-source-skip-dir? [name : String]) : bool
   (or (package-source-internal-dir? name) (package-source-test-dir? name)))
@@ -186,34 +187,34 @@
   package-source-skips-package-test-directories
   (if (package-source-skip-dir-self-test?)
     unit
-    (panic "package-source: skip-dir self-test mismatch")))
+    (io.panic "package-source: skip-dir self-test mismatch")))
 
 (define (package-source-vec-insert-self-test?) : bool
   (let
-    [items : StringVec
+    [items : vector.StringVec
       (package-source-vec-insert
         (package-source-vec-insert
           (package-source-vec-insert
-            (package-source-vec-insert (string-vec-new) "src/z.tl")
+            (package-source-vec-insert (vector.string-vec-new) "src/z.tl")
             "src/a.tl")
           "src/m.tl")
         "src/a.tl")]
     (and
-      (= (string-vec-len items) 3)
-      (string-eq (string-vec-get items 0 "") "src/a.tl")
-      (string-eq (string-vec-get items 1 "") "src/m.tl")
-      (string-eq (string-vec-get items 2 "") "src/z.tl"))))
+      (= (vector.string-vec-len items) 3)
+      (string.string-eq (vector.string-vec-get items 0 "") "src/a.tl")
+      (string.string-eq (vector.string-vec-get items 1 "") "src/m.tl")
+      (string.string-eq (vector.string-vec-get items 2 "") "src/z.tl"))))
 
 (test
   package-source-vector-insert-sorts-and-dedups
   (if (package-source-vec-insert-self-test?)
     unit
-    (panic "package-source: vector insert self-test mismatch")))
+    (io.panic "package-source: vector insert self-test mismatch")))
 
 (define (package-source-sort-entries-from
   [entries : vector.StringVec]
   [index : i64]
-  [acc : StringVec]) : StringVec
+  [acc : vector.StringVec]) : vector.StringVec
   (if (>= index (vector.string-vec-len entries))
     acc
     (package-source-sort-entries-from
@@ -221,12 +222,12 @@
       (+ index 1)
       (package-source-vec-insert acc (vector.string-vec-get entries index "")))))
 
-(define (package-source-sort-entries [entries : vector.StringVec]) : StringVec
-  (package-source-sort-entries-from entries 0 (string-vec-new)))
+(define (package-source-sort-entries [entries : vector.StringVec]) : vector.StringVec
+  (package-source-sort-entries-from entries 0 (vector.string-vec-new)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
-    [items : StringVec
+    [items : vector.StringVec
       (package-source-sort-entries
         (vector.string-vec-push
           (vector.string-vec-push
@@ -236,26 +237,28 @@
     (match items
       [_
         (and
-          (= (string-vec-len items) 3)
-          (string-eq (string-vec-get items 0 "") "alpha")
-          (string-eq (string-vec-get items 1 "") "middle")
-          (string-eq (string-vec-get items 2 "") "zeta"))])))
+          (= (vector.string-vec-len items) 3)
+          (string.string-eq (vector.string-vec-get items 0 "") "alpha")
+          (string.string-eq (vector.string-vec-get items 1 "") "middle")
+          (string.string-eq (vector.string-vec-get items 2 "") "zeta"))])))
 
 (test
   package-source-sorts-directory-entries-before-scanning
   (if (package-source-sort-entries-self-test?)
     unit
-    (panic "package-source: entry sort self-test mismatch")))
+    (io.panic "package-source: entry sort self-test mismatch")))
 
 (define (package-source-dir-has-manifest? [dir : String]) : bool
-  (file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
+  (io.file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
 (define (package-source-tl-file? [path : String]) : bool
-  (string-eq (fs-extension (& path)) "tl"))
+  (string.string-eq (fs.fs-extension (& path)) "tl"))
 
-(define (package-source-include-file? [path : String] [metadata : FsMetadata]) : bool
+(define (package-source-include-file?
+  [path : String]
+  [metadata : fs.FsMetadata]) : bool
   (and
-    (fs-file-kind-regular? (fs-metadata-kind metadata))
+    (fs.fs-file-kind-regular? (fs.fs-metadata-kind metadata))
     (package-source-tl-file? path)))
 
 (define (package-source-entry-error
@@ -263,22 +266,22 @@
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
-    (str-cat
-      (string-append command ": failed to inspect package path '")
+    (str_cat.str-cat
+      (string.string-append command ": failed to inspect package path '")
       path
-      (string-append "': " (io.io-error-message error)))))
+      (string.string-append "': " (io.io-error-message error)))))
 
 (define (package-source-read-dir-error
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
   (ErrPackageSourceList
-    (str-cat
-      (string-append command ": failed to read package directory '")
+    (str_cat.str-cat
+      (string.string-append command ": failed to read package directory '")
       path
-      (string-append "': " (io.io-error-message error)))))
+      (string.string-append "': " (io.io-error-message error)))))
 
-(define (package-source-entry-vec [source-set : PackageSourceSet]) : StringVec
+(define (package-source-entry-vec [source-set : PackageSourceSet]) : vector.StringVec
   (let
     [manifest : CompilerPkgManifest (struct-get source-set manifest)]
     [entry : String
@@ -286,18 +289,19 @@
         (package-source-root-join
           (struct-get source-set manifest-dir)
           (struct-get manifest entry)))]
-    (string-vec-push (string-vec-new) entry)))
+    (vector.string-vec-push (vector.string-vec-new) entry)))
 
 (define (package-source-scan-dir
   [command : String]
   [root : String]
   [relative : String]
-  [acc : StringVec]) : ResultPackageSourceList
+  [acc : vector.StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
-    (match (try-read-dir (& dir))
-      [(ErrIoStringVec error) (package-source-read-dir-error command dir error)]
-      [(OkIoStringVec entries)
+    (match (fs.try-read-dir (& dir))
+      [(fs.ErrIoStringVec error)
+        (package-source-read-dir-error command dir error)]
+      [(fs.OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
@@ -309,15 +313,15 @@
   [command : String]
   [root : String]
   [relative : String]
-  [acc : StringVec]) : ResultPackageSourceList
+  [acc : vector.StringVec]) : ResultPackageSourceList
   (let
     [dir : String (package-source-root-join root relative)]
-    (match (try-read-dir (& dir))
-      [(ErrIoStringVec error)
+    (match (fs.try-read-dir (& dir))
+      [(fs.ErrIoStringVec error)
         (if (or (io.io-error-not-found? error) (io.io-error-unsupported? error))
           (OkPackageSourceList acc)
           (package-source-read-dir-error command dir error))]
-      [(OkIoStringVec entries)
+      [(fs.OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
@@ -330,37 +334,37 @@
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
     [root : String (struct-get source-set manifest-dir)]
-    (match (try-read-dir (& root))
-      [(ErrIoStringVec error)
+    (match (fs.try-read-dir (& root))
+      [(fs.ErrIoStringVec error)
         (if (io.io-error-unsupported? error)
           (OkPackageSourceList (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
-      [(OkIoStringVec entries)
+      [(fs.OkIoStringVec entries)
         (package-source-scan-entries
           command
           root
           ""
           (package-source-sort-entries entries)
-          (string-vec-new))])))
+          (vector.string-vec-new))])))
 
 (define (package-source-scan-one
   [command : String]
   [root : String]
   [relative : String]
   [name : String]
-  [acc : StringVec]) : ResultPackageSourceList
+  [acc : vector.StringVec]) : ResultPackageSourceList
   (if (package-source-skip-dir? name)
     (OkPackageSourceList acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
-      (match (try-file-metadata (& child-path))
-        [(ErrFsMetadata error)
+      (match (fs.try-file-metadata (& child-path))
+        [(fs.ErrFsMetadata error)
           (package-source-entry-error command child-path error)]
-        [(OkFsMetadata metadata)
+        [(fs.OkFsMetadata metadata)
           (let
-            [kind : FsFileKind (fs-metadata-kind metadata)]
-            (if (fs-file-kind-directory? kind)
+            [kind : fs.FsFileKind (fs.fs-metadata-kind metadata)]
+            (if (fs.fs-file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
                 (OkPackageSourceList acc)
                 (package-source-scan-dir command root child-relative acc))
@@ -375,16 +379,16 @@
   [command : String]
   [root : String]
   [relative : String]
-  [entries : StringVec]
+  [entries : vector.StringVec]
   [index : i64]
-  [acc : StringVec]) : ResultPackageSourceList
-  (if (>= index (string-vec-len entries))
+  [acc : vector.StringVec]) : ResultPackageSourceList
+  (if (>= index (vector.string-vec-len entries))
     (OkPackageSourceList acc)
     (match (package-source-scan-one
       command
       root
       relative
-      (string-vec-get entries index "")
+      (vector.string-vec-get entries index "")
       acc)
       [(ErrPackageSourceList message) (ErrPackageSourceList message)]
       [(OkPackageSourceList next)
@@ -400,8 +404,8 @@
   [command : String]
   [root : String]
   [relative : String]
-  [entries : StringVec]
-  [acc : StringVec]) : ResultPackageSourceList
+  [entries : vector.StringVec]
+  [acc : vector.StringVec]) : ResultPackageSourceList
   (package-source-scan-entries-from command root relative entries 0 acc))
 
 (define (package-source-discover-for
@@ -414,10 +418,10 @@
       (match (package-source-scan-root command base)
         [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
         [(OkPackageSourceList sources)
-          (if (= (string-vec-len sources) 0)
+          (if (= (vector.string-vec-len sources) 0)
             (ErrPackageSourceSet
-              (str-cat
-                (string-append
+              (str_cat.str-cat
+                (string.string-append
                   command
                   ": no TypeLisp source files found in package '")
                 (struct-get base manifest-path)
@@ -434,7 +438,11 @@
   [source-set : PackageSourceSet]) : ResultPackageSourceList
   (let
     [root : String (struct-get source-set manifest-dir)]
-    (package-source-scan-optional-dir command root "tests" (string-vec-new))))
+    (package-source-scan-optional-dir
+      command
+      root
+      "tests"
+      (vector.string-vec-new))))
 
 (define (package-source-discover [manifest-path : String] [has-manifest : bool]) : ResultPackageSourceSet
   (package-source-discover-for "check" manifest-path has-manifest))

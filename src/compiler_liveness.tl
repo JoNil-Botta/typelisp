@@ -5,10 +5,10 @@
 ;; replace CompilerLiveI64Set with the general `(set i64)` family without a
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
+(import stdlib.io)
+(import stdlib.string)
 (import "compiler_ir_types.tl")
-(import "../stdlib/hashmap.tl")
+(import stdlib.hashmap)
 
 (defstruct CompilerLiveI64Set
   (words (Array i64)))
@@ -38,12 +38,12 @@
   (CompilerLiveBlockCons CompilerLiveBlock (Box CompilerLiveBlockList)))
 
 (defstruct CompilerLiveBlockGraph
-  (ids StringI64Map)
+  (ids hashmap.StringI64Map)
   (blocks (Array CompilerLiveBlock))
   (successors (Array CompilerLiveIndexVec)))
 
 (defenum CompilerFunctionLiveness
-  (CompilerFunctionLiveness StringI64Map (Array CompilerLiveBlock)))
+  (CompilerFunctionLiveness hashmap.StringI64Map (Array CompilerLiveBlock)))
 
 (defenum CompilerLiveMaybeBlock
   (CompilerLiveNoBlock)
@@ -479,7 +479,7 @@
   (match set
     [(CompilerLiveLabelNil) false]
     [(CompilerLiveLabelCons head rest)
-      (if (string-eq head value)
+      (if (string.string-eq head value)
         true
         (compiler-live-label-set-contains? (box-get rest) value))]))
 
@@ -820,7 +820,7 @@
     [(CompilerLiveBlockCons block rest)
       (match block
         [(CompilerLiveBlock block-label _ _ _ _ _ _)
-          (if (string-eq block-label label)
+          (if (string.string-eq block-label label)
             (CompilerLiveSomeBlock block)
             (compiler-live-find-block (box-get rest) label))])]))
 
@@ -832,9 +832,9 @@
 
 (define (compiler-live-block-graph-fill!
   [blocks : CompilerLiveBlockList]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [values : (Array CompilerLiveBlock)]
-  [index : i64]) : StringI64Map
+  [index : i64]) : hashmap.StringI64Map
   (match blocks
     [(CompilerLiveBlockNil) ids]
     [(CompilerLiveBlockCons block rest)
@@ -844,9 +844,9 @@
             (array-set! values index block)
             (compiler-live-block-graph-fill!
               (box-get rest)
-              (if (string-i64-map-contains? ids label)
+              (if (hashmap.string-i64-map-contains? ids label)
                 ids
-                (string-i64-map-put ids label index))
+                (hashmap.string-i64-map-put ids label index))
               values
               (+ index 1)))])]))
 
@@ -856,10 +856,10 @@
     [values : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
     [successors : (Array CompilerLiveIndexVec)
       (make-array CompilerLiveIndexVec count)]
-    [ids : StringI64Map
+    [ids : hashmap.StringI64Map
       (compiler-live-block-graph-fill!
         blocks
-        (string-i64-map-with-capacity (+ (* count 2) 1))
+        (hashmap.string-i64-map-with-capacity (+ (* count 2) 1))
         values
         0)]
     (begin
@@ -868,27 +868,27 @@
 
 (define (compiler-live-label-set-index-count
   [labels : CompilerLiveLabelSet]
-  [ids : StringI64Map]) : i64
+  [ids : hashmap.StringI64Map]) : i64
   (match labels
     [(CompilerLiveLabelNil) 0]
     [(CompilerLiveLabelCons label rest)
       (let
         [rest-count : i64
           (compiler-live-label-set-index-count (box-get rest) ids)]
-        (match (string-i64-map-get ids label)
-          [(StringI64MapFound _) (+ rest-count 1)]
-          [(StringI64MapMissing) rest-count]))]))
+        (match (hashmap.string-i64-map-get ids label)
+          [(hashmap.StringI64MapFound _) (+ rest-count 1)]
+          [(hashmap.StringI64MapMissing) rest-count]))]))
 
 (define (compiler-live-label-set-fill-indexes!
   [labels : CompilerLiveLabelSet]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [items : (Array i64)]
   [index : i64]) : i64
   (match labels
     [(CompilerLiveLabelNil) index]
     [(CompilerLiveLabelCons label rest)
-      (match (string-i64-map-get ids label)
-        [(StringI64MapFound slot)
+      (match (hashmap.string-i64-map-get ids label)
+        [(hashmap.StringI64MapFound slot)
           (begin
             (array-set! items index slot)
             (compiler-live-label-set-fill-indexes!
@@ -896,12 +896,12 @@
               ids
               items
               (+ index 1)))]
-        [(StringI64MapMissing)
+        [(hashmap.StringI64MapMissing)
           (compiler-live-label-set-fill-indexes! (box-get rest) ids items index)])]))
 
 (define (compiler-live-label-set-to-index-vec
   [labels : CompilerLiveLabelSet]
-  [ids : StringI64Map]) : CompilerLiveIndexVec
+  [ids : hashmap.StringI64Map]) : CompilerLiveIndexVec
   (let
     [count : i64 (compiler-live-label-set-index-count labels ids)]
     [items : (Array i64) (make-array i64 count)]
@@ -911,7 +911,7 @@
 
 (define (compiler-live-block-graph-fill-successors!
   [blocks : CompilerLiveBlockList]
-  [ids : StringI64Map]
+  [ids : hashmap.StringI64Map]
   [successors : (Array CompilerLiveIndexVec)]
   [index : i64]) : unit
   (match blocks
@@ -933,10 +933,10 @@
 (define (compiler-live-graph-find-block
   [graph : CompilerLiveBlockGraph]
   [label : String]) : CompilerLiveMaybeBlock
-  (match (string-i64-map-get (struct-get graph ids) label)
-    [(StringI64MapFound slot)
+  (match (hashmap.string-i64-map-get (struct-get graph ids) label)
+    [(hashmap.StringI64MapFound slot)
       (CompilerLiveSomeBlock (array-ref (struct-get graph blocks) slot))]
-    [(StringI64MapMissing) CompilerLiveNoBlock]))
+    [(hashmap.StringI64MapMissing) CompilerLiveNoBlock]))
 
 (define (compiler-live-successor-live-out-graph-loop
   [items : (Array i64)]
@@ -1234,10 +1234,10 @@
   [label : String]) : CompilerLiveMaybeBlock
   (match liveness
     [(CompilerFunctionLiveness ids blocks)
-      (match (string-i64-map-get ids label)
-        [(StringI64MapFound index)
+      (match (hashmap.string-i64-map-get ids label)
+        [(hashmap.StringI64MapFound index)
           (CompilerLiveSomeBlock (array-ref blocks index))]
-        [(StringI64MapMissing) CompilerLiveNoBlock])]))
+        [(hashmap.StringI64MapMissing) CompilerLiveNoBlock])]))
 
 (define (compiler-live-block-label [block : CompilerLiveBlock]) : String
   (match block
@@ -1595,4 +1595,4 @@
     (compiler-live-phi-ok?)
     (compiler-live-switch-ok?))
     42
-    (panic "liveness: smoke mismatch")))
+    (io.panic "liveness: smoke mismatch")))

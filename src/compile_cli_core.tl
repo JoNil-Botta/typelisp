@@ -13,18 +13,18 @@
 ;; `--pic` writes runtime-free, no-entry PIC assembly plus `<output>.fixups`.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
-;; `compile-cli-run [count]` dispatches and executes a command, reading `(arg 1)`
+;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
 ;; as the command name. The retained bootstrap `compile.tl` driver and the
 ;; unified `cli.tl` dispatcher both call it, so the single binary drives the
 ;; compiler (#1638).
-(import "../stdlib/io.tl")
-(import "../stdlib/arena.tl")
+(import stdlib.io)
+(import stdlib.vector)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.string)
+(import stdlib.str_cat)
 
 ;; Pair-shaped batch entries stay as a list until aggregate-element vector
 ;; support makes a generated entry vector cleaner than parallel StringVecs.
@@ -50,8 +50,8 @@
     bool
     bool
     CompilerBackendTarget
-    StringVec
-    StringVec
+    vector.StringVec
+    vector.StringVec
     CompilerBackendMode
     i64))
 
@@ -60,8 +60,8 @@
     String
     bool
     CompilerBackendTarget
-    StringVec
-    StringVec
+    vector.StringVec
+    vector.StringVec
     CompilerBackendMode
     i64
     bool))
@@ -77,12 +77,12 @@
 (defenum CompileCliAction
   (CompileCliRun CompileCliConfig)
   (CompileCliBatch CompileCliBatchConfig)
-  (CompileCliCheck String StringVec)
+  (CompileCliCheck String vector.StringVec)
   (CompileCliHelp)
   (CompileCliError String))
 
 (defenum ResultCompileCliCheckConfig
-  (OkCompileCliCheckConfig String StringVec)
+  (OkCompileCliCheckConfig String vector.StringVec)
   (ErrCompileCliCheckConfig String))
 
 (defenum ResultCompileCliTarget
@@ -93,26 +93,28 @@
   (or (= c '/') (= c '\\')))
 
 (define (compile-cli-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
+  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (compile-cli-usage) : String
   "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
-  (string-append message (string-append "\n\n" (compile-cli-usage))))
+  (string.string-append
+    message
+    (string.string-append "\n\n" (compile-cli-usage))))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
   [extension : String]) : String
   (let
-    [n : i64 (string-length input-path)]
+    [n : i64 (string.string-length input-path)]
     [i : i64 0]
     [last-dot : i64 -1]
     [last-sep : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref input-path i)]
+          [c : char (string.string-ref input-path i)]
           (begin
             (if (= c '.')
               (set! last-dot i)
@@ -122,8 +124,10 @@
               (set! last-sep last-sep))
             (set! i (+ i 1)))))
       (if (> last-dot last-sep)
-        (string-append (substring input-path 0 last-dot) extension)
-        (string-append input-path extension)))))
+        (string.string-append
+          (string.substring input-path 0 last-dot)
+          extension)
+        (string.string-append input-path extension)))))
 
 (define (compile-cli-default-output [input-path : String]) : String
   (compile-cli-default-output-with-extension input-path ".s"))
@@ -132,22 +136,27 @@
   (compile-cli-default-output-with-extension input-path ".ir"))
 
 (define (compile-cli-unknown-target [value : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "Error: unknown target '"
     value
     "'. Expected linux-x86_64 or windows-x86_64"))
 
 (define (compile-cli-target [value : String]) : ResultCompileCliTarget
-  (if (or (string-eq value "linux-x86_64") (string-eq value "linux_x86_64"))
+  (if (or
+    (string.string-eq value "linux-x86_64")
+    (string.string-eq value "linux_x86_64"))
     (OkCompileCliTarget (BackendTargetLinux))
     (if (or
-      (string-eq value "windows-x86_64")
-      (string-eq value "windows_x86_64"))
+      (string.string-eq value "windows-x86_64")
+      (string.string-eq value "windows_x86_64"))
       (OkCompileCliTarget (BackendTargetWindows))
       (ErrCompileCliTarget (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
-  (str-cat "compile: invalid --opt-level " value "; expected 0, 1, or 2"))
+  (str_cat.str-cat
+    "compile: invalid --opt-level "
+    value
+    "; expected 0, 1, or 2"))
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode
@@ -156,12 +165,15 @@
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
-    [(string-eq value "scalar") (OkCompileCliBackendMode (BackendModeScalar))]
-    [(string-eq value "avx2") (OkCompileCliBackendMode (BackendModeAvx2))]
-    [(string-eq value "avx512") (OkCompileCliBackendMode (BackendModeAvx512))]
+    [(string.string-eq value "scalar")
+      (OkCompileCliBackendMode (BackendModeScalar))]
+    [(string.string-eq value "avx2")
+      (OkCompileCliBackendMode (BackendModeAvx2))]
+    [(string.string-eq value "avx512")
+      (OkCompileCliBackendMode (BackendModeAvx512))]
     [else
       (ErrCompileCliBackendMode
-        (str-cat
+        (str_cat.str-cat
           "Error: unknown backend mode '"
           value
           "'. Expected scalar, avx2, or avx512"))]))
@@ -174,8 +186,8 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
   [emit-ir : bool]
   [pic : bool]
   [has-opt-level : bool]
@@ -199,9 +211,9 @@
           backend-mode
           opt-level)))
     (let
-      [current : String (arg idx)]
+      [current : String (io.arg idx)]
       (cond
-        [(string-eq current "-o")
+        [(string.string-eq current "-o")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: -o requires a value")
             (if has-output
@@ -210,7 +222,7 @@
                 (+ idx 2)
                 count
                 input-path
-                (arg (+ idx 1))
+                (io.arg (+ idx 1))
                 true
                 has-target
                 target
@@ -221,7 +233,7 @@
                 has-opt-level
                 opt-level
                 backend-mode)))]
-        [(string-eq current "--stdlib-root")
+        [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
             (compile-cli-parse-options
@@ -232,14 +244,14 @@
               has-output
               has-target
               target
-              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
               cfg-names
               emit-ir
               pic
               has-opt-level
               opt-level
               backend-mode))]
-        [(string-eq current "--cfg")
+        [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --cfg requires a value")
             (compile-cli-parse-options
@@ -251,19 +263,19 @@
               has-target
               target
               stdlib-roots
-              (string-vec-push cfg-names (arg (+ idx 1)))
+              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
               emit-ir
               pic
               has-opt-level
               opt-level
               backend-mode))]
-        [(string-eq current "--target")
+        [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --target requires a value")
             (if has-target
               (ErrCompileCliConfig
                 "compile: --target was provided more than once")
-              (match (compile-cli-target (arg (+ idx 1)))
+              (match (compile-cli-target (io.arg (+ idx 1)))
                 [(OkCompileCliTarget parsed-target)
                   (compile-cli-parse-options
                     (+ idx 2)
@@ -281,14 +293,14 @@
                     opt-level
                     backend-mode)]
                 [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))]
-        [(string-eq current "--opt-level")
+        [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --opt-level requires a value")
             (if has-opt-level
               (ErrCompileCliConfig
                 "compile: --opt-level was provided more than once")
               (let
-                [value : String (arg (+ idx 1))]
+                [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
                   [(OkCompilerOptimizeLevel parsed-level)
                     (compile-cli-parse-options
@@ -308,10 +320,10 @@
                       backend-mode)]
                   [(ErrCompilerOptimizeLevel)
                     (ErrCompileCliConfig (compile-cli-invalid-opt-level value))]))))]
-        [(string-eq current "--backend-mode")
+        [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --backend-mode requires a value")
-            (match (compile-cli-backend-mode (arg (+ idx 1)))
+            (match (compile-cli-backend-mode (io.arg (+ idx 1)))
               [(OkCompileCliBackendMode parsed-mode)
                 (compile-cli-parse-options
                   (+ idx 2)
@@ -329,7 +341,7 @@
                   opt-level
                   parsed-mode)]
               [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))]
-        [(string-eq current "--pic")
+        [(string.string-eq current "--pic")
           (compile-cli-parse-options
             (+ idx 1)
             count
@@ -345,7 +357,7 @@
             has-opt-level
             opt-level
             backend-mode)]
-        [(string-eq current "--emit-ir")
+        [(string.string-eq current "--emit-ir")
           (compile-cli-parse-options
             (+ idx 1)
             count
@@ -364,9 +376,9 @@
         [else
           (if (compile-cli-flag? current)
             (ErrCompileCliConfig
-              (string-append "compile: unknown flag " current))
+              (string.string-append "compile: unknown flag " current))
             (ErrCompileCliConfig
-              (string-append "compile: unexpected argument " current)))]))))
+              (string.string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-batch-parse-options
   [idx : i64]
@@ -374,8 +386,8 @@
   [batch-path : String]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
   [has-opt-level : bool]
   [opt-level : i64]
   [backend-mode : CompilerBackendMode]
@@ -392,17 +404,17 @@
         opt-level
         prefix-cache-stats))
     (let
-      [current : String (arg idx)]
+      [current : String (io.arg idx)]
       (cond
-        [(string-eq current "-o")
+        [(string.string-eq current "-o")
           (ErrCompileCliBatchConfig
             "compile: --batch reads output paths from the batch file")]
-        [(string-eq current "--emit-ir")
+        [(string.string-eq current "--emit-ir")
           (ErrCompileCliBatchConfig
             "compile: --batch does not support --emit-ir")]
-        [(string-eq current "--pic")
+        [(string.string-eq current "--pic")
           (ErrCompileCliBatchConfig "compile: --batch does not support --pic")]
-        [(string-eq current "--stdlib-root")
+        [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliBatchConfig "compile: --stdlib-root requires a value")
             (compile-cli-batch-parse-options
@@ -411,13 +423,13 @@
               batch-path
               has-target
               target
-              (string-vec-push stdlib-roots (arg (+ idx 1)))
+              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
               cfg-names
               has-opt-level
               opt-level
               backend-mode
               prefix-cache-stats))]
-        [(string-eq current "--cfg")
+        [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
             (ErrCompileCliBatchConfig "compile: --cfg requires a value")
             (compile-cli-batch-parse-options
@@ -427,18 +439,18 @@
               has-target
               target
               stdlib-roots
-              (string-vec-push cfg-names (arg (+ idx 1)))
+              (vector.string-vec-push cfg-names (io.arg (+ idx 1)))
               has-opt-level
               opt-level
               backend-mode
               prefix-cache-stats))]
-        [(string-eq current "--target")
+        [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrCompileCliBatchConfig "compile: --target requires a value")
             (if has-target
               (ErrCompileCliBatchConfig
                 "compile: --target was provided more than once")
-              (match (compile-cli-target (arg (+ idx 1)))
+              (match (compile-cli-target (io.arg (+ idx 1)))
                 [(OkCompileCliTarget parsed-target)
                   (compile-cli-batch-parse-options
                     (+ idx 2)
@@ -454,14 +466,14 @@
                     prefix-cache-stats)]
                 [(ErrCompileCliTarget message)
                   (ErrCompileCliBatchConfig message)])))]
-        [(string-eq current "--opt-level")
+        [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrCompileCliBatchConfig "compile: --opt-level requires a value")
             (if has-opt-level
               (ErrCompileCliBatchConfig
                 "compile: --opt-level was provided more than once")
               (let
-                [value : String (arg (+ idx 1))]
+                [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
                   [(OkCompilerOptimizeLevel parsed-level)
                     (compile-cli-batch-parse-options
@@ -479,11 +491,11 @@
                   [(ErrCompilerOptimizeLevel)
                     (ErrCompileCliBatchConfig
                       (compile-cli-invalid-opt-level value))]))))]
-        [(string-eq current "--backend-mode")
+        [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ErrCompileCliBatchConfig
               "compile: --backend-mode requires a value")
-            (match (compile-cli-backend-mode (arg (+ idx 1)))
+            (match (compile-cli-backend-mode (io.arg (+ idx 1)))
               [(OkCompileCliBackendMode parsed-mode)
                 (compile-cli-batch-parse-options
                   (+ idx 2)
@@ -499,7 +511,7 @@
                   prefix-cache-stats)]
               [(ErrCompileCliBackendMode message)
                 (ErrCompileCliBatchConfig message)]))]
-        [(string-eq current "--prefix-cache-stats")
+        [(string.string-eq current "--prefix-cache-stats")
           (compile-cli-batch-parse-options
             (+ idx 1)
             count
@@ -515,15 +527,15 @@
         [else
           (if (compile-cli-flag? current)
             (ErrCompileCliBatchConfig
-              (string-append "compile: unknown flag " current))
+              (string.string-append "compile: unknown flag " current))
             (ErrCompileCliBatchConfig
-              (string-append "compile: unexpected argument " current)))]))))
+              (string.string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (if (>= input-idx count)
     (ErrCompileCliConfig "compile: expected source path")
     (let
-      [input-path : String (arg input-idx)]
+      [input-path : String (io.arg input-idx)]
       (if (compile-cli-flag? input-path)
         (ErrCompileCliConfig "compile: expected source path before flags")
         (compile-cli-parse-options
@@ -534,8 +546,8 @@
           false
           false
           (BackendTargetLinux)
-          (string-vec-new)
-          (string-vec-new)
+          (vector.string-vec-new)
+          (vector.string-vec-new)
           false
           false
           false
@@ -549,7 +561,7 @@
   (if (>= batch-path-idx count)
     (ErrCompileCliBatchConfig "compile: --batch requires a list file")
     (let
-      [batch-path : String (arg batch-path-idx)]
+      [batch-path : String (io.arg batch-path-idx)]
       (if (compile-cli-flag? batch-path)
         (ErrCompileCliBatchConfig "compile: --batch requires a list file")
         (compile-cli-batch-parse-options
@@ -558,15 +570,15 @@
           batch-path
           false
           (BackendTargetLinux)
-          (string-vec-new)
-          (string-vec-new)
+          (vector.string-vec-new)
+          (vector.string-vec-new)
           false
           (compiler-optimize-default-level)
           (BackendModeScalar)
           false)))))
 
 (define (compile-cli-command-action [count : i64]) : CompileCliAction
-  (if (and (> count 2) (string-eq (arg 2) "--batch"))
+  (if (and (> count 2) (string.string-eq (io.arg 2) "--batch"))
     (match (compile-cli-batch-config-from 3 count)
       [(OkCompileCliBatchConfig config) (CompileCliBatch config)]
       [(ErrCompileCliBatchConfig message) (CompileCliError message)])
@@ -578,21 +590,22 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : StringVec]) : ResultCompileCliCheckConfig
+  [stdlib-roots : vector.StringVec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (OkCompileCliCheckConfig input-path stdlib-roots)
     (let
-      [current : String (arg idx)]
-      (if (string-eq current "--stdlib-root")
+      [current : String (io.arg idx)]
+      (if (string.string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
           (ErrCompileCliCheckConfig "Error: --stdlib-root requires a value")
           (compile-cli-check-parse-options
             (+ idx 2)
             count
             input-path
-            (string-vec-push stdlib-roots (arg (+ idx 1)))))
+            (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))
         (begin
-          (print-error (string-append "Warning: unknown flag: " current))
+          (io.print-error
+            (string.string-append "Warning: unknown flag: " current))
           (compile-cli-check-parse-options
             (+ idx 1)
             count
@@ -608,8 +621,8 @@
     (compile-cli-check-parse-options
       (+ input-idx 1)
       count
-      (arg input-idx)
-      (string-vec-new))))
+      (io.arg input-idx)
+      (vector.string-vec-new))))
 
 (define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
   (compile-cli-check-config-from
@@ -622,15 +635,16 @@
     (CompileCliError
       (compile-cli-message-with-usage "typelisp: expected command"))
     (let
-      [command : String (arg 1)]
+      [command : String (io.arg 1)]
       (cond
         [(or
-            (string-eq command "help")
-            (string-eq command "--help")
-            (string-eq command "-h"))
+            (string.string-eq command "help")
+            (string.string-eq command "--help")
+            (string.string-eq command "-h"))
           (CompileCliHelp)]
-        [(string-eq command "compile") (compile-cli-command-action count)]
-        [(string-eq command "check")
+        [(string.string-eq command "compile")
+          (compile-cli-command-action count)]
+        [(string.string-eq command "check")
           (match (compile-cli-top-level-check-config count)
             [(OkCompileCliCheckConfig input-path roots)
               (CompileCliCheck input-path roots)]
@@ -638,35 +652,35 @@
         [else
           (CompileCliError
             (compile-cli-message-with-usage
-              (string-append "Unknown command: " command)))]))))
+              (string.string-append "Unknown command: " command)))]))))
 
 (define (compile-cli-cfg-names-to-env-from
-  [cfg-names : StringVec]
+  [cfg-names : vector.StringVec]
   [index : i64]
   [env : SymI64Env]) : SymI64Env
-  (if (>= index (string-vec-len cfg-names))
+  (if (>= index (vector.string-vec-len cfg-names))
     env
     (compile-cli-cfg-names-to-env-from
       cfg-names
       (+ index 1)
-      (compiler-cfg-enable env (string-vec-get cfg-names index "")))))
+      (compiler-cfg-enable env (vector.string-vec-get cfg-names index "")))))
 
-(define (compile-cli-cfg-names-to-env [cfg-names : StringVec]) : SymI64Env
+(define (compile-cli-cfg-names-to-env [cfg-names : vector.StringVec]) : SymI64Env
   (compile-cli-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
-  [stdlib-roots : StringVec]) : i64
-  (match (try-read-file (& input-path))
-    [(ErrIoString _) 0]
-    [(OkIoString source)
+  [stdlib-roots : vector.StringVec]) : i64
+  (match (io.try-read-file (& input-path))
+    [(io.ErrIoString _) 0]
+    [(io.OkIoString source)
       (let
         [report : DocTestRunReport
           (doc-test-typecheck-source-with-roots input-path source stdlib-roots)]
         (if (doc-test-run-report-ok? report)
           0
           (begin
-            (print-error (doc-test-run-report-render report))
+            (io.print-error (doc-test-run-report-render report))
             1)))]))
 
 (define (compile-cli-run-compile-file
@@ -678,8 +692,8 @@
   ;; lint-allow: unused-variable
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
@@ -748,8 +762,8 @@
 (define (compile-cli-run-batch-inline-tests
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]) : i64
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]) : i64
   (match entries
     [(CompileCliBatchEntryNil) 0]
     [(CompileCliBatchEntryCons input-path _ rest)
@@ -768,8 +782,11 @@
             stdlib-roots
             cfg-names)
           (begin
-            (print-error
-              (str-cat "\ncompile: batch source failed: " input-path "\n"))
+            (io.print-error
+              (str_cat.str-cat
+                "\ncompile: batch source failed: "
+                input-path
+                "\n"))
             status)))]))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
@@ -779,7 +796,7 @@
     (begin
       (while (and (not done) (< i n))
         (let
-          [c : char (string-ref text i)]
+          [c : char (string.string-ref text i)]
           (if (or (= c '\n') (= c '\r'))
             (set! done true)
             (set! i (+ i 1)))))
@@ -789,9 +806,9 @@
   (if (>= line-end n)
     n
     (if (and
-      (= (string-ref text line-end) '\r')
+      (= (string.string-ref text line-end) '\r')
       (< (+ line-end 1) n)
-      (= (string-ref text (+ line-end 1)) '\n'))
+      (= (string.string-ref text (+ line-end 1)) '\n'))
       (+ line-end 2)
       (+ line-end 1))))
 
@@ -804,17 +821,17 @@
     [found : i64 -1]
     (begin
       (while (and (= found -1) (< i end))
-        (if (= (string-ref text i) '|')
+        (if (= (string.string-ref text i) '|')
           (set! found i)
           (set! i (+ i 1))))
       found)))
 
 (define (compile-cli-batch-line-error [line : i64] [message : String]) : i64
   (begin
-    (print-error
-      (str-cat
+    (io.print-error
+      (str_cat.str-cat
         "compile: malformed --batch line "
-        (int->string line)
+        (string.int->string line)
         ": "
         message
         "\n"))
@@ -846,9 +863,13 @@
                   (ErrCompileCliBatchEntryList
                     (compile-cli-batch-line-error line "missing output path"))
                   (let
-                    [input-path : String (substring text start (- sep start))]
+                    [input-path : String
+                      (string.substring text start (- sep start))]
                     [output-path : String
-                      (substring text output-start (- line-end output-start))]
+                      (string.substring
+                        text
+                        output-start
+                        (- line-end output-start))]
                     (match (compile-cli-batch-parse-entries-from
                       text
                       next-start
@@ -868,8 +889,8 @@
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match entries
@@ -906,8 +927,11 @@
             backend-mode
             opt-level)
           (begin
-            (print-error
-              (str-cat "\ncompile: batch source failed: " input-path "\n"))
+            (io.print-error
+              (str_cat.str-cat
+                "\ncompile: batch source failed: "
+                input-path
+                "\n"))
             status)))]))
 
 (define (compile-cli-run-batch-from
@@ -917,15 +941,15 @@
   [line : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : StringVec]
-  [cfg-names : StringVec]
+  [stdlib-roots : vector.StringVec]
+  [cfg-names : vector.StringVec]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
     text
     start
     line
-    (string-length text))
+    (string.string-length text))
     [(OkCompileCliBatchEntryList entries)
       (let
         [inline-test-status : i64
@@ -969,7 +993,7 @@
               (tc-prefix-snapshot-cache-clear!)
               (compile-cli-run-batch-from
                 state
-                (read-file batch-path)
+                (io.read-file batch-path)
                 0
                 1
                 has-target
@@ -1031,19 +1055,19 @@
                   (compile-cli-typecheck-doctests input-path stdlib-roots)]
                 (if (= doctest-status 0)
                   (begin
-                    (print-string "Type checking passed!\n")
+                    (io.print-string "Type checking passed!\n")
                     0)
                   doctest-status))
               inline-test-status))]
         [(ErrCompilerCheck diag)
           (begin
-            (print-error (compiler-diagnostic-render (box-get diag)))
+            (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)])]
     [(CompileCliHelp)
       (begin
-        (print-error (compile-cli-usage))
+        (io.print-error (compile-cli-usage))
         0)]
     [(CompileCliError message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]))

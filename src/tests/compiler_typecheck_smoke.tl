@@ -1,7 +1,8 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl (#426).
-(import "../../stdlib/io.tl")
+(import stdlib.io)
+(import stdlib.vector)
 (import "../compiler_typecheck.tl")
-(import "../../stdlib/string.tl")
+(import stdlib.string)
 
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
@@ -37,7 +38,7 @@
   (compiler-typecheck-with-alloc-string-helper-source
     "(define (main [items : (Array (& r str))]) : unit
   (with-arena r
-    (let [s : String (int->string 1)]
+    (let [s : String (string.int->string 1)]
       (array-set! items 0 (& s)))))"))
 
 (define (compiler-typecheck-reference-lambda-capture-source) : String
@@ -156,13 +157,13 @@
   (compiler-typecheck-with-alloc-string-helper-source
     "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
   (with-arena phase
-    (let [s : String (int->string 1)] (tuple (& phase s) 1))))"))
+    (let [s : String (string.int->string 1)] (tuple (& phase s) 1))))"))
 
 (define (compiler-typecheck-reference-fixed-arena-escape-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
     "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
   (with-arena phase
-    (let [s : String (int->string 1)] (array (& phase s)))))"))
+    (let [s : String (string.int->string 1)] (array (& phase s)))))"))
 
 (define (compiler-typecheck-reference-dyn-array-init-ok-source) : String
   "(define (main [n : i64]) : unit
@@ -722,7 +723,7 @@
     [(CompilerDiagnosticLabelCons entry rest)
       (match (struct-get entry label)
         [(CompilerDiagnosticSomeString text)
-          (if (string-contains (& text) (& needle))
+          (if (string.string-contains (& text) (& needle))
             true
             (compiler-typecheck-secondary-label-contains? (box-get rest) needle))]
         [CompilerDiagnosticNoString
@@ -732,7 +733,8 @@
   [diag : CompilerDiagnostic]
   [needle : String]) : bool
   (match (compiler-diagnostic-help diag)
-    [(CompilerDiagnosticSomeString text) (string-contains (& text) (& needle))]
+    [(CompilerDiagnosticSomeString text)
+      (string.string-contains (& text) (& needle))]
     [CompilerDiagnosticNoString false]))
 
 (define (compiler-typecheck-labeled-borrow-error-ok?
@@ -858,7 +860,7 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (string.string-eq (compiler-diagnostic-message (box-get diag)) want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -877,7 +879,7 @@
   (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (and
-        (string-eq (compiler-diagnostic-message (box-get diag)) want-message)
+        (string.string-eq (compiler-diagnostic-message (box-get diag)) want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -1055,7 +1057,8 @@
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-import-incompatible-key-source) : String
-  "(defmacro (gen [key : Expr]) : Module
+  "(import stdlib.comptime)
+(defmacro (gen [key : Expr]) : Module
   (match key
     [(ExprCall _ _)
       `(begin
@@ -1066,8 +1069,8 @@
       (module generated.module)
       (define (answer) : i64 42))]))
 (defmacro (later) : Decls
-  `(import (gen (string-append \"sa\" \"me\"))))
-(import (gen \"same\"))
+  `(import (gen (type-key (type i64)))))
+(import (gen \"i64\"))
 (later)
 (define (main) : i64 (answer))")
 
@@ -1108,11 +1111,12 @@
 (define (main) : i64 (answer))")
 
 (define (compiler-typecheck-smoke-module-macro-type-key-source) : String
-  "(defstruct Pair (value i64))
+  "(import stdlib.comptime)
+(defstruct Pair (value i64))
 (defstruct Other (value i64))
 (defmacro (boxmod [T : type]) : Module
   (let
-    [mod-name : Expr (expr-var (string-append \"generated.box.\" (type-key T)))]
+    [mod-name : Expr (expr-var (type-key T))]
     `(begin
       (module ,mod-name)
       (defstruct Boxed (value ,T))
@@ -1207,7 +1211,8 @@
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
 (define (compiler-typecheck-smoke-module-macro-extension-incompatible-source) : String
-  "(defmacro (base [key : String]) : Module
+  "(import stdlib.comptime)
+(defmacro (base [key : String]) : Module
   `(begin
     (module generated.shared)
     (define (answer) : i64 40)))
@@ -1221,9 +1226,9 @@
       `(begin
         (module generated.shared)
         (define (bonus) : i64 1))]))
-(import (base \"same\") as base)
-(import (extra \"same\") as extra)
-(import (extra (string-append \"sa\" \"me\")) as extra2)
+(import (base \"i64\") as base)
+(import (extra \"i64\") as extra)
+(import (extra (type-key (type i64))) as extra2)
 (define (main) : i64
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
@@ -1233,7 +1238,7 @@
       (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
-      "typecheck: Module macro output for generated identity :gen(string_4_115_97_109_101) has incompatible payload")
+      "typecheck: Module macro output for generated identity :gen(string_3_105_54_52) has incompatible payload")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-generated-collision-source)
       "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
@@ -1253,7 +1258,7 @@
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-module-macro-extension-incompatible-source)
-      "typecheck: Module macro output for generated identity :extra(string_4_115_97_109_101) has incompatible payload")))
+      "typecheck: Module macro output for generated identity :extra(string_3_105_54_52) has incompatible payload")))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
@@ -1310,11 +1315,15 @@
 (define (main) : i64 (ib.bumped (ib.make 20)))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-import-source) : String
-  "(defstruct Pair (value i64))
+  "(import stdlib.comptime)
+(defstruct Pair (value i64))
 (defmacro (vector [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string-append \"generated.vector.\" (type-key T)))]
+      (expr-var
+        (if (__tl_string_eq (type-key T) \"i64\")
+          \"generated.vector.i64\"
+          \"generated.vector.Pair\"))]
     `(begin
       (module ,module-name)
       (defstruct Vec (len i64))
@@ -1325,7 +1334,10 @@
 (defmacro (sliceish [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string-append \"generated.sliceish.\" (type-key T)))]
+      (expr-var
+        (if (__tl_string_eq (type-key T) \"i64\")
+          \"generated.sliceish.i64\"
+          \"generated.sliceish.Pair\"))]
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)
@@ -1375,14 +1387,15 @@
 (define (main) : i64 (bundle-score (BundleSome \"x\")))")
 
 (define (compiler-typecheck-smoke-decls-macro-generated-incompatible-source) : String
-  "(defmacro (bundle [key : Expr]) : Decls
+  "(import stdlib.comptime)
+(defmacro (bundle [key : Expr]) : Decls
   (match key
     [(ExprCall _ _)
       `(defstruct BundleBox (value i64))]
     [_
       `(defstruct BundleBox (value String))]))
-(bundle \"same\")
-(bundle (string-append \"sa\" \"me\"))
+(bundle \"i64\")
+(bundle (type-key (type i64)))
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String
@@ -1450,14 +1463,14 @@
     (compiler-load-join-root-path root "tc_prefix_shared.tl")
     (ast-decl-path-cons entry-path AstDeclPathNil)))
 
-(define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : StringVec
-  (string-vec-push (string-vec-new) root))
+(define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : vector.StringVec
+  (vector.string-vec-push (vector.string-vec-new) root))
 
 (define (compiler-typecheck-smoke-prefix-cache-check-cfg
   [src : String]
   [entry-path : String]
   [paths : AstDeclPathList]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : bool
   (match (parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
     [(OkAstProgramDiagnostic program)
@@ -1479,8 +1492,10 @@
     [root-b : String "target/tc_prefix_root_b"]
     [entry-a : String "target/tc_prefix_root_entry_a.tl"]
     [entry-b : String "target/tc_prefix_root_entry_b.tl"]
-    [roots-a : StringVec (compiler-typecheck-smoke-prefix-cache-roots root-a)]
-    [roots-b : StringVec (compiler-typecheck-smoke-prefix-cache-roots root-b)]
+    [roots-a : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root-a)]
+    [roots-b : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root-b)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)
@@ -1533,7 +1548,8 @@
     [root : String "target/tc_prefix_cfg_root"]
     [entry-empty : String "target/tc_prefix_cfg_entry_empty.tl"]
     [entry-feature : String "target/tc_prefix_cfg_entry_feature.tl"]
-    [roots : StringVec (compiler-typecheck-smoke-prefix-cache-roots root)]
+    [roots : vector.StringVec
+      (compiler-typecheck-smoke-prefix-cache-roots root)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)
@@ -1583,7 +1599,7 @@
 
 (define (compiler-typecheck-smoke-prefix-cache-file-check
   [entry-path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : bool
   (match (compiler-load-file-with-paths-and-roots-cfg
     entry-path
@@ -1608,19 +1624,19 @@
     [dep : String "target/tc_prefix_local_dep.tl"]
     [entry-a : String "target/tc_prefix_local_entry_a.tl"]
     [entry-b : String "target/tc_prefix_local_entry_b.tl"]
-    [roots : StringVec (string-vec-new)]
+    [roots : vector.StringVec (vector.string-vec-new)]
     [cfgs : SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (write-file
+      (io.write-file
         dep
         "(module tc.prefix.local.dep)
 (define (value [x : i64]) : i64 (+ x 1))")
-      (write-file
+      (io.write-file
         entry-a
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 1))")
-      (write-file
+      (io.write-file
         entry-b
         "(import \"tc_prefix_local_dep.tl\" module tc.prefix.local.dep as dep)
 (define (main) : i64 (dep.value 2))")
@@ -1649,16 +1665,16 @@
     [dep : String "target/tc_prefix_flat_dep.tl"]
     [entry-a : String "target/tc_prefix_flat_entry_a.tl"]
     [entry-b : String "target/tc_prefix_flat_entry_b.tl"]
-    [roots : StringVec (string-vec-new)]
+    [roots : vector.StringVec (vector.string-vec-new)]
     [cfgs : SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
-      (write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
-      (write-file
+      (io.write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
+      (io.write-file
         entry-a
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 1))")
-      (write-file
+      (io.write-file
         entry-b
         "(import \"tc_prefix_flat_dep.tl\")
 (define (main) : i64 (flat-helper 2))")
@@ -1687,12 +1703,12 @@
     [dir : String "target/tc_specialized_import_path"]
     [dep : String (compiler-load-join-root-path dir "dep.tl")]
     [entry : String (compiler-load-join-root-path dir "entry.tl")]
-    [roots : StringVec (string-vec-new)]
+    [roots : vector.StringVec (vector.string-vec-new)]
     [cfgs : SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir dir)
-      (write-file dep "(define imported : i64 true)")
-      (write-file
+      (io.write-file dep "(define imported : i64 true)")
+      (io.write-file
         entry
         "(define (id [comptime T : type] [value : T]) : T value)
 (import \"dep.tl\")
@@ -1713,8 +1729,8 @@
               cfgs))
             [(ErrCompilerTypecheck diag)
               (and
-                (string-eq (compiler-diagnostic-path (box-get diag)) dep)
-                (string-eq
+                (string.string-eq (compiler-diagnostic-path (box-get diag)) dep)
+                (string.string-eq
                   (compiler-diagnostic-message (box-get diag))
                   "typecheck: value definition type mismatch"))]
             [(OkCompilerTypecheck _) false])]
@@ -1739,16 +1755,16 @@
     [helper : String "target/tc_macro_context_helper.tl"]
     [provider : String "target/tc_macro_context_provider.tl"]
     [entry : String "target/tc_macro_context_entry.tl"]
-    [roots : StringVec (string-vec-new)]
+    [roots : vector.StringVec (vector.string-vec-new)]
     [cfgs : SymI64Env (compiler-cfg-empty)]
     (begin
-      (write-file
+      (io.write-file
         helper
         (compiler-typecheck-smoke-macro-dependency-helper-source))
-      (write-file
+      (io.write-file
         provider
         (compiler-typecheck-smoke-macro-dependency-provider-source))
-      (write-file
+      (io.write-file
         entry
         (compiler-typecheck-smoke-macro-dependency-entry-source))
       (compiler-load-session-reset-pools!)
@@ -1760,48 +1776,50 @@
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-reference-escape-tests-ok?)
-      (panic "typecheck: reference escape tests failed"))
+      (io.panic "typecheck: reference escape tests failed"))
     (unless
       (compiler-typecheck-auto-borrow-tests-ok?)
-      (panic "typecheck: auto-borrow tests failed"))
+      (io.panic "typecheck: auto-borrow tests failed"))
     (unless
       (compiler-typecheck-borrow-diagnostic-tests-ok?)
-      (panic "typecheck: borrow diagnostic tests failed"))
+      (io.panic "typecheck: borrow diagnostic tests failed"))
     (unless
       (compiler-typecheck-move-diagnostic-tests-ok?)
-      (panic "typecheck: move diagnostic tests failed"))
+      (io.panic "typecheck: move diagnostic tests failed"))
     (unless
       (compiler-typecheck-macro-alias-cache-collision-ok?)
-      (panic "typecheck: macro alias cache collision test failed"))
+      (io.panic "typecheck: macro alias cache collision test failed"))
     (unless
       (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
-      (panic "typecheck: module macro identity smoke failed"))
+      (io.panic "typecheck: module macro identity smoke failed"))
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
-      (panic "typecheck: declaration macro body smoke failed"))
+      (io.panic "typecheck: declaration macro body smoke failed"))
     (unless
       (compiler-typecheck-smoke-decls-macro-generated-tests-ok?)
-      (panic "typecheck: declaration macro generated identity smoke failed"))
+      (io.panic "typecheck: declaration macro generated identity smoke failed"))
     (unless
       (compiler-typecheck-smoke-type-macro-param-tests-ok?)
-      (panic "typecheck: type macro param smoke failed"))
+      (io.panic "typecheck: type macro param smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
-      (panic "typecheck: prefix cache root smoke failed"))
+      (io.panic "typecheck: prefix cache root smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?)
-      (panic "typecheck: prefix cache cfg smoke failed"))
+      (io.panic "typecheck: prefix cache cfg smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?)
-      (panic "typecheck: prefix cache local module smoke failed"))
+      (io.panic "typecheck: prefix cache local module smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
-      (panic "typecheck: prefix cache flat local smoke failed"))
+      (io.panic "typecheck: prefix cache flat local smoke failed"))
     (unless
       (compiler-typecheck-smoke-specialized-import-path-ok?)
-      (panic "typecheck: specialized import diagnostic path smoke failed"))
+      (io.panic "typecheck: specialized import diagnostic path smoke failed"))
     (unless
       (compiler-typecheck-smoke-macro-dependency-context-ok?)
-      (panic "typecheck: macro dependency context smoke failed"))
+      (io.panic "typecheck: macro dependency context smoke failed"))
     (macro-alias-cache-reset!)
     42))
+
+

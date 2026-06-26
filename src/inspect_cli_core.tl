@@ -1,7 +1,7 @@
 ;; inspect_cli_core.tl - Public tlci inspection command (#2655).
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.str_cat)
 (import "tlci_core.tl")
 
 (define (tlci-inspect-help-text) : String
@@ -18,13 +18,13 @@ Summary:
     "unknown"))
 
 (define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "  "
     name
     ": offset="
-    (int->string offset)
+    (string.int->string offset)
     " bytes="
-    (int->string len)
+    (string.int->string len)
     "\n"))
 
 (define (tlci-inspect-table-line
@@ -32,42 +32,42 @@ Summary:
   [offset : i64]
   [count : i64]
   [record-size : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "  "
     name
     ": offset="
-    (int->string offset)
+    (string.int->string offset)
     " records="
-    (int->string count)
+    (string.int->string count)
     " bytes="
-    (int->string (* count record-size))
+    (string.int->string (* count record-size))
     "\n"))
 
 (define (tlci-inspect-render [bytes : (Array u8)] [image : TlciImage]) : String
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
     [host-arch : i64 (struct-get image host-arch)]
-    (str-cat
+    (str_cat.str-cat
       "tlci image\n"
       "format-version: "
-      (int->string (tlci-read-u64 bytes 8))
+      (string.int->string (tlci-read-u64 bytes 8))
       "\n"
       "host-arch: "
       (tlci-inspect-host-arch-name host-arch)
       " ("
-      (int->string host-arch)
+      (string.int->string host-arch)
       ")\n"
       "callback-abi-version: "
-      (int->string (struct-get image callback-abi-version))
+      (string.int->string (struct-get image callback-abi-version))
       "\n"
       "compiler-build-hash: "
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "
-      (int->string (tlci-read-u64 bytes 48))
+      (string.int->string (tlci-read-u64 bytes 48))
       "\n"
       "file-size: "
-      (int->string (tlci-read-u64 bytes 152))
+      (string.int->string (tlci-read-u64 bytes 152))
       "\n"
       "metadata-version: "
       (struct-get metadata version)
@@ -114,24 +114,25 @@ Summary:
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
     (begin
-      (print-error "inspect: expected one .tlci path\n")
+      (io.print-error "inspect: expected one .tlci path\n")
       1)
     (let
-      [path : String (arg idx)]
-      (match (try-read-file (& path))
-        [(ErrIoString error)
+      [path : String (io.arg idx)]
+      (match (io.try-read-file (& path))
+        [(io.ErrIoString error)
           (begin
-            (print-error (str-cat "inspect: " (io-error-message error) "\n"))
+            (io.print-error
+              (str_cat.str-cat "inspect: " (io.io-error-message error) "\n"))
             1)]
-        [(OkIoString contents)
+        [(io.OkIoString contents)
           (let
             [bytes : (Array u8) (tlci-string->bytes contents)]
             (match (tlci-parse-image bytes)
               [(ErrTlciImage message)
                 (begin
-                  (print-error (str-cat "inspect: " message "\n"))
+                  (io.print-error (str_cat.str-cat "inspect: " message "\n"))
                   1)]
               [(OkTlciImage image)
                 (begin
-                  (print-string (tlci-inspect-render bytes image))
+                  (io.print-string (tlci-inspect-render bytes image))
                   0)]))]))))

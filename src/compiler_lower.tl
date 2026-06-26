@@ -3783,32 +3783,6 @@
           (compiler-symbol-module-key "stdlib.string" base)))
       state)))
 
-(define (lower-reach-used-types-add-type! [ty : AstType]) : unit
-  (set!
-    lower-reach-active-body-used-types
-    (lower-used-types-add-type lower-reach-active-body-used-types "" ty)))
-
-(define (lower-reach-used-types-add-maybe-type! [maybe-ty : AstMaybeType]) : unit
-  (set!
-    lower-reach-active-body-used-types
-    (lower-used-types-add-maybe-type
-      lower-reach-active-body-used-types
-      ""
-      maybe-ty)))
-
-(define (lower-reach-used-types-add-param-list! [params : AstParamList]) : unit
-  (set!
-    lower-reach-active-body-used-types
-    (lower-used-types-add-param-list
-      lower-reach-active-body-used-types
-      ""
-      params)))
-
-(define (lower-reach-used-types-add-pattern! [pattern : AstPattern]) : unit
-  (set!
-    lower-reach-active-body-used-types
-    (lower-used-types-add-pattern lower-reach-active-body-used-types "" pattern)))
-
 (define (lower-reach-expr-list
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
@@ -3841,7 +3815,12 @@
             (let
               [value : AstExpr (ast-node-get value-box)]
               (begin
-                (lower-reach-used-types-add-maybe-type! maybe-ty)
+                (set!
+                  lower-reach-active-body-used-types
+                  (lower-used-types-add-maybe-type
+                    lower-reach-active-body-used-types
+                    ""
+                    maybe-ty))
                 (lower-reach-let-bindings
                   all-functions
                   names
@@ -3863,7 +3842,12 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (begin
-                (lower-reach-used-types-add-pattern! pattern)
+                (set!
+                  lower-reach-active-body-used-types
+                  (lower-used-types-add-pattern
+                    lower-reach-active-body-used-types
+                    ""
+                    pattern))
                 (lower-reach-match-arms
                   all-functions
                   names
@@ -4992,8 +4976,15 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (begin
-              (lower-reach-used-types-add-param-list! params)
-              (lower-reach-used-types-add-maybe-type! ret)
+              (set!
+                lower-reach-active-body-used-types
+                (lower-used-types-add-maybe-type
+                  (lower-used-types-add-param-list
+                    lower-reach-active-body-used-types
+                    ""
+                    params)
+                  ""
+                  ret))
               (lower-reach-expr
                 all-functions
                 names
@@ -5014,7 +5005,9 @@
       (let
         [len : AstExpr (ast-node-get len-box)]
         (begin
-          (lower-reach-used-types-add-type! ty)
+          (set!
+            lower-reach-active-body-used-types
+            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
           (lower-reach-expr all-functions names state len)))]
     [(AstExprArrayRef array-box index-box)
       (let
@@ -5078,13 +5071,17 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (begin
-          (lower-reach-used-types-add-type! ty)
+          (set!
+            lower-reach-active-body-used-types
+            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
           (lower-reach-expr all-functions names state inner)))]
     [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (begin
-          (lower-reach-used-types-add-type! ty)
+          (set!
+            lower-reach-active-body-used-types
+            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
           (lower-reach-expr all-functions names state inner)))]
     [(AstExprBorrow _ _ inner-box)
       (let
@@ -5108,7 +5105,12 @@
             [init : AstExpr (ast-node-get init-box)]
             [body : AstExpr (ast-node-get body-box)]
             (begin
-              (lower-reach-used-types-add-type! index-ty)
+              (set!
+                lower-reach-active-body-used-types
+                (lower-used-types-add-type
+                  lower-reach-active-body-used-types
+                  ""
+                  index-ty))
               (lower-reach-expr
                 all-functions
                 names
@@ -5134,7 +5136,12 @@
             [map-expr : AstExpr (ast-node-get map-expr-box)]
             [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
             (begin
-              (lower-reach-used-types-add-type! index-ty)
+              (set!
+                lower-reach-active-body-used-types
+                (lower-used-types-add-type
+                  lower-reach-active-body-used-types
+                  ""
+                  index-ty))
               (lower-reach-expr
                 all-functions
                 names
@@ -5168,8 +5175,15 @@
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
             (begin
-              (lower-reach-used-types-add-type! index-ty)
-              (lower-reach-used-types-add-type! prefix-ty)
+              (set!
+                lower-reach-active-body-used-types
+                (lower-used-types-add-type
+                  (lower-used-types-add-type
+                    lower-reach-active-body-used-types
+                    ""
+                    index-ty)
+                  ""
+                  prefix-ty))
               (lower-reach-expr
                 all-functions
                 names
@@ -5277,11 +5291,18 @@
           value))]
     [(AstExprTypeLiteral ty)
       (begin
-        (lower-reach-used-types-add-type! ty)
+        (set!
+          lower-reach-active-body-used-types
+          (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
         state)]
     [(AstExprInit maybe-ty)
       (begin
-        (lower-reach-used-types-add-maybe-type! maybe-ty)
+        (set!
+          lower-reach-active-body-used-types
+          (lower-used-types-add-maybe-type
+            lower-reach-active-body-used-types
+            ""
+            maybe-ty))
         state)]
     [(AstExprComptime inner-box)
       (let
@@ -5309,7 +5330,9 @@
         (lower-reach-expr all-functions names state inner))]
     [(AstExprPtrNull ty)
       (begin
-        (lower-reach-used-types-add-type! ty)
+        (set!
+          lower-reach-active-body-used-types
+          (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
         state)]
     [(AstExprPtrNullCheck value-box)
       (let
@@ -5342,7 +5365,9 @@
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (begin
-          (lower-reach-used-types-add-type! ty)
+          (set!
+            lower-reach-active-body-used-types
+            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
           (lower-reach-expr all-functions names state ptr)))]
     [(AstExprPtrToInt ptr-box)
       (let
@@ -5352,7 +5377,9 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (begin
-          (lower-reach-used-types-add-type! ty)
+          (set!
+            lower-reach-active-body-used-types
+            (lower-used-types-add-type lower-reach-active-body-used-types "" ty))
           (lower-reach-expr all-functions names state value)))]
     [(AstExprStringData inner-box)
       (let

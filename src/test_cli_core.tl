@@ -1965,7 +1965,7 @@
     [source : String "stdlib/args.tl"]
     [dep-fn : AstDecl
       (ast-decl-def-fn
-        "string.string-eq"
+        "string-eq"
         AstParamNil
         (AstTyBool)
         (ast-node-push (AstExprLiteral (AstLitBool true))))]
@@ -2010,7 +2010,7 @@
               (= count 1)
               (tltest-decl-list-has-name?
                 (box-get harness-decls-box)
-                "string.string-eq"))])])))
+                "string-eq"))])])))
 
 (test
   test-cli-inline-harness-keeps-alias-qualified-base

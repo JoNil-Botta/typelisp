@@ -3740,10 +3740,10 @@
 
 (define (lower-stdlib-string-public-helper-name? [base : String]) : bool
   (or
-    (string.string-eq base "string.string-length")
-    (string.string-eq base "string.string-ref")
+    (string.string-eq base "string-length")
+    (string.string-eq base "string-ref")
     (string.string-eq base "char-at")
-    (string.string-eq base "string.string-eq")
+    (string.string-eq base "string-eq")
     (string.string-eq base "string=?")
     (string.string-eq base "string->int")))
 
@@ -8453,8 +8453,8 @@
 
 (define (lower-string-concat-builtin-name? [name : String]) : bool
   (or
-    (string.string-eq name "string.string-append")
-    (string.string-eq name "string.string-concat")))
+    (string.string-eq name "string-append")
+    (string.string-eq name "string-concat")))
 
 (define (lower-string-concat-call-parts
   [ctx : TcContext]
@@ -8553,7 +8553,7 @@
                     (box
                       (lower-diagnostic-at-expr
                         expr
-                        "lower: string.string-concat requires String"))))])]
+                        "lower: string-concat requires String"))))])]
           [(ErrLowerExpr message) (ErrLowerStringValues message)]))]))
 
 (define (lower-string-concat-exprs
@@ -15834,8 +15834,7 @@
         [(OkTcType str-ty)
           (if (lower-string-handle-type? ctx str-ty)
             (OkTcType (AstTyChar))
-            (ErrTcType
-              "lower: string.string-ref result type is not fast-pathable"))]
+            (ErrTcType "lower: string-ref result type is not fast-pathable"))]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -18204,7 +18203,7 @@
               (box
                 (lower-diagnostic-at-expr
                   str
-                  "lower: string.string-ref requires String"))))])]
+                  "lower: string-ref requires String"))))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call-runtime
@@ -21550,7 +21549,7 @@
     [(AstExprVar raw-name)
       ;; Builtins reached from a macro expansion arrive hygiene-renamed
       ;; (`__tl_macro_global$string.string-length`); strip the prefix so the builtin
-      ;; dispatch below (length/string.string-length inline loads, etc.) fires just as it
+      ;; dispatch below (length/string-length inline loads, etc.) fires just as it
       ;; does for hand-written calls. `raw-name` still keys the local-variable
       ;; lookup, and the generic call path strips the prefix itself.
       (let
@@ -39282,11 +39281,11 @@
                 (not
                   (lower-test-function-defined?
                     functions
-                    "stdlib/string.tl::stdlib.string/string.string-length"))
+                    "stdlib/string.tl::stdlib.string/string-length"))
                 (not
                   (lower-test-function-defined?
                     functions
-                    "string.tl::stdlib.string/string.string-length")))])]
+                    "string.tl::stdlib.string/string-length")))])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
@@ -43480,7 +43479,7 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string.string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
+(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
@@ -43498,9 +43497,7 @@
       (match lowered
         [(IrProgram _ functions _)
           (>
-            (lower-test-functions-call-count
-              functions
-              "pkg.string/string.string-eq")
+            (lower-test-functions-call-count functions "pkg.string/string-eq")
             0)])]
     [(ErrCompilerLower _) false]))
 
@@ -44754,7 +44751,7 @@
         [(IrProgram _ functions _)
           (and
             (= (lower-test-functions-call-count functions "tl_string_eq") 0)
-            (= (lower-test-functions-call-count functions "string.string-eq") 0)
+            (= (lower-test-functions-call-count functions "string-eq") 0)
             (> (lower-test-function-branch-count functions "classify") 2)
             (> (lower-test-function-load-count functions "classify") 2))])]
     [(ErrCompilerLower _) false]))
@@ -45163,9 +45160,7 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "string.string-length")
+                (lower-test-functions-call-count functions "string-length")
                 0)
                 unit
                 (set! ok false))
@@ -47875,12 +47870,8 @@
         (set! ok false))
       (when (lower-string-runtime-builtin? "substring") (set! ok false))
       (when (lower-string-runtime-builtin? "string-slice") (set! ok false))
-      (when
-        (lower-string-runtime-builtin? "string.string-append")
-        (set! ok false))
-      (when
-        (lower-string-runtime-builtin? "string.string-concat")
-        (set! ok false))
+      (when (lower-string-runtime-builtin? "string-append") (set! ok false))
+      (when (lower-string-runtime-builtin? "string-concat") (set! ok false))
       ok)))
 
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool

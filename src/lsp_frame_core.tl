@@ -3098,13 +3098,13 @@
       (lsp-hover-markdown "not : (-> bool bool)" "Logical negation.")]
     [(string.string-eq name "neg")
       (lsp-hover-markdown "neg : (-> num num)" "Numeric negation.")]
-    [(string.string-eq name "string.string-length")
+    [(string.string-eq name "string-length")
       (lsp-hover-markdown
-        "string.string-length : (-> String i64)"
+        "string-length : (-> String i64)"
         "Number of bytes in a string.")]
-    [(string.string-eq name "string.string-ref")
+    [(string.string-eq name "string-ref")
       (lsp-hover-markdown
-        "string.string-ref : (-> String i64 char)"
+        "string-ref : (-> String i64 char)"
         "Byte at the given index.")]
     [(string.string-eq name "string-data")
       (lsp-hover-markdown

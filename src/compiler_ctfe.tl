@@ -1032,7 +1032,7 @@
     [(AstExprArrayRef _ _) "array-ref"]
     [(AstExprArraySet _ _ _) "array-set!"]
     [(AstExprArrayPush _ _) "array-push!"]
-    [(AstExprStringRef _ _) "string.string-ref"]
+    [(AstExprStringRef _ _) "string-ref"]
     [(AstExprWhile _ _) "while"]
     [(AstExprBegin _) "begin"]
     [(AstExprUnsafe _) "unsafe"]
@@ -3432,17 +3432,14 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        "string.string-eq expects two strings")))]))]
+                        "string-eq expects two strings")))]))]
           [_
             (ErrCtfe
               (box
-                (ctfe-diagnostic-at-expr
-                  expr
-                  "string.string-eq expects two strings")))]))]
+                (ctfe-diagnostic-at-expr expr "string-eq expects two strings")))]))]
     [_
       (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr expr "string.string-eq expects two strings")))]))
+        (box (ctfe-diagnostic-at-expr expr "string-eq expects two strings")))]))
 
 (define (ctfe-eval-string-append-call
   [name : String]
@@ -3481,19 +3478,16 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        "string.string-append expects two strings")))]))]
+                        "string-append expects two strings")))]))]
           [_
             (ErrCtfe
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  "string.string-append expects two strings")))]))]
+                  "string-append expects two strings")))]))]
     [_
       (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "string.string-append expects two strings")))]))
+        (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))]))
 
 (define (ctfe-eval-string-length-call
   [name : String]
@@ -3517,13 +3511,10 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  "string.string-length expects one string")))]))]
+                  "string-length expects one string")))]))]
     [_
       (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "string.string-length expects one string")))]))
+        (box (ctfe-diagnostic-at-expr expr "string-length expects one string")))]))
 
 (define (ctfe-eval-string-ref-call
   [name : String]
@@ -3558,19 +3549,17 @@
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
-                        "string.string-ref expects a string and index")))]))]
+                        "string-ref expects a string and index")))]))]
           [_
             (ErrCtfe
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  "string.string-ref expects a string and index")))]))]
+                  "string-ref expects a string and index")))]))]
     [_
       (ErrCtfe
         (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "string.string-ref expects a string and index")))]))
+          (ctfe-diagnostic-at-expr expr "string-ref expects a string and index")))]))
 
 (define (ctfe-eval-string-ref-index
   [text : String]
@@ -3585,9 +3574,7 @@
       (if (or (< index 0) (>= index (string.string-length text)))
         (ErrCtfe
           (box
-            (ctfe-diagnostic-at-expr
-              origin
-              "string.string-ref index out of bounds")))
+            (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
         (OkCtfe (CtfeChar (string.string-ref text index)) index-fuel))]))
 
 (define (ctfe-eval-string-to-int-call
@@ -3683,7 +3670,6 @@
   (or
     (string.string-eq name "__tl_string_eq")
     (string.string-eq name "string-eq")
-    (string.string-eq name "string.string-eq")
     (string.string-eq name "string=?")
     (ctfe-stdlib-string-helper-name? name "string-eq")
     (ctfe-stdlib-string-helper-name? name "string=?")))
@@ -3692,7 +3678,6 @@
   (or
     (string.string-eq name "__tl_string_length")
     (string.string-eq name "string-length")
-    (string.string-eq name "string.string-length")
     (ctfe-stdlib-string-helper-name? name "string-length")
     (string.string-eq name "length")))
 
@@ -3700,7 +3685,6 @@
   (or
     (string.string-eq name "__tl_string_ref")
     (string.string-eq name "string-ref")
-    (string.string-eq name "string.string-ref")
     (string.string-eq name "char-at")
     (ctfe-stdlib-string-helper-name? name "string-ref")
     (ctfe-stdlib-string-helper-name? name "char-at")))

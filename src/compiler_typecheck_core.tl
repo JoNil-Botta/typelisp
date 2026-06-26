@@ -15896,8 +15896,7 @@
                               (ErrTcType
                                 "typecheck: string index must be integer"))]
                           [(ErrTcType message) (ErrTcType message)])
-                        (ErrTcType
-                          "typecheck: string.string-ref requires String"))]
+                        (ErrTcType "typecheck: string-ref requires String"))]
                     [(ErrTcType message) (ErrTcType message)])]
                 [_ (ErrTcType "typecheck: arity mismatch")]))]
           [_ (ErrTcType "typecheck: arity mismatch")]))]
@@ -27236,7 +27235,7 @@
             (match (tc-expect
               str-ty
               (AstTyString)
-              "typecheck: string.string-ref requires String")
+              "typecheck: string-ref requires String")
               [(OkTcUnit)
                 (match (tc-expr-with-expected-or-actual
                   ctx
@@ -36143,8 +36142,7 @@
         [(OkMacroSexpr sstring)
           (match (macro-child-to-spanned-sexpr index-id span origin)
             [(OkMacroSexpr sindex)
-              (OkMacroSexpr
-                (macro-form2 "string.string-ref" sstring sindex span))]
+              (OkMacroSexpr (macro-form2 "string-ref" sstring sindex span))]
             [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstExprStructGet receiver-id field)

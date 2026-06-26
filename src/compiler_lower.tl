@@ -35421,7 +35421,7 @@
                     [(ErrLowerCallArgs message) (LowerDirectStoreErr message)])]
                 [(ErrTcTypeList message)
                   (LowerDirectStoreErr
-                    (lower-diagnostic-at-expr origin message))]))]
+                    (box (lower-diagnostic-at-expr origin message)))]))]
           [_ (LowerNoDirectStore)])]
       [(ErrTcType _) (LowerNoDirectStore)])))
 

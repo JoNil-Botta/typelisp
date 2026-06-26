@@ -6603,20 +6603,45 @@
   [divisor-reg : String]) : String
   (if (compiler-backend-type-signed? ty)
     (let
+      ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
+      ;; Scavenge them instead of hardcoding %r10/%r11, excluding the dividend
+      ;; (%rax), %rdx, the divisor, and each other. The exclude omits %r10/%r11 so
+      ;; the fallbacks stay pickable -> byte-identical while %r10/%r11 are reserved.
+      [min-excl : (Array String)
+        (let
+          [a : (Array String) (make-array String 3)]
+          (begin
+            (array-set! a 0 "%rax")
+            (array-set! a 1 "%rdx")
+            (array-set! a 2 divisor-reg)
+            a))]
+      [min-full : String
+        (compiler-backend-scavenge-reg-here min-excl 3 "%r10")]
+      [neg-excl : (Array String)
+        (let
+          [a : (Array String) (make-array String 4)]
+          (begin
+            (array-set! a 0 "%rax")
+            (array-set! a 1 "%rdx")
+            (array-set! a 2 divisor-reg)
+            (array-set! a 3 min-full)
+            a))]
+      [neg-full : String
+        (compiler-backend-scavenge-reg-here neg-excl 4 "%r11")]
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
       [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
-      [min-reg : String (compiler-backend-sized-reg "%r10" ty)]
-      [neg-one-reg : String (compiler-backend-sized-reg "%r11" ty)]
+      [min-reg : String (compiler-backend-sized-reg min-full ty)]
+      [neg-one-reg : String (compiler-backend-sized-reg neg-full ty)]
       (string-append
         (compiler-backend-emit-load-i64-absolute
           (compiler-backend-signed-min-value ty)
-          "%r10")
+          min-full)
         (string-append
           (compiler-backend-binop-cmp-reg-asm ty min-reg lhs)
           (string-append
             "    jne 1f\n"
             (string-append
-              (compiler-backend-emit-load-i64-absolute (- 0 1) "%r11")
+              (compiler-backend-emit-load-i64-absolute (- 0 1) neg-full)
               (string-append
                 (compiler-backend-binop-cmp-reg-asm ty neg-one-reg rhs)
                 "    jne 1f\n    call tl_div_abort\n1:\n"))))))
@@ -9757,17 +9782,23 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [load-ty : AstType]) : ResultCompilerBackend
+  [load-ty : AstType]
+  [base-reg-in : String]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
+        ;; the caller-supplied register (the gep-pair shares one base across both
+        ;; loads so the 2nd doesn't reload).
         [base-reg : String
-          (compiler-backend-scavenge-reg
-            dst
-            (compiler-backend-addr-scavenge-exclude)
-            0
-            "%r10")]
+          (if (string-eq base-reg-in "")
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-addr-scavenge-exclude)
+              0
+              "%r10")
+            base-reg-in)]
         [addr : String (compiler-backend-base-address disp base-reg)]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
@@ -9814,6 +9845,12 @@
                           "%rax")))))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
+      ;; RESIDUAL (blocks pooling %r10): this dynamic-index branch still hardcodes
+      ;; %r10 as the addressing base (gep-index-address-r10 / "(%r10)" /
+      ;; emit-load-value-with-plan base "%r10") and ignores base-reg-in. A
+      ;; gep-pair whose first offset is non-constant therefore can NOT share the
+      ;; threaded base yet. Scavenge a base here (threading base-reg-in) before
+      ;; %r10 enters the allocator pool.
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         [scav-idx : String
@@ -9897,12 +9934,14 @@
   [dst : i64]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [load-ty : AstType]) : ResultCompilerBackend
+  [load-ty : AstType]
+  [base-reg : String]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-        [addr : String (compiler-backend-r10-address disp)]
+        ;; The base was loaded into base-reg by the 1st load of the pair; reuse it.
+        [addr : String (compiler-backend-base-address disp base-reg)]
         (OkCompilerBackend
           (if (compiler-backend-float-type? load-ty)
             (string-append
@@ -9942,24 +9981,36 @@
   [elem-ty1 : AstType]
   [load-dst1 : i64]
   [load-ty1 : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-from-gep
-    assignments
-    load-dst0
-    base
-    offset0
-    elem-ty0
-    load-ty0)
-    [(OkCompilerBackend first-asm)
-      (match (compiler-backend-emit-load-from-gep-r10-live
-        assignments
-        load-dst1
-        offset1
-        elem-ty1
-        load-ty1)
-        [(OkCompilerBackend second-asm)
-          (OkCompilerBackend (string-append first-asm second-asm))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  (let
+    ;; Scavenge ONE base register and share it across both loads: the 1st load
+    ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
+    ;; to the old %r10 path while %r10 is reserved).
+    [base-reg : String
+      (compiler-backend-scavenge-reg
+        load-dst0
+        (compiler-backend-addr-scavenge-exclude)
+        0
+        "%r10")]
+    (match (compiler-backend-emit-load-from-gep
+      assignments
+      load-dst0
+      base
+      offset0
+      elem-ty0
+      load-ty0
+      base-reg)
+      [(OkCompilerBackend first-asm)
+        (match (compiler-backend-emit-load-from-gep-r10-live
+          assignments
+          load-dst1
+          offset1
+          elem-ty1
+          load-ty1
+          base-reg)
+          [(OkCompilerBackend second-asm)
+            (OkCompilerBackend (string-append first-asm second-asm))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-load
   [assignments : CompilerRegAssignmentList]
@@ -18355,7 +18406,8 @@
         base
         offset
         elem-ty
-        load-ty)]
+        load-ty
+        "")]
     (match (compiler-backend-value-as-i64 offset)
       [(CompilerBackendSomeI64 _)
         (match rest
@@ -22904,6 +22956,13 @@
 ;; compiler-reg-greedy-integer-pool: caller-saved r8/r9/rcx/rdx + callee-saved
 ;; r12-r15/rbx. Non-pool registers (rax/rsi/rdi/r10/r11) are NOT candidates: the
 ;; backend uses them untracked, so the liveness query cannot certify them free.
+;; NB: %r10/%r11 are intentionally NOT scavenge candidates while the backend still
+;; has hardcoded %r10/%r11 uses (addressing, magic-division, c-abi, indirect call).
+;; The allocator may HOME a var in %r10/%r11 (they are in the pool), but the
+;; scavenger must not pick them as scratch: a scratch %r10 chosen inside an
+;; instruction whose template also hardcodes %r10 would self-collide -- invisible
+;; to the freeness query (the scratch IS free; the template use is untracked).
+;; Re-add them here only once every hardcoded %r10/%r11 emit site is scavenged.
 (define (compiler-backend-scavenge-candidates) : (Array String)
   (let
     [a : (Array String) (make-array String 9)]

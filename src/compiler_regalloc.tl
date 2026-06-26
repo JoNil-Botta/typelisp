@@ -8028,17 +8028,15 @@
       (- 0 1))
     (- 0 1)))
 
-;; {rax,rdx,r10,r11}: the registers an idiv clobbers (rax:rdx outputs + the
-;; INT_MIN/-1 overflow guard). rax/r10/r11 are reserved (not in the pool); listing
-;; them is harmless and future-proofs pooling them.
+;; {rax,rdx}: the registers an idiv hard-clobbers (rax:rdx outputs). The INT_MIN/-1
+;; overflow guard temps are no longer hardcoded to %r10/%r11 -- the guard scavenges
+;; free registers (compiler-backend-div-overflow-guard-asm), avoiding any
+;; div-spanning value via the live query, so a div-spanning var may now use
+;; %r10/%r11. rax stays reserved.
 (define (compiler-reg-greedy-div-clobber-registers) : CompilerRegStringList
   (compiler-reg-string-cons
     "%rax"
-    (compiler-reg-string-cons
-      "%rdx"
-      (compiler-reg-string-cons
-        "%r10"
-        (compiler-reg-string-cons "%r11" CompilerRegStringNil)))))
+    (compiler-reg-string-cons "%rdx" CompilerRegStringNil)))
 
 ;; Caller-saved registers a div/shift-spanning (but NOT call-spanning) var may not
 ;; use: div-span -> {rax,rdx,r10,r11}, shift-span -> {rcx}, unioned. The call-span
@@ -8552,6 +8550,13 @@
 ;; clobber), exactly the regmask-as-interference rule. Such values start their
 ;; register search at the callee-saved offset. This folds the old
 ;; prepass-partition + caller-saved-overflow into ONE allocation pass.
+;; NB: %r10/%r11 are NOT yet in this pool. Pooling them is gated on every hardcoded
+;; %r10/%r11 emit site in the backend being scavenged first. Remaining blockers
+;; (confirmed by an opt-2 self-host fixpoint segfault when they were temp-pooled):
+;; emit-load-from-gep NoI64 branch (dynamic-index base), magic-division scratch
+;; (compiler-backend-binop-*divmod* ~6924-7097), emit-address-base callers,
+;; c-abi return-slot %r11, and the indirect-call env/target %r11. The div overflow
+;; guard and the constant-offset gep-pair are already scavenged.
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r9"

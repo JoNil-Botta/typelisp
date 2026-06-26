@@ -109,9 +109,20 @@
 (defenum LowerReachState
   (LowerReachState hashmap.I64I64Map LowerStringSet))
 
+(defenum LowerUsedTypePathSeed
+  (LowerUsedTypePathSeed hashmap.I64I64Map bool))
+
 (defenum LowerMaybeFunctionBody
   (LowerNoFunctionBody)
-  (LowerSomeFunctionBody AstExpr LowerNameCache))
+  (LowerSomeFunctionBody AstExpr LowerNameCache String))
+
+;; Reset once per prune reach walk; lower-reach-process records each reachable
+;; function body's source path so type-decl DCE can keep local support types
+;; without rescanning every declaration to rediscover those paths.
+(define lower-reach-active-runtime-paths : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 8))
+(define lower-reach-active-body-used-types : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 8))
 
 (defenum LowerSpmdInlineHelper
   (LowerNoSpmdInlineHelper)
@@ -127,6 +138,9 @@
 
 (defenum LowerPrunedProgram
   (LowerPrunedProgram AstProgram AstDeclPathList))
+
+(defenum LowerFilteredReachable
+  (LowerFilteredReachable AstDeclList AstDeclPathList))
 
 (defenum LowerEntryMainScan
   (LowerEntryMainScan i64 String bool))
@@ -3772,6 +3786,35 @@
           (compiler-symbol-module-key "stdlib.string" base)))
       state)))
 
+(define (lower-reach-used-type-name-add-source! [source : String] [name : i64]) : unit
+  (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+    (set!
+      lower-reach-active-body-used-types
+      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+    unit))
+
+(define (lower-reach-used-types-add-pattern-roots! [pattern : AstPattern]) : unit
+  (match pattern
+    [(AstPatVar _ _) unit]
+    [(AstPatTuple patterns-box)
+      (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box))]
+    [(AstPatWildcard) unit]
+    [(AstPatBinding _) unit]
+    [(AstPatVariant name patterns-box)
+      (begin
+        (lower-reach-used-type-name-add-source! (intern-str name) name)
+        (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box)))]
+    [(AstPatLiteral _) unit]))
+
+(define (lower-reach-used-types-add-pattern-list-roots!
+  [patterns : AstPatternList]) : unit
+  (match patterns
+    [(AstPatternNil) unit]
+    [(AstPatternCons pattern rest)
+      (begin
+        (lower-reach-used-types-add-pattern-roots! (box-get pattern))
+        (lower-reach-used-types-add-pattern-list-roots! (box-get rest)))]))
+
 (define (lower-reach-expr-list
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
@@ -3820,14 +3863,16 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm pattern body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (lower-reach-match-arms
-                all-functions
-                names
-                (lower-reach-expr all-functions names state body)
-                rest))]))]))
+              (begin
+                (lower-reach-used-types-add-pattern-roots! pattern)
+                (lower-reach-match-arms
+                  all-functions
+                  names
+                  (lower-reach-expr all-functions names state body)
+                  rest)))]))]))
 
 (define (lower-reach-resource-bindings
   [all-functions : hashmap.StringI64Map]
@@ -5627,13 +5672,14 @@
   [index : LowerFunctionBodyIndex]
   [logical-name : String]
   [names : LowerNameCache]
-  [body : AstExpr]) : LowerFunctionBodyIndex
+  [body : AstExpr]
+  [decl-path : String]) : LowerFunctionBodyIndex
   (let
     [ids : hashmap.StringI64Map (struct-get index ids)]
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
-      (array-set! bodies next (LowerSomeFunctionBody body names))
+      (array-set! bodies next (LowerSomeFunctionBody body names decl-path))
       (LowerFunctionBodyIndex
         (hashmap.string-i64-map-put ids logical-name next)
         bodies
@@ -5716,7 +5762,8 @@
                     module
                     (intern-str name))
                   module-name-cache
-                  body)))]
+                  body
+                  decl-path)))]
           [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
@@ -5756,7 +5803,8 @@
                           module
                           (intern-str name))
                         module-name-cache
-                        body)))]
+                        body
+                        decl-path)))]
                 [(AstDeclComptimeDecl _ _)
                   (lower-function-body-index-from-decls-in-module
                     (ast-decl-cons inner rest)
@@ -5828,12 +5876,19 @@
             [popped : LowerReachState
               (LowerReachState reachable (box-get rest))]
             (match (lower-function-body-index-find body-index name)
-              [(LowerSomeFunctionBody body body-names)
-                (lower-reach-process
-                  all-functions
-                  names
-                  body-index
-                  (lower-reach-expr all-functions body-names popped body))]
+              [(LowerSomeFunctionBody body body-names body-path)
+                (begin
+                  (set!
+                    lower-reach-active-runtime-paths
+                    (hashmap.i64-i64-map-put
+                      lower-reach-active-runtime-paths
+                      (intern body-path)
+                      1))
+                  (lower-reach-process
+                    all-functions
+                    names
+                    body-index
+                    (lower-reach-expr all-functions body-names popped body)))]
               [(LowerNoFunctionBody)
                 (lower-reach-process all-functions names body-index popped)]))])]))
 
@@ -6055,10 +6110,651 @@
     (lower-reach-slot-set-contains-name? all-functions reachable logical-name)
     (hashmap.string-i64-map-contains? dispatch-variants logical-name)))
 
-(define (lower-comptime-only-module? [module : String]) : bool
-  (string.string-eq module "stdlib.comptime"))
+(define (lower-used-type-name-leaf [name : String]) : String
+  (let
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string.string-length source)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (string.char-eq (string.string-ref source i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (if (and (>= last-dot 0) (< last-dot (- n 1)))
+        (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
+        source))))
 
-(define (lower-decl-kept-by-reach-or-dispatch?
+(define (lower-used-type-name-add
+  [used : hashmap.I64I64Map]
+  [_module : String]
+  [name : i64]) : hashmap.I64I64Map
+  (let
+    [source : String (intern-str name)]
+    [with-source : hashmap.I64I64Map (hashmap.i64-i64-map-put used name 1)]
+    (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+      (let
+        [leaf : String (lower-used-type-name-leaf source)]
+        (if (string.string-eq leaf source)
+          with-source
+          (hashmap.i64-i64-map-put with-source (intern leaf) 1)))
+      with-source)))
+
+(define (lower-used-type-name-contains?
+  [used : hashmap.I64I64Map]
+  [_module : String]
+  [name : i64]) : bool
+  (if (hashmap.i64-i64-map-contains? used name)
+    true
+    (let
+      [source : String (intern-str name)]
+      (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+        (let
+          [leaf : String (lower-used-type-name-leaf source)]
+          (if (string.string-eq leaf source)
+            false
+            (hashmap.i64-i64-map-contains? used (intern leaf))))
+        false))))
+
+(define (lower-used-types-precise-empty) : hashmap.I64I64Map
+  (hashmap.i64-i64-map-put
+    (hashmap.i64-i64-map-with-capacity 8192)
+    (intern "$lower.precise-type-dce")
+    1))
+
+(define (lower-used-types-add-type-id
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [ty-id : i64]) : hashmap.I64I64Map
+  (lower-used-types-add-type used module (ty-node-get ty-id)))
+
+(define (lower-used-types-add-type-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [types : AstTypeList]) : hashmap.I64I64Map
+  (match types
+    [(AstTypeNil) used]
+    [(AstTypeCons head rest)
+      (lower-used-types-add-type-list
+        (lower-used-types-add-type-id used module head)
+        module
+        (box-get rest))]))
+
+(define (lower-used-types-add-type
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [ty : AstType]) : hashmap.I64I64Map
+  (match ty
+    [(AstTyFunc args ret)
+      (lower-used-types-add-type-id
+        (lower-used-types-add-type-list used module (box-get args))
+        module
+        ret)]
+    [(AstTyTuple elems)
+      (lower-used-types-add-type-list used module (box-get elems))]
+    [(AstTyArray elem _) (lower-used-types-add-type-id used module elem)]
+    [(AstTyDynArray elem) (lower-used-types-add-type-id used module elem)]
+    [(AstTyBox elem) (lower-used-types-add-type-id used module elem)]
+    [(AstTyRegion _ inner) (lower-used-types-add-type-id used module inner)]
+    [(AstTyRef _ inner) (lower-used-types-add-type-id used module inner)]
+    [(AstTyMutRef _ inner) (lower-used-types-add-type-id used module inner)]
+    [(AstTyEnum name) (lower-used-type-name-add used module name)]
+    [(AstTyEnumArgs name _) (lower-used-type-name-add used module name)]
+    [(AstTyStruct name) (lower-used-type-name-add used module name)]
+    [(AstTyStructArgs name _) (lower-used-type-name-add used module name)]
+    [(AstTyVar name) (lower-used-type-name-add used module name)]
+    [(AstTyVarArgs name _) (lower-used-type-name-add used module name)]
+    [(AstTyPtr inner) (lower-used-types-add-type-id used module inner)]
+    [(AstTyMutPtr inner) (lower-used-types-add-type-id used module inner)]
+    [_ used]))
+
+(define (lower-used-types-add-maybe-type
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [maybe-ty : AstMaybeType]) : hashmap.I64I64Map
+  (match maybe-ty
+    [(AstNoType) used]
+    [(AstSomeType ty) (lower-used-types-add-type used module ty)]))
+
+(define (lower-used-types-add-param-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [params : AstParamList]) : hashmap.I64I64Map
+  (match params
+    [(AstParamNil) used]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (lower-used-types-add-param-list
+            (lower-used-types-add-type used module ty)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-macro-param-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [params : AstMacroParamList]) : hashmap.I64I64Map
+  (match params
+    [(AstMacroParamNil) used]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam _ ty _)
+          (lower-used-types-add-macro-param-list
+            (lower-used-types-add-type used module ty)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-expr-id
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [expr-id : i64]) : hashmap.I64I64Map
+  (lower-used-types-add-expr used module (ast-node-get expr-id)))
+
+(define (lower-used-types-add-expr-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [exprs : AstExprList]) : hashmap.I64I64Map
+  (match exprs
+    [(AstExprNil) used]
+    [(AstExprCons expr rest)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module expr)
+        module
+        (box-get rest))]))
+
+(define (lower-used-types-add-pattern
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [pattern : AstPattern]) : hashmap.I64I64Map
+  (match pattern
+    [(AstPatVar _ maybe-ty)
+      (lower-used-types-add-maybe-type used module maybe-ty)]
+    [(AstPatTuple patterns-box)
+      (lower-used-types-add-pattern-list used module (box-get patterns-box))]
+    [(AstPatWildcard) used]
+    [(AstPatBinding _) used]
+    [(AstPatVariant name patterns-box)
+      (let
+        [name-str : String (intern-str name)]
+        [with-head : hashmap.I64I64Map
+          (if (or
+            (tc-name-qualified? name-str)
+            (>= (tc-name-first-dot name-str) 0))
+            (lower-used-type-name-add used module name)
+            used)]
+        (lower-used-types-add-pattern-list
+          with-head
+          module
+          (box-get patterns-box)))]
+    [(AstPatLiteral _) used]))
+
+(define (lower-used-types-add-pattern-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [patterns : AstPatternList]) : hashmap.I64I64Map
+  (match patterns
+    [(AstPatternNil) used]
+    [(AstPatternCons pattern rest)
+      (lower-used-types-add-pattern-list
+        (lower-used-types-add-pattern used module (box-get pattern))
+        module
+        (box-get rest))]))
+
+(define (lower-used-types-add-let-bindings
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : AstLetBindingList]) : hashmap.I64I64Map
+  (match bindings
+    [(AstLetBindingNil) used]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ maybe-ty value-box)
+          (lower-used-types-add-let-bindings
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-maybe-type used module maybe-ty)
+              module
+              value-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-match-arms
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [arms : AstMatchArmList]) : hashmap.I64I64Map
+  (match arms
+    [(AstMatchArmNil) used]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body-box)
+          (lower-used-types-add-match-arms
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-pattern used module pattern)
+              module
+              body-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-resource-bindings
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [bindings : AstResourceBindingList]) : hashmap.I64I64Map
+  (match bindings
+    [(AstResourceBindingNil) used]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ acquire-box cleanup-box)
+          (lower-used-types-add-resource-bindings
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id used module acquire-box)
+              module
+              cleanup-box)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-expr
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [expr : AstExpr]) : hashmap.I64I64Map
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprLiteral _) used]
+    [(AstExprVar _) used]
+    [(AstExprBinary _ lhs-box rhs-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module lhs-box)
+        module
+        rhs-box)]
+    [(AstExprUnary _ inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprCall callee-box args)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module callee-box)
+        module
+        args)]
+    [(AstExprIf cond-box then-box else-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id
+          (lower-used-types-add-expr-id used module cond-box)
+          module
+          then-box)
+        module
+        else-box)]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-let-bindings used module bindings)
+            module
+            body-box)])]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda params ret body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-maybe-type
+              (lower-used-types-add-param-list used module params)
+              module
+              ret)
+            module
+            body-box)])]
+    [(AstExprTuple values) (lower-used-types-add-expr-list used module values)]
+    [(AstExprTupleRef value-box _)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprArray values) (lower-used-types-add-expr-list used module values)]
+    [(AstExprMakeArray ty len-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        len-box)]
+    [(AstExprArrayRef array-box index-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module array-box)
+        module
+        index-box)]
+    [(AstExprArraySet array-box index-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id
+          (lower-used-types-add-expr-id used module array-box)
+          module
+          index-box)
+        module
+        value-box)]
+    [(AstExprArrayPush array-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module array-box)
+        module
+        value-box)]
+    [(AstExprStringRef text-box index-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module text-box)
+        module
+        index-box)]
+    [(AstExprWhile cond-box body-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module cond-box)
+        module
+        body-box)]
+    [(AstExprBegin exprs) (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprUnsafe exprs) (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprSet _ value-box)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprAnn inner-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        inner-box)]
+    [(AstExprCast inner-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        inner-box)]
+    [(AstExprBorrow _ _ inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch value-box arms)
+          (lower-used-types-add-match-arms
+            (lower-used-types-add-expr-id used module value-box)
+            module
+            arms)])]
+    [(AstExprForeach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach _ index-ty start-box end-box body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-type used module index-ty)
+                module
+                start-box)
+              module
+              end-box)
+            module
+            body-box)])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce
+            _
+            _
+            index-ty
+            source-box
+            init-box
+            map-expr-box
+            reduce-expr-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-expr-id
+                  (lower-used-types-add-type used module index-ty)
+                  module
+                  source-box)
+                module
+                init-box)
+              module
+              map-expr-box)
+            module
+            reduce-expr-box)])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            _
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (lower-used-types-add-expr-id
+            (lower-used-types-add-expr-id
+              (lower-used-types-add-expr-id
+                (lower-used-types-add-expr-id
+                  (lower-used-types-add-expr-id
+                    (lower-used-types-add-type
+                      (lower-used-types-add-type used module index-ty)
+                      module
+                      prefix-ty)
+                    module
+                    start-box)
+                  module
+                  end-box)
+                module
+                init-box)
+              module
+              value-box)
+            module
+            body-box)])]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module value-box)
+        module
+        lane-box)]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module value-box)
+        module
+        lane-box)]
+    [(AstExprStructGet value-box _)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprStructSet receiver-box _ value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module receiver-box)
+        module
+        value-box)]
+    [(AstExprWithRegion _ exprs)
+      (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprWithEscape scratch-box exprs)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module scratch-box)
+        module
+        exprs)]
+    [(AstExprWithScratch exprs)
+      (lower-used-types-add-expr-list used module exprs)]
+    [(AstExprInArena arena-box exprs)
+      (lower-used-types-add-expr-list
+        (lower-used-types-add-expr-id used module arena-box)
+        module
+        exprs)]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (lower-used-types-add-expr-list
+            (lower-used-types-add-resource-bindings used module bindings)
+            module
+            body)])]
+    [(AstExprBox inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxGet inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxTake inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBoxSet inner-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module inner-box)
+        module
+        value-box)]
+    [(AstExprTypeLiteral ty) (lower-used-types-add-type used module ty)]
+    [(AstExprInit maybe-ty)
+      (lower-used-types-add-maybe-type used module maybe-ty)]
+    [(AstExprComptime inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprQuote _) used]
+    [(AstExprQuasiquote _) used]
+    [(AstExprUnquote inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprUnquoteSplicing inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBracketClause items)
+      (lower-used-types-add-expr-list used module items)]
+    [(AstExprTry inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprReturn inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprPtrNull ty) (lower-used-types-add-type used module ty)]
+    [(AstExprPtrNullCheck value-box)
+      (lower-used-types-add-expr-id used module value-box)]
+    [(AstExprPtrAddrOf _) used]
+    [(AstExprPtrRead ptr-box)
+      (lower-used-types-add-expr-id used module ptr-box)]
+    [(AstExprPtrWrite ptr-box value-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        value-box)]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        offset-box)]
+    [(AstExprPtrCast ptr-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        ptr-box)]
+    [(AstExprPtrToInt ptr-box)
+      (lower-used-types-add-expr-id used module ptr-box)]
+    [(AstExprIntToPtr value-box ty)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-type used module ty)
+        module
+        value-box)]
+    [(AstExprStringData inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module ptr-box)
+        module
+        len-box)]
+    [(AstExprArrayData inner-box)
+      (lower-used-types-add-expr-id used module inner-box)]
+    [(AstExprBinaryData _) used]
+    [(AstExprSpmdProgramIndex) used]
+    [(AstExprSpmdProgramCount) used]
+    [(AstExprProgramArgc) used]
+    [(AstExprProgramArgv) used]
+    [(AstExprProgramEnvp) used]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (lower-used-types-add-expr-id
+        (lower-used-types-add-expr-id used module leaf-box)
+        module
+        subleaf-box)]
+    [(AstExprXgetbv index-box)
+      (lower-used-types-add-expr-id used module index-box)]
+    [(AstExprSyscall args) (lower-used-types-add-expr-list used module args)]))
+
+(define (lower-used-types-add-field-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [fields : AstFieldDefList]) : hashmap.I64I64Map
+  (match fields
+    [(AstFieldDefNil) used]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ ty _)
+          (lower-used-types-add-field-list
+            (lower-used-types-add-type used module ty)
+            module
+            (box-get rest))])]))
+
+(define (lower-used-types-add-variant-list
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [variants : AstVariantDefList]) : hashmap.I64I64Map
+  (match variants
+    [(AstVariantDefNil) used]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef _ fields _)
+          (lower-used-types-add-variant-list
+            (lower-used-types-add-type-list used module fields)
+            module
+            (box-get rest))])]))
+
+(define (lower-type-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefEnum _ _ _) true]
+    [(AstDeclDefEnumLifetimes _ _ _ _) true]
+    [(AstDeclDefStruct _ _ _ _) true]
+    [(AstDeclDefStructLifetimes _ _ _ _ _) true]
+    [(AstDeclUnsafe inner-box) (lower-type-decl? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ inner-box) (lower-type-decl? (box-get inner-box))]
+    [_ false]))
+
+(define (lower-type-decl-used?
+  [module : String]
+  [used-types : hashmap.I64I64Map]
+  [decl : AstDecl]) : bool
+  ;; Empty is the fast-path marker for "all type declaration paths are already
+  ;; reachable"; precise DCE starts from lower-used-types-precise-empty instead.
+  (if (= (hashmap.i64-i64-map-len used-types) 0)
+    true
+    (match decl
+      [(AstDeclDefEnum name _ variants)
+        (lower-used-type-name-contains? used-types module name)]
+      [(AstDeclDefEnumLifetimes name _ _ variants)
+        (lower-used-type-name-contains? used-types module name)]
+      [(AstDeclDefStruct name _ _ _)
+        (lower-used-type-name-contains? used-types module name)]
+      [(AstDeclDefStructLifetimes name _ _ _ _)
+        (lower-used-type-name-contains? used-types module name)]
+      [(AstDeclUnsafe inner-box)
+        (lower-type-decl-used? module used-types (box-get inner-box))]
+      [(AstDeclComptimeDecl _ inner-box)
+        (lower-type-decl-used? module used-types (box-get inner-box))]
+      [_ true])))
+
+(define (lower-used-types-add-kept-runtime-decl
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [decl : AstDecl]) : hashmap.I64I64Map
+  (match decl
+    [(AstDeclDef _ maybe-ty _)
+      (lower-used-types-add-maybe-type used module maybe-ty)]
+    [(AstDeclDefFn _ params ret _ _)
+      (lower-used-types-add-type
+        (lower-used-types-add-param-list used module params)
+        module
+        ret)]
+    [(AstDeclDefMacro _ params ret _)
+      (lower-used-types-add-type
+        (lower-used-types-add-macro-param-list used module params)
+        module
+        ret)]
+    [(AstDeclExtern _ _ _ ty) (lower-used-types-add-type used module ty)]
+    [(AstDeclDefEnum _ _ _) used]
+    [(AstDeclDefEnumLifetimes _ _ _ _) used]
+    [(AstDeclDefStruct _ _ _ _) used]
+    [(AstDeclDefStructLifetimes _ _ _ _ _) used]
+    [(AstDeclTest _ body-box _)
+      (lower-used-types-add-expr-id used module body-box)]
+    [(AstDeclUnsafe inner-box)
+      (lower-used-types-add-kept-runtime-decl used module (box-get inner-box))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-used-types-add-kept-runtime-decl used module (box-get inner-box))]
+    [_ used]))
+
+(define (lower-runtime-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
   [module : String]
@@ -6081,84 +6777,245 @@
           logical-name)]
       [(TcNoString) true])))
 
-(define (lower-filter-reachable-decls-in-module
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
+(define (lower-used-types-add-type-decl-name
+  [used : hashmap.I64I64Map]
   [module : String]
-  [names : LowerNameCache]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]) : AstDeclList
-  (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [decl-path : String
-          (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathCons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList (box-get path-rest)]
-                path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
-        (match decl
-          [(AstDeclModule next-module)
-            (ast-decl-cons
-              decl
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                (intern-str next-module)
-                names
-                all-functions
-                reachable
-                dispatch-variants))]
-          [_
-            (if (lower-decl-kept-by-reach-or-dispatch?
-              entry-path
-              decl-path
-              module
-              all-functions
-              reachable
-              dispatch-variants
-              decl)
-              (ast-decl-cons
-                decl
-                (lower-filter-reachable-decls-in-module
-                  rest
-                  rest-paths
-                  entry-path
-                  module
-                  names
-                  all-functions
-                  reachable
-                  dispatch-variants))
-              (lower-filter-reachable-decls-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                names
-                all-functions
-                reachable
-                dispatch-variants))]))]))
+  [decl : AstDecl]) : hashmap.I64I64Map
+  (match decl
+    [(AstDeclDefEnum name _ _) (lower-used-type-name-add used module name)]
+    [(AstDeclDefEnumLifetimes name _ _ _)
+      (lower-used-type-name-add used module name)]
+    [(AstDeclDefStruct name _ _ _) (lower-used-type-name-add used module name)]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
+      (lower-used-type-name-add used module name)]
+    [(AstDeclUnsafe inner-box)
+      (lower-used-types-add-type-decl-name used module (box-get inner-box))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-used-types-add-type-decl-name used module (box-get inner-box))]
+    [_ used]))
 
-(define (lower-filter-reachable-paths-in-module
+(define (lower-used-types-path-seed-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
+  [reachable-paths : hashmap.I64I64Map]
+  [used : hashmap.I64I64Map]
+  [covered : bool]) : LowerUsedTypePathSeed
+  (match decls
+    [(AstDeclNil) (LowerUsedTypePathSeed used covered)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-used-types-path-seed-in-module
+              rest
+              rest-paths
+              entry-path
+              (intern-str next-module)
+              reachable-paths
+              used
+              covered)]
+          [_
+            (let
+              [is-type-decl : bool (lower-type-decl? decl)]
+              [path-covered : bool
+                (hashmap.i64-i64-map-contains?
+                  reachable-paths
+                  (intern decl-path))]
+              (lower-used-types-path-seed-in-module
+                rest
+                rest-paths
+                entry-path
+                module
+                reachable-paths
+                (if (and is-type-decl path-covered)
+                  (lower-used-types-add-type-decl-name used module decl)
+                  used)
+                (and covered (or (not is-type-decl) path-covered))))]))]))
+
+(define (lower-used-types-from-kept-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
   [all-functions : hashmap.StringI64Map]
   [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]) : AstDeclPathList
+  [dispatch-variants : hashmap.StringI64Map]
+  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
   (match decls
-    [(AstDeclNil) AstDeclPathNil]
+    [(AstDeclNil) used]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) (box-get path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-used-types-from-kept-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              (intern-str next-module)
+              all-functions
+              reachable
+              dispatch-variants
+              used)]
+          [_
+            (lower-used-types-from-kept-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              all-functions
+              reachable
+              dispatch-variants
+              (if (lower-runtime-decl-kept-by-reach-or-dispatch?
+                entry-path
+                decl-path
+                module
+                all-functions
+                reachable
+                dispatch-variants
+                decl)
+                (lower-used-types-add-kept-runtime-decl used module decl)
+                used))]))]))
+
+(define (lower-used-types-add-stdlib-arena-support-deps
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [name : i64]) : hashmap.I64I64Map
+  ;; `in-arena` and allocation lowering use the arena mark support type even
+  ;; when source signatures only mention the public Arena wrapper.
+  (if (and
+    (string.string-eq module "stdlib.arena")
+    (string.string-eq (intern-str name) "Arena"))
+    (lower-used-type-name-add used module (intern "ArenaMark"))
+    used))
+
+(define (lower-used-types-add-type-decl-deps
+  [used : hashmap.I64I64Map]
+  [module : String]
+  [decl : AstDecl]) : hashmap.I64I64Map
+  (match decl
+    [(AstDeclDefEnum _ _ variants)
+      (lower-used-types-add-variant-list used module variants)]
+    [(AstDeclDefEnumLifetimes _ _ _ variants)
+      (lower-used-types-add-variant-list used module variants)]
+    [(AstDeclDefStruct name _ _ fields)
+      (lower-used-types-add-field-list
+        (lower-used-types-add-stdlib-arena-support-deps used module name)
+        module
+        fields)]
+    [(AstDeclDefStructLifetimes _ _ _ _ fields)
+      (lower-used-types-add-field-list used module fields)]
+    [(AstDeclUnsafe inner-box)
+      (lower-used-types-add-type-decl-deps used module (box-get inner-box))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (lower-used-types-add-type-decl-deps used module (box-get inner-box))]
+    [_ used]))
+
+(define (lower-used-types-add-type-decl-deps-in-module
+  [decls : AstDeclList]
+  [module : String]
+  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
+  (match decls
+    [(AstDeclNil) used]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-used-types-add-type-decl-deps-in-module
+              rest
+              (intern-str next-module)
+              used)]
+          [_
+            (lower-used-types-add-type-decl-deps-in-module
+              rest
+              module
+              (if (and
+                (lower-type-decl? decl)
+                (or
+                  (lower-comptime-only-module? module)
+                  (lower-type-decl-used? module used decl)))
+                (lower-used-types-add-type-decl-deps used module decl)
+                used))]))]))
+
+(define (lower-used-types-expand-fixed
+  [decls : AstDeclList]
+  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
+  (let
+    [current : hashmap.I64I64Map used]
+    [iterations : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [before : i64 (hashmap.i64-i64-map-len current)]
+          [next : hashmap.I64I64Map
+            (lower-used-types-add-type-decl-deps-in-module decls "" current)]
+          (begin
+            (set! current next)
+            (set! iterations (+ iterations 1))
+            (if (or
+              (= before (hashmap.i64-i64-map-len current))
+              (>= iterations 8))
+              (set! done true)
+              unit))))
+      current)))
+
+(define (lower-comptime-only-module? [module : String]) : bool
+  (string.string-eq module "stdlib.comptime"))
+
+(define (lower-decl-kept-by-reach-or-dispatch?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
+  [dispatch-variants : hashmap.StringI64Map]
+  [used-types : hashmap.I64I64Map]
+  [decl : AstDecl]) : bool
+  (if (lower-comptime-only-module? module)
+    true
+    (if (lower-type-decl? decl)
+      (lower-type-decl-used? module used-types decl)
+      (lower-runtime-decl-kept-by-reach-or-dispatch?
+        entry-path
+        decl-path
+        module
+        all-functions
+        reachable
+        dispatch-variants
+        decl))))
+
+(define (lower-filter-reachable-in-module
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [module : String]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
+  [dispatch-variants : hashmap.StringI64Map]
+  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
+  (match decls
+    [(AstDeclNil) (LowerFilteredReachable AstDeclNil AstDeclPathNil)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -6175,43 +7032,63 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (ast-decl-path-cons
-              decl-path
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                (intern-str next-module)
-                all-functions
-                reachable
-                dispatch-variants))]
-          [_
-            (if (lower-decl-kept-by-reach-or-dispatch?
+            (match (lower-filter-reachable-in-module
+              rest
+              rest-paths
               entry-path
-              decl-path
+              (intern-str next-module)
+              all-functions
+              reachable
+              dispatch-variants
+              used-types)
+              [(LowerFilteredReachable rest-decls rest-paths)
+                (LowerFilteredReachable
+                  (ast-decl-cons decl rest-decls)
+                  (ast-decl-path-cons decl-path rest-paths))])]
+          [_
+            (match (lower-filter-reachable-in-module
+              rest
+              rest-paths
+              entry-path
               module
               all-functions
               reachable
               dispatch-variants
-              decl)
-              (ast-decl-path-cons
-                decl-path
-                (lower-filter-reachable-paths-in-module
-                  rest
-                  rest-paths
+              used-types)
+              [(LowerFilteredReachable rest-decls rest-paths)
+                (if (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
+                  decl-path
                   module
                   all-functions
                   reachable
-                  dispatch-variants))
-              (lower-filter-reachable-paths-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                all-functions
-                reachable
-                dispatch-variants))]))]))
+                  dispatch-variants
+                  used-types
+                  decl)
+                  (LowerFilteredReachable
+                    (ast-decl-cons decl rest-decls)
+                    (ast-decl-path-cons decl-path rest-paths))
+                  (LowerFilteredReachable rest-decls rest-paths))])]))]))
+
+;; Keep decls and paths in lockstep so pruning does not repeat the same
+;; reachability predicate walk over the whole declaration list.
+(define (lower-filter-reachable-decls-and-paths
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [all-functions : hashmap.StringI64Map]
+  [reachable : hashmap.I64I64Map]
+  [dispatch-variants : hashmap.StringI64Map]
+  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
+  (lower-filter-reachable-in-module
+    decls
+    paths
+    entry-path
+    ""
+    all-functions
+    reachable
+    dispatch-variants
+    used-types))
 
 ;; The synthesized clone$<T> helpers (compiler_clone.tl) are referenced by
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
@@ -6391,77 +7268,110 @@
                 name-cache)]
             [result : LowerPrunedProgram
               (if (hashmap.string-i64-map-contains? all-functions "main")
-                (match (lower-reach-process
-                  all-functions
-                  name-cache
-                  body-index
-                  (lower-reach-global-decls
+                (begin
+                  (set!
+                    lower-reach-active-runtime-paths
+                    (hashmap.i64-i64-map-with-capacity 1024))
+                  (set!
+                    lower-reach-active-body-used-types
+                    (lower-used-types-precise-empty))
+                  (match (lower-reach-process
                     all-functions
                     name-cache
-                    (lower-reach-add-dispatch-variant-roots
+                    body-index
+                    (lower-reach-global-decls
                       all-functions
-                      decls
                       name-cache
-                      (lower-reach-add-clone-root-helpers
+                      (lower-reach-add-dispatch-variant-roots
                         all-functions
+                        decls
                         name-cache
-                        clone-roots
-                        (lower-reach-cleanup-metadata-roots-in-module
+                        (lower-reach-add-clone-root-helpers
                           all-functions
-                          decls
-                          paths
-                          entry-path
-                          ""
                           name-cache
-                          (lower-reach-add-export-roots-in-module
+                          clone-roots
+                          (lower-reach-cleanup-metadata-roots-in-module
+                            all-functions
                             decls
                             paths
                             entry-path
                             ""
-                            all-functions
-                            (lower-reach-add-logical
+                            name-cache
+                            (lower-reach-add-export-roots-in-module
+                              decls
+                              paths
+                              entry-path
+                              ""
                               all-functions
-                              (LowerReachState
-                                (hashmap.i64-i64-map-with-capacity 8192)
-                                LowerStringNil)
-                              "main")))))
-                    decls))
-                  [(LowerReachState reachable _)
-                    (let
-                      [scratch-head : i64 (tl_arena_current)]
-                      (begin
-                        ;; Materialize the pruned program back in the persistent
-                        ;; arena before rewinding the scratch arena.
-                        (unsafe
-                          (tl_arena_set prev-arena))
-                        (let
-                          [pruned : LowerPrunedProgram
-                            (LowerPrunedProgram
-                              (ast-program
-                                (lower-filter-reachable-decls-in-module
+                              (lower-reach-add-logical
+                                all-functions
+                                (LowerReachState
+                                  (hashmap.i64-i64-map-with-capacity 8192)
+                                  LowerStringNil)
+                                "main")))))
+                      decls))
+                    [(LowerReachState reachable _)
+                      (let
+                        [reachable-runtime-paths : hashmap.I64I64Map
+                          lower-reach-active-runtime-paths]
+                        [type-path-seed : LowerUsedTypePathSeed
+                          (lower-used-types-path-seed-in-module
+                            decls
+                            paths
+                            entry-path
+                            ""
+                            reachable-runtime-paths
+                            lower-reach-active-body-used-types
+                            true)]
+                        [used-types : hashmap.I64I64Map
+                          (match type-path-seed
+                            [(LowerUsedTypePathSeed
+                                reachable-path-type-names
+                                type-paths-covered)
+                              (if type-paths-covered
+                                (hashmap.i64-i64-map-with-capacity 8)
+                                (lower-used-types-expand-fixed
                                   decls
-                                  paths
-                                  entry-path
-                                  ""
-                                  name-cache
-                                  all-functions
-                                  reachable
-                                  dispatch-variants))
-                              (lower-filter-reachable-paths-in-module
+                                  (lower-used-types-from-kept-decls-in-module
+                                    decls
+                                    paths
+                                    entry-path
+                                    ""
+                                    all-functions
+                                    reachable
+                                    dispatch-variants
+                                    reachable-path-type-names)))])]
+                        [scratch-head : i64 (tl_arena_current)]
+                        (begin
+                          ;; Materialize the pruned program back in the persistent
+                          ;; arena before rewinding the scratch arena.
+                          (unsafe
+                            (tl_arena_set prev-arena))
+                          (let
+                            [filtered : LowerFilteredReachable
+                              (lower-filter-reachable-decls-and-paths
                                 decls
                                 paths
                                 entry-path
-                                ""
                                 all-functions
                                 reachable
-                                dispatch-variants))]
-                          [new-prev-arena : i64 (tl_arena_current)]
-                          (begin
-                            (unsafe
-                              (tl_arena_set scratch-head)
-                              (tl_region_reset mark)
-                              (tl_arena_set new-prev-arena))
-                            pruned))))])
+                                dispatch-variants
+                                used-types)]
+                            [pruned : LowerPrunedProgram
+                              (match filtered
+                                [(LowerFilteredReachable
+                                    filtered-decls
+                                    filtered-paths)
+                                  (LowerPrunedProgram
+                                    (ast-program filtered-decls)
+                                    filtered-paths)])]
+                            [new-prev-arena : i64 (tl_arena_current)]
+                            (begin
+                              (unsafe
+                                (tl_arena_set scratch-head)
+                                (tl_region_reset mark)
+                                (tl_arena_set new-prev-arena))
+                              pruned))))]))
                 (let
                   [scratch-head : i64 (tl_arena_current)]
                   (begin
@@ -49202,6 +50112,22 @@
             (if (string.string-eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
+          [(AstDeclDefEnum found _ _)
+            (if (string.string-eq (intern-str found) name)
+              true
+              (lower-test-decl-list-defines? rest name))]
+          [(AstDeclDefEnumLifetimes found _ _ _)
+            (if (string.string-eq (intern-str found) name)
+              true
+              (lower-test-decl-list-defines? rest name))]
+          [(AstDeclDefStruct found _ _ _)
+            (if (string.string-eq (intern-str found) name)
+              true
+              (lower-test-decl-list-defines? rest name))]
+          [(AstDeclDefStructLifetimes found _ _ _ _)
+            (if (string.string-eq (intern-str found) name)
+              true
+              (lower-test-decl-list-defines? rest name))]
           [(AstDeclComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
@@ -49322,6 +50248,258 @@
 (define (dead-helper) : i64 0)
 (unsafe (define (dead-unsafe) : i64 (dead-helper)))")
 
+(define (compiler-lower-type-decl-dce-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-def-enum
+        "UsedEnum"
+        AstEnumNoCleanup
+        (ast-variant-def-cons
+          (ast-variant-def "UsedA" AstTypeNil AstVariantPayloadCleanupNil)
+          AstVariantDefNil))
+      (ast-decl-cons
+        (ast-decl-def-enum
+          "DeadEnum"
+          AstEnumNoCleanup
+          (ast-variant-def-cons
+            (ast-variant-def "DeadA" AstTypeNil AstVariantPayloadCleanupNil)
+            AstVariantDefNil))
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "UsedBox"
+            AstStructReprDefault
+            AstStructNoCleanup
+            (ast-field-def-cons
+              (ast-field-def
+                "value"
+                (AstTyEnum (intern "UsedEnum"))
+                AstFieldNoCleanup)
+              AstFieldDefNil))
+          (ast-decl-cons
+            (ast-decl-def-struct
+              "DeadBox"
+              AstStructReprDefault
+              AstStructNoCleanup
+              (ast-field-def-cons
+                (ast-field-def "value" (AstTyI64) AstFieldNoCleanup)
+                AstFieldDefNil))
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyStruct (intern "UsedBox"))
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil)))))))
+
+(define (compiler-lower-type-decl-dce-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "types.tl"
+    (ast-decl-path-cons
+      "types.tl"
+      (ast-decl-path-cons
+        "types.tl"
+        (ast-decl-path-cons
+          "types.tl"
+          (ast-decl-path-cons "entry.tl" AstDeclPathNil))))))
+
+(define (compiler-lower-type-decl-dce-qualified-base-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-def-enum
+        "io.ResultIoString"
+        AstEnumNoCleanup
+        (ast-variant-def-cons
+          (ast-variant-def "OkIoString" AstTypeNil AstVariantPayloadCleanupNil)
+          AstVariantDefNil))
+      (ast-decl-cons
+        (ast-decl-def-enum
+          "io.DeadResult"
+          AstEnumNoCleanup
+          (ast-variant-def-cons
+            (ast-variant-def
+              "DeadResultA"
+              AstTypeNil
+              AstVariantPayloadCleanupNil)
+            AstVariantDefNil))
+        (ast-decl-cons
+          (ast-decl-def-fn
+            "main"
+            AstParamNil
+            (AstTyEnum (intern "ResultIoString"))
+            (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+          AstDeclNil)))))
+
+(define (compiler-lower-type-decl-dce-qualified-base-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "types.tl"
+    (ast-decl-path-cons
+      "types.tl"
+      (ast-decl-path-cons "entry.tl" AstDeclPathNil))))
+
+(define (compiler-lower-type-decl-dce-arena-support-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-module "stdlib.arena")
+      (ast-decl-cons
+        (ast-decl-def-struct
+          "Arena"
+          AstStructReprDefault
+          AstStructNoCleanup
+          (ast-field-def-cons
+            (ast-field-def "handle" (AstTyI64) AstFieldNoCleanup)
+            AstFieldDefNil))
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "ArenaMark"
+            AstStructReprDefault
+            AstStructNoCleanup
+            (ast-field-def-cons
+              (ast-field-def "handle" (AstTyI64) AstFieldNoCleanup)
+              AstFieldDefNil))
+          (ast-decl-cons
+            (ast-decl-def-struct
+              "DeadArenaPeer"
+              AstStructReprDefault
+              AstStructNoCleanup
+              (ast-field-def-cons
+                (ast-field-def "handle" (AstTyI64) AstFieldNoCleanup)
+                AstFieldDefNil))
+            (ast-decl-cons
+              (ast-decl-module "main")
+              (ast-decl-cons
+                (ast-decl-def-struct
+                  "ThreadBox"
+                  AstStructReprDefault
+                  AstStructNoCleanup
+                  (ast-field-def-cons
+                    (ast-field-def
+                      "owner"
+                      (AstTyStruct (intern "arena.Arena"))
+                      AstFieldNoCleanup)
+                    AstFieldDefNil))
+                (ast-decl-cons
+                  (ast-decl-def-fn
+                    "main"
+                    AstParamNil
+                    (AstTyStruct (intern "ThreadBox"))
+                    (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+                  AstDeclNil)))))))))
+
+(define (compiler-lower-type-decl-dce-arena-support-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "arena.tl"
+    (ast-decl-path-cons
+      "arena.tl"
+      (ast-decl-path-cons
+        "arena.tl"
+        (ast-decl-path-cons
+          "arena.tl"
+          (ast-decl-path-cons
+            "entry.tl"
+            (ast-decl-path-cons
+              "thread.tl"
+              (ast-decl-path-cons "entry.tl" AstDeclPathNil))))))))
+
+(define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
+  (let
+    [unit-expr : i64 (ast-node-push (AstExprLiteral (AstLitUnit)))]
+    [test-body : i64
+      (ast-expr-let
+        (ast-let-binding-cons
+          (ast-let-binding
+            "mark"
+            (AstSomeType (AstTyStruct (intern "ImportedMark")))
+            unit-expr)
+          AstLetBindingNil)
+        unit-expr)]
+    (ast-program
+      (ast-decl-cons
+        (ast-decl-def-struct
+          "ImportedMark"
+          AstStructReprDefault
+          AstStructNoCleanup
+          AstFieldDefNil)
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "DeadMark"
+            AstStructReprDefault
+            AstStructNoCleanup
+            AstFieldDefNil)
+          (ast-decl-cons
+            (ast-decl-test
+              "uses-imported-mark-annotation"
+              test-body
+              (AstSourceSpan 1 1 1 1))
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil)))))))
+
+(define (compiler-lower-type-decl-dce-test-body-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "types.tl"
+    (ast-decl-path-cons
+      "types.tl"
+      (ast-decl-path-cons
+        "entry.tl"
+        (ast-decl-path-cons "entry.tl" AstDeclPathNil)))))
+
+(define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
+  (ast-program
+    (ast-decl-cons
+      (ast-decl-module "struct.match.geom")
+      (ast-decl-cons
+        (ast-decl-def-struct
+          "QPoint"
+          AstStructReprDefault
+          AstStructNoCleanup
+          (ast-field-def-cons
+            (ast-field-def "x" (AstTyI64) AstFieldNoCleanup)
+            (ast-field-def-cons
+              (ast-field-def "y" (AstTyI64) AstFieldNoCleanup)
+              AstFieldDefNil)))
+        (ast-decl-cons
+          (ast-decl-def-struct
+            "DeadGeom"
+            AstStructReprDefault
+            AstStructNoCleanup
+            (ast-field-def-cons
+              (ast-field-def "value" (AstTyI64) AstFieldNoCleanup)
+              AstFieldDefNil))
+          (ast-decl-cons
+            (ast-decl-module "main")
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-expr-match
+                  (ast-node-push (AstExprLiteral (ast-lit-int 0)))
+                  (ast-match-arm-cons
+                    (ast-match-arm
+                      (ast-pat-variant
+                        "geom.QPoint"
+                        (ast-pattern-cons
+                          (ast-pat-binding "x")
+                          (ast-pattern-cons (ast-pat-binding "y") AstPatternNil)))
+                      (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+                    AstMatchArmNil)))
+              AstDeclNil)))))))
+
+(define (compiler-lower-type-decl-dce-body-pattern-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "geom.tl"
+    (ast-decl-path-cons
+      "geom.tl"
+      (ast-decl-path-cons
+        "geom.tl"
+        (ast-decl-path-cons
+          "entry.tl"
+          (ast-decl-path-cons "entry.tl" AstDeclPathNil))))))
+
 (define (compiler-lower-ast-dce-ok?) : bool
   (let
     [program : AstProgram (compiler-lower-ast-dce-program)]
@@ -49377,6 +50555,129 @@
                           (lower-test-decl-list-defines? kept "callback-target")
                           (not (lower-test-decl-list-defines? kept "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
+
+(define (compiler-lower-type-decl-dce-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 3)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "UsedBox")
+                (lower-test-decl-list-defines? kept "UsedEnum")
+                (not (lower-test-decl-list-defines? kept "DeadBox"))
+                (not (lower-test-decl-list-defines? kept "DeadEnum"))))])])))
+
+(define (compiler-lower-type-decl-dce-qualified-base-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-qualified-base-program)]
+    [paths : AstDeclPathList
+      (compiler-lower-type-decl-dce-qualified-base-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 2)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "io.ResultIoString")
+                (not (lower-test-decl-list-defines? kept "io.DeadResult"))))])])))
+
+(define (compiler-lower-type-decl-dce-arena-support-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-arena-support-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-arena-support-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ThreadBox")
+                (lower-test-decl-list-defines? kept "Arena")
+                (lower-test-decl-list-defines? kept "ArenaMark")
+                (not (lower-test-decl-list-defines? kept "DeadArenaPeer"))))])])))
+
+(define (compiler-lower-type-decl-dce-test-body-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-test-body-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-test-body-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (= (lower-test-decl-list-count kept) 3)
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "ImportedMark")
+                (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
+
+(define (compiler-lower-type-decl-dce-body-pattern-ok?) : bool
+  (let
+    [program : AstProgram (compiler-lower-type-decl-dce-body-pattern-program)]
+    [paths : AstDeclPathList (compiler-lower-type-decl-dce-body-pattern-paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls decls paths "entry.tl" LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines? kept "QPoint")
+                (not (lower-test-decl-list-defines? kept "DeadGeom"))))])])))
 
 (define (compiler-lower-macro-body-dce-ok?) : bool
   (let
@@ -49659,6 +50960,21 @@
         unit
         (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-qualified-base-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-arena-support-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-test-body-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-decl-dce-body-pattern-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-macro-body-dce-ok?)

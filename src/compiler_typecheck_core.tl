@@ -35333,6 +35333,7 @@
 
 (define (macro-identity-key-params
   [ctx : TcContext]
+  [fallback-module : String]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -35388,7 +35389,10 @@
                     [head-expr : AstExpr (ast-node-get head)]
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (if (tc-macro-type-param-kind? ty)
-                      (match (macro-type-arg ctx head-expr)
+                      (match (macro-type-arg-with-fallback
+                        ctx
+                        fallback-module
+                        head-expr)
                         [(OkMacroTypeArg resolved-ty)
                           (OkGenKey
                             (str_cat.str-cat
@@ -35397,7 +35401,10 @@
                             fuel)]
                         [(ErrMacroTypeArg diag) (ErrGenKey diag)])
                       (if (tc-macro-module-param-kind? ty)
-                        (match (macro-module-strategy-arg ctx head-expr)
+                        (match (macro-module-strategy-arg-with-fallback
+                          ctx
+                          fallback-module
+                          head-expr)
                           [(OkMacroModuleArg module)
                             (OkGenKey
                               (str_cat.str-cat
@@ -35415,6 +35422,7 @@
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
+                          fallback-module
                           rest-params
                           rest-args
                           env
@@ -35429,6 +35437,7 @@
 
 (define (macro-module-identity
   [ctx : TcContext]
+  [fallback-module : String]
   [macro-name : String]
   [definition-module : String]
   [params : AstMacroParamList]
@@ -35437,6 +35446,7 @@
   [call-expr : AstExpr]) : ResultGenKey
   (match (macro-identity-key-params
     ctx
+    fallback-module
     params
     args
     env
@@ -38513,6 +38523,19 @@
           (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
 
+(define (macro-type-arg-with-fallback
+  [ctx : TcContext]
+  [fallback-module : String]
+  [arg : AstExpr]) : ResultMacroTypeArg
+  (match (macro-type-arg ctx arg)
+    [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
+    [(ErrMacroTypeArg primary-diag)
+      (if (string.string-eq fallback-module (tc-context-module ctx))
+        (ErrMacroTypeArg primary-diag)
+        (match (macro-type-arg (tc-context-with-module ctx fallback-module) arg)
+          [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
+          [(ErrMacroTypeArg _) (ErrMacroTypeArg primary-diag)]))]))
+
 (define (macro-module-strategy-unknown-message [name : String]) : String
   (str_cat.str-cat
     "typecheck: unknown module strategy "
@@ -38555,6 +38578,21 @@
           (ctfe-diagnostic-at-expr
             arg
             "typecheck: Module macro operand expects a module name")))]))
+
+(define (macro-module-strategy-arg-with-fallback
+  [ctx : TcContext]
+  [fallback-module : String]
+  [arg : AstExpr]) : ResultMacroModuleArg
+  (match (macro-module-strategy-arg ctx arg)
+    [(OkMacroModuleArg module) (OkMacroModuleArg module)]
+    [(ErrMacroModuleArg primary-diag)
+      (if (string.string-eq fallback-module (tc-context-module ctx))
+        (ErrMacroModuleArg primary-diag)
+        (match (macro-module-strategy-arg
+          (tc-context-with-module ctx fallback-module)
+          arg)
+          [(OkMacroModuleArg module) (OkMacroModuleArg module)]
+          [(ErrMacroModuleArg _) (ErrMacroModuleArg primary-diag)]))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
   (match items
@@ -38836,6 +38874,7 @@
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [name : i64]
   [ty : AstType]
@@ -38845,13 +38884,16 @@
   [env : CtfeEnv]) : ResultMacroEnv
   (cond
     [(tc-macro-type-param-kind? ty)
-      (match (macro-type-arg ctx arg-expr)
+      (match (macro-type-arg-with-fallback ctx fallback-module arg-expr)
         [(OkMacroTypeArg resolved-ty)
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
         [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])]
     [(tc-macro-module-param-kind? ty)
-      (match (macro-module-strategy-arg ctx arg-expr)
+      (match (macro-module-strategy-arg-with-fallback
+        ctx
+        fallback-module
+        arg-expr)
         [(OkMacroModuleArg module)
           (OkMacroEnv
             (ctfe-env-extend-typed
@@ -38899,6 +38941,7 @@
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
 (define (macro-bind-params
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [params : AstMacroParamList]
   [args : AstExprList]
@@ -38935,6 +38978,7 @@
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (macro-bind-fixed-param
                       ctx
+                      fallback-module
                       type-env
                       pname
                       pty
@@ -38945,6 +38989,7 @@
                       [(OkMacroEnv next-env)
                         (macro-bind-params
                           ctx
+                          fallback-module
                           type-env
                           rest-params
                           rest-args
@@ -38957,6 +39002,7 @@
 ;; returned syntax value for expression, module, or declaration positions.
 (define (macro-eval-transformer-expanded
   [ctx : TcContext]
+  [fallback-module : String]
   [type-env : TcTypeEnv]
   [macro-name : String]
   [params : AstMacroParamList]
@@ -38967,6 +39013,7 @@
     (tc-context-capture-active-pools! ctx)
     (match (macro-bind-params
       ctx
+      fallback-module
       type-env
       params
       expanded-args
@@ -39013,6 +39060,7 @@
     [(OkMacroExprList expanded-args)
       (macro-eval-transformer-expanded
         ctx
+        (tc-context-module ctx)
         type-env
         macro-name
         params
@@ -39432,6 +39480,7 @@
 
 (define (macro-vector-family-fast-decls
   [ctx : TcContext]
+  [fallback-module : String]
   [args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
   (match args
@@ -39448,7 +39497,10 @@
                 [(AstExprCons prefix-id rest3-box)
                   (match (box-get rest3-box)
                     [(AstExprNil)
-                      (match (macro-type-arg ctx type-expr)
+                      (match (macro-type-arg-with-fallback
+                        ctx
+                        fallback-module
+                        type-expr)
                         [(OkMacroTypeArg elem-ty)
                           (match (macro-vf-name-expr vec-expr)
                             [(TcSomeString vec-name)
@@ -39608,6 +39660,7 @@
               (tc-context-capture-active-pools! ctx)
               (match (macro-bind-params
                 ctx
+                (tc-context-module ctx)
                 type-env
                 params
                 expanded-args
@@ -40719,7 +40772,7 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(OkMacroCallDeclModule maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
@@ -40734,6 +40787,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            call-module
                             macro-name
                             definition-module
                             params
@@ -40746,6 +40800,7 @@
                                 definition-module)
                                 (match (macro-vector-family-fast-decls
                                   call-ctx
+                                  call-module
                                   expanded-args
                                   call-expr)
                                   [(OkMacroParsedDecls generated)
@@ -40768,6 +40823,7 @@
                                     (ErrMacroDeclExpansion diag)])
                                 (match (macro-eval-transformer-expanded
                                   call-ctx
+                                  call-module
                                   global-env
                                   macro-name
                                   params
@@ -40853,7 +40909,7 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(OkMacroCallDeclModule maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
@@ -40868,6 +40924,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            call-module
                             macro-name
                             definition-module
                             params
@@ -40877,6 +40934,7 @@
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer-expanded
                                 call-ctx
+                                call-module
                                 global-env
                                 macro-name
                                 params

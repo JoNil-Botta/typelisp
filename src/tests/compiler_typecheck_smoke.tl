@@ -1199,6 +1199,21 @@
 (define (main) : i64
   (user.score (user.make 42)))")
 
+(define (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source) : String
+  "(import stdlib.json)
+(import stdlib.vector)
+(defmacro (json-vector-user) : Module
+  `(begin
+    (module generated.json_vector_user)
+    (import (vector json.Json) as jvec)
+    (define (score) : i64
+      (let
+        [items : jvec.Vec (jvec.new)]
+        (jvec.len (& items))))))
+(import (json-vector-user) as user)
+(define (main) : i64
+  (user.score))")
+
 (define (compiler-typecheck-smoke-module-macro-strategy-alias-source) : String
   "(module toy.format)
 (defmacro (emit-i64 [value : i64]) : i64
@@ -1336,6 +1351,8 @@
       (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-strategy-alias-source))
     (compiler-typecheck-ok?

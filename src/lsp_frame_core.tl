@@ -6,6 +6,7 @@
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.str_cat)
+(import stdlib.byte_buf)
 (import stdlib.json)
 (import stdlib.vector)
 (import "compiler_check_core.tl")
@@ -421,17 +422,17 @@
     [found : i64 -1]
     [done : bool false]
     (begin
-      (while (< i (lsp-documents-len docs))
+      (while (< i (lsp-documents-len (& docs)))
         (if done
-          (set! i (lsp-documents-len docs))
+          (set! i (lsp-documents-len (& docs)))
           (let
             [doc : LspDocument
-              (lsp-documents-get docs i (lsp-document-fallback))]
+              (lsp-documents-get (& docs) i (lsp-document-fallback))]
             (if (string.string-eq (struct-get doc uri) uri)
               (begin
                 (set! found i)
                 (set! done true)
-                (set! i (lsp-documents-len docs)))
+                (set! i (lsp-documents-len (& docs))))
               (set! i (+ i 1))))))
       found)))
 
@@ -452,7 +453,7 @@
     (if (>= index 0)
       (let
         [old-doc : LspDocument
-          (lsp-documents-get docs index (lsp-document-fallback))]
+          (lsp-documents-get (& docs) index (lsp-document-fallback))]
         [old-text : String (struct-get old-doc text)]
         [old-decls : LspDeclList (struct-get old-doc decls)]
         [old-decls-valid : bool (struct-get old-doc decls-valid)]
@@ -464,39 +465,47 @@
           (if (string.string-eq old-text text)
             old-decls-valid
             false)]
-        (lsp-documents-set!
-          docs
-          index
-          (LspDocument uri path text diagnostic-uri new-decls new-decls-valid)))
+        (begin
+          (lsp-documents-set!
+            (&mut docs)
+            index
+            (LspDocument uri path text diagnostic-uri new-decls new-decls-valid))
+          docs))
       (let
         [doc : LspDocument
           (LspDocument uri path text diagnostic-uri (lsp-decl-list-new) false)]
-        (if (>= (lsp-documents-len docs) lsp-documents-max-capacity)
+        (if (>= (lsp-documents-len (& docs)) lsp-documents-max-capacity)
           (begin
             (lsp-documents-shift-left! docs 0)
-            (lsp-documents-set! docs (- (lsp-documents-len docs) 1) doc)
+            (lsp-documents-set!
+              (&mut docs)
+              (- (lsp-documents-len (& docs)) 1)
+              doc)
             docs)
-          (lsp-documents-push docs doc))))))
+          (begin
+            (lsp-documents-push (&mut docs) doc)
+            docs))))))
 
 (define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
   (let
     [i : i64 index]
-    [last : i64 (- (lsp-documents-len docs) 1)]
+    [last : i64 (- (lsp-documents-len (& docs)) 1)]
     (while (< i last)
-      (begin
-        (lsp-documents-set!
-          docs
-          i
-          (lsp-documents-get docs (+ i 1) (lsp-document-fallback)))
-        (set! i (+ i 1))))))
+      (let
+        [next : LspDocument
+          (lsp-documents-get (& docs) (+ i 1) (lsp-document-fallback))]
+        (begin
+          (lsp-documents-set! (&mut docs) i next)
+          (set! i (+ i 1)))))))
 
 (define (lsp-documents-remove-index [docs : LspDocuments] [index : i64]) : LspDocuments
   (if (if (>= index 0)
-    (< index (lsp-documents-len docs))
+    (< index (lsp-documents-len (& docs)))
     false)
     (begin
       (lsp-documents-shift-left! docs index)
-      (LspDocuments (lsp-documents-slots docs) (- (lsp-documents-len docs) 1)))
+      (set! (struct-get docs len) (- (lsp-documents-len (& docs)) 1))
+      docs)
     docs))
 
 (define (lsp-documents-remove [docs : LspDocuments] [uri : String]) : LspDocuments
@@ -508,7 +517,7 @@
     (if (>= index 0)
       (let
         [doc : LspDocument
-          (lsp-documents-get docs index (lsp-document-fallback))]
+          (lsp-documents-get (& docs) index (lsp-document-fallback))]
         (FoundLspDocument
           (struct-get doc path)
           (struct-get doc text)
@@ -561,7 +570,7 @@
           "diag10"))
       (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
       (and
-        (= (lsp-documents-len docs) lsp-documents-max-capacity)
+        (= (lsp-documents-len (& docs)) lsp-documents-max-capacity)
         (lsp-documents-smoke-missing? docs "file:///doc00.tl")
         (lsp-documents-smoke-text-eq?
           docs
@@ -1550,10 +1559,11 @@
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspDefLocation
-  (if (>= idx (lsp-documents-len docs))
+  (if (>= idx (lsp-documents-len (& docs)))
     MissingDefLoc
     (let
-      [doc : LspDocument (lsp-documents-get docs idx (lsp-document-fallback))]
+      [doc : LspDocument
+        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
       (if (string.string-eq (struct-get doc uri) current-uri)
         (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))
         (let
@@ -2156,13 +2166,15 @@
   [docs : LspDocuments]
   [idx : i64]
   [acc : vector.StringVec]) : vector.StringVec
-  (if (>= idx (lsp-documents-len docs))
+  (if (>= idx (lsp-documents-len (& docs)))
     acc
     (lsp-collect-def-names-all
       docs
       (+ idx 1)
       (lsp-collect-def-names
-        (struct-get (lsp-documents-get docs idx (lsp-document-fallback)) text)
+        (struct-get
+          (lsp-documents-get (& docs) idx (lsp-document-fallback))
+          text)
         acc))))
 
 (define (lsp-completion-respond [id : json.Json] [docs : LspDocuments]) : unit
@@ -2681,10 +2693,11 @@
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspDefSource
-  (if (>= idx (lsp-documents-len docs))
+  (if (>= idx (lsp-documents-len (& docs)))
     MissingDefSource
     (let
-      [doc : LspDocument (lsp-documents-get docs idx (lsp-document-fallback))]
+      [doc : LspDocument
+        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
       (if (string.string-eq (struct-get doc uri) current-uri)
         (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))
         (let
@@ -2938,10 +2951,11 @@
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspVariantHit
-  (if (>= idx (lsp-documents-len docs))
+  (if (>= idx (lsp-documents-len (& docs)))
     MissingVariant
     (let
-      [doc : LspDocument (lsp-documents-get docs idx (lsp-document-fallback))]
+      [doc : LspDocument
+        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
       (if (string.string-eq (struct-get doc uri) current-uri)
         (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))
         (match (lsp-enum-of-variant (struct-get doc text) needle)
@@ -3447,20 +3461,18 @@
                           (lsp-line-col-cache-at-offset! lc-cache text name-off)]
                         [form-end-lc : LspLineCol
                           (lsp-line-col-cache-at-offset! lc-cache text form-end)]
-                        (set!
-                          result
-                          (lsp-decl-list-push
-                            result
-                            (LspDeclEntry
-                              kind
-                              name
-                              (struct-get name-lc line)
-                              (struct-get name-lc col)
-                              (string.string-length name)
-                              (struct-get form-start-lc line)
-                              (struct-get form-start-lc col)
-                              (struct-get form-end-lc line)
-                              (struct-get form-end-lc col)))))
+                        (lsp-decl-list-push
+                          (&mut result)
+                          (LspDeclEntry
+                            kind
+                            name
+                            (struct-get name-lc line)
+                            (struct-get name-lc col)
+                            (string.string-length name)
+                            (struct-get form-start-lc line)
+                            (struct-get form-start-lc col)
+                            (struct-get form-end-lc line)
+                            (struct-get form-end-lc col))))
                       unit))
                   unit)
                 (set! i (+ i 1)))]
@@ -3494,7 +3506,7 @@
               (if (>= idx 0)
                 (let
                   [doc : LspDocument
-                    (lsp-documents-get docs idx (lsp-document-fallback))]
+                    (lsp-documents-get (& docs) idx (lsp-document-fallback))]
                   (FoundLspDocumentDecls
                     (struct-get doc path)
                     (struct-get doc text)
@@ -3517,7 +3529,7 @@
       (if (>= idx 0)
         (begin
           (lsp-documents-set!
-            docs
+            (&mut docs)
             idx
             (LspDocument
               uri
@@ -3554,11 +3566,11 @@
 
 ;; Helper: build json.Json array of declaration names from LspDeclList
 (define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len decls))
+  (if (>= idx (lsp-decl-list-len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get decls idx (lsp-decl-entry-fallback))]
+        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
       (lsp-json-list-cons
         (json.JsonString name)
@@ -3566,11 +3578,11 @@
 
 ;; Helper: build json.Json array of all declarations with metadata
 (define (lsp-decls-to-json-list [decls : LspDeclList] [idx : i64]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len decls))
+  (if (>= idx (lsp-decl-list-len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get decls idx (lsp-decl-entry-fallback))]
+        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
       [obj : json.Json
         (lsp-json-object
           (lsp-json-member
@@ -3593,6 +3605,25 @@
 
 ;; Helper: replace text from (sl,sc) to (el,ec) with new-text
 ;; Positions are 1-based (from scanner), convert to 0-based for offset-at-position
+(define (lsp-edit-range-at-offset
+  [text : String]
+  [start-off : i64]
+  [end-off : i64]
+  [new-text : String]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [new-len : i64 (string.string-length new-text)]
+    [removed-len : i64 (- end-off start-off)]
+    [capacity : i64 (+ (- n removed-len) new-len)]
+    [buf : byte_buf.ByteBuf (byte_buf.byte-buf-with-capacity capacity)]
+    (begin
+      (set! buf (byte_buf.byte-buf-append-string-range buf text 0 start-off))
+      (set! buf (byte_buf.byte-buf-append-string buf new-text))
+      (set!
+        buf
+        (byte_buf.byte-buf-append-string-range buf text end-off (- n end-off)))
+      (byte_buf.byte-buf-to-string buf))))
+
 (define (lsp-edit-at-pos
   [text : String]
   [sl : i64]
@@ -3603,10 +3634,7 @@
   (let
     [start-off : i64 (lsp-offset-at-position text (- sl 1) (- sc 1))]
     [end-off : i64 (lsp-offset-at-position text (- el 1) (- ec 1))]
-    [before : String (string.substring text 0 start-off)]
-    [after : String
-      (string.substring text end-off (- (string.string-length text) end-off))]
-    (str_cat.str-cat before new-text after)))
+    (lsp-edit-range-at-offset text start-off end-off new-text)))
 
 ;; tl/listFunctions - List all top-level function names in a document
 (define (lsp-handle-tl-list-functions
@@ -3655,7 +3683,7 @@
             [kind-param : String
               (lsp-json-string-field-default params "kind" "")]
             [i : i64 0]
-            [n : i64 (lsp-decl-list-len decls)]
+            [n : i64 (lsp-decl-list-len (& decls))]
             [found : bool false]
             [result-line : i64 0]
             [result-col : i64 0]
@@ -3663,7 +3691,7 @@
               (while (and (< i n) (not found))
                 (let
                   [entry : LspDeclEntry
-                    (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+                    (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
                   (if (and
                     (string.string-eq (struct-get entry name) name)
                     (or
@@ -3765,13 +3793,13 @@
 (define (lsp-decl-list-find-name [decls : LspDeclList] [name : String]) : i64
   (let
     [i : i64 0]
-    [n : i64 (lsp-decl-list-len decls)]
+    [n : i64 (lsp-decl-list-len (& decls))]
     [found : i64 -1]
     (begin
       (while (and (< i n) (= found -1))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.string-eq (struct-get entry name) name)
             (set! found i)
             (set! i (+ i 1)))))
@@ -3819,9 +3847,9 @@
       [else
         (let
           [found-entry : LspDeclEntry
-            (lsp-decl-list-get decls found-idx (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) found-idx (lsp-decl-entry-fallback))]
           [dest-entry : LspDeclEntry
-            (lsp-decl-list-get decls dest-idx (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) dest-idx (lsp-decl-entry-fallback))]
           [result : String (lsp-move-form-after text found-entry dest-entry)]
           (lsp-write-structural-edit-success id docs result))])))
 
@@ -3834,7 +3862,7 @@
   [direction : String]) : LspHandleResult
   (let
     [found-idx : i64 (lsp-decl-list-find-name decls name)]
-    [n : i64 (lsp-decl-list-len decls)]
+    [n : i64 (lsp-decl-list-len (& decls))]
     [target-idx : i64
       (if (string.string-eq direction "up")
         (- found-idx 1)
@@ -3853,9 +3881,9 @@
       [else
         (let
           [found-entry : LspDeclEntry
-            (lsp-decl-list-get decls found-idx (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) found-idx (lsp-decl-entry-fallback))]
           [target-entry : LspDeclEntry
-            (lsp-decl-list-get decls target-idx (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) target-idx (lsp-decl-entry-fallback))]
           [found-first : bool (< found-idx target-idx)]
           [first-entry : LspDeclEntry
             (if found-first
@@ -3947,13 +3975,13 @@
         [(OkLspJsonText name)
           (let
             [i : i64 0]
-            [n : i64 (lsp-decl-list-len decls)]
+            [n : i64 (lsp-decl-list-len (& decls))]
             [found-idx : i64 -1]
             (begin
               (while (and (< i n) (= found-idx -1))
                 (let
                   [entry : LspDeclEntry
-                    (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+                    (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
                   (if (string.string-eq (struct-get entry name) name)
                     (set! found-idx i)
                     (set! i (+ i 1)))))
@@ -3964,7 +3992,7 @@
                 (let
                   [entry : LspDeclEntry
                     (lsp-decl-list-get
-                      decls
+                      (& decls)
                       found-idx
                       (lsp-decl-entry-fallback))]
                   [start-off : i64
@@ -4146,10 +4174,10 @@
                         [off : i64 (lsp-offset-at-position text line0 char0)]
                         [sym : String (lsp-symbol-at-offset text off)]
                         [bind-type : String
-                          (if (string-eq sym "")
+                          (if (string.string-eq sym "")
                             ""
                             (lsp-binding-type text (lsp-symbol-base sym) off))]
-                        (if (string-eq bind-type "")
+                        (if (string.string-eq bind-type "")
                           (begin
                             (lsp-write-response
                               id
@@ -4282,14 +4310,14 @@
 
 (define (lsp-decls-contain-name? [decls : LspDeclList] [needle : String]) : bool
   (let
-    [n : i64 (lsp-decl-list-len decls)]
+    [n : i64 (lsp-decl-list-len (& decls))]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.string-eq (struct-get entry name) needle)
             (set! found true)
             (set! i (+ i 1)))))
@@ -4468,7 +4496,7 @@
                   (lsp-validate-forms-error new-text)))
               (LspContinue docs))
             (let
-              [n : i64 (lsp-decl-list-len decls)]
+              [n : i64 (lsp-decl-list-len (& decls))]
               [result : String ""]
               (begin
                 (if (= n 0)
@@ -4476,7 +4504,7 @@
                   (let
                     [last-entry : LspDeclEntry
                       (lsp-decl-list-get
-                        decls
+                        (& decls)
                         (- n 1)
                         (lsp-decl-entry-fallback))]
                     (set!
@@ -5079,7 +5107,7 @@
                   [(OkLspJsonText new-pattern)
                     (let
                       [i : i64 0]
-                      [n : i64 (lsp-decl-list-len decls)]
+                      [n : i64 (lsp-decl-list-len (& decls))]
                       [found : bool false]
                       [result : String ""]
                       (begin
@@ -5087,7 +5115,7 @@
                           (let
                             [entry : LspDeclEntry
                               (lsp-decl-list-get
-                                decls
+                                (& decls)
                                 i
                                 (lsp-decl-entry-fallback))]
                             (if (string.string-eq (struct-get entry name) name)
@@ -5238,7 +5266,7 @@
   [decls : LspDeclList]) : LspEditResult
   (let
     [i : i64 0]
-    [n : i64 (lsp-decl-list-len decls)]
+    [n : i64 (lsp-decl-list-len (& decls))]
     [found : bool false]
     [result : String ""]
     [err : String ""]
@@ -5246,7 +5274,7 @@
       (while (and (< i n) (not found))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.string-eq (struct-get entry name) name)
             (begin
               (set! found true)
@@ -5335,7 +5363,7 @@
     (ErrLspEdit "oldPattern cannot be empty")
     (let
       [i : i64 0]
-      [n : i64 (lsp-decl-list-len decls)]
+      [n : i64 (lsp-decl-list-len (& decls))]
       [found : bool false]
       [result : String ""]
       [err : String ""]
@@ -5343,7 +5371,7 @@
         (while (and (< i n) (not found))
           (let
             [entry : LspDeclEntry
-              (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+              (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
             (if (string.string-eq (struct-get entry name) name)
               (begin
                 (set! found true)
@@ -5450,14 +5478,14 @@
         (lsp-validate-forms-error new-text)))
     (let
       [i : i64 0]
-      [n : i64 (lsp-decl-list-len decls)]
+      [n : i64 (lsp-decl-list-len (& decls))]
       [found : bool false]
       [result : String ""]
       (begin
         (while (and (< i n) (not found))
           (let
             [entry : LspDeclEntry
-              (lsp-decl-list-get decls i (lsp-decl-entry-fallback))]
+              (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
             (if (string.string-eq (struct-get entry name) name)
               (begin
                 (set!
@@ -5512,11 +5540,7 @@
           (if (> matches 1)
             (ErrLspEdit "oldText occurs more than once in document")
             (let
-              [before : String (string.substring text 0 found-at)]
-              [after-start : i64 (+ found-at old-len)]
-              [after : String
-                (string.substring text after-start (- n after-start))]
-              [replaced : String (str_cat.str-cat before new-text after)]
+              [replaced : String (string.string-replace text old-text new-text)]
               (if (not (lsp-text-is-valid-forms replaced))
                 (ErrLspEdit
                   (str_cat.str-cat
@@ -5737,14 +5761,8 @@
               [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
               (if (or (= form-end -1) (<= form-end offset))
                 (OkLspEdit text)
-                (let
-                  [before : String (string.substring text 0 form-start)]
-                  [after : String
-                    (string.substring
-                      text
-                      form-end
-                      (- (string.string-length text) form-end))]
-                  (OkLspEdit (str_cat.str-cat before new-text after)))))))))))
+                (OkLspEdit
+                  (lsp-edit-range-at-offset text form-start form-end new-text))))))))))
 
 ;; tl/replaceAt - Replace form at position (line, character)
 (define (lsp-handle-tl-structural-replace-at

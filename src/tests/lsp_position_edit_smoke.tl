@@ -110,9 +110,9 @@
     (if (and (= foo-idx 0) (= baz-idx 2))
       (let
         [foo-entry : LspDeclEntry
-          (lsp-decl-list-get decls foo-idx (lsp-decl-entry-fallback))]
+          (lsp-decl-list-get (& decls) foo-idx (lsp-decl-entry-fallback))]
         [baz-entry : LspDeclEntry
-          (lsp-decl-list-get decls baz-idx (lsp-decl-entry-fallback))]
+          (lsp-decl-list-get (& decls) baz-idx (lsp-decl-entry-fallback))]
         [moved : String
           (format-rules-render-source-width
             (lsp-move-form-after text foo-entry baz-entry)

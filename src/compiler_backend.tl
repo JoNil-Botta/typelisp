@@ -5668,6 +5668,12 @@
 ;; so basing word1 there keeps the regions disjoint and consistent across every
 ;; emission path. In stack-only mode (empty plan) `frame-slots` is just `vars`, so
 ;; the layout is unchanged.
+;;
+;; This base is STABLE across body emission because `frame-slots` depends only on
+;; the allocator plan (`plan-uses-callee-regs?`), not on any set mutated during
+;; emission: the scavenger only ever hands out callee registers the plan ALREADY
+;; saves (see scavenge-candidate-ok?), so the prologue's callee-save reservation --
+;; and hence this word1 base -- never grows partway through the body.
 (define (compiler-backend-group-word1-slot
   [var : i64]
   [vars : i64]
@@ -9942,8 +9948,8 @@
           (if (string-eq base-reg-in "")
             (compiler-backend-scavenge-reg
               dst
-              (compiler-backend-scavenge-exclude-caller-only scav-idx)
-              11
+              (compiler-backend-one-exclude scav-idx)
+              1
               "%r10")
             base-reg-in)]
         [addr : String
@@ -23151,8 +23157,34 @@
       (array-set! a 8 "%rbx")
       a)))
 
+(define (compiler-backend-callee-saved-reg? [reg : String]) : bool
+  (or
+    (string-eq reg "%r12")
+    (or
+      (string-eq reg "%r13")
+      (or
+        (string-eq reg "%r14")
+        (or
+          (string-eq reg "%r15")
+          (string-eq reg "%rbx"))))))
+
 ;; A candidate is usable as scratch iff: free at `point`, not excluded, and
 ;; (caller-saved OR already saved by the prologue).
+;;
+;; The third clause is essential for soundness. A callee-saved register belongs
+;; to the CALLER and must be preserved across this function. The prologue/epilogue
+;; only save+restore the callee registers the ALLOCATOR PLAN homes a value in
+;; (`plan-uses-reg?`), and that set is fixed BEFORE body emission. If the scavenger
+;; were allowed to hand out a callee register the plan does NOT save, the function
+;; would clobber the caller's value with no save/restore -- and dynamically adding
+;; it to the save set is itself unsound, because the prologue SAVE is emitted
+;; post-body (final set) while every RESTORE (each return, each tail call) is
+;; emitted inline DURING the body and sees only the set as it stood at that point,
+;; so an early return restores a partial set and corrupts the caller. Restricting
+;; callee picks to plan-saved registers keeps the save/restore set a pure function
+;; of the plan (stable, order-independent) and still gives the scavenger every
+;; callee register the allocator already pays to preserve, used as scratch only
+;; where the freeness query certifies no live value occupies it.
 (define (compiler-backend-scavenge-candidate-ok?
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -23164,7 +23196,11 @@
   [reg : String]) : bool
   (and
     (not (compiler-backend-scavenge-excluded? exclude exclude-n reg))
-    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)))
+    (and
+      (or
+        (not (compiler-backend-callee-saved-reg? reg))
+        (compiler-backend-plan-uses-reg? assignments reg))
+      (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg))))
 
 (define (compiler-backend-scavenge-pick-iter
   [starts : (Array i64)]
@@ -23198,11 +23234,11 @@
       exclude
       exclude-n
       (array-ref cands i))
-      (let
-        [picked : String (array-ref cands i)]
-        (begin
-          (compiler-backend-scavenge-mark-callee-used! picked)
-          picked))
+      ;; A picked callee-saved register is, by candidate-ok?, one the plan already
+      ;; saves -- so the prologue/epilogue (driven by the stable plan set) already
+      ;; preserve it for the caller. No dynamic save-set growth (that was unsound:
+      ;; post-body save vs inline partial-set restores).
+      (array-ref cands i)
       (compiler-backend-scavenge-pick-iter
         starts
         ends

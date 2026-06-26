@@ -20468,7 +20468,18 @@
   (OptReachWorklistCons i64 (Box OptReachWorklist)))
 
 (defenum OptReachState
-  (OptReachState hashmap.I64I64Map OptReachWorklist))
+  (OptReachState hashmap.I64I64Map OptReachWorklist hashmap.StringI64Map))
+
+(defenum OptPrunedProgram
+  (OptPrunedProgram CompilerIrGlobalList CompilerIrFunctionList))
+
+(define (opt-pruned-program-globals [pruned : OptPrunedProgram]) : CompilerIrGlobalList
+  (match pruned
+    [(OptPrunedProgram globals _) globals]))
+
+(define (opt-pruned-program-functions [pruned : OptPrunedProgram]) : CompilerIrFunctionList
+  (match pruned
+    [(OptPrunedProgram _ functions) functions]))
 
 (define (opt-function-index-capacity [count : i64]) : i64
   (if (< count 4)
@@ -24373,12 +24384,21 @@
 
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match state
-    [(OptReachState reachable worklist)
+    [(OptReachState reachable worklist globals)
       (if (hashmap.i64-i64-map-contains? reachable slot)
         state
         (OptReachState
           (hashmap.i64-i64-map-put reachable slot 1)
-          (OptReachWorklistCons slot (box worklist))))]))
+          (OptReachWorklistCons slot (box worklist))
+          globals))]))
+
+(define (opt-reach-add-global [state : OptReachState] [name : String]) : OptReachState
+  (match state
+    [(OptReachState reachable worklist globals)
+      (OptReachState
+        reachable
+        worklist
+        (hashmap.string-i64-map-put globals name 1))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : OptFunctionIndex]
@@ -24456,8 +24476,10 @@
   [state : OptReachState]
   [value : CompilerIrValue]) : OptReachState
   (match value
-    [(IrValueGlobal name) (opt-reach-add-function index state name)]
-    [(IrValueGlobalAddr name) (opt-reach-add-function index state name)]
+    [(IrValueGlobal name)
+      (opt-reach-add-function index (opt-reach-add-global state name) name)]
+    [(IrValueGlobalAddr name)
+      (opt-reach-add-function index (opt-reach-add-global state name) name)]
     [(IrValueFunction name) (opt-reach-add-function index state name)]
     [_ state]))
 
@@ -24624,7 +24646,8 @@
         index
         (opt-reach-call-args index state args)
         name)]
-    [(IrInstrStore _ value _) (opt-reach-value index state value)]
+    [(IrInstrStore name value _)
+      (opt-reach-value index (opt-reach-add-global state name) value)]
     [(IrInstrJump _) state]
     [(IrInstrBranch cond _ _) (opt-reach-value index state cond)]
     [(IrInstrReturn maybe) (opt-reach-maybe-value index state maybe)]
@@ -24701,12 +24724,13 @@
 
 (define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
-    [(OptReachState reachable worklist)
+    [(OptReachState reachable worklist globals)
       (match worklist
         [(OptReachWorklistNil) state]
         [(OptReachWorklistCons slot rest)
           (let
-            [popped : OptReachState (OptReachState reachable (box-get rest))]
+            [popped : OptReachState
+              (OptReachState reachable (box-get rest) globals)]
             (opt-reach-process
               index
               (opt-reach-function
@@ -24776,6 +24800,30 @@
           (compiler-ir-function-seq-to-list seq)
           reachable))]))
 
+(define (opt-runtime-global? [ty : AstType] [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueUnit)
+      (match ty
+        [(AstTyUnit) false]
+        [_ true])]
+    [_ false]))
+
+(define (opt-filter-reachable-globals
+  [globals : CompilerIrGlobalList]
+  [reachable : hashmap.StringI64Map]) : CompilerIrGlobalList
+  (match globals
+    [(IrGlobalNil) (IrGlobalNil)]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal name ty value)
+          (if (or
+            (opt-runtime-global? ty value)
+            (hashmap.string-i64-map-contains? reachable name))
+            (compiler-ir-global-cons
+              global
+              (opt-filter-reachable-globals (box-get rest) reachable))
+            (opt-filter-reachable-globals (box-get rest) reachable))])]))
+
 ;; Functions exported via #2143 are lowered to a `provided` IrExtern whose name
 ;; is the function's logical name. Such functions may be called only from outside
 ;; TypeLisp IR (e.g. the backend-emitted bounds/division/shift checks call the
@@ -24812,16 +24860,19 @@
           (set! i (+ i 1))))
       (string.substring name start (- n start)))))
 
-(define (opt-prune-unreachable-functions
+(define (opt-prune-unreachable-program
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : CompilerIrFunctionList
+  [externs : CompilerIrExternList]) : OptPrunedProgram
   (if (opt-function-list-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
       [reachable : hashmap.I64I64Map
         (hashmap.i64-i64-map-with-capacity
           (opt-function-index-capacity (opt-function-list-count functions)))]
+      [reachable-globals : hashmap.StringI64Map
+        (hashmap.string-i64-map-with-capacity
+          (opt-function-index-capacity (compiler-ir-global-list-count globals)))]
       (match (opt-reach-process
         index
         (opt-reach-globals
@@ -24831,12 +24882,21 @@
             externs
             (opt-reach-add-function
               index
-              (OptReachState reachable (OptReachWorklistNil))
+              (OptReachState reachable (OptReachWorklistNil) reachable-globals)
               "main"))
           globals))
-        [(OptReachState reachable-out _)
-          (opt-filter-reachable-functions index functions reachable-out)]))
-    functions))
+        [(OptReachState reachable-out _ reachable-globals-out)
+          (OptPrunedProgram
+            (opt-filter-reachable-globals globals reachable-globals-out)
+            (opt-filter-reachable-functions index functions reachable-out))]))
+    (OptPrunedProgram globals functions)))
+
+(define (opt-prune-unreachable-functions
+  [globals : CompilerIrGlobalList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerIrFunctionList
+  (match (opt-prune-unreachable-program globals functions externs)
+    [(OptPrunedProgram _ pruned-functions) pruned-functions]))
 
 (defenum OptLoopBceArgcScan
   (OptLoopBceArgcScan OptLoopBceExprEnv bool bool))
@@ -25644,13 +25704,20 @@
               (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
               (cfg compile-profile (compiler-opt-profile-start))
               (let
-                [pruned-functions : CompilerIrFunctionList
-                  (opt-prune-unreachable-functions
+                [pruned : OptPrunedProgram
+                  (opt-prune-unreachable-program
                     globals
                     reachable-functions
                     externs)]
+                [pruned-globals : CompilerIrGlobalList
+                  (opt-pruned-program-globals pruned)]
+                [pruned-functions : CompilerIrFunctionList
+                  (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
-                  (opt-build-program-summaries globals pruned-functions level)]
+                  (opt-build-program-summaries
+                    pruned-globals
+                    pruned-functions
+                    level)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
                     pruned-functions
@@ -25662,11 +25729,20 @@
                     (compiler-opt-profile-finish "functions"))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
-                    [final-functions : CompilerIrFunctionList
-                      (opt-prune-unreachable-functions
+                    [final-pruned
+                      : OptPrunedProgram
+                      ;; Keep scanning the original global initializers so a
+                      ;; function referenced only from one still follows the
+                      ;; existing reachability rule even if that global is
+                      ;; later filtered from the emitted program.
+                      (opt-prune-unreachable-program
                         globals
                         optimized-functions
                         externs)]
+                    [final-globals : CompilerIrGlobalList
+                      (opt-pruned-program-globals final-pruned)]
+                    [final-functions : CompilerIrFunctionList
+                      (opt-pruned-program-functions final-pruned)]
                     [scratch-reset-functions : CompilerIrFunctionList
                       (opt-scratch-reset-function-list-with-level
                         final-functions
@@ -25676,7 +25752,7 @@
                         compile-profile
                         (compiler-opt-profile-finish "post_prune"))
                       (IrProgram
-                        globals
+                        final-globals
                         (compiler-ir-function-list-compact
                           scratch-reset-functions)
                         externs)))))))))]))
@@ -25939,13 +26015,20 @@
                 (cfg compile-profile (compiler-opt-profile-finish "pre_prune"))
                 (cfg compile-profile (compiler-opt-profile-start))
                 (let
-                  [pruned-functions : CompilerIrFunctionList
-                    (opt-prune-unreachable-functions
+                  [pruned : OptPrunedProgram
+                    (opt-prune-unreachable-program
                       globals
                       reachable-functions
                       externs)]
+                  [pruned-globals : CompilerIrGlobalList
+                    (opt-pruned-program-globals pruned)]
+                  [pruned-functions : CompilerIrFunctionList
+                    (opt-pruned-program-functions pruned)]
                   [summaries : OptLoopBceSummaries
-                    (opt-build-program-summaries globals pruned-functions level)]
+                    (opt-build-program-summaries
+                      pruned-globals
+                      pruned-functions
+                      level)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
                       pruned-functions
@@ -25957,18 +26040,27 @@
                       (compiler-opt-profile-finish "functions"))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
-                      [final-functions : CompilerIrFunctionList
-                        (opt-prune-unreachable-functions
+                      [final-pruned
+                        : OptPrunedProgram
+                        ;; Keep scanning the original global initializers so a
+                        ;; function referenced only from one still follows the
+                        ;; existing reachability rule even if that global is
+                        ;; later filtered from the emitted program.
+                        (opt-prune-unreachable-program
                           globals
                           optimized-functions
                           externs)]
+                      [final-globals : CompilerIrGlobalList
+                        (opt-pruned-program-globals final-pruned)]
+                      [final-functions : CompilerIrFunctionList
+                        (opt-pruned-program-functions final-pruned)]
                       [scratch-reset-functions : CompilerIrFunctionList
                         (opt-scratch-reset-function-list-with-level
                           final-functions
                           level)]
                       [optimized : CompilerIrProgram
                         (IrProgram
-                          globals
+                          final-globals
                           (compiler-ir-function-list-compact
                             scratch-reset-functions)
                           externs)]
@@ -30181,6 +30273,22 @@
   (match program
     [(IrProgram _ funcs _) funcs]))
 
+(define (opt-program-globals [program : CompilerIrProgram]) : CompilerIrGlobalList
+  (match program
+    [(IrProgram globals _ _) globals]))
+
+(define (opt-global-list-defines?
+  [globals : CompilerIrGlobalList]
+  [name : String]) : bool
+  (match globals
+    [(IrGlobalNil) false]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal global-name _ _)
+          (if (string.string-eq global-name name)
+            true
+            (opt-global-list-defines? (box-get rest) name))])]))
+
 (define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
   (match (compiler-optimize-parse-level value)
     [(OkCompilerOptimizeLevel level) (= level expected)]
@@ -30249,21 +30357,25 @@
 
 (define (opt-global-dce-main-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (IrInstrCall 1 "helper" (IrCallArgsNil) (AstTyI64))
+    (IrInstrMov 3 (IrValueGlobal "used-global") (AstTyI64))
     (compiler-ir-instr-cons
-      (IrInstrCall
-        2
-        "tl_substring"
-        (compiler-ir-call-args-from-list
-          (compiler-ir-value-cons
-            (IrValueI64 0)
-            (compiler-ir-value-cons
-              (IrValueI64 0)
-              (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
-        (AstTyI64))
+      (IrInstrStore "stored-global" (IrValueI64 99) (AstTyI64))
       (compiler-ir-instr-cons
-        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-        (IrInstrNil)))))
+        (IrInstrCall 1 "helper" (IrCallArgsNil) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrCall
+            2
+            "tl_substring"
+            (compiler-ir-call-args-from-list
+              (compiler-ir-value-cons
+                (IrValueI64 0)
+                (compiler-ir-value-cons
+                  (IrValueI64 0)
+                  (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
+            (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+            (IrInstrNil)))))))
 
 (define (opt-global-dce-return-instrs [value : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -30274,7 +30386,15 @@
   (IrProgram
     (compiler-ir-global-cons
       (IrGlobal "callback" (AstTyI64) (IrValueGlobal "callback-target"))
-      (IrGlobalNil))
+      (compiler-ir-global-cons
+        (IrGlobal "used-global" (AstTyI64) (IrValueI64 3))
+        (compiler-ir-global-cons
+          (IrGlobal "stored-global" (AstTyI64) (IrValueI64 0))
+          (compiler-ir-global-cons
+            (IrGlobal "runtime-global" (AstTyI64) (IrValueUnit))
+            (compiler-ir-global-cons
+              (IrGlobal "dead-global" (AstTyI64) (IrValueI64 5))
+              (IrGlobalNil))))))
     (compiler-ir-function-cons
       (opt-test-function-named "main" (opt-global-dce-main-instrs))
       (compiler-ir-function-cons
@@ -30318,9 +30438,13 @@
     [level0-functions : CompilerIrFunctionList (opt-program-functions level0)]
     [level1-functions : CompilerIrFunctionList (opt-program-functions level1)]
     [no-main-functions : CompilerIrFunctionList (opt-program-functions no-main)]
+    [level0-globals : CompilerIrGlobalList (opt-program-globals level0)]
+    [level1-globals : CompilerIrGlobalList (opt-program-globals level1)]
     (and
       (= (compiler-ir-function-list-count level0-functions) 6)
       (= (compiler-ir-function-list-count level1-functions) 4)
+      (= (compiler-ir-global-list-count level0-globals) 5)
+      (= (compiler-ir-global-list-count level1-globals) 3)
       (opt-function-list-defines? level1-functions "main")
       (opt-function-list-defines? level1-functions "helper")
       (opt-function-list-defines? level1-functions "callback-target")
@@ -30332,6 +30456,11 @@
           level1-functions
           "C:/repo/stdlib/runtime.tl::tl-runtime-int-to-string"))
       (not (opt-function-list-defines? level1-functions "dead"))
+      (opt-global-list-defines? level1-globals "used-global")
+      (opt-global-list-defines? level1-globals "stored-global")
+      (opt-global-list-defines? level1-globals "runtime-global")
+      (not (opt-global-list-defines? level1-globals "dead-global"))
+      (not (opt-global-list-defines? level1-globals "callback"))
       (= (compiler-ir-function-list-count no-main-functions) 2))))
 
 (define (compiler-optimize-global-dce-self-test) : i64

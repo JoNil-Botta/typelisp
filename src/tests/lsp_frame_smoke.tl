@@ -1,18 +1,21 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.json)
 (import stdlib.string)
+(import stdlib.vector)
 (import "../lsp_frame_core.tl")
 
-(define (lsp-smoke-string-vec-contains? [items : StringVec] [needle : String]) : bool
+(define (lsp-smoke-string-vec-contains?
+  [items : vector.StringVec]
+  [needle : String]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
     (begin
-      (while (< idx (string-vec-len items))
-        (if (string.string-eq (string-vec-get items idx "") needle)
+      (while (< idx (vector.string-vec-len items))
+        (if (string.string-eq (vector.string-vec-get items idx "") needle)
           (begin
             (set! found true)
-            (set! idx (string-vec-len items)))
+            (set! idx (vector.string-vec-len items)))
           (set! idx (+ idx 1))))
       found)))
 
@@ -20,10 +23,11 @@
   (let
     [src : String
       "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : StringVec (lsp-collect-def-names src (string-vec-new))]
-    [keywords : StringVec (lsp-split-spaces (lsp-completion-keywords))]
-    [builtins : StringVec (lsp-split-spaces (lsp-completion-builtins))]
-    [types : StringVec (lsp-split-spaces (lsp-completion-types))]
+    [names : vector.StringVec
+      (lsp-collect-def-names src (vector.string-vec-new))]
+    [keywords : vector.StringVec (lsp-split-spaces (lsp-completion-keywords))]
+    [builtins : vector.StringVec (lsp-split-spaces (lsp-completion-builtins))]
+    [types : vector.StringVec (lsp-split-spaces (lsp-completion-types))]
     (and
       (lsp-smoke-string-vec-contains? names "square")
       (lsp-smoke-string-vec-contains? names "answer")
@@ -33,13 +37,15 @@
 
 (define (lsp-smoke-index-of [haystack : String] [needle : String]) : i64
   (let
-    [n : i64 (string-length haystack)]
-    [m : i64 (string-length needle)]
+    [n : i64 (string.string-length haystack)]
+    [m : i64 (string.string-length needle)]
     [i : i64 0]
     [found : i64 -1]
     (begin
       (while (and (< i n) (< found 0))
-        (if (and (<= (+ i m) n) (is-string-prefix-at (& haystack) (& needle) i))
+        (if (and
+          (<= (+ i m) n)
+          (string.is-string-prefix-at (& haystack) (& needle) i))
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -68,9 +74,9 @@
             (tc-inlay-hints-disable!)
             (and
               (= (json.json-list-count hints) 2)
-              (string-contains (& rendered) (& type-label))
-              (string-contains (& rendered) (& total-pos))
-              (string-contains (& rendered) (& next-pos)))))))))
+              (string.string-contains (& rendered) (& type-label))
+              (string.string-contains (& rendered) (& total-pos))
+              (string.string-contains (& rendered) (& next-pos)))))))))
 
 (define (lsp-formatting-smoke-ok?) : bool
   (let
@@ -84,9 +90,9 @@
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
           (and
-            (string-contains (& formatted) (& sig))
-            (string-contains (& rendered) (& newtext-key))
-            (string-contains (& rendered) (& range-key))))]
+            (string.string-contains (& formatted) (& sig))
+            (string.string-contains (& rendered) (& newtext-key))
+            (string.string-contains (& rendered) (& range-key))))]
       [(ErrFormatString _) false])))
 
 (define (lsp-check-smoke-ok?) : bool
@@ -94,14 +100,17 @@
     [ok-src : String "(define (main) : i64 42)"]
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
-      (match (compiler-check-source-with-roots "ok.tl" ok-src (string-vec-new))
+      (match (compiler-check-source-with-roots
+        "ok.tl"
+        ok-src
+        (vector.string-vec-new))
         [(OkCompilerCheck _) true]
         [(ErrCompilerCheck _) false])]
     [bad-result : bool
       (match (compiler-check-source-with-roots
         "bad.tl"
         bad-src
-        (string-vec-new))
+        (vector.string-vec-new))
         [(OkCompilerCheck _) false]
         [(ErrCompilerCheck _) true])]
     (and ok-result bad-result)))
@@ -115,7 +124,10 @@
       false
       (begin
         (tc-inlay-hints-enable!)
-        (match (compiler-check-source-with-roots "test.tl" src (string-vec-new))
+        (match (compiler-check-source-with-roots
+          "test.tl"
+          src
+          (vector.string-vec-new))
           [(OkCompilerCheck _) unit]
           [(ErrCompilerCheck _) unit])
         (let
@@ -132,7 +144,9 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set! found-ok (string-eq (tc-inlay-hint-type-at i) "i32"))
+                    (set!
+                      found-ok
+                      (string.string-eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let
@@ -140,7 +154,7 @@
               (if (>= near-idx 0)
                 (set!
                   near-ok
-                  (string-eq (tc-inlay-hint-type-at near-idx) "i32"))
+                  (string.string-eq (tc-inlay-hint-type-at near-idx) "i32"))
                 unit))
             (tc-inlay-hints-disable!)
             (and found-ok near-ok)))))))
@@ -154,12 +168,12 @@
         src
         "foo"
         0
-        (string-length src)
+        (string.string-length src)
         json.JsonListNil)]
     [rendered : String (json.json-stringify (lsp-json-array refs))]
     [count-ok : bool (= (json.json-list-count refs) 2)]
     [needle0 : String "\"line\":0"]
-    [line0-ok : bool (string-contains (& rendered) (& needle0))]
+    [line0-ok : bool (string.string-contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
 (define (lsp-document-decls-cache-empty-ok?) : bool
@@ -205,12 +219,12 @@
     (and
       (= (lsp-decl-list-len (& first-decls)) 1)
       (= (lsp-decl-list-len (& second-decls)) 2)
-      (string-eq (struct-get wide name) "wide")
+      (string.string-eq (struct-get wide name) "wide")
       (= (struct-get wide form-start-line) 5)
       (= (struct-get wide form-start-col) 1)
       (= (struct-get wide name-line) 5)
       (= (struct-get wide name-col) 10)
-      (string-eq (struct-get next name) "next")
+      (string.string-eq (struct-get next name) "next")
       (= (struct-get next form-start-line) 6)
       (= (struct-get next form-start-col) 1)
       (= (struct-get next name-line) 6)

@@ -1,5 +1,6 @@
-(import "../../stdlib/string.tl")
-(import "../../stdlib/io.tl")
+(import stdlib.string)
+(import stdlib.io)
+(import stdlib.vector)
 (import "../compiler_driver_core.tl")
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
@@ -396,14 +397,14 @@
                   (match decl
                     [(AstDeclDefFn fn-name _ _ body _)
                       (and
-                        (string-eq
+                        (string.string-eq
                           (intern-str fn-name)
                           (clone-helper-name name))
                         (match (ast-node-pool-context-expr-get pools body)
                           [(AstExprCall callee _)
                             (match (ast-node-pool-context-expr-get pools callee)
                               [(AstExprVar ctor)
-                                (string-eq (intern-str ctor) name)]
+                                (string.string-eq (intern-str ctor) name)]
                               [_ false])]
                           [_ false]))]
                     [_ false])]
@@ -447,10 +448,10 @@
               "CloneA")))))))
 
 (define (compiler-driver-state-smoke-specialize-source [n : i64]) : String
-  (string-append
+  (string.string-append
     "(define (scale [comptime n : i64] [x : i64]) : i64 (+ x n))
 (define (main) : i64 (scale "
-    (string-append (int->string n) " 35))")))
+    (string.string-append (string.int->string n) " 35))")))
 
 (define (compiler-driver-state-smoke-specialized-scale-body-ok?
   [pools : AstNodePoolContext]
@@ -465,7 +466,7 @@
             pools
             (ast-node-pool-context-expr-get pools left))
             [(AstExprVar name)
-              (if (string-eq (intern-str name) "x")
+              (if (string.string-eq (intern-str name) "x")
                 (match (compiler-driver-state-smoke-context-expr-unspan
                   pools
                   (ast-node-pool-context-expr-get pools right))
@@ -487,7 +488,9 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDefFn name _ _ body _)
-          (if (string-eq (intern-str name) "__tl_specialized_scale_i64_7_none")
+          (if (string.string-eq
+            (intern-str name)
+            "__tl_specialized_scale_i64_7_none")
             (compiler-driver-state-smoke-specialized-scale-body-ok? pools body)
             (compiler-driver-state-smoke-specialized-scale-decls-ok?
               pools
@@ -677,12 +680,12 @@
           ok)))))
 
 (define (compiler-driver-state-smoke-typecheck-macro-source [n : i64]) : String
-  (string-append
+  (string.string-append
     "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 (define (use-macro) : i64 (if (and2 true true) "
-    (string-append (int->string n) " 0))")))
+    (string.string-append (string.int->string n) " 0))")))
 
 (define (compiler-driver-state-smoke-typecheck-macro-with-pools
   [path : String]
@@ -708,7 +711,7 @@
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
             AstDeclPathNil
-            (string-vec-new)
+            (vector.string-vec-new)
             (tc-prefix-default-cache-scope)
             pools)
             [(OkCompilerTypecheck _)
@@ -937,7 +940,8 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (begin
       (compiler-load-session-cache-disable-for-test!)
       (compiler-driver-state-reset-file-state! state-a)
@@ -983,7 +987,7 @@
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
   [input-path : String]
-  [stdlib-roots : StringVec]) : bool
+  [stdlib-roots : vector.StringVec]) : bool
   (let
     [decoy-state : CompilerDriverState (compiler-driver-state-new)]
     (begin
@@ -1012,7 +1016,8 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -1042,17 +1047,18 @@
     [path : String "target/compiler_driver_emit_ir_core_macro.tl"]
     [fallback : String "compiler_driver_emit_ir_core_macro.tl"]
     [source : String (compiler-driver-state-smoke-emit-ir-core-macro-source)]
-    (match (try-write-file (& path) (& source))
-      [(OkIoUnit) path]
-      [(ErrIoUnit _)
+    (match (io.try-write-file (& path) (& source))
+      [(io.OkIoUnit) path]
+      [(io.ErrIoUnit _)
         (begin
-          (write-file fallback source)
+          (io.write-file fallback source)
           fallback)])))
 
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
     [needle : String "score"]
@@ -1068,8 +1074,8 @@
         (compiler-cfg-empty))
         [(OkCompilerDriver summary)
           (and
-            (> (string-length summary) 0)
-            (string-contains (& summary) (& needle)))]
+            (> (string.string-length summary) 0)
+            (string.string-contains (& summary) (& needle)))]
         [(ErrCompilerDriver _) false]))))
 
 (define (main) : i64

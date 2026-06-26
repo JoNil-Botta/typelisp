@@ -1199,6 +1199,84 @@
 (define (main) : i64
   (user.score (user.make 42)))")
 
+(define (compiler-typecheck-smoke-module-macro-strategy-alias-source) : String
+  "(module toy.format)
+(defmacro (emit-i64 [value : i64]) : i64
+  `(+ ,value 1))
+(module app)
+(import toy.format as fmt)
+(defmacro (make [format : Module]) : Module
+  (let
+    [emit : Expr (module-hook format \"emit-i64\")]
+    `(begin
+      (module generated.strategy_alias)
+      (define (answer) : i64 (,emit 41)))))
+(import (make fmt) as gen)
+(define (main) : i64 (gen.answer))")
+
+(define (compiler-typecheck-smoke-module-macro-strategy-dedup-source) : String
+  "(module toy.format)
+(defmacro (emit-i64 [value : i64]) : i64
+  `(+ ,value 1))
+(module app)
+(import toy.format)
+(import toy.format as fmt)
+(defmacro (make [format : Module]) : Module
+  (let
+    [emit : Expr (module-hook format \"emit-i64\")]
+    `(begin
+      (module generated.strategy_dedup)
+      (define (answer) : i64 (,emit 41)))))
+(import (make fmt) as a)
+(import (make toy.format) as b)
+(define (main) : i64 (+ (a.answer) (b.answer)))")
+
+(define (compiler-typecheck-smoke-module-macro-strategy-missing-hook-source) : String
+  "(module toy.empty)
+(define (marker) : i64 0)
+(module app)
+(import toy.empty as fmt)
+(defmacro (make [format : Module]) : Module
+  (let
+    [emit : Expr (module-hook format \"emit-i64\")]
+    `(begin
+      (module generated.strategy_missing_hook)
+      (define (answer) : i64 (,emit 41)))))
+(import (make fmt) as gen)
+(define (main) : i64 (gen.answer))")
+
+(define (compiler-typecheck-smoke-module-macro-strategy-unresolved-source) : String
+  "(defmacro (make [format : Module]) : Module
+  `(begin
+    (module generated.strategy_unresolved)
+    (define (answer) : i64 0)))
+(import (make missing) as gen)
+(define (main) : i64 (gen.answer))")
+
+(define (compiler-typecheck-smoke-module-macro-strategy-vector-hook-source) : String
+  "(module generated.strategy_vector_hook_app)
+(import stdlib.comptime)
+(import stdlib.vector)
+(defmacro (make [factory : Module]) : Module
+  (let
+    [vector-macro : Expr (module-hook factory \"vector\")]
+    `(begin
+      (module generated.strategy_vector_hook)
+      (defstruct T
+        (value i64))
+      (import (,vector-macro T) as vec)
+      (define (make [value : i64]) : T
+        (T value))
+      (define (score [value : T]) : i64
+        (let
+          [items : vec.Vec (vec.new)]
+          (begin
+            (vec.push (&mut items) value)
+            (struct-get (vec.get (& items) 0 (T 0)) value)))))))
+(import (make vector) as gen)
+(define (main) : i64
+  (gen.score (gen.make 42)))")
+
 (define (compiler-typecheck-smoke-module-macro-extension-source) : String
   "(defmacro (base [key : String]) : Module
   `(begin
@@ -1258,6 +1336,18 @@
       (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-strategy-alias-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-strategy-dedup-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-strategy-missing-hook-source)
+      "typecheck: strategy module toy.empty does not export hook emit-i64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-module-macro-strategy-unresolved-source)
+      "typecheck: unknown module strategy missing; import the module or use a visible dotted module alias")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-strategy-vector-hook-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-extension-source))
     (compiler-typecheck-error-ok?

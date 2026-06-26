@@ -7,11 +7,11 @@
 
 (defenum ResultCompilerCheck
   (OkCompilerCheck CompilerTypecheckSummary)
-  (ErrCompilerCheck CompilerDiagnostic))
+  (ErrCompilerCheck (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerCheckWithPaths
   (OkCompilerCheckWithPaths CompilerTypecheckSummary AstDeclPathList)
-  (ErrCompilerCheckWithPaths CompilerDiagnostic))
+  (ErrCompilerCheckWithPaths (Box CompilerDiagnostic)))
 
 (cfg
   compile-profile
@@ -84,7 +84,8 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ErrCompilerCheck
-            (compiler-check-diagnostic-with-fallback-path diag path)))])))
+            (box
+              (compiler-check-diagnostic-with-fallback-path (box-get diag) path))))])))
 
 (define (compiler-check-program-with-paths
   [path : String]
@@ -389,7 +390,7 @@
   (match (compiler-check-source path source)
     [(OkCompilerCheck _) false]
     [(ErrCompilerCheck diag)
-      (string.string-eq (compiler-diagnostic-message diag) want)]))
+      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
@@ -437,7 +438,7 @@
   (match (compiler-check-direct-source path source)
     [(OkCompilerCheck _) false]
     [(ErrCompilerCheck diag)
-      (string.string-eq (compiler-diagnostic-message diag) want)]))
+      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
@@ -593,11 +594,11 @@
     [(OkCompilerCheck _) false]
     [(ErrCompilerCheck diag)
       (if (string.string-eq
-        (compiler-diagnostic-path diag)
+        (compiler-diagnostic-path (box-get diag))
         "docs/examples/bad_type.tl")
-        (if (= (compiler-diagnostic-line diag) 1)
+        (if (= (compiler-diagnostic-line (box-get diag)) 1)
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "typecheck: return type mismatch")
           false)
         false)]))

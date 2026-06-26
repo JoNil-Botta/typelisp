@@ -120,8 +120,10 @@
         (ErrPackageSourceSet
           (str_cat.str-cat
             "invalid package manifest '"
-            (compiler-diagnostic-path diag)
-            (string.string-append "': " (compiler-diagnostic-message diag))))]
+            (compiler-diagnostic-path (box-get diag))
+            (string.string-append
+              "': "
+              (compiler-diagnostic-message (box-get diag)))))]
       [(OkCompilerPkgManifestDiagnostic manifest)
         (OkPackageSourceSet
           (PackageSourceSet

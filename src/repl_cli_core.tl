@@ -454,13 +454,13 @@
     (sym-i64-empty))
     [(OkCompilerLoad decls _) (OkReplDeclList decls)]
     [(ErrCompilerLoad diag)
-      (ErrReplDeclList (compiler-diagnostic-message diag))]))
+      (ErrReplDeclList (compiler-diagnostic-message (box-get diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : ResultCompilerTypecheck
   (match (repl-load-session-decls session-source)
     [(OkReplDeclList decls) (typecheck-compiler-program (ast-program decls))]
     [(ErrReplDeclList message)
-      (ErrCompilerTypecheck (tc-diag-at-start message))]))
+      (ErrCompilerTypecheck (box (tc-diag-at-start message)))]))
 
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
@@ -562,7 +562,7 @@
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)
                 (begin
-                  (repl-report-diagnostic diag)
+                  (repl-report-diagnostic (box-get diag))
                   session-source)]))]
         [(AstReplExpr expr)
           (begin

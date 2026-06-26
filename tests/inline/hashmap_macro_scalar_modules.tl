@@ -1,6 +1,7 @@
 ;; hashmap_macro_scalar_modules.tl - scalar generated-module hashmap surfaces (#3760).
 (import "stdlib/test.tl")
 (import stdlib.hashmap)
+(import stdlib.string)
 (import (hashmap String String) as map_string_string)
 (import (hashmap i64 i64) as map_i64_i64)
 (import (hashmap i64 String) as map_i64_string)
@@ -83,7 +84,7 @@
         [cursor : i64 (map_string_string.next-occupied (& m) 0)]
         (assert-true
           (>
-            (string-length
+            (string.string-length
               (map_string_string.entry-value-or
                 (map_string_string.entry-at (& m) cursor)
                 ""))
@@ -242,7 +243,7 @@
         [cursor : i64 (map_i64_string.next-occupied (& m) 0)]
         (assert-true
           (>
-            (string-length
+            (string.string-length
               (map_i64_string.entry-value-or
                 (map_i64_string.entry-at (& m) cursor)
                 ""))

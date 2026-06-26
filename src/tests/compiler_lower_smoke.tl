@@ -63,9 +63,9 @@
             paths)
             [(OkCompilerLower _ _) true]
             [(ErrCompilerLower diag)
-              (io.panic (compiler-diagnostic-message diag))])]
+              (panic (compiler-diagnostic-message (box-get diag)))])]
         [(ErrCompilerLoadWithPaths diag)
-          (io.panic (compiler-diagnostic-message diag))]))))
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
@@ -135,7 +135,8 @@
                       (if (= bare-count 1)
                         (panic "lower: module entry main uses bare helper")
                         (panic "lower: module entry main helper call missing"))))))])]
-        [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))])]
+        [(ErrCompilerLower diag)
+          (panic (compiler-diagnostic-message (box-get diag)))])]
     [(ErrAstProgram _) (panic "lower: module entry main parse failed")]))
 
 (define (compiler-lower-smoke-self-test) : unit

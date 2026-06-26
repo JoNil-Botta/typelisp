@@ -17,5 +17,5 @@
           0)]
       [(ErrCompilerBackend diag)
         (begin
-          (io.print-error (compiler-diagnostic-render diag))
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))

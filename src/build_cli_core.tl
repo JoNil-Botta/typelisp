@@ -755,7 +755,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-target value)
-                [(OkSourceToolTarget parsed-target)
+                [(ResultSourceToolTarget.Ok parsed-target)
                   (build-package-worker-parse-options
                     (+ idx 2)
                     count
@@ -769,7 +769,7 @@
                     lock-policy
                     stdlib-roots
                     resolved-deps)]
-                [(ErrSourceToolTarget _)
+                [(ResultSourceToolTarget.Err _)
                   (ErrBuildPackageWorkerConfig (build-cli-unknown-target value))])))]
         [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
@@ -778,7 +778,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-backend-mode "build" value)
-                [(OkSourceToolBackendMode parsed-mode)
+                [(ResultSourceToolBackendMode.Ok parsed-mode)
                   (build-package-worker-parse-options
                     (+ idx 2)
                     count
@@ -792,7 +792,7 @@
                     lock-policy
                     stdlib-roots
                     resolved-deps)]
-                [(ErrSourceToolBackendMode message)
+                [(ResultSourceToolBackendMode.Err message)
                   (ErrBuildPackageWorkerConfig message)])))]
         [(string.string-eq current "--profile")
           (if (>= (+ idx 1) count)
@@ -2609,7 +2609,7 @@
     crt-entry
     decls
     paths)
-    [(OkSourceToolString obj)
+    [(ResultSourceToolString.Ok obj)
       (build-package-write-linux-direct-object-artifact
         kind
         target
@@ -2617,7 +2617,8 @@
         artifact-path
         link-inputs
         obj)]
-    [(ErrSourceToolString message) (SourceToolDirectObjectUnavailable message)]))
+    [(ResultSourceToolString.Err message)
+      (SourceToolDirectObjectUnavailable message)]))
 
 (define (build-package-try-render-linux-direct-object
   [kind : CompilerPkgKind]
@@ -2644,8 +2645,8 @@
       [(OkCompilerDriverObject image)
         (build-package-render-linux-direct-object kind image)]
       [(ErrCompilerDriverObject diag)
-        (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])
-    (ErrSourceToolString "linux direct object disabled")))
+        (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])
+    (ResultSourceToolString.Err "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
@@ -2982,7 +2983,7 @@
       (let
         [direct-status : SourceToolDirectObjectStatus
           (match direct-object
-            [(OkSourceToolString obj)
+            [(ResultSourceToolString.Ok obj)
               (build-package-write-linux-direct-object-artifact
                 kind
                 target
@@ -2990,7 +2991,7 @@
                 artifact-path
                 link-inputs
                 obj)]
-            [(ErrSourceToolString message)
+            [(ResultSourceToolString.Err message)
               (SourceToolDirectObjectUnavailable message)])]
         (match (build-package-artifact-status
           kind
@@ -4195,11 +4196,11 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : vector.StringVec]) : i64
   (match (source-tool-backend-mode "build" mode)
-    [(ErrSourceToolBackendMode message)
+    [(ResultSourceToolBackendMode.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(OkSourceToolBackendMode backend-mode)
+    [(ResultSourceToolBackendMode.Ok backend-mode)
       (match (build-load-manifest manifest-path)
         [(ErrBuildManifest message)
           (begin
@@ -4433,7 +4434,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-target value)
-                [(OkSourceToolTarget parsed-target)
+                [(ResultSourceToolTarget.Ok parsed-target)
                   (build-cli-parse-options
                     (+ idx 2)
                     count
@@ -4446,7 +4447,7 @@
                     stdlib-roots
                     opt-level
                     link-inputs)]
-                [(ErrSourceToolTarget _)
+                [(ResultSourceToolTarget.Err _)
                   (ErrBuildCliConfig (build-cli-unknown-target value))])))]
         [(BuildCliOptionBackendMode)
           (if (>= (+ idx 1) count)
@@ -4454,7 +4455,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-backend-mode "build" value)
-                [(OkSourceToolBackendMode parsed-mode)
+                [(ResultSourceToolBackendMode.Ok parsed-mode)
                   (build-cli-parse-options
                     (+ idx 2)
                     count
@@ -4467,7 +4468,8 @@
                     stdlib-roots
                     opt-level
                     link-inputs)]
-                [(ErrSourceToolBackendMode message) (ErrBuildCliConfig message)])))]
+                [(ResultSourceToolBackendMode.Err message)
+                  (ErrBuildCliConfig message)])))]
         [(BuildCliOptionOptLevel)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --opt-level requires a value")

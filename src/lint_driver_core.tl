@@ -3,8 +3,8 @@
 ;; render each finding as `path:line:col: message`. Kept main-less so both the
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by default; callers can pass `--check` after the input
-;; path to exit non-zero when findings remain. The deprecated string-concat rule
-;; is opt-in until the remaining in-tree str-cat migrations land.
+;; path to exit non-zero when findings remain. The deprecated string.string-concat rule
+;; is opt-in until the remaining in-tree str_cat.str-cat migrations land.
 (import stdlib.io)
 (import stdlib.vector)
 (import "compiler_check_core.tl")
@@ -15,7 +15,7 @@
 
 ;; Parsed lint CLI config: input paths, stdlib roots, whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present), and
-;; whether the staged deprecated string-concat rule is enabled.
+;; whether the staged deprecated string.string-concat rule is enabled.
 (defenum SelfhostLintConfig
   (SelfhostLintFileConfig vector.StringVec vector.StringVec bool bool)
   (SelfhostLintPackageConfig String bool vector.StringVec bool bool))
@@ -413,7 +413,7 @@
 
 ;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
 ;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
-;; stops at its newline; `and`/`or` are not short-circuiting, so the `string-ref`
+;; stops at its newline; `and`/`or` are not short-circuiting, so the `string.string-ref`
 ;; is guarded by the loop's `stop` flag rather than the bounds test.
 (define (selfhost-lint-line-allows?
   [source : String]
@@ -1863,7 +1863,7 @@
               (lint-findings-count findings))))]
       [(ErrAstProgramDiagnostic diag)
         (begin
-          (io.print-error (compiler-diagnostic-render diag))
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-file-with-package-dead
@@ -1902,7 +1902,7 @@
             (selfhost-lint-enforce-exit enforcing total-count)))]
       [(ErrAstProgramDiagnostic diag)
         (begin
-          (io.print-error (compiler-diagnostic-render diag))
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))
 
 (define (selfhost-lint-files-from

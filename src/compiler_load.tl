@@ -13,7 +13,7 @@
 
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
-  (ErrCompilerLoad CompilerDiagnostic))
+  (ErrCompilerLoad (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadWithPaths
   (OkCompilerLoadWithPaths
@@ -21,7 +21,7 @@
     AstDeclPathList
     AstDeclModuleList
     SymI64Env)
-  (ErrCompilerLoadWithPaths CompilerDiagnostic))
+  (ErrCompilerLoadWithPaths (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybePath
   (CompilerLoadNoPath)
@@ -54,15 +54,15 @@
 
 (defenum ResultCompilerLoadInclude
   (OkCompilerLoadInclude AstDecl)
-  (ErrCompilerLoadInclude CompilerDiagnostic))
+  (ErrCompilerLoadInclude (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadModuleId
   (OkCompilerLoadModuleId String)
-  (ErrCompilerLoadModuleId CompilerDiagnostic))
+  (ErrCompilerLoadModuleId (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadAliasCheck
   (OkCompilerLoadAliasCheck)
-  (ErrCompilerLoadAliasCheck CompilerDiagnostic))
+  (ErrCompilerLoadAliasCheck (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadPreludeCacheLookup
   (CompilerLoadPreludeCacheMiss)
@@ -1346,10 +1346,11 @@
         (OkCompilerLoadInclude (compiler-load-include-str-def name source))]
       [(CompilerEmbeddedStdlibNoSource)
         (ErrCompilerLoadInclude
-          (compiler-load-include-str-read-error
-            importer-path
-            include-path
-            resolved))])))
+          (box
+            (compiler-load-include-str-read-error
+              importer-path
+              include-path
+              resolved)))])))
 
 (define (compiler-load-include-str-from-resolved-with-pools
   [importer-path : String]
@@ -1369,10 +1370,11 @@
           (compiler-load-include-str-def-with-pools pools name source))]
       [(CompilerEmbeddedStdlibNoSource)
         (ErrCompilerLoadInclude
-          (compiler-load-include-str-read-error
-            importer-path
-            include-path
-            resolved))])))
+          (box
+            (compiler-load-include-str-read-error
+              importer-path
+              include-path
+              resolved)))])))
 
 (define (compiler-load-include-bin-read-error
   [importer-path : String]
@@ -1402,10 +1404,11 @@
         (OkCompilerLoadInclude (compiler-load-include-bin-def name source))]
       [(CompilerEmbeddedStdlibNoSource)
         (ErrCompilerLoadInclude
-          (compiler-load-include-bin-read-error
-            importer-path
-            include-path
-            resolved))])))
+          (box
+            (compiler-load-include-bin-read-error
+              importer-path
+              include-path
+              resolved)))])))
 
 (define (compiler-load-include-bin-from-resolved-with-pools
   [importer-path : String]
@@ -1425,10 +1428,11 @@
           (compiler-load-include-bin-def-with-pools pools name source))]
       [(CompilerEmbeddedStdlibNoSource)
         (ErrCompilerLoadInclude
-          (compiler-load-include-bin-read-error
-            importer-path
-            include-path
-            resolved))])))
+          (box
+            (compiler-load-include-bin-read-error
+              importer-path
+              include-path
+              resolved)))])))
 
 (define (compiler-load-expand-include-str
   [importer-path : String]
@@ -1447,7 +1451,7 @@
         name)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-str-with-pools
   [importer-path : String]
@@ -1468,7 +1472,7 @@
         pools)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-bin
   [importer-path : String]
@@ -1487,7 +1491,7 @@
         name)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-bin-with-pools
   [importer-path : String]
@@ -1508,7 +1512,7 @@
         pools)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
@@ -1630,9 +1634,10 @@
                   (CompilerLoadSomeModuleId (intern-str name)))]
               [(CompilerLoadSomeModuleId _)
                 (ErrCompilerLoadModuleId
-                  (compiler-diagnostic-at-start
-                    path
-                    "compiler-load: duplicate module declaration"))])]
+                  (box
+                    (compiler-diagnostic-at-start
+                      path
+                      "compiler-load: duplicate module declaration")))])]
           [_ (compiler-load-decls-module-id-loop path rest fallback found)]))]))
 
 (define (compiler-load-decls-module-id [path : String] [decls : AstDeclList]) : ResultCompilerLoadModuleId
@@ -1652,13 +1657,14 @@
       (if (string.string-eq want actual)
         (OkCompilerLoadModuleId actual)
         (ErrCompilerLoadModuleId
-          (compiler-diagnostic-at-start
-            path
-            (string.string-append
-              "compiler-load: import expected module "
+          (box
+            (compiler-diagnostic-at-start
+              path
               (string.string-append
-                want
-                (string.string-append " but loaded " actual))))))]))
+                "compiler-load: import expected module "
+                (string.string-append
+                  want
+                  (string.string-append " but loaded " actual)))))))]))
 
 (define (compiler-load-no-expected-module? [expected : AstMaybeModuleName]) : bool
   (match expected
@@ -1791,11 +1797,12 @@
     [(CompilerLoadNoString) (OkCompilerLoadAliasCheck)]
     [(CompilerLoadSomeString alias)
       (ErrCompilerLoadAliasCheck
-        (compiler-diagnostic-at-start
-          path
-          (string.string-append
-            "compiler-load: duplicate module import alias "
-            alias)))]))
+        (box
+          (compiler-diagnostic-at-start
+            path
+            (string.string-append
+              "compiler-load: duplicate module import alias "
+              alias))))]))
 
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
@@ -2064,7 +2071,7 @@
                       (ErrCompilerLoadWithPaths diag)])]
                 [(ErrPkgResolve message)
                   (ErrCompilerLoadWithPaths
-                    (compiler-diagnostic-at-start importer-path message))]))]
+                    (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-expand-include-str-with-pools
               importer-path
@@ -3101,11 +3108,12 @@
                 [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
             [(CompilerEmbeddedStdlibNoSource)
               (ErrCompilerLoadWithPaths
-                (compiler-diagnostic-at-start
-                  path
-                  (string.string-append
-                    "compiler-load: cannot read import "
-                    path)))]))))))
+                (box
+                  (compiler-diagnostic-at-start
+                    path
+                    (string.string-append
+                      "compiler-load: cannot read import "
+                      path))))]))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
@@ -3182,11 +3190,12 @@
                 [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
             [(CompilerEmbeddedStdlibNoSource)
               (ErrCompilerLoadWithPaths
-                (compiler-diagnostic-at-start
-                  path
-                  (string.string-append
-                    "compiler-load: cannot read import "
-                    path)))]))))))
+                (box
+                  (compiler-diagnostic-at-start
+                    path
+                    (string.string-append
+                      "compiler-load: cannot read import "
+                      path))))]))))))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
@@ -3759,7 +3768,9 @@
               "compiler-load: invalid dependency package manifest '"
               (string.string-append
                 manifest-path
-                (string.string-append "': " (compiler-diagnostic-message diag)))))]
+                (string.string-append
+                  "': "
+                  (compiler-diagnostic-message (box-get diag))))))]
         [(OkCompilerPkgManifestDiagnostic manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
@@ -3780,7 +3791,8 @@
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source resolved)
     [(ErrCompilerLoadPackageEntry message)
-      (ErrCompilerLoadWithPaths (compiler-diagnostic-at-start resolved message))]
+      (ErrCompilerLoadWithPaths
+        (box (compiler-diagnostic-at-start resolved message)))]
     [(OkCompilerLoadPackageEntry entry)
       (match (compiler-load-file-with-paths-and-roots-expect-cfg
         resolved
@@ -3820,7 +3832,7 @@
         name)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-expand-include-bin
   [importer-path : String]
@@ -3843,7 +3855,7 @@
         name)]
     [(ErrPkgResolve message)
       (ErrCompilerLoadInclude
-        (compiler-diagnostic-at-start importer-path message))]))
+        (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : AstDeclList]
@@ -3978,7 +3990,7 @@
                       (ErrCompilerLoadWithPaths diag)])]
                 [(ErrPkgResolve message)
                   (ErrCompilerLoadWithPaths
-                    (compiler-diagnostic-at-start importer-path message))]))]
+                    (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
               importer-path
@@ -4167,9 +4179,10 @@
             [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
         [(CompilerEmbeddedStdlibNoSource)
           (ErrCompilerLoadWithPaths
-            (compiler-diagnostic-at-start
-              path
-              (string.string-append "compiler-load: cannot read import " path)))]))))
+            (box
+              (compiler-diagnostic-at-start
+                path
+                (string.string-append "compiler-load: cannot read import " path))))]))))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
@@ -4580,7 +4593,7 @@
     (AstSomeModuleName "lib.want"))
     [(ErrCompilerLoadWithPaths diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: import expected module lib.want but loaded lib.actual")]
     [(OkCompilerLoadWithPaths _ _ _ _) false]))
 
@@ -4593,7 +4606,7 @@
     (sym-i64-empty))
     [(ErrCompilerLoad diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module declaration")]
     [(OkCompilerLoad _ _) false]))
 
@@ -4832,7 +4845,7 @@
     (sym-i64-empty))
     [(ErrCompilerLoad diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module import alias one")]
     [(OkCompilerLoad _ _) false]))
 
@@ -5380,7 +5393,7 @@
     (sym-i64-empty))
     [(ErrCompilerLoad diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
     [(OkCompilerLoad _ _) false]))
 
@@ -5423,7 +5436,7 @@
     (sym-i64-empty))
     [(ErrCompilerLoad diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
     [(OkCompilerLoad _ _) false]))
 
@@ -5473,7 +5486,7 @@
     (sym-i64-empty))
     [(ErrCompilerLoad diag)
       (string.string-eq
-        (compiler-diagnostic-message diag)
+        (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
     [(OkCompilerLoad _ _) false]))
 
@@ -5519,10 +5532,10 @@
       [(ErrCompilerLoadWithPaths diag)
         (and
           (string.string-eq
-            (compiler-diagnostic-path diag)
+            (compiler-diagnostic-path (box-get diag))
             "target/cl_ipe_dep.tl")
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "parse: malformed value definition"))]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
@@ -5546,10 +5559,10 @@
       [(ErrCompilerLoadWithPaths diag)
         (and
           (string.string-eq
-            (compiler-diagnostic-path diag)
+            (compiler-diagnostic-path (box-get diag))
             "target/cl_idm_dep.tl")
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "compiler-load: duplicate module declaration"))]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
@@ -5608,7 +5621,7 @@
       (vector.string-vec-push (vector.string-vec-new) "target"))
       [(ErrCompilerLoadWithPaths diag)
         (string.string-eq
-          (compiler-diagnostic-message diag)
+          (compiler-diagnostic-message (box-get diag))
           "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
@@ -5705,7 +5718,7 @@
 ;: Source-facing parse result: the manifest or a path/span-bearing diagnostic.
 (defenum ResultCompilerPkgManifestDiagnostic
   (OkCompilerPkgManifestDiagnostic CompilerPkgManifest)
-  (ErrCompilerPkgManifestDiagnostic CompilerDiagnostic))
+  (ErrCompilerPkgManifestDiagnostic (Box CompilerDiagnostic)))
 
 ;: Internal: a single extracted string field value, or a diagnostic.
 (defenum ResultPkgString
@@ -6659,7 +6672,8 @@
             (compiler-load-manifest-with-kind manifest kind))]
         [(ErrCompilerPkgKind message)
           (ErrCompilerPkgManifestDiagnostic
-            (compiler-load-manifest-validation-diagnostic path form message))])
+            (box
+              (compiler-load-manifest-validation-diagnostic path form message)))])
       (OkCompilerPkgManifestDiagnostic manifest))))
 
 (define (compiler-load-parse-manifest-form-diagnostic
@@ -6670,7 +6684,7 @@
       (OkCompilerPkgManifestDiagnostic manifest)]
     [(ErrCompilerPkgManifest message)
       (ErrCompilerPkgManifestDiagnostic
-        (compiler-load-manifest-validation-diagnostic path form message))]))
+        (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 (define (compiler-load-parse-manifest-form-diagnostic-infer-kind
   [path : String]
@@ -6680,7 +6694,7 @@
       (compiler-load-manifest-apply-kind-inference path form manifest)]
     [(ErrCompilerPkgManifest message)
       (ErrCompilerPkgManifestDiagnostic
-        (compiler-load-manifest-validation-diagnostic path form message))]))
+        (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 ;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
 ;: preserving manifest path/span identity for source-facing errors.
@@ -6692,12 +6706,12 @@
     (match (lex-spanned-result source)
       [(ErrSpannedTokens err)
         (ErrCompilerPkgManifestDiagnostic
-          (compiler-load-manifest-source-error-diagnostic path err))]
+          (box (compiler-load-manifest-source-error-diagnostic path err)))]
       [(OkSpannedTokens toks)
         (match (read-spanned-result toks)
           [(ErrSpannedSexpr err)
             (ErrCompilerPkgManifestDiagnostic
-              (compiler-load-manifest-source-error-diagnostic path err))]
+              (box (compiler-load-manifest-source-error-diagnostic path err)))]
           [(OkSpannedSexpr form)
             (compiler-load-parse-manifest-form-diagnostic path form)])])))
 
@@ -6709,12 +6723,12 @@
     (match (lex-spanned-result source)
       [(ErrSpannedTokens err)
         (ErrCompilerPkgManifestDiagnostic
-          (compiler-load-manifest-source-error-diagnostic path err))]
+          (box (compiler-load-manifest-source-error-diagnostic path err)))]
       [(OkSpannedTokens toks)
         (match (read-spanned-result toks)
           [(ErrSpannedSexpr err)
             (ErrCompilerPkgManifestDiagnostic
-              (compiler-load-manifest-source-error-diagnostic path err))]
+              (box (compiler-load-manifest-source-error-diagnostic path err)))]
           [(OkSpannedSexpr form)
             (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
 
@@ -6725,7 +6739,7 @@
     [(OkCompilerPkgManifestDiagnostic manifest)
       (OkCompilerPkgManifest manifest)]
     [(ErrCompilerPkgManifestDiagnostic diag)
-      (ErrCompilerPkgManifest (compiler-diagnostic-message diag))]))
+      (ErrCompilerPkgManifest (compiler-diagnostic-message (box-get diag)))]))
 
 ;: Self-test: a full manifest parses with the expected fields + dependency
 ;: count.
@@ -6852,11 +6866,11 @@
   (match (compiler-load-parse-manifest-diagnostic path source)
     [(ErrCompilerPkgManifestDiagnostic diag)
       (and
-        (string.string-eq (compiler-diagnostic-path diag) path)
-        (= (compiler-diagnostic-line diag) line)
-        (= (compiler-diagnostic-col diag) col)
-        (compiler-load-manifest-diagnostic-span-forward? diag)
-        (string.string-eq (compiler-diagnostic-message diag) expected))]
+        (string.string-eq (compiler-diagnostic-path (box-get diag)) path)
+        (= (compiler-diagnostic-line (box-get diag)) line)
+        (= (compiler-diagnostic-col (box-get diag)) col)
+        (compiler-load-manifest-diagnostic-span-forward? (box-get diag))
+        (string.string-eq (compiler-diagnostic-message (box-get diag)) expected))]
     [(OkCompilerPkgManifestDiagnostic _) false]))
 
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
@@ -6949,7 +6963,7 @@
     path
     (io.read-file path))
     [(ErrCompilerPkgManifestDiagnostic diag)
-      (string.string-eq (compiler-diagnostic-message diag) expected)]
+      (string.string-eq (compiler-diagnostic-message (box-get diag)) expected)]
     [(OkCompilerPkgManifestDiagnostic _) false]))
 
 (define (compiler-load-manifest-infer-bin-only-ok?) : bool

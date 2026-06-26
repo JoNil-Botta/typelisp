@@ -350,11 +350,11 @@
 
 (defenum ResultCompilerTypecheck
   (OkCompilerTypecheck CompilerTypecheckSummary)
-  (ErrCompilerTypecheck CompilerDiagnostic))
+  (ErrCompilerTypecheck (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerTypecheckChecked
   (OkCompilerTypecheckChecked CompilerTypecheckSummary TcContext TcTypeEnv)
-  (ErrCompilerTypecheckChecked CompilerDiagnostic))
+  (ErrCompilerTypecheckChecked (Box CompilerDiagnostic)))
 
 (defenum TcPrefixSnapshotLookup
   (TcPrefixSnapshotMiss)
@@ -803,13 +803,13 @@
 
 (define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerTypecheck (tc-ty-node-pool-exhausted-diagnostic))
+    (ErrCompilerTypecheck (box (tc-ty-node-pool-exhausted-diagnostic)))
     result))
 
 (define (tc-typecheck-checked-result-with-pool-check
   [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerTypecheckChecked (tc-ty-node-pool-exhausted-diagnostic))
+    (ErrCompilerTypecheckChecked (box (tc-ty-node-pool-exhausted-diagnostic)))
     result))
 
 (cfg
@@ -3096,7 +3096,7 @@
 ;; the cached env internals allocated there dangle once the scratch arena is
 ;; reclaimed, and a later tl_arena_make reuses the pages (observed: a fresh
 ;; arena header written over a live cache node, then a garbage module String
-;; crashing string-eq). Build cache entries inside this dedicated persistent
+;; crashing string.string-eq). Build cache entries inside this dedicated persistent
 ;; arena instead (same idiom as the node pools' base arena).
 (define tc-hygiene-module-env-cache-arena : i64
   0)
@@ -6863,6 +6863,47 @@
     (= (intern-qualified-base-id lookup-id) (tc-name-id base))
     (tc-stdlib-string-module-name? (intern-qualified-module lookup-id))))
 
+(define (tc-decl-list-module-imports-stdlib-string?
+  [decls : AstDeclList]
+  [target-module-id : i64]
+  [current-module-id : i64]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        (match decl
+          [(AstDeclModule next-module)
+            (tc-decl-list-module-imports-stdlib-string?
+              rest
+              target-module-id
+              next-module)]
+          [(AstDeclImport
+              (AstImportSpec _ _ (AstSomeModuleName import-module) _ _))
+            (if (and
+              (= current-module-id target-module-id)
+              (tc-stdlib-string-module-name? import-module))
+              true
+              (tc-decl-list-module-imports-stdlib-string?
+                rest
+                target-module-id
+                current-module-id))]
+          [_
+            (tc-decl-list-module-imports-stdlib-string?
+              rest
+              target-module-id
+              current-module-id)]))]))
+
+(define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
+  (match ctx
+    [(TcContext program _ _ module _)
+      (match program
+        [(AstProgram decls-box)
+          (tc-decl-list-module-imports-stdlib-string?
+            (box-get decls-box)
+            (intern module)
+            (intern ""))])]))
+
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -6872,8 +6913,10 @@
   (if source-match
     (or
       (tc-context-is-stdlib-string? ctx)
+      (tc-context-imports-stdlib-string? ctx)
       (tc-stdlib-string-helper-bound-wrapper? env base)
-      (tc-stdlib-string-helper-symbol-wrapper? ctx base))
+      (tc-stdlib-string-helper-symbol-wrapper? ctx base)
+      (tc-stdlib-string-qualified-helper-id? lookup-id base))
     (tc-stdlib-string-qualified-helper-id? lookup-id base)))
 
 (define tc-source-dotted-alias-key-cache-capacity : i64
@@ -12766,7 +12809,8 @@
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
           [(OkCtfe value _)
             (tc-ctfe-value-type-with-expected ctx value expected)]
-          [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
+          [(ErrCtfe diag)
+            (ErrTcType (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType) (tc-init-expr ctx env expected)]
@@ -13054,7 +13098,7 @@
                   (tc-call-arity-argument-word actual))))))))))
 
 ;; Deferred arity-mismatch message. tc-call-arity-message is real work (two
-;; list-length walks, callee-name unspan/intern, two int->string division loops,
+;; list-length walks, callee-name unspan/intern, two string.int->string division loops,
 ;; seven string-appends) but it is only ever consumed on the arity-mismatch error
 ;; path, which never fires while typechecking well-formed code (the self-compile).
 ;; Carrying the ingredients in this enum and materializing the text only at the
@@ -27608,7 +27652,8 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
           [(OkCtfe value _) (tc-ctfe-value-type ctx value)]
-          [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
+          [(ErrCtfe diag)
+            (ErrTcType (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExprQuote _) (OkTcType (AstTyExpr))]
     [(AstExprQuasiquote template-box)
       (let
@@ -29226,7 +29271,7 @@
                         (ast-node-pool-context-install! (tc-context-pools ctx))
                         (tc-check-defmacro-produced-type ctx ret value))]
                     [(ErrCtfe diag)
-                      (ErrTcUnit (compiler-diagnostic-message diag))]))]
+                      (ErrTcUnit (compiler-diagnostic-message (box-get diag)))]))]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
@@ -34761,92 +34806,92 @@
 
 (defenum ResultMacroCallDecl
   (OkMacroCallDecl MacroMaybeDecl)
-  (ErrMacroCallDecl CompilerDiagnostic))
+  (ErrMacroCallDecl (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCallDeclModule
   (OkMacroCallDeclModule MacroMaybeDecl String)
-  (ErrMacroCallDeclModule CompilerDiagnostic))
+  (ErrMacroCallDeclModule (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpr
   (OkMacroExpr i64)
-  (ErrMacroExpr CompilerDiagnostic))
+  (ErrMacroExpr (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCompatCall
   (OkMacroCompatCall i64)
   (NoMacroCompatCall)
-  (ErrMacroCompatCall CompilerDiagnostic))
+  (ErrMacroCompatCall (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExprList
   (OkMacroExprList AstExprList)
-  (ErrMacroExprList CompilerDiagnostic))
+  (ErrMacroExprList (Box CompilerDiagnostic)))
 
 (defenum ResultMacroArms
   (OkMacroArms AstMatchArmList)
-  (ErrMacroArms CompilerDiagnostic))
+  (ErrMacroArms (Box CompilerDiagnostic)))
 
 (defenum ResultMacroLetBindings
   (OkMacroLetBindings AstLetBindingList TcTypeEnv)
-  (ErrMacroLetBindings CompilerDiagnostic))
+  (ErrMacroLetBindings (Box CompilerDiagnostic)))
 
 (defenum ResultMacroEnv
   (OkMacroEnv CtfeEnv)
-  (ErrMacroEnv CompilerDiagnostic))
+  (ErrMacroEnv (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCheck
   (OkMacroCheck)
-  (ErrMacroCheck CompilerDiagnostic))
+  (ErrMacroCheck (Box CompilerDiagnostic)))
 
 (defenum ResultMacroClause
   (OkMacroClause AstExprClause)
-  (ErrMacroClause CompilerDiagnostic))
+  (ErrMacroClause (Box CompilerDiagnostic)))
 
 (defenum ResultMacroClauseList
   (OkMacroClauseList AstExprClauseList)
-  (ErrMacroClauseList CompilerDiagnostic))
+  (ErrMacroClauseList (Box CompilerDiagnostic)))
 
 (defenum ResultMacroBindingClause
   (OkMacroBindingClause AstExprBindingClause)
-  (ErrMacroBindingClause CompilerDiagnostic))
+  (ErrMacroBindingClause (Box CompilerDiagnostic)))
 
 (defenum ResultMacroBindingClauseList
   (OkMacroBindingClauseList AstExprBindingClauseList)
-  (ErrMacroBindingClauseList CompilerDiagnostic))
+  (ErrMacroBindingClauseList (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDecl
   (OkMacroDecl AstDecl)
-  (ErrMacroDecl CompilerDiagnostic))
+  (ErrMacroDecl (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDecls
   (OkMacroDecls AstDeclList)
-  (ErrMacroDecls CompilerDiagnostic))
+  (ErrMacroDecls (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDeclExpansion
   (OkMacroDeclExpansion AstDeclList AstDeclPathList)
-  (ErrMacroDeclExpansion CompilerDiagnostic))
+  (ErrMacroDeclExpansion (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDeclsWithPaths
   (OkMacroDeclsWithPaths AstDeclList AstDeclPathList)
-  (ErrMacroDeclsWithPaths CompilerDiagnostic))
+  (ErrMacroDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpand
   (OkMacroExpand AstProgram AstDeclPathList)
-  (ErrMacroExpand CompilerDiagnostic))
+  (ErrMacroExpand (Box CompilerDiagnostic)))
 
 (defenum ResultMacroValue
   (OkMacroValue CompilerCtfeValue)
-  (ErrMacroValue CompilerDiagnostic))
+  (ErrMacroValue (Box CompilerDiagnostic)))
 
 (defenum ResultMacroTypeArg
   (OkMacroTypeArg AstType)
-  (ErrMacroTypeArg CompilerDiagnostic))
+  (ErrMacroTypeArg (Box CompilerDiagnostic)))
 
 (defenum ResultMacroSexpr
   (OkMacroSexpr SpannedSexpr)
-  (ErrMacroSexpr CompilerDiagnostic))
+  (ErrMacroSexpr (Box CompilerDiagnostic)))
 
 (defenum ResultMacroParsedDecls
   (OkMacroParsedDecls AstDeclList)
-  (ErrMacroParsedDecls CompilerDiagnostic))
+  (ErrMacroParsedDecls (Box CompilerDiagnostic)))
 
 (defenum MacroMaybeModuleName
   (MacroNoModuleName)
@@ -35016,9 +35061,10 @@
         [(CtfeString text) (OkGenKey (spec-string-key text) next-fuel)]
         [_
           (ErrGenKey
-            (ctfe-diagnostic-at-expr
-              expr
-              "typecheck: Module macro identity key expression must evaluate to String"))])]
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "typecheck: Module macro identity key expression must evaluate to String")))])]
     [(ErrCtfe diag) (ErrGenKey diag)]))
 
 (define (macro-identity-key-string-exprs
@@ -35141,9 +35187,10 @@
         [(AstExprNil) (OkGenKey "" fuel)]
         [(AstExprCons head _)
           (ErrGenKey
-            (ctfe-diagnostic-at-expr
-              (ast-node-get head)
-              "macro call has too many arguments"))])]
+            (box
+              (ctfe-diagnostic-at-expr
+                (ast-node-get head)
+                "macro call has too many arguments")))])]
     [(AstMacroParamCons param rest-params)
       (let
         [rest-params : AstMacroParamList (box-get rest-params)]
@@ -35152,9 +35199,10 @@
             (if variadic
               (if (tc-macro-type-param-kind? ty)
                 (ErrGenKey
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "typecheck: type macro operand cannot be variadic"))
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: type macro operand cannot be variadic")))
                 (if (macro-identity-syntax-param-type? ctx ty)
                   (macro-identity-key-param-exprs
                     ctx
@@ -35167,9 +35215,10 @@
               (match args
                 [(AstExprNil)
                   (ErrGenKey
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "macro call has too few arguments"))]
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "macro call has too few arguments")))]
                 [(AstExprCons head rest-args)
                   (let
                     [head-expr : AstExpr (ast-node-get head)]
@@ -35792,14 +35841,16 @@
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [(AstPatTuple _)
       (ErrMacroSexpr
-        (macro-output-syntax-diag
-          origin
-          "typecheck: module macro output tuple patterns cannot be parsed as source declarations"))]
+        (box
+          (macro-output-syntax-diag
+            origin
+            "typecheck: module macro output tuple patterns cannot be parsed as source declarations")))]
     [(AstPatVar _ _)
       (ErrMacroSexpr
-        (macro-output-syntax-diag
-          origin
-          "typecheck: module macro output typed patterns cannot be parsed as source declarations"))]))
+        (box
+          (macro-output-syntax-diag
+            origin
+            "typecheck: module macro output typed patterns cannot be parsed as source declarations")))]))
 
 (define (macro-match-arm-bracket
   [arm : AstMatchArm]
@@ -36215,9 +36266,10 @@
         [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
     [_
       (ErrMacroSexpr
-        (macro-output-syntax-diag
-          origin
-          "typecheck: module macro output contains syntax that cannot be parsed as a declaration"))]))
+        (box
+          (macro-output-syntax-diag
+            origin
+            "typecheck: module macro output contains syntax that cannot be parsed as a declaration")))]))
 
 (define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
@@ -36249,7 +36301,7 @@
     [(OkAstDecls decls) (OkMacroParsedDecls decls)]
     [(OkAstNoDecl) (OkMacroParsedDecls AstDeclNil)]
     [(ErrAstMaybeDecl message)
-      (ErrMacroParsedDecls (macro-output-syntax-diag origin message))]))
+      (ErrMacroParsedDecls (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
   [dispatch : SymI64Env]
@@ -36320,9 +36372,10 @@
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
-        (macro-output-syntax-diag
-          origin
-          "typecheck: Module macro transformer did not produce Expr"))]))
+        (box
+          (macro-output-syntax-diag
+            origin
+            "typecheck: Module macro transformer did not produce Expr")))]))
 
 (define (macro-decls-from-ctfe-value
   [value : CompilerCtfeValue]
@@ -36333,9 +36386,10 @@
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ErrMacroParsedDecls
-        (macro-output-syntax-diag
-          origin
-          "typecheck: Decls macro transformer did not produce Expr"))]))
+        (box
+          (macro-output-syntax-diag
+            origin
+            "typecheck: Decls macro transformer did not produce Expr")))]))
 
 (define (macro-collect-decl-name [decl : AstDecl] [acc : TcStringList]) : TcStringList
   (match decl
@@ -37811,9 +37865,10 @@
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl)
           (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-missing-macro-message name)))])]
+            (box
+              (ctfe-diagnostic-at-expr
+                call-expr
+                (macro-missing-macro-message name))))])]
     [(NoneI64)
       (match (compiler-symbols-lookup-value-in-module-id
         (tc-context-symbols ctx)
@@ -37822,9 +37877,10 @@
         [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
         [(NoneI64)
           (ErrMacroCallDecl
-            (ctfe-diagnostic-at-expr
-              call-expr
-              (macro-missing-macro-message name)))])]))
+            (box
+              (ctfe-diagnostic-at-expr
+                call-expr
+                (macro-missing-macro-message name))))])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -38097,7 +38153,7 @@
         [(OkTcString resolved-name)
           (macro-call-decl-from-name ctx decls module resolved-name call-expr)]
         [(ErrTcString message)
-          (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))]))))
+          (ErrMacroCallDecl (box (ctfe-diagnostic-at-expr call-expr message)))]))))
 
 (define (macro-call-decl-from-hygiene-name
   [ctx : TcContext]
@@ -38268,7 +38324,7 @@
       (match (tc-source-type-policy-ok ctx ty)
         [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
         [(ErrTcUnit message)
-          (ErrMacroTypeArg (ctfe-diagnostic-at-expr arg message))])]
+          (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
@@ -38282,22 +38338,24 @@
               [(AstExprNil) (OkMacroClause (ast-expr-clause first second))]
               [_
                 (ErrMacroClause
-                  (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))])]
+                  (box
+                    (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))])]
           [_
             (ErrMacroClause
-              (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))]))]
+              (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))]
     [_
       (ErrMacroClause
-        (ctfe-diagnostic-at-expr arg (macro-clause-shape-message)))]))
+        (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))
 
 (define (macro-expr-clause-from-arg [arg : AstExpr]) : ResultMacroClause
   (match (ast-expr-unspan arg)
     [(AstExprBracketClause items) (macro-expr-clause-from-items arg items)]
     [_
       (ErrMacroClause
-        (ctfe-diagnostic-at-expr
-          arg
-          "typecheck: ExprClause macro operand expects bracket syntax"))]))
+        (box
+          (ctfe-diagnostic-at-expr
+            arg
+            "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-clause-list-from-args [args : AstExprList]) : ResultMacroClauseList
   (match args
@@ -38326,7 +38384,7 @@
 
 (define (macro-expr-binding-clause-shape-error [arg : AstExpr]) : ResultMacroBindingClause
   (ErrMacroBindingClause
-    (ctfe-diagnostic-at-expr arg (macro-binding-clause-shape-message))))
+    (box (ctfe-diagnostic-at-expr arg (macro-binding-clause-shape-message)))))
 
 (define (macro-expr-binding-clause-from-name
   [arg : AstExpr]
@@ -38384,9 +38442,10 @@
       (macro-expr-binding-clause-from-items arg items)]
     [_
       (ErrMacroBindingClause
-        (ctfe-diagnostic-at-expr
-          arg
-          "typecheck: ExprBindingClause macro operand expects bracket syntax"))]))
+        (box
+          (ctfe-diagnostic-at-expr
+            arg
+            "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
 (define (macro-expr-binding-clause-list-from-args [args : AstExprList]) : ResultMacroBindingClauseList
   (match args
@@ -38417,16 +38476,18 @@
         (if (tc-type-compatible? resolved-expected actual)
           OkMacroCheck
           (ErrMacroCheck
-            (tc-expr-diag
-              arg
-              (macro-operand-mismatch-message resolved-expected actual))))]
+            (box
+              (tc-expr-diag
+                arg
+                (macro-operand-mismatch-message resolved-expected actual)))))]
       [(ErrTcType message)
         (ErrMacroCheck
-          (tc-expr-diag
-            arg
-            (string.string-append
-              "typecheck: macro operand typecheck failed: "
-              message)))])))
+          (box
+            (tc-expr-diag
+              arg
+              (string.string-append
+                "typecheck: macro operand typecheck failed: "
+                message))))])))
 
 (define (macro-operand-bracket-clause? [arg : AstExpr]) : bool
   (match (ast-expr-unspan arg)
@@ -38456,9 +38517,10 @@
             [(ErrMacroBindingClause diag) (ErrMacroCheck diag)])]
         [(macro-operand-bracket-clause? arg)
           (ErrMacroCheck
-            (ctfe-diagnostic-at-expr
-              arg
-              (macro-clause-operand-mismatch-message resolved-expected)))]
+            (box
+              (ctfe-diagnostic-at-expr
+                arg
+                (macro-clause-operand-mismatch-message resolved-expected))))]
         [else (macro-check-ordinary-operand ctx env resolved-expected arg)]))))
 
 (define (macro-check-variadic-operands
@@ -38511,9 +38573,10 @@
   (cond
     [(tc-macro-type-param-kind? ty)
       (ErrMacroEnv
-        (ctfe-diagnostic-at-expr
-          (AstExprVar name)
-          "typecheck: type macro operand cannot be variadic"))]
+        (box
+          (ctfe-diagnostic-at-expr
+            (AstExprVar name)
+            "typecheck: type macro operand cannot be variadic")))]
     [(macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-list-from-args args)
         [(OkMacroClauseList clauses)
@@ -38603,9 +38666,10 @@
         [(AstExprNil) (OkMacroEnv env)]
         [_
           (ErrMacroEnv
-            (ctfe-diagnostic-at-expr
-              call-expr
-              "macro call has too many arguments"))])]
+            (box
+              (ctfe-diagnostic-at-expr
+                call-expr
+                "macro call has too many arguments")))])]
     [(AstMacroParamCons param rest-params)
       (let
         [rest-params : AstMacroParamList (box-get rest-params)]
@@ -38616,9 +38680,10 @@
               (match args
                 [(AstExprNil)
                   (ErrMacroEnv
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "macro call has too few arguments"))]
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "macro call has too few arguments")))]
                 [(AstExprCons arg rest-args)
                   (let
                     [arg-expr : AstExpr (ast-node-get arg)]
@@ -38656,7 +38721,7 @@
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroValue
   ;; Expand the operands first so a macro call passed as an argument (e.g. a
-  ;; nested `str-cat`) is reduced to a plain expression before it is typechecked
+  ;; nested `str_cat.str-cat`) is reduced to a plain expression before it is typechecked
   ;; and bound; otherwise the operand typecheck sees the inner macro name as an
   ;; unbound value.
   (match (macro-expand-exprs ctx type-env decls depth args)
@@ -38752,7 +38817,7 @@
         (macro-core-fast-or (box-get rest)))]))
 
 (define (macro-core-fast-arity-error [call-expr : AstExpr] [message : String]) : ResultMacroCompatCall
-  (ErrMacroCompatCall (ctfe-diagnostic-at-expr call-expr message)))
+  (ErrMacroCompatCall (box (ctfe-diagnostic-at-expr call-expr message))))
 
 (define (macro-core-fast-guard
   [args : AstExprList]
@@ -38902,14 +38967,16 @@
   [call-expr : AstExpr]) : ResultMacroExpr
   (if (tc-macro-result-module? ret)
     (ErrMacroExpr
-      (ctfe-diagnostic-at-expr
-        call-expr
-        "typecheck: Module macro can only be used in import position"))
-    (if (tc-macro-result-decls? ret)
-      (ErrMacroExpr
+      (box
         (ctfe-diagnostic-at-expr
           call-expr
-          "typecheck: Decls macro can only be used at module scope"))
+          "typecheck: Module macro can only be used in import position")))
+    (if (tc-macro-result-decls? ret)
+      (ErrMacroExpr
+        (box
+          (ctfe-diagnostic-at-expr
+            call-expr
+            "typecheck: Decls macro can only be used at module scope")))
       (match (macro-core-fast-expand
         ctx
         type-env
@@ -38951,14 +39018,16 @@
                             definition-module)
                           (+ depth 1))))
                     (ErrMacroExpr
-                      (ctfe-diagnostic-at-expr
-                        call-expr
-                        "typecheck: macro expansion produced type does not match declaration")))]
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          call-expr
+                          "typecheck: macro expansion produced type does not match declaration"))))]
                 [_
                   (ErrMacroExpr
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "macro transformer did not produce an Expr"))])]
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "macro transformer did not produce an Expr")))])]
             [(ErrMacroValue diag) (ErrMacroExpr diag)])]))))
 
 (define (macro-expand-exprs
@@ -39015,7 +39084,8 @@
                               nrest))]
                         [(ErrMacroArms diag) (ErrMacroArms diag)])]
                     [(ErrMacroExpr diag) (ErrMacroArms diag)])]
-                [(ErrTcEnv message) (ErrMacroArms (tc-expr-diag body message))]))]))]))
+                [(ErrTcEnv message)
+                  (ErrMacroArms (box (tc-expr-diag body message)))]))]))]))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -39056,7 +39126,7 @@
                         [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
                     [(ErrTcEnv message)
                       (ErrMacroLetBindings
-                        (tc-expr-diag (ast-node-get ninit) message))])]
+                        (box (tc-expr-diag (ast-node-get ninit) message)))])]
                 [(ErrMacroExpr diag) (ErrMacroLetBindings diag)]))]))]))
 
 (define (macro-compat-unit-expr) : i64
@@ -39119,9 +39189,10 @@
         (match body
           [(AstExprNil)
             (ErrMacroCompatCall
-              (ctfe-diagnostic-at-expr
-                call-expr
-                (macro-compat-guard-message name)))]
+              (box
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  (macro-compat-guard-message name))))]
           [_
             (macro-expand-compat-guard-body
               ctx
@@ -39133,7 +39204,8 @@
               is-unless)]))]
     [_
       (ErrMacroCompatCall
-        (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name)))]))
+        (box
+          (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name))))]))
 
 (define (macro-expand-compat-call
   [ctx : TcContext]
@@ -39176,7 +39248,8 @@
   [expr : AstExpr]) : ResultMacroExpr
   (if (< (macro-expand-depth-limit) depth)
     (ErrMacroExpr
-      (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))
+      (box
+        (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit")))
     (match expr
       [(AstExprSpanned inner-box span)
         (let
@@ -39326,7 +39399,7 @@
                         [(ErrMacroArms diag) (ErrMacroExpr diag)])]
                     [(ErrTcType message)
                       (ErrMacroExpr
-                        (tc-expr-diag (ast-node-get nscrut) message))])]
+                        (box (tc-expr-diag (ast-node-get nscrut) message)))])]
                 [(ErrMacroExpr diag) (ErrMacroExpr diag)]))])]
       [(AstExprWhile cond-box body-box)
         (let
@@ -39626,45 +39699,53 @@
                   (cond
                     [(and import-position (tc-macro-result-module? ret))
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Module macro expansion is not implemented yet (#3153)"))]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Module macro expansion is not implemented yet (#3153)")))]
                     [(and import-position (tc-macro-result-decls? ret))
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Decls macro cannot be used in import position"))]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Decls macro cannot be used in import position")))]
                     [import-position
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: expression macro cannot be used as module import"))]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used as module import")))]
                     [(tc-macro-result-decls? ret)
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Decls macro expansion is not implemented yet (#3153)"))]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Decls macro expansion is not implemented yet (#3153)")))]
                     [(tc-macro-result-module? ret)
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: Module macro can only be used in import position"))]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: Module macro can only be used in import position")))]
                     [else
                       (ErrMacroDecl
-                        (ctfe-diagnostic-at-expr
-                          call-expr
-                          "typecheck: expression macro cannot be used at module scope"))])]
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            call-expr
+                            "typecheck: expression macro cannot be used at module scope")))])]
                 [(MacroNoDecl)
                   (ErrMacroDecl
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "typecheck: module-scope macro call must resolve to defmacro"))])]
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: module-scope macro call must resolve to defmacro")))])]
             [(ErrMacroCallDecl diag) (ErrMacroDecl diag)]))]
       [_
         (ErrMacroDecl
-          (ctfe-diagnostic-at-expr
-            call-expr
-            "typecheck: module-scope macro placeholder must be a call"))])))
+          (box
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "typecheck: module-scope macro placeholder must be a call")))])))
 
 (define (macro-expand-decl
   [ctx : TcContext]
@@ -39819,9 +39900,9 @@
                       (macro-paths-for-decls expanded decl-path)))]
                 [(CompilerSomeString message)
                   (ErrMacroDeclExpansion
-                    (macro-generated-import-diag span message))])
+                    (box (macro-generated-import-diag span message)))])
               (ErrMacroDeclExpansion
-                (macro-module-incompatible-output-diag call-expr identity))))
+                (box (macro-module-incompatible-output-diag call-expr identity)))))
           (match (macro-check-generated-import-collisions
             orig-decls
             generated-body
@@ -39843,7 +39924,8 @@
                   expanded
                   (macro-paths-for-decls expanded decl-path)))]
             [(CompilerSomeString message)
-              (ErrMacroDeclExpansion (macro-generated-import-diag span message))]))]
+              (ErrMacroDeclExpansion
+                (box (macro-generated-import-diag span message)))]))]
       [(MacroNoDeclList)
         (match (macro-check-generated-import-collisions
           orig-decls
@@ -39863,7 +39945,8 @@
                 expanded
                 (macro-paths-for-decls expanded decl-path)))]
           [(CompilerSomeString message)
-            (ErrMacroDeclExpansion (macro-generated-import-diag span message))])])))
+            (ErrMacroDeclExpansion
+              (box (macro-generated-import-diag span message)))])])))
 
 (define (macro-expand-module-generated-decls
   [orig-decls : AstDeclList]
@@ -39879,14 +39962,16 @@
     [module-count : i64 (macro-decls-module-count generated)]
     (if (= module-count 0)
       (ErrMacroDeclExpansion
-        (ctfe-diagnostic-at-expr
-          call-expr
-          "typecheck: Module macro output must include a module declaration"))
-      (if (> module-count 1)
-        (ErrMacroDeclExpansion
+        (box
           (ctfe-diagnostic-at-expr
             call-expr
-            "typecheck: Module macro output must include exactly one module declaration"))
+            "typecheck: Module macro output must include a module declaration")))
+      (if (> module-count 1)
+        (ErrMacroDeclExpansion
+          (box
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "typecheck: Module macro output must include exactly one module declaration")))
         (match generated
           [(AstDeclCons first body-rest-box)
             (match first
@@ -39904,14 +39989,16 @@
                   call-expr)]
               [_
                 (ErrMacroDeclExpansion
-                  (ctfe-diagnostic-at-expr
-                    call-expr
-                    "typecheck: Module macro output must start with a module declaration"))])]
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: Module macro output must start with a module declaration")))])]
           [(AstDeclNil)
             (ErrMacroDeclExpansion
-              (ctfe-diagnostic-at-expr
-                call-expr
-                "typecheck: Module macro output must include a module declaration"))])))))
+              (box
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  "typecheck: Module macro output must include a module declaration")))])))))
 
 (define (macro-expand-decls-splice
   [ctx : TcContext]
@@ -40002,22 +40089,25 @@
                         [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                       (if (tc-macro-result-module? ret)
                         (ErrMacroDeclExpansion
-                          (ctfe-diagnostic-at-expr
-                            call-expr
-                            "typecheck: Module macro can only be used in import position"))
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              call-expr
+                              "typecheck: Module macro can only be used in import position")))
                         (ErrMacroDeclExpansion
-                          (ctfe-diagnostic-at-expr
-                            call-expr
-                            "typecheck: expression macro cannot be used at module scope"))))]
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              call-expr
+                              "typecheck: expression macro cannot be used at module scope")))))]
                   [(MacroNoDecl)
                     (ErrMacroDeclExpansion
-                      (macro-call-not-macro-diag call-expr))]))]
+                      (box (macro-call-not-macro-diag call-expr)))]))]
             [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
       [_
         (ErrMacroDeclExpansion
-          (ctfe-diagnostic-at-expr
-            call-expr
-            "typecheck: module-scope macro placeholder must be a call"))])))
+          (box
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "typecheck: module-scope macro placeholder must be a call")))])))
 
 (define (macro-expand-module-import
   [ctx : TcContext]
@@ -40106,22 +40196,25 @@
                         [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
                       (if (tc-macro-result-decls? ret)
                         (ErrMacroDeclExpansion
-                          (ctfe-diagnostic-at-expr
-                            call-expr
-                            "typecheck: Decls macro cannot be used in import position"))
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              call-expr
+                              "typecheck: Decls macro cannot be used in import position")))
                         (ErrMacroDeclExpansion
-                          (ctfe-diagnostic-at-expr
-                            call-expr
-                            "typecheck: expression macro cannot be used as module import"))))]
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              call-expr
+                              "typecheck: expression macro cannot be used as module import")))))]
                   [(MacroNoDecl)
                     (ErrMacroDeclExpansion
-                      (macro-call-not-macro-diag call-expr))]))]
+                      (box (macro-call-not-macro-diag call-expr)))]))]
             [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
       [_
         (ErrMacroDeclExpansion
-          (ctfe-diagnostic-at-expr
-            call-expr
-            "typecheck: import macro placeholder must contain a call"))])))
+          (box
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "typecheck: import macro placeholder must contain a call")))])))
 
 (define (macro-expand-decl-with-path
   [ctx : TcContext]
@@ -41122,7 +41215,7 @@
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
     [result : ResultMacroDeclsWithPaths
       (ErrMacroDeclsWithPaths
-        (tc-diag-at-start "macro: internal decl expansion walk"))]
+        (box (tc-diag-at-start "macro: internal decl expansion walk")))]
     [done : bool false]
     (begin
       (while (not done)
@@ -41455,13 +41548,15 @@
                                               (compiler-tc-macro-profile-emit))
                                             (ErrMacroExpand diag))]))]
                                   [(ErrTcEnv message)
-                                    (ErrMacroExpand (tc-diag-at-start message))])]
+                                    (ErrMacroExpand
+                                      (box (tc-diag-at-start message)))])]
                               [(ErrTcUnit message)
-                                (ErrMacroExpand (tc-diag-at-start message))])))]
+                                (ErrMacroExpand
+                                  (box (tc-diag-at-start message)))])))]
                       [(ErrCompilerRegistries message)
-                        (ErrMacroExpand (tc-diag-at-start message))])]
+                        (ErrMacroExpand (box (tc-diag-at-start message)))])]
                   [(ErrCompilerSymbols message)
-                    (ErrMacroExpand (tc-diag-at-start message))]))
+                    (ErrMacroExpand (box (tc-diag-at-start message)))]))
               (OkMacroExpand program paths))))])))
 
 (define (macro-expand-program-pass-with-paths
@@ -41500,7 +41595,7 @@
 
 (defenum ResultMacroMaterializeImport
   (OkMacroMaterializeImport AstDeclList AstDeclPathList SymI64Env bool)
-  (ErrMacroMaterializeImport CompilerDiagnostic))
+  (ErrMacroMaterializeImport (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
   (match decl
@@ -41643,7 +41738,7 @@
               [(ErrCompilerLoadWithPaths diag) (ErrMacroMaterializeImport diag)])]
           [(ErrPkgResolve message)
             (ErrMacroMaterializeImport
-              (macro-materialize-import-diagnostic decl-path span message))]))]))
+              (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
 (define (macro-materialize-generated-imports-in
   [decls : AstDeclList]
@@ -41661,7 +41756,8 @@
     [changed : bool false]
     [result : ResultMacroMaterializeImport
       (ErrMacroMaterializeImport
-        (tc-diag-at-start "macro: internal generated import materialization"))]
+        (box
+          (tc-diag-at-start "macro: internal generated import materialization")))]
     [done : bool false]
     (begin
       (while (not done)
@@ -41764,8 +41860,9 @@
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ErrMacroExpand
-      (tc-diag-at-start
-        "typecheck: module macro expansion exceeded fixed-point limit"))
+      (box
+        (tc-diag-at-start
+          "typecheck: module macro expansion exceeded fixed-point limit")))
     (let
       [had-placeholders : bool
         (match program
@@ -42576,9 +42673,9 @@
                         (tc-summary-add-decl summary decl)
                         module)]
                     [(ErrTcUnit message)
-                      (ErrCompilerTypecheck (tc-decl-diag decl message))]))]
+                      (ErrCompilerTypecheck (box (tc-decl-diag decl message)))]))]
               [(ErrTcEnv message)
-                (ErrCompilerTypecheck (tc-decl-diag decl message))])]))]))
+                (ErrCompilerTypecheck (box (tc-decl-diag decl message)))])]))]))
 
 (define (tc-decl-path-list-last [paths : AstDeclPathList] [last : String]) : String
   (match paths
@@ -42963,7 +43060,7 @@
       [(ErrTcModuleLocalEnv message)
         (begin
           (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-          (ErrCompilerTypecheck (tc-diag-at-start message)))])))
+          (ErrCompilerTypecheck (box (tc-diag-at-start message))))])))
 
 (define (tc-check-decls-with-paths-in-module-env
   [ctx : TcContext]
@@ -42987,7 +43084,8 @@
     [cur-local-env : TcTypeEnv local-env]
     [cur-global-env : TcTypeEnv global-env]
     [result : ResultCompilerTypecheck
-      (ErrCompilerTypecheck (tc-diag-at-start "typecheck: internal decls walk"))]
+      (ErrCompilerTypecheck
+        (box (tc-diag-at-start "typecheck: internal decls walk")))]
     [done : bool false]
     (begin
       (while (not done)
@@ -43050,10 +43148,11 @@
                               (set!
                                 result
                                 (ErrCompilerTypecheck
-                                  (tc-typecheck-diag-with-path
-                                    decl
-                                    decl-path
-                                    message)))
+                                  (box
+                                    (tc-typecheck-diag-with-path
+                                      decl
+                                      decl-path
+                                      message))))
                               (set! done true))])]
                       [(ErrTcModuleLocalEnv message)
                         (begin
@@ -43063,10 +43162,11 @@
                           (set!
                             result
                             (ErrCompilerTypecheck
-                              (tc-typecheck-diag-with-path
-                                decl
-                                decl-path
-                                message)))
+                              (box
+                                (tc-typecheck-diag-with-path
+                                  decl
+                                  decl-path
+                                  message))))
                           (set! done true))]))]
                 [_
                   (if (tc-generated-clone-decl-with-path? decl decl-path)
@@ -43106,10 +43206,11 @@
                               (set!
                                 result
                                 (ErrCompilerTypecheck
-                                  (tc-typecheck-diag-with-path
-                                    decl
-                                    decl-path
-                                    message)))
+                                  (box
+                                    (tc-typecheck-diag-with-path
+                                      decl
+                                      decl-path
+                                      message))))
                               (set! done true))]))))]))]))
       result)))
 
@@ -43162,15 +43263,16 @@
                                       (ErrCompilerTypecheckChecked diag)])))])]
                         [(ErrTcEnv message)
                           (ErrCompilerTypecheckChecked
-                            (tc-diag-at-start message))])]
+                            (box (tc-diag-at-start message)))])]
                     [(ErrTcUnit message)
-                      (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+                      (ErrCompilerTypecheckChecked
+                        (box (tc-diag-at-start message)))])]
                 [(ErrTcUnit message)
-                  (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
+                  (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))]))]
           [(ErrCompilerRegistries message)
-            (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
+            (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])]
       [(ErrCompilerSymbols message)
-        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])))
+        (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]

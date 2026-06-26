@@ -1090,19 +1090,21 @@
           "")]
       [(ErrCompilerCheck diag)
         (let
-          [diag-uri : String (lsp-diagnostic-uri uri path diag)]
+          [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
           (if (string.string-eq diag-uri uri)
             (begin
               (lsp-publish-diagnostics
                 uri
-                (lsp-json-list-cons (lsp-compiler-diagnostic diag) lint-diags))
+                (lsp-json-list-cons
+                  (lsp-compiler-diagnostic (box-get diag))
+                  lint-diags))
               uri)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
               (lsp-publish-diagnostics
                 diag-uri
                 (lsp-json-list-cons
-                  (lsp-compiler-diagnostic diag)
+                  (lsp-compiler-diagnostic (box-get diag))
                   json.JsonListNil))
               diag-uri)))])))
 
@@ -4065,7 +4067,8 @@
                     "success"
                     (json.JsonBool false)
                     "error"
-                    (json.JsonString (compiler-diagnostic-message diag))))
+                    (json.JsonString
+                      (compiler-diagnostic-message (box-get diag)))))
                 (LspContinue docs))])]
         [(MissingLspDocument)
           (match (lsp-file-uri-to-path uri)
@@ -4100,7 +4103,8 @@
                             "success"
                             (json.JsonBool false)
                             "error"
-                            (json.JsonString (compiler-diagnostic-message diag))))
+                            (json.JsonString
+                              (compiler-diagnostic-message (box-get diag)))))
                         (LspContinue docs))])))]
             [(ErrLspUriPath message)
               (begin
@@ -5672,7 +5676,7 @@
 
 ;; Position-based editing helpers
 ;; Find start index of innermost form containing offset. Returns -1 if not found.
-;; Uses string-ref on literal parens since char literals for parens confuse the parser.
+;; Uses string.string-ref on literal parens since char literals for parens confuse the parser.
 (define (lsp-find-form-at-offset [text : String] [offset : i64]) : i64
   (if (or (< offset 0) (>= offset (string.string-length text)))
     -1

@@ -489,7 +489,7 @@
             (source-tool-link-inputs-empty))
           explicit-inputs))]
     [(ErrCompilerLoadWithPaths diag)
-      (ErrSourceToolLinkInputs (compiler-diagnostic-render diag))]))
+      (ErrSourceToolLinkInputs (compiler-diagnostic-render (box-get diag)))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -724,7 +724,7 @@
           (OkSourceToolString
             (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
-          (ErrSourceToolString (compiler-diagnostic-render diag))])]))
+          (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]))
 
 (define (source-tool-emit-package-assembly
   [source : String]
@@ -758,7 +758,7 @@
           (OkSourceToolString
             (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
-          (ErrSourceToolString (compiler-diagnostic-render diag))])]))
+          (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -837,7 +837,7 @@
             [(OkCompilerDriverObject image)
               (source-tool-render-linkable-linux-elf-object image)]
             [(ErrCompilerDriverObject diag)
-              (ErrSourceToolString (compiler-diagnostic-render diag))])])]
+              (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])])]
     [(BackendTargetWindows)
       (ErrSourceToolString
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -864,7 +864,7 @@
         [(OkCompilerDriverObject image)
           (source-tool-render-linkable-linux-elf-object image)]
         [(ErrCompilerDriverObject diag)
-          (ErrSourceToolString (compiler-diagnostic-render diag))])]
+          (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]
     [(BackendTargetWindows)
       (ErrSourceToolString
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -995,7 +995,7 @@
             [(OkCompilerDriverObject image)
               (source-tool-render-linkable-windows-coff-object image)]
             [(ErrCompilerDriverObject diag)
-              (ErrSourceToolString (compiler-diagnostic-render diag))])])]))
+              (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])])]))
 
 (define (source-tool-emit-lowered-windows-coff-object
   [source : String]
@@ -1021,7 +1021,7 @@
         [(OkCompilerDriverObject image)
           (source-tool-render-linkable-windows-coff-object image)]
         [(ErrCompilerDriverObject diag)
-          (ErrSourceToolString (compiler-diagnostic-render diag))])]))
+          (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -1868,7 +1868,7 @@
                 (source-tool-augment-assembly-for-target asm target)
                 write-context)]
             [(ErrCompilerDriver diag)
-              (SourceToolCommandErr (compiler-diagnostic-render diag))])])]))
+              (SourceToolCommandErr (compiler-diagnostic-render (box-get diag)))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

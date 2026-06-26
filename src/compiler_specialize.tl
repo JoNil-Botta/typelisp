@@ -78,67 +78,67 @@
 
 (defenum ResultSpecProgram
   (OkSpecProgram AstProgram)
-  (ErrSpecProgram CompilerDiagnostic))
+  (ErrSpecProgram (Box CompilerDiagnostic)))
 
 (defenum ResultSpecProgramWithPaths
   (OkSpecProgramWithPaths AstProgram AstDeclPathList)
-  (ErrSpecProgramWithPaths CompilerDiagnostic))
+  (ErrSpecProgramWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecls
   (OkSpecDecls AstDeclList SpecState)
-  (ErrSpecDecls CompilerDiagnostic))
+  (ErrSpecDecls (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDeclsWithPaths
   (OkSpecDeclsWithPaths AstDeclList AstDeclPathList SpecState)
-  (ErrSpecDeclsWithPaths CompilerDiagnostic))
+  (ErrSpecDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecl
   (OkSpecDecl SpecMaybeDecl SpecState)
-  (ErrSpecDecl CompilerDiagnostic))
+  (ErrSpecDecl (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExpr
   (OkSpecExpr i64 SpecState)
-  (ErrSpecExpr CompilerDiagnostic))
+  (ErrSpecExpr (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExprList
   (OkSpecExprList AstExprList SpecState)
-  (ErrSpecExprList CompilerDiagnostic))
+  (ErrSpecExprList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecLetBindingList
   (OkSpecLetBindingList AstLetBindingList SpecState)
-  (ErrSpecLetBindingList CompilerDiagnostic))
+  (ErrSpecLetBindingList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecMatchArmList
   (OkSpecMatchArmList AstMatchArmList SpecState)
-  (ErrSpecMatchArmList CompilerDiagnostic))
+  (ErrSpecMatchArmList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecArgs
   (OkSpecArgs SpecValueList AstExprList SpecState)
-  (ErrSpecArgs CompilerDiagnostic))
+  (ErrSpecArgs (Box CompilerDiagnostic)))
 
 (defenum ResultSpecEnsure
   (OkSpecEnsure String SpecState)
-  (ErrSpecEnsure CompilerDiagnostic))
+  (ErrSpecEnsure (Box CompilerDiagnostic)))
 
 (defenum ResultSpecBuild
   (OkSpecBuild AstParamList SpecValueSubst SpecTypeSubst)
-  (ErrSpecBuild CompilerDiagnostic))
+  (ErrSpecBuild (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExpr
   (OkSpecSubExpr i64)
-  (ErrSpecSubExpr CompilerDiagnostic))
+  (ErrSpecSubExpr (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExprList
   (OkSpecSubExprList AstExprList)
-  (ErrSpecSubExprList CompilerDiagnostic))
+  (ErrSpecSubExprList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubLetBindingList
   (OkSpecSubLetBindingList AstLetBindingList)
-  (ErrSpecSubLetBindingList CompilerDiagnostic))
+  (ErrSpecSubLetBindingList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubMatchArmList
   (OkSpecSubMatchArmList AstMatchArmList)
-  (ErrSpecSubMatchArmList CompilerDiagnostic))
+  (ErrSpecSubMatchArmList (Box CompilerDiagnostic)))
 
 (defenum GenMaybeEntry
   (GenNoEntry)
@@ -146,27 +146,27 @@
 
 (defenum ResultGenKey
   (OkGenKey String i64)
-  (ErrGenKey CompilerDiagnostic))
+  (ErrGenKey (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecl
   (OkGenDecl AstDeclList GenRegistry String)
-  (ErrGenDecl CompilerDiagnostic))
+  (ErrGenDecl (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecls
   (OkGenDecls AstDeclList GenRegistry String)
-  (ErrGenDecls CompilerDiagnostic))
+  (ErrGenDecls (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgram
   (OkGenProgram AstProgram)
-  (ErrGenProgram CompilerDiagnostic))
+  (ErrGenProgram (Box CompilerDiagnostic)))
 
 (defenum ResultGenDeclsWithPaths
   (OkGenDeclsWithPaths AstDeclList AstDeclPathList GenRegistry String)
-  (ErrGenDeclsWithPaths CompilerDiagnostic))
+  (ErrGenDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgramWithPaths
   (OkGenProgramWithPaths AstProgram AstDeclPathList)
-  (ErrGenProgramWithPaths CompilerDiagnostic))
+  (ErrGenProgramWithPaths (Box CompilerDiagnostic)))
 
 (define (spec-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
@@ -1104,9 +1104,10 @@
                   [(ErrGenKey diag) (ErrGenKey diag)])]
               [_
                 (ErrGenKey
-                  (spec-diagnostic-at-expr
-                    head-expr
-                    "generated-decl: key expression must evaluate to String"))])]
+                  (box
+                    (spec-diagnostic-at-expr
+                      head-expr
+                      "generated-decl: key expression must evaluate to String")))])]
           [(ErrCtfe diag) (ErrGenKey diag)]))]))
 
 (define (gen-full-key
@@ -1178,37 +1179,37 @@
 
 (defenum ResultGenHashmapTypeInfo
   (OkGenHashmapTypeInfo GenHashmapTypeInfo)
-  (ErrGenHashmapTypeInfo CompilerDiagnostic))
+  (ErrGenHashmapTypeInfo (Box CompilerDiagnostic)))
 
 (defenum ResultGenHashmapType
   (OkGenHashmapType AstType)
-  (ErrGenHashmapType CompilerDiagnostic))
+  (ErrGenHashmapType (Box CompilerDiagnostic)))
 
 (defenum GenHashmapArgs
   (GenHashmapArgs String String String))
 
 (defenum ResultGenHashmapArgs
   (OkGenHashmapArgs GenHashmapArgs)
-  (ErrGenHashmapArgs CompilerDiagnostic))
+  (ErrGenHashmapArgs (Box CompilerDiagnostic)))
 
 (defenum ResultGenHashmapSource
   (OkGenHashmapSource String)
-  (ErrGenHashmapSource CompilerDiagnostic))
+  (ErrGenHashmapSource (Box CompilerDiagnostic)))
 
 (defenum ResultGenJsonType
   (OkGenJsonType AstType)
-  (ErrGenJsonType CompilerDiagnostic))
+  (ErrGenJsonType (Box CompilerDiagnostic)))
 
 (defenum GenJsonDeriveArgs
   (GenJsonDeriveArgs AstType))
 
 (defenum ResultGenJsonDeriveArgs
   (OkGenJsonDeriveArgs GenJsonDeriveArgs)
-  (ErrGenJsonDeriveArgs CompilerDiagnostic))
+  (ErrGenJsonDeriveArgs (Box CompilerDiagnostic)))
 
 (defenum ResultGenJsonSource
   (OkGenJsonSource String)
-  (ErrGenJsonSource CompilerDiagnostic))
+  (ErrGenJsonSource (Box CompilerDiagnostic)))
 
 (define (gen-tb2 [buf : text_buf.TextBuf] [a : String] [b : String]) : text_buf.TextBuf
   (text_buf.text-buf-append (text_buf.text-buf-append buf a) b))
@@ -1268,9 +1269,10 @@
         [(CtfeString text) (OkGenKey text fuel)]
         [_
           (ErrGenKey
-            (spec-diagnostic-at-expr
-              expr
-              "hashmap-family: argument must evaluate to String"))])]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                "hashmap-family: argument must evaluate to String")))])]
     [(ErrCtfe diag) (ErrGenKey diag)]))
 
 (define (gen-hashmap-args [args : AstExprList] [env : CtfeEnv]) : ResultGenHashmapArgs
@@ -1303,20 +1305,24 @@
                       [(ErrGenKey diag) (ErrGenHashmapArgs diag)]))]
                 [_
                   (ErrGenHashmapArgs
-                    (gen-hashmap-diag
-                      "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+                    (box
+                      (gen-hashmap-diag
+                        "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
             [_
               (ErrGenHashmapArgs
-                (gen-hashmap-diag
-                  "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+                (box
+                  (gen-hashmap-diag
+                    "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
         [_
           (ErrGenHashmapArgs
-            (gen-hashmap-diag
-              "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+            (box
+              (gen-hashmap-diag
+                "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
     [_
       (ErrGenHashmapArgs
-        (gen-hashmap-diag
-          "hashmap-family: expected key type, value type, and key descriptor arguments"))]))
+        (box
+          (gen-hashmap-diag
+            "hashmap-family: expected key type, value type, and key descriptor arguments")))]))
 
 (define (gen-json-diag [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
@@ -1338,10 +1344,11 @@
         [(SpecSomeString name) (OkGenJsonType (AstTyStruct (intern name)))]
         [(SpecNoString)
           (ErrGenJsonType
-            (gen-json-diag
-              (string.string-append
-                "json-derive: unsupported type-key "
-                type-key)))])]))
+            (box
+              (gen-json-diag
+                (string.string-append
+                  "json-derive: unsupported type-key "
+                  type-key))))])]))
 
 (define (gen-json-eval-type [expr : AstExpr] [env : CtfeEnv]) : ResultGenJsonType
   (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
@@ -1353,9 +1360,10 @@
         [(CtfeString type-key) (gen-json-type-from-key type-key)]
         [_
           (ErrGenJsonType
-            (spec-diagnostic-at-expr
-              expr
-              "json-derive: argument must evaluate to a type or type-key String"))])]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                "json-derive: argument must evaluate to a type or type-key String")))])]
     [(ErrCtfe diag) (ErrGenJsonType diag)]))
 
 (define (gen-json-args [args : AstExprList] [env : CtfeEnv]) : ResultGenJsonDeriveArgs
@@ -1370,10 +1378,11 @@
               [(ErrGenJsonType diag) (ErrGenJsonDeriveArgs diag)]))]
         [_
           (ErrGenJsonDeriveArgs
-            (gen-json-diag "json-derive: expected one struct type argument"))])]
+            (box
+              (gen-json-diag "json-derive: expected one struct type argument")))])]
     [_
       (ErrGenJsonDeriveArgs
-        (gen-json-diag "json-derive: expected one struct type argument"))]))
+        (box (gen-json-diag "json-derive: expected one struct type argument")))]))
 
 (define (gen-hashmap-one-byte-string [code : i64]) : String
   (let
@@ -1425,10 +1434,13 @@
     (if (string.string-eq type-key "i64")
       (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
       (ErrGenHashmapTypeInfo
-        (gen-hashmap-diag
-          (string.string-append
-            "hashmap-family: unsupported "
-            (string.string-append role (string.string-append " type " type-key))))))))
+        (box
+          (gen-hashmap-diag
+            (string.string-append
+              "hashmap-family: unsupported "
+              (string.string-append
+                role
+                (string.string-append " type " type-key)))))))))
 
 (define (gen-hashmap-value-type-info [type-key : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-scalar-type-info type-key "value")
@@ -1445,10 +1457,11 @@
                 (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
             [(SpecNoString)
               (ErrGenHashmapTypeInfo
-                (gen-hashmap-diag
-                  (string.string-append
-                    "hashmap-family: unsupported value type "
-                    type-key)))])])]))
+                (box
+                  (gen-hashmap-diag
+                    (string.string-append
+                      "hashmap-family: unsupported value type "
+                      type-key))))])])]))
 
 (define (gen-hashmap-nominal-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-nominal-name type-key "struct_")
@@ -1462,12 +1475,13 @@
             (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
         [(SpecNoString)
           (ErrGenHashmapTypeInfo
-            (gen-hashmap-diag
-              (string.string-append
-                "hashmap-family: unsupported "
+            (box
+              (gen-hashmap-diag
                 (string.string-append
-                  role
-                  (string.string-append " type " type-key)))))])]))
+                  "hashmap-family: unsupported "
+                  (string.string-append
+                    role
+                    (string.string-append " type " type-key))))))])]))
 
 (define (gen-hashmap-key-type-info [type-key : String] [descriptor : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-scalar-type-info type-key "key")
@@ -1476,12 +1490,13 @@
       (if (string.string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
         (gen-hashmap-nominal-type-info type-key "key")
         (ErrGenHashmapTypeInfo
-          (gen-hashmap-diag
-            (string.string-append
-              "hashmap-family: unsupported key descriptor "
+          (box
+            (gen-hashmap-diag
               (string.string-append
-                descriptor
-                (string.string-append " for key type " type-key))))))]))
+                "hashmap-family: unsupported key descriptor "
+                (string.string-append
+                  descriptor
+                  (string.string-append " for key type " type-key)))))))]))
 
 (define (gen-hashmap-borrowed-value-type [value-type : String]) : String
   (if (string.string-eq value-type "String")
@@ -4246,33 +4261,36 @@
         [(SpecSomeString name) (OkGenHashmapType (AstTyEnum (intern name)))]
         [(SpecNoString)
           (ErrGenHashmapType
-            (gen-hashmap-diag
-              (string.string-append
-                "hashmap-family: aggregate key descriptor requires nominal aggregate key type, got "
-                type-key)))])]))
+            (box
+              (gen-hashmap-diag
+                (string.string-append
+                  "hashmap-family: aggregate key descriptor requires nominal aggregate key type, got "
+                  type-key))))])]))
 
 (define (gen-hashmap-aggregate-unsupported
   [aggregate-name : String]
   [member-name : String]
   [type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string.string-append
-        "hashmap-family: unsupported aggregate key member "
+    (box
+      (gen-hashmap-diag
         (string.string-append
-          aggregate-name
+          "hashmap-family: unsupported aggregate key member "
           (string.string-append
-            "."
+            aggregate-name
             (string.string-append
-              member-name
-              (string.string-append " type " type-key))))))))
+              "."
+              (string.string-append
+                member-name
+                (string.string-append " type " type-key)))))))))
 
 (define (gen-hashmap-aggregate-no-reflection [type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string.string-append
-        "hashmap-family: no reflection metadata for aggregate key "
-        type-key))))
+    (box
+      (gen-hashmap-diag
+        (string.string-append
+          "hashmap-family: no reflection metadata for aggregate key "
+          type-key)))))
 
 (define (gen-hashmap-aggregate-field-expr [base : String] [field-name : String]) : String
   (string.string-append
@@ -4487,7 +4505,7 @@
                 (+ payload-index 1)
                 (gen-hashmap-aggregate-combine-expr prefix seed payload-hash))]))]
       [(ErrCtfeTypeLookup message)
-        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+        (ErrGenHashmapSource (box (gen-hashmap-diag message)))])))
 
 (define (gen-hashmap-aggregate-enum-hash-arms
   [variants : CtfeReflectVariantList]
@@ -4757,7 +4775,7 @@
                   (OkGenHashmapSource
                     (gen-hashmap-aggregate-and-expr head-source rest-source))])]))]
       [(ErrCtfeTypeLookup message)
-        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+        (ErrGenHashmapSource (box (gen-hashmap-diag message)))])))
 
 (define (gen-hashmap-aggregate-enum-eq-arms
   [variants : CtfeReflectVariantList]
@@ -4901,12 +4919,13 @@
   [descriptor : String]
   [key-type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string.string-append
-        "hashmap-family: descriptor "
+    (box
+      (gen-hashmap-diag
         (string.string-append
-          descriptor
-          (string.string-append " does not support key type " key-type-key))))))
+          "hashmap-family: descriptor "
+          (string.string-append
+            descriptor
+            (string.string-append " does not support key type " key-type-key)))))))
 
 (define (gen-hashmap-type-info-source [info : GenHashmapTypeInfo]) : String
   (match info
@@ -4943,14 +4962,15 @@
     (cond
       [(not (string.string-eq map-name expected-map))
         (ErrGenHashmapSource
-          (gen-hashmap-diag
-            (string.string-append
-              "hashmap-family: marker item "
+          (box
+            (gen-hashmap-diag
               (string.string-append
-                map-name
+                "hashmap-family: marker item "
                 (string.string-append
-                  " does not match generated map "
-                  expected-map)))))]
+                  map-name
+                  (string.string-append
+                    " does not match generated map "
+                    expected-map))))))]
       [(string.string-eq descriptor "stdlib/hashmap/string-key-v1")
         (if (string.string-eq key-type-key "String")
           (OkGenHashmapSource
@@ -4971,10 +4991,11 @@
           infos)]
       [else
         (ErrGenHashmapSource
-          (gen-hashmap-diag
-            (string.string-append
-              "hashmap-family: unsupported key descriptor "
-              descriptor)))])))
+          (box
+            (gen-hashmap-diag
+              (string.string-append
+                "hashmap-family: unsupported key descriptor "
+                descriptor))))])))
 
 (define (gen-hashmap-source-for
   [map-name : String]
@@ -5024,12 +5045,13 @@
 
 (define (gen-json-field-unsupported [field-name : String] [type-key : String]) : ResultGenJsonSource
   (ErrGenJsonSource
-    (gen-json-diag
-      (string.string-append
-        "json-derive: unsupported field "
+    (box
+      (gen-json-diag
         (string.string-append
-          field-name
-          (string.string-append " type " type-key))))))
+          "json-derive: unsupported field "
+          (string.string-append
+            field-name
+            (string.string-append " type " type-key)))))))
 
 (define (gen-json-field-type-source
   [field-name : String]
@@ -5628,14 +5650,15 @@
           [expected-request : String (string.string-append type-name "Json")]
           (if (not (string.string-eq request-name expected-request))
             (ErrGenJsonSource
-              (gen-json-diag
-                (string.string-append
-                  "json-derive: marker item "
+              (box
+                (gen-json-diag
                   (string.string-append
-                    request-name
+                    "json-derive: marker item "
                     (string.string-append
-                      " does not match generated request "
-                      expected-request)))))
+                      request-name
+                      (string.string-append
+                        " does not match generated request "
+                        expected-request))))))
             (match (ctfe-reflect-info-lookup
               infos
               (ctfe-type-nominal-key resolved))
@@ -5646,10 +5669,11 @@
                   [_ (gen-json-field-unsupported request-name type-key)])]
               [(CtfeNoReflectInfo)
                 (ErrGenJsonSource
-                  (gen-json-diag
-                    (string.string-append
-                      "json-derive: no reflection metadata for "
-                      type-key)))])))]
+                  (box
+                    (gen-json-diag
+                      (string.string-append
+                        "json-derive: no reflection metadata for "
+                        type-key))))])))]
       [_ (gen-json-field-unsupported request-name type-key)])))
 
 (define (gen-register-generated-decl
@@ -5674,7 +5698,7 @@
       [(GenSomeEntry existing)
         (if (gen-decl-eq? existing template)
           (OkGenDecl AstDeclNil registry module)
-          (ErrGenDecl (gen-incompatible-diag item key)))])))
+          (ErrGenDecl (box (gen-incompatible-diag item key))))])))
 
 (define (gen-register-generated-decls
   [decls : AstDeclList]
@@ -5705,8 +5729,9 @@
                 [(ErrGenDecl diag) (ErrGenDecl diag)])]
             [_
               (ErrGenDecl
-                (gen-hashmap-diag
-                  "hashmap-family: generated payload must declare a visible item"))])]
+                (box
+                  (gen-hashmap-diag
+                    "hashmap-family: generated payload must declare a visible item")))])]
         [(SpecSomeString item)
           (match (gen-register-generated-decl
             decl
@@ -5750,7 +5775,7 @@
       [(GenSomeEntry existing)
         (if (gen-decl-eq? existing template)
           (OkGenDecl AstDeclNil registry module)
-          (ErrGenDecl (gen-incompatible-diag item key)))])))
+          (ErrGenDecl (box (gen-incompatible-diag item key))))])))
 
 ;; JSON derive emits runtime helpers that call imported stdlib functions. Keep
 ;; the registry key for dedup, but leave declarations raw so the run pipeline
@@ -5782,8 +5807,9 @@
                 [(ErrGenDecl diag) (ErrGenDecl diag)])]
             [_
               (ErrGenDecl
-                (gen-json-diag
-                  "json-derive: generated payload must declare a visible item"))])]
+                (box
+                  (gen-json-diag
+                    "json-derive: generated payload must declare a visible item")))])]
         [(SpecSomeString item)
           (match (gen-register-generated-decl-raw
             decl
@@ -5845,10 +5871,11 @@
                     registry)]
                 [(ErrAstProgram message)
                   (ErrGenDecl
-                    (gen-hashmap-diag
-                      (string.string-append
-                        "hashmap-family: generated source did not parse: "
-                        message)))])]
+                    (box
+                      (gen-hashmap-diag
+                        (string.string-append
+                          "hashmap-family: generated source did not parse: "
+                          message))))])]
             [(ErrGenHashmapSource diag) (ErrGenDecl diag)])])]
     [(ErrGenHashmapArgs diag) (ErrGenDecl diag)]))
 
@@ -5876,10 +5903,11 @@
                     registry)]
                 [(ErrAstProgram message)
                   (ErrGenDecl
-                    (gen-json-diag
-                      (string.string-append
-                        "json-derive: generated source did not parse: "
-                        message)))])]
+                    (box
+                      (gen-json-diag
+                        (string.string-append
+                          "json-derive: generated source did not parse: "
+                          message))))])]
             [(ErrGenJsonSource diag) (ErrGenDecl diag)])])]
     [(ErrGenJsonDeriveArgs diag) (ErrGenDecl diag)]))
 
@@ -5903,12 +5931,13 @@
               (match (gen-decl-visible-name template)
                 [(SpecNoString)
                   (ErrGenDecl
-                    (compiler-diagnostic-at-start
-                      ""
-                      "generated-decl: generated payload must declare a visible item"))]
+                    (box
+                      (compiler-diagnostic-at-start
+                        ""
+                        "generated-decl: generated payload must declare a visible item")))]
                 [(SpecSomeString actual)
                   (if (not (string.string-eq item actual))
-                    (ErrGenDecl (gen-item-mismatch-diag item actual))
+                    (ErrGenDecl (box (gen-item-mismatch-diag item actual)))
                     (match (gen-metadata-arg-key meta-key args env)
                       [(OkGenKey arg-key _)
                         (cond
@@ -6449,47 +6478,57 @@
       (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitChar c))))]
     [(CtfeString _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time String value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time String value into runtime expression")))]
     [(CtfeUnit) (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitUnit))))]
     [(CtfeType ty)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          (string.string-append
-            "cannot substitute compile-time type value "
-            (string.string-append (spec-type-key ty) " into runtime expression"))))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            (string.string-append
+              "cannot substitute compile-time type value "
+              (string.string-append
+                (spec-type-key ty)
+                " into runtime expression")))))]
     [(CtfeExpr _ _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time Expr value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time Expr value into runtime expression")))]
     [(CtfeExprList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprList value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprList value into runtime expression")))]
     [(CtfeExprClause _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprClause value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClause value into runtime expression")))]
     [(CtfeExprClauseList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprClauseList value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClauseList value into runtime expression")))]
     [(CtfeExprBindingClause _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprBindingClause value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprBindingClause value into runtime expression")))]
     [(CtfeExprBindingClauseList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprBindingClauseList value into runtime expression"))]))
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)
@@ -6609,7 +6648,7 @@
         [(AstExprNil) (OkSpecArgs SpecValueNil AstExprNil state)]
         [_
           (ErrSpecArgs
-            (compiler-diagnostic-at-start "" "specialize: arity mismatch"))])]
+            (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])]
     [(AstParamCons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
@@ -6643,17 +6682,18 @@
                                 [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
                             [_
                               (ErrSpecArgs
-                                (spec-diagnostic-at-expr
-                                  arg
-                                  (string.string-append
-                                    "comptime argument '"
+                                (box
+                                  (spec-diagnostic-at-expr
+                                    arg
                                     (string.string-append
-                                      (intern-str param-name)
+                                      "comptime argument '"
                                       (string.string-append
-                                        "' for function '"
+                                        (intern-str param-name)
                                         (string.string-append
-                                          fn-name
-                                          "' must be a type value such as `(type i64)`"))))))])
+                                          "' for function '"
+                                          (string.string-append
+                                            fn-name
+                                            "' must be a type value such as `(type i64)`")))))))])
                           (if (spec-value-runtime-type-matches? value param-ty)
                             (match (spec-rewrite-specialized-args
                               rest-params
@@ -6668,23 +6708,24 @@
                                   rest-state)]
                               [(ErrSpecArgs diag) (ErrSpecArgs diag)])
                             (ErrSpecArgs
-                              (spec-diagnostic-at-expr
-                                arg
-                                (string.string-append
-                                  "comptime argument '"
+                              (box
+                                (spec-diagnostic-at-expr
+                                  arg
                                   (string.string-append
-                                    (intern-str param-name)
+                                    "comptime argument '"
                                     (string.string-append
-                                      "' for function '"
+                                      (intern-str param-name)
                                       (string.string-append
-                                        fn-name
+                                        "' for function '"
                                         (string.string-append
-                                          "' has type "
+                                          fn-name
                                           (string.string-append
-                                            (spec-value-type-label value)
+                                            "' has type "
                                             (string.string-append
-                                              ", expected "
-                                              (spec-type-key param-ty))))))))))))]
+                                              (spec-value-type-label value)
+                                              (string.string-append
+                                                ", expected "
+                                                (spec-type-key param-ty)))))))))))))]
                       [(ErrCtfe diag) (ErrSpecArgs diag)])
                     (match (spec-rewrite-expr arg templates state)
                       [(OkSpecExpr rewritten-arg arg-state)
@@ -6703,7 +6744,8 @@
                       [(ErrSpecExpr diag) (ErrSpecArgs diag)]))]))]
           [_
             (ErrSpecArgs
-              (compiler-diagnostic-at-start "" "specialize: arity mismatch"))]))]))
+              (box
+                (compiler-diagnostic-at-start "" "specialize: arity mismatch")))]))]))
 
 (define (spec-build-specialization
   [params : AstParamList]
@@ -6715,7 +6757,7 @@
           (OkSpecBuild AstParamNil SpecValueSubstNil SpecTypeSubstNil)]
         [_
           (ErrSpecBuild
-            (compiler-diagnostic-at-start "" "specialize: value mismatch"))])]
+            (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])]
     [(AstParamCons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
@@ -6740,9 +6782,10 @@
                                 type-subs))]
                           [_
                             (ErrSpecBuild
-                              (compiler-diagnostic-at-start
-                                ""
-                                "specialize: expected type value"))])
+                              (box
+                                (compiler-diagnostic-at-start
+                                  ""
+                                  "specialize: expected type value")))])
                         (OkSpecBuild
                           runtime
                           (spec-value-subst-cons
@@ -6753,9 +6796,10 @@
                     [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
                 [_
                   (ErrSpecBuild
-                    (compiler-diagnostic-at-start
-                      ""
-                      "specialize: value mismatch"))])
+                    (box
+                      (compiler-diagnostic-at-start
+                        ""
+                        "specialize: value mismatch")))])
               (match (spec-build-specialization rest-params values)
                 [(OkSpecBuild runtime value-subs type-subs)
                   (OkSpecBuild
@@ -7761,11 +7805,12 @@
         (match (spec-value-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
-              (spec-diagnostic-at-expr
-                expr
-                (string.string-append
-                  "cannot assign to comptime parameter '"
-                  (string.string-append (intern-str name) "'"))))]
+              (box
+                (spec-diagnostic-at-expr
+                  expr
+                  (string.string-append
+                    "cannot assign to comptime parameter '"
+                    (string.string-append (intern-str name) "'")))))]
           [(SpecNoString)
             (match (spec-substitute-values-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -8052,11 +8097,12 @@
       (match (spec-value-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string.string-append
-                "cannot take address of comptime value parameter '"
-                (string.string-append (intern-str name) "'"))))]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                (string.string-append
+                  "cannot take address of comptime value parameter '"
+                  (string.string-append (intern-str name) "'")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
@@ -8320,13 +8366,14 @@
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string.string-append
-                "type-valued comptime parameter '"
+            (box
+              (spec-diagnostic-at-expr
+                expr
                 (string.string-append
-                  (intern-str name)
-                  "' cannot be used as a runtime value"))))]
+                  "type-valued comptime parameter '"
+                  (string.string-append
+                    (intern-str name)
+                    "' cannot be used as a runtime value")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral ty)
@@ -8665,13 +8712,14 @@
         (match (spec-type-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
-              (spec-diagnostic-at-expr
-                expr
-                (string.string-append
-                  "type-valued comptime parameter '"
+              (box
+                (spec-diagnostic-at-expr
+                  expr
                   (string.string-append
-                    (intern-str name)
-                    "' cannot be assigned"))))]
+                    "type-valued comptime parameter '"
+                    (string.string-append
+                      (intern-str name)
+                      "' cannot be assigned")))))]
           [(SpecNoString)
             (match (spec-substitute-types-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -8816,13 +8864,14 @@
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string.string-append
-                "type-valued comptime parameter '"
+            (box
+              (spec-diagnostic-at-expr
+                expr
                 (string.string-append
-                  (intern-str name)
-                  "' cannot be used as a runtime value"))))]
+                  "type-valued comptime parameter '"
+                  (string.string-append
+                    (intern-str name)
+                    "' cannot be used as a runtime value")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
@@ -9972,7 +10021,7 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (match (compiler-diagnostic-notes diag)
+          (match (compiler-diagnostic-notes (box-get diag))
             [(CompilerDiagnosticNoteCons note _)
               (string.string-eq
                 note
@@ -10406,7 +10455,7 @@
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported key descriptor stdlib/hashmap/i64-key-v1 for key type bool")])]
     [(ErrAstProgram _) false]))
 
@@ -10418,7 +10467,7 @@
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported value type bool")])]
     [(ErrAstProgram _) false]))
 
@@ -10430,7 +10479,7 @@
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported aggregate key member BadAggregateKey.score type f64")])]
     [(ErrAstProgram _) false]))
 
@@ -10486,7 +10535,7 @@
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
           (string.string-eq
-            (compiler-diagnostic-message diag)
+            (compiler-diagnostic-message (box-get diag))
             "json-derive: unsupported field score type f64")])]
     [(ErrAstProgram _) false]))
 

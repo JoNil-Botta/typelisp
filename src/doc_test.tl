@@ -1404,11 +1404,12 @@
                 (OkSourceToolString
                   (source-tool-augment-assembly-for-target asm target))]
               [(ErrCompilerDriver diag)
-                (ErrSourceToolString (compiler-diagnostic-render diag))])]
+                (ErrSourceToolString
+                  (compiler-diagnostic-render (box-get diag)))])]
           [(ErrCompilerLower diag)
-            (ErrSourceToolString (compiler-diagnostic-render diag))])]
+            (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]
       [(ErrCompilerLoadWithPaths diag)
-        (ErrSourceToolString (compiler-diagnostic-render diag))])))
+        (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])))
 
 (define (doc-test-runnable-failure
   [path : String]
@@ -1632,7 +1633,7 @@
               path
               source-line
               index
-              (doc-test-unexpected-error-message index diag))))])))
+              (doc-test-unexpected-error-message index (box-get diag)))))])))
 
 (define (doc-test-typecheck-package-example-with-roots
   [path : String]
@@ -1669,7 +1670,7 @@
               path
               source-line
               index
-              (doc-test-unexpected-error-message index diag))))])))
+              (doc-test-unexpected-error-message index (box-get diag)))))])))
 
 (define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-typecheck-example-with-roots path example (vector.string-vec-new)))

@@ -127,7 +127,7 @@
         0)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
-        (io.print-error (compiler-diagnostic-render diag))
+        (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (doc-generate-package
@@ -502,16 +502,14 @@
   [count : i64]
   [input-paths : vector.StringVec]
   [output-path : DocMaybeString]
-  [has-output : bool]
   [manifest-path : String]
-  [has-manifest : bool]
   [stdlib-roots : vector.StringVec]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
       input-paths
       output-path
       manifest-path
-      has-manifest
+      (not (string.string-eq manifest-path ""))
       stdlib-roots)
     (let
       [current : String (io.arg idx)]
@@ -519,17 +517,16 @@
         [(string.string-eq current "-o")
           (if (>= (+ idx 1) count)
             (ErrDocDefaultCliConfig "doc: -o requires a value")
-            (if has-output
-              (ErrDocDefaultCliConfig "doc: duplicate -o")
-              (doc-default-parse-options
-                (+ idx 2)
-                count
-                input-paths
-                (DocSomeString (io.arg (+ idx 1)))
-                true
-                manifest-path
-                has-manifest
-                stdlib-roots)))]
+            (match output-path
+              [(DocSomeString _) (ErrDocDefaultCliConfig "doc: duplicate -o")]
+              [(DocNoString)
+                (doc-default-parse-options
+                  (+ idx 2)
+                  count
+                  input-paths
+                  (DocSomeString (io.arg (+ idx 1)))
+                  manifest-path
+                  stdlib-roots)]))]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
@@ -538,23 +535,19 @@
               count
               input-paths
               output-path
-              has-output
               manifest-path
-              has-manifest
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
-            (if has-manifest
+            (if (not (string.string-eq manifest-path ""))
               (ErrDocDefaultCliConfig "doc: duplicate --manifest-path")
               (doc-default-parse-options
                 (+ idx 2)
                 count
                 input-paths
                 output-path
-                has-output
                 (io.arg (+ idx 1))
-                true
                 stdlib-roots)))]
         [(doc-flag? current)
           (ErrDocDefaultCliConfig
@@ -565,9 +558,7 @@
             count
             (vector.string-vec-push input-paths current)
             output-path
-            has-output
             manifest-path
-            has-manifest
             stdlib-roots)]))))
 
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
@@ -576,9 +567,7 @@
     count
     (vector.string-vec-new)
     (DocNoString)
-    false
     ""
-    false
     (vector.string-vec-new)))
 
 (define (doc-invalid-args) : i64

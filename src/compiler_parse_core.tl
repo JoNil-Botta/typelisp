@@ -216,7 +216,7 @@
 
 (defenum ResultParseAstDeclVecDiagnostic
   (OkParseAstDeclVecDiagnostic)
-  (ErrParseAstDeclVecDiagnostic CompilerDiagnostic))
+  (ErrParseAstDeclVecDiagnostic (Box CompilerDiagnostic)))
 
 (defenum ResultAstMaybeExpr
   (OkAstNoExpr)
@@ -241,11 +241,11 @@
 
 (defenum ResultAstDeclListDiagnostic
   (OkAstDeclListDiagnostic AstDeclList)
-  (ErrAstDeclListDiagnostic CompilerDiagnostic))
+  (ErrAstDeclListDiagnostic (Box CompilerDiagnostic)))
 
 (defenum ResultAstProgramDiagnostic
   (OkAstProgramDiagnostic AstProgram)
-  (ErrAstProgramDiagnostic CompilerDiagnostic))
+  (ErrAstProgramDiagnostic (Box CompilerDiagnostic)))
 
 (define (sexpr-colon? [s : Sexpr]) : bool
   (match s
@@ -6863,15 +6863,17 @@
                   out))]
             [(ErrAstMaybeDecl message)
               (ErrParseAstDeclVecDiagnostic
-                (parse-ast-canonical-diagnostic
-                  (compiler-diagnostic-from-span
-                    path
-                    (spanned-sexpr-span spanned-form)
-                    message)))])]
+                (box
+                  (parse-ast-canonical-diagnostic
+                    (compiler-diagnostic-from-span
+                      path
+                      (spanned-sexpr-span spanned-form)
+                      message))))])]
         [(ErrSpannedSexpr err)
           (ErrParseAstDeclVecDiagnostic
-            (parse-ast-canonical-diagnostic
-              (compiler-diagnostic-from-source-error path err)))]))))
+            (box
+              (parse-ast-canonical-diagnostic
+                (compiler-diagnostic-from-source-error path err))))]))))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
@@ -6940,8 +6942,9 @@
       (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
     [(ErrSpannedTokens err)
       (ErrAstProgramDiagnostic
-        (parse-ast-canonical-diagnostic
-          (compiler-diagnostic-from-source-error path err)))]))
+        (box
+          (parse-ast-canonical-diagnostic
+            (compiler-diagnostic-from-source-error path err))))]))
 
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
@@ -7439,10 +7442,10 @@
   (match (parse-ast-source-diagnostic path src)
     [(ErrAstProgramDiagnostic diag)
       (and
-        (string.string-eq (compiler-diagnostic-path diag) path)
-        (= (compiler-diagnostic-line diag) line)
-        (= (compiler-diagnostic-col diag) col)
-        (string.string-eq (compiler-diagnostic-message diag) want))]
+        (string.string-eq (compiler-diagnostic-path (box-get diag)) path)
+        (= (compiler-diagnostic-line (box-get diag)) line)
+        (= (compiler-diagnostic-col (box-get diag)) col)
+        (string.string-eq (compiler-diagnostic-message (box-get diag)) want))]
     [(OkAstProgramDiagnostic _) false]))
 
 (define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
@@ -7543,11 +7546,11 @@
     "parse-code.tl"
     (compiler-parse-malformed-binary-source))
     [(ErrAstProgramDiagnostic diag)
-      (match (compiler-diagnostic-code diag)
+      (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
           (and
             (string.string-eq code (compiler-diagnostic-code-parse))
-            (match (compiler-diagnostic-category diag)
+            (match (compiler-diagnostic-category (box-get diag))
               [(CompilerDiagnosticSomeString category)
                 (string.string-eq category "parse")]
               [CompilerDiagnosticNoString false]))]

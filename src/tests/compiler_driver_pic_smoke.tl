@@ -92,7 +92,7 @@
     [(OkCompilerDriverPic _) false]
     [(ErrCompilerDriverPic diag)
       (compiler-driver-pic-smoke-contains?
-        (compiler-diagnostic-render diag)
+        (compiler-diagnostic-render (box-get diag))
         "backend: --pic supports only internal references")]))
 
 (define (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?) : bool

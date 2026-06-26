@@ -1,4 +1,6 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
+(import stdlib.arena)
+(import stdlib.array)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import "compiler_diagnostic.tl")
@@ -232,33 +234,33 @@
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (let
-    [cell : (Array bool) (make-array bool 1)]
+    [cell : (Array bool) (array.make-array bool 1)]
     (begin
-      (array-set! cell 0 value)
+      (array.array-set! cell 0 value)
       cell)))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
   (let
-    [cell : (Array i64) (make-array i64 1)]
+    [cell : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! cell 0 value)
+      (array.array-set! cell 0 value)
       cell)))
 
 (define (compiler-load-session-state-bool-cell-get [cell : (Array bool)]) : bool
-  (array-ref cell 0))
+  (array.array-ref cell 0))
 
 (define (compiler-load-session-state-bool-cell-set!
   [cell : (Array bool)]
   [value : bool]) : unit
-  (array-set! cell 0 value))
+  (array.array-set! cell 0 value))
 
 (define (compiler-load-session-state-i64-cell-get [cell : (Array i64)]) : i64
-  (array-ref cell 0))
+  (array.array-ref cell 0))
 
 (define (compiler-load-session-state-i64-cell-set!
   [cell : (Array i64)]
   [value : i64]) : unit
-  (array-set! cell 0 value))
+  (array.array-set! cell 0 value))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (CompilerLoadSessionState
@@ -267,14 +269,14 @@
     (compiler-load-session-state-i64-cell 0)
     (compiler-load-session-state-i64-cell 0)
     (compiler-load-session-state-i64-cell 0)
-    (make-array CompilerLoadProgramCacheSlot 256)
-    (make-array CompilerLoadProgramAdmissionSlot 256)
+    (array.make-array CompilerLoadProgramCacheSlot 256)
+    (array.make-array CompilerLoadProgramAdmissionSlot 256)
     (compiler-load-session-state-bool-cell false)
     (compiler-load-session-state-bool-cell false)
     (compiler-load-session-state-i64-cell 0)
     (compiler-load-session-state-i64-cell 0)
     (compiler-load-session-state-i64-cell 0)
-    (make-array CompilerLoadPreludeCacheSlot 16)
+    (array.make-array CompilerLoadPreludeCacheSlot 16)
     (compiler-load-session-state-bool-cell false)))
 
 (define compiler-load-active-session-state : CompilerLoadSessionState
@@ -311,7 +313,7 @@
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
-      (array-set!
+      (array.array-set!
         (struct-get compiler-load-active-session-state program-cache)
         index
         (CompilerLoadProgramCacheEmpty))
@@ -319,15 +321,15 @@
 
 (define (compiler-load-program-cache-stats-reset!) : unit
   (begin
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-hit-count)
       0
       0)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-miss-count)
       0
       0)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-store-count)
       0
       0)))
@@ -335,7 +337,7 @@
 (define (compiler-load-program-cache-clear!) : unit
   (begin
     (compiler-load-program-cache-fill! 0)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-ready)
       0
       true)
@@ -343,49 +345,49 @@
     (compiler-load-program-cache-stats-reset!)))
 
 (define (compiler-load-program-cache-ensure!) : unit
-  (if (array-ref
+  (if (array.array-ref
     (struct-get compiler-load-active-session-state program-cache-ready)
     0)
     unit
     (compiler-load-program-cache-clear!)))
 
 (define (compiler-load-program-cache-note-hit!) : unit
-  (array-set!
+  (array.array-set!
     (struct-get compiler-load-active-session-state program-cache-hit-count)
     0
     (+ (compiler-load-program-cache-hit-count-value) 1)))
 
 (define (compiler-load-program-cache-note-miss!) : unit
-  (array-set!
+  (array.array-set!
     (struct-get compiler-load-active-session-state program-cache-miss-count)
     0
     (+ (compiler-load-program-cache-miss-count-value) 1)))
 
 (define (compiler-load-program-cache-note-store!) : unit
-  (array-set!
+  (array.array-set!
     (struct-get compiler-load-active-session-state program-cache-store-count)
     0
     (+ (compiler-load-program-cache-store-count-value) 1)))
 
 (define (compiler-load-program-cache-hit-count-value) : i64
-  (array-ref
+  (array.array-ref
     (struct-get compiler-load-active-session-state program-cache-hit-count)
     0))
 
 (define (compiler-load-program-cache-miss-count-value) : i64
-  (array-ref
+  (array.array-ref
     (struct-get compiler-load-active-session-state program-cache-miss-count)
     0))
 
 (define (compiler-load-program-cache-store-count-value) : i64
-  (array-ref
+  (array.array-ref
     (struct-get compiler-load-active-session-state program-cache-store-count)
     0))
 
 (define (compiler-load-program-cache-lookup-from [key : String] [index : i64]) : CompilerLoadProgramCacheLookup
   (if (>= index compiler-load-program-cache-capacity)
     (CompilerLoadProgramCacheMiss)
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state program-cache)
       index)
       [(CompilerLoadProgramCacheEmpty) (CompilerLoadProgramCacheMiss)]
@@ -405,12 +407,12 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state program-cache)
       index)
       [(CompilerLoadProgramCacheEmpty)
         (begin
-          (array-set!
+          (array.array-set!
             (struct-get compiler-load-active-session-state program-cache)
             index
             (CompilerLoadProgramCacheFull key program))
@@ -419,7 +421,7 @@
       [(CompilerLoadProgramCacheFull slot-key _)
         (if (string.string-eq slot-key key)
           (begin
-            (array-set!
+            (array.array-set!
               (struct-get compiler-load-active-session-state program-cache)
               index
               (CompilerLoadProgramCacheFull key program))
@@ -437,7 +439,7 @@
 (define (compiler-load-program-cache-can-store-at [key : String] [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state program-cache)
       index)
       [(CompilerLoadProgramCacheEmpty) true]
@@ -455,7 +457,7 @@
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
-      (array-set!
+      (array.array-set!
         (struct-get compiler-load-active-session-state program-admission)
         index
         (CompilerLoadProgramAdmissionEmpty))
@@ -464,13 +466,13 @@
 (define (compiler-load-program-admission-clear!) : unit
   (begin
     (compiler-load-program-admission-fill! 0)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-admission-ready)
       0
       true)))
 
 (define (compiler-load-program-admission-ensure!) : unit
-  (if (array-ref
+  (if (array.array-ref
     (struct-get compiler-load-active-session-state program-admission-ready)
     0)
     unit
@@ -481,7 +483,7 @@
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state program-admission)
       index)
       [(CompilerLoadProgramAdmissionEmpty) false]
@@ -498,12 +500,12 @@
 (define (compiler-load-program-admission-record-at [key : String] [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state program-admission)
       index)
       [(CompilerLoadProgramAdmissionEmpty)
         (begin
-          (array-set!
+          (array.array-set!
             (struct-get compiler-load-active-session-state program-admission)
             index
             (CompilerLoadProgramAdmissionFull key))
@@ -522,16 +524,16 @@
   (if (compiler-load-program-admission-contains? key)
     true
     (let
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [recorded : bool
         (begin
           (unsafe
-            (tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string.string-copy (& key))]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               (compiler-load-program-admission-record persistent-key))))]
       recorded)))
 
@@ -541,13 +543,13 @@
     [new-intern-floor : i64 (intern-pool-len)]
     (begin
       (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
-        (array-set!
+        (array.array-set!
           (struct-get compiler-load-active-session-state ast-floor)
           0
           (ast-node-pool-len))
         unit)
       (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
-        (array-set!
+        (array.array-set!
           (struct-get compiler-load-active-session-state ty-floor)
           0
           (ty-node-pool-len))
@@ -555,7 +557,7 @@
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persist-range! old-intern-floor new-intern-floor)
-          (array-set!
+          (array.array-set!
             (struct-get compiler-load-active-session-state intern-floor)
             0
             new-intern-floor))
@@ -570,7 +572,7 @@
       (if (>
         (ast-node-pool-context-expr-len pools)
         (compiler-load-session-ast-floor-value))
-        (array-set!
+        (array.array-set!
           (struct-get compiler-load-active-session-state ast-floor)
           0
           (ast-node-pool-context-expr-len pools))
@@ -578,7 +580,7 @@
       (if (>
         (ast-node-pool-context-type-len pools)
         (compiler-load-session-ty-floor-value))
-        (array-set!
+        (array.array-set!
           (struct-get compiler-load-active-session-state ty-floor)
           0
           (ast-node-pool-context-type-len pools))
@@ -586,35 +588,37 @@
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persist-range! old-intern-floor new-intern-floor)
-          (array-set!
+          (array.array-set!
             (struct-get compiler-load-active-session-state intern-floor)
             0
             new-intern-floor))
         unit))))
 
 (define (compiler-load-session-ast-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
+  (array.array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
 
 (define (compiler-load-session-ty-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state ty-floor) 0))
+  (array.array-ref (struct-get compiler-load-active-session-state ty-floor) 0))
 
 (define (compiler-load-session-intern-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state intern-floor) 0))
+  (array.array-ref
+    (struct-get compiler-load-active-session-state intern-floor)
+    0))
 
 (define (compiler-load-session-floors-set!
   [ast-floor : i64]
   [ty-floor : i64]
   [intern-floor : i64]) : unit
   (begin
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state ast-floor)
       0
       ast-floor)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state ty-floor)
       0
       ty-floor)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state intern-floor)
       0
       intern-floor)))
@@ -626,7 +630,7 @@
 
 (define (compiler-load-session-cache-enable!) : unit
   (begin
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state cache-enabled)
       0
       true)
@@ -636,14 +640,14 @@
   (if enabled
     (compiler-load-session-cache-enable!)
     (begin
-      (array-set!
+      (array.array-set!
         (struct-get compiler-load-active-session-state cache-enabled)
         0
         false)
       (intern-persistent-storage-disable!))))
 
 (define (compiler-load-session-program-cache-enable!) : unit
-  (array-set!
+  (array.array-set!
     (struct-get compiler-load-active-session-state program-cache-enabled)
     0
     true))
@@ -652,16 +656,16 @@
   [state : CompilerLoadSessionState]) : unit
   (begin
     (compiler-load-session-state-program-cache-set-enabled-cell! state false)
-    (array-set! (struct-get state program-cache-ready) 0 false)
-    (array-set! (struct-get state program-admission-ready) 0 false)
-    (array-set! (struct-get state program-cache-hit-count) 0 0)
-    (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)
+    (array.array-set! (struct-get state program-cache-ready) 0 false)
+    (array.array-set! (struct-get state program-admission-ready) 0 false)
+    (array.array-set! (struct-get state program-cache-hit-count) 0 0)
+    (array.array-set! (struct-get state program-cache-miss-count) 0 0)
+    (array.array-set! (struct-get state program-cache-store-count) 0 0)
     (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
   (begin
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-enabled)
       0
       false)
@@ -681,18 +685,18 @@
     (compiler-load-session-program-cache-disable!)))
 
 (define (compiler-load-session-program-cache-enabled?) : bool
-  (array-ref
+  (array.array-ref
     (struct-get compiler-load-active-session-state program-cache-enabled)
     0))
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
     (set! compiler-load-active-session-state (compiler-load-session-state-new))
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state cache-enabled)
       0
       false)
-    (array-set!
+    (array.array-set!
       (struct-get compiler-load-active-session-state program-cache-enabled)
       0
       true)
@@ -702,7 +706,9 @@
     (intern-persistent-storage-disable!)))
 
 (define (compiler-load-session-cache-enabled?) : bool
-  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
+  (array.array-ref
+    (struct-get compiler-load-active-session-state cache-enabled)
+    0))
 
 (define (compiler-load-session-reset-pools!) : unit
   (if (compiler-load-session-cache-enabled?)
@@ -731,7 +737,7 @@
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
     (begin
-      (array-set!
+      (array.array-set!
         (struct-get compiler-load-active-session-state runtime-prelude-cache)
         index
         (CompilerLoadPreludeCacheEmpty))
@@ -740,7 +746,7 @@
 (define (compiler-load-runtime-prelude-cache-clear!) : unit
   (begin
     (compiler-load-runtime-prelude-cache-fill! 0)
-    (array-set!
+    (array.array-set!
       (struct-get
         compiler-load-active-session-state
         runtime-prelude-cache-ready)
@@ -748,7 +754,7 @@
       true)))
 
 (define (compiler-load-runtime-prelude-cache-ensure!) : unit
-  (if (array-ref
+  (if (array.array-ref
     (struct-get compiler-load-active-session-state runtime-prelude-cache-ready)
     0)
     unit
@@ -759,7 +765,7 @@
   [index : i64]) : CompilerLoadPreludeCacheLookup
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     (CompilerLoadPreludeCacheMiss)
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state runtime-prelude-cache)
       index)
       [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
@@ -782,17 +788,17 @@
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
-    (match (array-ref
+    (match (array.array-ref
       (struct-get compiler-load-active-session-state runtime-prelude-cache)
       index)
       [(CompilerLoadPreludeCacheEmpty)
-        (array-set!
+        (array.array-set!
           (struct-get compiler-load-active-session-state runtime-prelude-cache)
           index
           (CompilerLoadPreludeCacheFull key decls paths modules seen))]
       [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
         (if (string.string-eq slot-key key)
-          (array-set!
+          (array.array-set!
             (struct-get
               compiler-load-active-session-state
               runtime-prelude-cache)
@@ -3176,18 +3182,18 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string.string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-file-diagnostic-escaping path cfgs)]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result persistent-key parsed))))]
       loaded)
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
@@ -3199,11 +3205,11 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (tl_arena_set (ast-node-pool-context-base-arena pools)))
+            (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : String (string.string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
@@ -3213,7 +3219,7 @@
                 pools)]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
                 persistent-key
                 parsed
@@ -3383,18 +3389,18 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (tl_arena_set node-pool-base-arena))
+            (arena.tl_arena_set node-pool-base-arena))
           (let
             [persistent-key : String (string.string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
               (compiler-load-parse-source-diagnostic-escaping path source cfgs)]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result persistent-key parsed))))]
       loaded)
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
@@ -3407,11 +3413,11 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
-      [prev-arena : i64 (tl_arena_current)]
+      [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
         (begin
           (unsafe
-            (tl_arena_set (ast-node-pool-context-base-arena pools)))
+            (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
           (let
             [persistent-key : String (string.string-copy (& key))]
             [parsed : ResultAstProgramDiagnostic
@@ -3422,7 +3428,7 @@
                 pools)]
             (begin
               (unsafe
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
                 persistent-key
                 parsed
@@ -5057,14 +5063,14 @@
 
 (define (compiler-load-binary-fixture) : String
   (let
-    [bytes : (Array u8) (make-array u8 6)]
+    [bytes : (Array u8) (array.make-array u8 6)]
     (begin
-      (array-set! bytes 0 (cast 0 : u8))
-      (array-set! bytes 1 (cast 65 : u8))
-      (array-set! bytes 2 (cast 127 : u8))
-      (array-set! bytes 3 (cast 128 : u8))
-      (array-set! bytes 4 (cast 255 : u8))
-      (array-set! bytes 5 (cast 10 : u8))
+      (array.array-set! bytes 0 (cast 0 : u8))
+      (array.array-set! bytes 1 (cast 65 : u8))
+      (array.array-set! bytes 2 (cast 127 : u8))
+      (array.array-set! bytes 3 (cast 128 : u8))
+      (array.array-set! bytes 4 (cast 255 : u8))
+      (array.array-set! bytes 5 (cast 10 : u8))
       (unsafe
         (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 6)))))
 

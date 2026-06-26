@@ -2,6 +2,7 @@
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
+(import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import "read.tl")
@@ -1429,10 +1430,10 @@
 (define (tlci-core-self-test) : i64
   (if (= (tlci-core-self-test-status) 0)
     42
-    (panic "tlci-core: self-test mismatch")))
+    (io.panic "tlci-core: self-test mismatch")))
 
 (test
   tlci-core-parse-emit-round-trip
   (if (= (tlci-core-self-test-status) 0)
     unit
-    (panic "tlci-core: inline self-test mismatch")))
+    (io.panic "tlci-core: inline self-test mismatch")))

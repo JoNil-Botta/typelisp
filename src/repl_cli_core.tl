@@ -474,7 +474,7 @@
 
 (define (repl-run-scratch-source [source : String]) : unit
   (match (source-tool-create-temp-dir "typelisp-repl")
-    [(OkSourceToolString temp-dir)
+    [(ResultSourceToolString.Ok temp-dir)
       (let
         [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
         (match (source-tool-write-file
@@ -501,7 +501,7 @@
               (begin
                 (repl-clean-scratch-source temp-dir source-path)
                 (repl-report-run-status status)))]))]
-    [(ErrSourceToolString message)
+    [(ResultSourceToolString.Err message)
       (repl-print-error-line
         (string.string-append
           "repl: failed to create scratch temp dir: "

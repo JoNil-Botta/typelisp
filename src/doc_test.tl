@@ -1401,15 +1401,16 @@
               true
               (compiler-optimize-default-level))
               [(OkCompilerDriver asm)
-                (OkSourceToolString
+                (ResultSourceToolString.Ok
                   (source-tool-augment-assembly-for-target asm target))]
               [(ErrCompilerDriver diag)
-                (ErrSourceToolString
+                (ResultSourceToolString.Err
                   (compiler-diagnostic-render (box-get diag)))])]
           [(ErrCompilerLower diag)
-            (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])]
+            (ResultSourceToolString.Err
+              (compiler-diagnostic-render (box-get diag)))])]
       [(ErrCompilerLoadWithPaths diag)
-        (ErrSourceToolString (compiler-diagnostic-render (box-get diag)))])))
+        (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])))
 
 (define (doc-test-runnable-failure
   [path : String]
@@ -1534,7 +1535,7 @@
     [obj-path : String (source-tool-obj-path temp-dir virtual-path target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir virtual-path target)]
     (match (doc-test-emit-runnable-assembly path example stdlib-roots target)
-      [(ErrSourceToolString message)
+      [(ResultSourceToolString.Err message)
         (begin
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           (doc-test-runnable-failure
@@ -1542,7 +1543,7 @@
             source-line
             index
             (doc-test-runnable-compile-message index message)))]
-      [(OkSourceToolString asm)
+      [(ResultSourceToolString.Ok asm)
         (doc-test-write-link-and-run-runnable
           path
           source-line
@@ -1565,14 +1566,14 @@
     [target : CompilerBackendTarget (source-tool-default-target)]
     (if (doc-test-runnable-target-supported? target)
       (match (source-tool-create-temp-dir "typelisp-doctest")
-        [(OkSourceToolString temp-dir)
+        [(ResultSourceToolString.Ok temp-dir)
           (doc-test-run-runnable-output
             path
             example
             stdlib-roots
             target
             temp-dir)]
-        [(ErrSourceToolString message)
+        [(ResultSourceToolString.Err message)
           (DocTestSomeFailure
             (DocTestRunFailure
               path

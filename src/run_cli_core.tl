@@ -288,7 +288,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-target value)
-                [(OkSourceToolTarget parsed-target)
+                [(ResultSourceToolTarget.Ok parsed-target)
                   (run-cli-parse-options
                     (+ idx 2)
                     count
@@ -300,7 +300,7 @@
                     runtime-args
                     opt-level
                     link-inputs)]
-                [(ErrSourceToolTarget _)
+                [(ResultSourceToolTarget.Err _)
                   (ErrRunCliConfig (run-cli-unknown-target value))])))]
         [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
@@ -308,7 +308,7 @@
             (let
               [value : String (io.arg (+ idx 1))]
               (match (source-tool-backend-mode "run" value)
-                [(OkSourceToolBackendMode parsed-mode)
+                [(ResultSourceToolBackendMode.Ok parsed-mode)
                   (run-cli-parse-options
                     (+ idx 2)
                     count
@@ -320,7 +320,8 @@
                     runtime-args
                     opt-level
                     link-inputs)]
-                [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))]
+                [(ResultSourceToolBackendMode.Err message)
+                  (ErrRunCliConfig message)])))]
         [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --opt-level requires a value")

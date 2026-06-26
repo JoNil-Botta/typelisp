@@ -212,8 +212,8 @@
 
 (define (tltest-target-valid? [value : String]) : bool
   (match (source-tool-target value)
-    [(OkSourceToolTarget _) true]
-    [(ErrSourceToolTarget _) false]))
+    [(ResultSourceToolTarget.Ok _) true]
+    [(ResultSourceToolTarget.Err _) false]))
 
 (define (tltest-backend-mode-valid? [value : String]) : bool
   (or
@@ -2674,8 +2674,8 @@
 
 (define (tltest-nested-module-macro-vector-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-nested-module-macro-vector")
-    [(ErrSourceToolString _) false]
-    [(OkSourceToolString dir)
+    [(ResultSourceToolString.Err _) false]
+    [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
         [roots : vector.StringVec (tltest-roots-for-self-test)]
@@ -2717,8 +2717,8 @@
 
 (define (tltest-package-cfg-inline-load-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-package-cfg")
-    [(ErrSourceToolString _) false]
-    [(OkSourceToolString dir)
+    [(ResultSourceToolString.Err _) false]
+    [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "cfg_inline.tl")]
         [roots : vector.StringVec (tltest-roots-for-self-test)]
@@ -2748,8 +2748,8 @@
 
 (define (tltest-stdlib-io-string-helper-lower-self-test?) : bool
   (match (source-tool-create-temp-dir "tltest-stdlib-io-lower")
-    [(ErrSourceToolString _) false]
-    [(OkSourceToolString dir)
+    [(ResultSourceToolString.Err _) false]
+    [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "io_run.tl")]
         [roots : vector.StringVec (tltest-roots-for-self-test)]
@@ -3047,13 +3047,13 @@
   [target : String]
   [opt-level : i64]) : i64
   (match (source-tool-target target)
-    [(ErrSourceToolTarget _)
+    [(ResultSourceToolTarget.Err _)
       (begin
         (io.print-error (tltest-unknown-target target))
         1)]
-    [(OkSourceToolTarget backend-target)
+    [(ResultSourceToolTarget.Ok backend-target)
       (match (source-tool-create-temp-dir "typelisp-test")
-        [(OkSourceToolString temp-dir)
+        [(ResultSourceToolString.Ok temp-dir)
           (tltest-run-harness-in-temp
             source
             entry-path
@@ -3063,7 +3063,7 @@
             backend-target
             opt-level
             temp-dir)]
-        [(ErrSourceToolString message)
+        [(ResultSourceToolString.Err message)
           (begin
             (io.print-error
               (string.string-append "test: failed to create temp dir: " message))
@@ -3810,11 +3810,11 @@
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)
-    [(ErrSourceToolTarget _)
+    [(ResultSourceToolTarget.Err _)
       (begin
         (io.print-error (tltest-unknown-target target))
         1)]
-    [(OkSourceToolTarget backend-target)
+    [(ResultSourceToolTarget.Ok backend-target)
       (match (package-source-discover-for "test" manifest-path has-manifest)
         [(ErrPackageSourceSet message)
           (begin
@@ -3986,11 +3986,11 @@
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)
     (match (source-tool-target target)
-      [(ErrSourceToolTarget _)
+      [(ResultSourceToolTarget.Err _)
         (begin
           (io.print-error (tltest-unknown-target target))
           1)]
-      [(OkSourceToolTarget backend-target)
+      [(ResultSourceToolTarget.Ok backend-target)
         (let
           [status : i64
             (begin
@@ -4008,11 +4008,11 @@
   (match config
     [(TestFileConfig source target mode roots opt-level test-mode)
       (match (source-tool-target target)
-        [(ErrSourceToolTarget _)
+        [(ResultSourceToolTarget.Err _)
           (begin
             (io.print-error (tltest-unknown-target target))
             1)]
-        [(OkSourceToolTarget backend-target)
+        [(ResultSourceToolTarget.Ok backend-target)
           (match (compiler-driver-load-file-with-runtime
             source
             roots

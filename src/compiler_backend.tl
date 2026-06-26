@@ -13,6 +13,7 @@
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.string)
+(import stdlib.byte_buf_core)
 (import stdlib.str_cat)
 
 (cfg
@@ -28905,22 +28906,24 @@ tl_memchr:
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
-;; Private hot object-code fragments keep compatibility byte-array storage.
-(define (compiler-backend-object-push-u8! [out : (Array u8)] [value : i64]) : unit
-  (array-push! out (compiler-backend-object-byte value)))
+;; Private hot object-code fragments use the narrow append-only ByteBuf core.
+(define (compiler-backend-object-push-u8!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (byte_buf_core.byte-buf-builder-push out (compiler-backend-object-byte value)))
 
-(define (compiler-backend-object-push-u32! [out : (Array u8)] [value : i64]) : unit
+(define (compiler-backend-object-push-u32!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
   (begin
     (compiler-backend-object-push-u8! out value)
     (compiler-backend-object-push-u8! out (shr value 8))
     (compiler-backend-object-push-u8! out (shr value 16))
     (compiler-backend-object-push-u8! out (shr value 24))))
 
-(define (compiler-backend-object-bytes-finish [out : (Array u8)]) : String
-  (unsafe
-    (string-from-bytes
-      (ptr-cast (array-data out) : (Ptr u8))
-      (array-length out))))
+(define (compiler-backend-object-bytes-finish
+  [out : (& out byte_buf_core.ByteBufBuilder)]) : String
+  (byte_buf_core.byte-buf-builder-finish-string out))
 
 (define (compiler-backend-object-add-nonempty-bytes
   [parts : CompilerBackendObjectParts]
@@ -28961,7 +28964,7 @@ tl_memchr:
   [disp : i64]
   [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -28970,20 +28973,20 @@ tl_memchr:
           4
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0x8b)
+      (compiler-backend-object-push-u8! (&mut out) rex)
+      (compiler-backend-object-push-u8! (&mut out) 0x8b)
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
-          (compiler-backend-object-push-u8! out disp))
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! (&mut out) disp))
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
-          (compiler-backend-object-push-u32! out disp)))
-      (compiler-backend-object-bytes-finish out))))
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-store-slot-bytes [var-id : i64] [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [disp : i64 (compiler-backend-object-slot-disp var-id)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
@@ -28993,22 +28996,22 @@ tl_memchr:
           4
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0x89)
+      (compiler-backend-object-push-u8! (&mut out) rex)
+      (compiler-backend-object-push-u8! (&mut out) 0x89)
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x45 (* reg-code 8)))
-          (compiler-backend-object-push-u8! out disp))
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x45 (* reg-code 8)))
+          (compiler-backend-object-push-u8! (&mut out) disp))
         (begin
-          (compiler-backend-object-push-u8! out (+ 0x85 (* reg-code 8)))
-          (compiler-backend-object-push-u32! out disp)))
-      (compiler-backend-object-bytes-finish out))))
+          (compiler-backend-object-push-u8! (&mut out) (+ 0x85 (* reg-code 8)))
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-mov-imm32-reg-bytes
   [value : i64]
   [reg : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
     [rex : i64
       (+
@@ -29017,11 +29020,11 @@ tl_memchr:
           1
           0))]
     (begin
-      (compiler-backend-object-push-u8! out rex)
-      (compiler-backend-object-push-u8! out 0xc7)
-      (compiler-backend-object-push-u8! out (+ 0xc0 reg-code))
-      (compiler-backend-object-push-u32! out value)
-      (compiler-backend-object-bytes-finish out))))
+      (compiler-backend-object-push-u8! (&mut out) rex)
+      (compiler-backend-object-push-u8! (&mut out) 0xc7)
+      (compiler-backend-object-push-u8! (&mut out) (+ 0xc0 reg-code))
+      (compiler-backend-object-push-u32! (&mut out) value)
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-mov-reg-reg-bytes
   [src : String]
@@ -29029,7 +29032,7 @@ tl_memchr:
   (if (string.string-eq src dst)
     ""
     (let
-      [out : (Array u8) (make-array u8 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       [src-code : i64 (compiler-backend-object-reg-low-code src)]
       [dst-code : i64 (compiler-backend-object-reg-low-code dst)]
       [rex : i64
@@ -29043,35 +29046,35 @@ tl_memchr:
               1
               0)))]
       (begin
-        (compiler-backend-object-push-u8! out rex)
-        (compiler-backend-object-push-u8! out 0x89)
+        (compiler-backend-object-push-u8! (&mut out) rex)
+        (compiler-backend-object-push-u8! (&mut out) 0x89)
         (compiler-backend-object-push-u8!
-          out
+          (&mut out)
           (+ 0xc0 (+ (* src-code 8) dst-code)))
-        (compiler-backend-object-bytes-finish out)))))
+        (compiler-backend-object-bytes-finish (& out))))))
 
 (define (compiler-backend-object-prologue-bytes [frame-size : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x55)
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x89)
-      (compiler-backend-object-push-u8! out 0xe5)
+      (compiler-backend-object-push-u8! (&mut out) 0x55)
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x89)
+      (compiler-backend-object-push-u8! (&mut out) 0xe5)
       (if (= frame-size 0)
         unit
         (if (<= frame-size 127)
           (begin
-            (compiler-backend-object-push-u8! out 0x48)
-            (compiler-backend-object-push-u8! out 0x83)
-            (compiler-backend-object-push-u8! out 0xec)
-            (compiler-backend-object-push-u8! out frame-size))
+            (compiler-backend-object-push-u8! (&mut out) 0x48)
+            (compiler-backend-object-push-u8! (&mut out) 0x83)
+            (compiler-backend-object-push-u8! (&mut out) 0xec)
+            (compiler-backend-object-push-u8! (&mut out) frame-size))
           (begin
-            (compiler-backend-object-push-u8! out 0x48)
-            (compiler-backend-object-push-u8! out 0x81)
-            (compiler-backend-object-push-u8! out 0xec)
-            (compiler-backend-object-push-u32! out frame-size))))
-      (compiler-backend-object-bytes-finish out))))
+            (compiler-backend-object-push-u8! (&mut out) 0x48)
+            (compiler-backend-object-push-u8! (&mut out) 0x81)
+            (compiler-backend-object-push-u8! (&mut out) 0xec)
+            (compiler-backend-object-push-u32! (&mut out) frame-size))))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-leave-ret-bytes) : String
   (compiler-backend-object-bytes-from-hex "c9c3"))
@@ -29081,20 +29084,20 @@ tl_memchr:
 
 (define (compiler-backend-object-rsp-imm-bytes [opcode : i64] [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
       (if (<= value 127)
         (begin
-          (compiler-backend-object-push-u8! out 0x48)
-          (compiler-backend-object-push-u8! out 0x83)
-          (compiler-backend-object-push-u8! out opcode)
-          (compiler-backend-object-push-u8! out value))
+          (compiler-backend-object-push-u8! (&mut out) 0x48)
+          (compiler-backend-object-push-u8! (&mut out) 0x83)
+          (compiler-backend-object-push-u8! (&mut out) opcode)
+          (compiler-backend-object-push-u8! (&mut out) value))
         (begin
-          (compiler-backend-object-push-u8! out 0x48)
-          (compiler-backend-object-push-u8! out 0x81)
-          (compiler-backend-object-push-u8! out opcode)
-          (compiler-backend-object-push-u32! out value)))
-      (compiler-backend-object-bytes-finish out))))
+          (compiler-backend-object-push-u8! (&mut out) 0x48)
+          (compiler-backend-object-push-u8! (&mut out) 0x81)
+          (compiler-backend-object-push-u8! (&mut out) opcode)
+          (compiler-backend-object-push-u32! (&mut out) value)))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-sub-rsp-bytes [value : i64]) : String
   (if (= value 0)
@@ -29108,20 +29111,20 @@ tl_memchr:
 
 (define (compiler-backend-object-store-rax-rsp-bytes [disp : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x89)
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x89)
       (if (compiler-backend-object-disp8? disp)
         (begin
-          (compiler-backend-object-push-u8! out 0x44)
-          (compiler-backend-object-push-u8! out 0x24)
-          (compiler-backend-object-push-u8! out disp))
+          (compiler-backend-object-push-u8! (&mut out) 0x44)
+          (compiler-backend-object-push-u8! (&mut out) 0x24)
+          (compiler-backend-object-push-u8! (&mut out) disp))
         (begin
-          (compiler-backend-object-push-u8! out 0x84)
-          (compiler-backend-object-push-u8! out 0x24)
-          (compiler-backend-object-push-u32! out disp)))
-      (compiler-backend-object-bytes-finish out))))
+          (compiler-backend-object-push-u8! (&mut out) 0x84)
+          (compiler-backend-object-push-u8! (&mut out) 0x24)
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-load-rax-pointee-bytes [ty : AstType]) : String
   (let
@@ -29257,31 +29260,31 @@ tl_memchr:
 
 (define (compiler-backend-object-sub-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x2d)
-      (compiler-backend-object-push-u32! out value)
-      (compiler-backend-object-bytes-finish out))))
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x2d)
+      (compiler-backend-object-push-u32! (&mut out) value)
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-add-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x05)
-      (compiler-backend-object-push-u32! out value)
-      (compiler-backend-object-bytes-finish out))))
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x05)
+      (compiler-backend-object-push-u32! (&mut out) value)
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-imul-imm32-r8-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x4d)
-      (compiler-backend-object-push-u8! out 0x69)
-      (compiler-backend-object-push-u8! out 0xc0)
-      (compiler-backend-object-push-u32! out value)
-      (compiler-backend-object-bytes-finish out))))
+      (compiler-backend-object-push-u8! (&mut out) 0x4d)
+      (compiler-backend-object-push-u8! (&mut out) 0x69)
+      (compiler-backend-object-push-u8! (&mut out) 0xc0)
+      (compiler-backend-object-push-u32! (&mut out) value)
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-add-r8-rax-bytes) : String
   (compiler-backend-object-bytes-from-hex "4c01c0"))
@@ -29327,12 +29330,12 @@ tl_memchr:
 
 (define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (compiler-backend-object-push-u8! out 0x48)
-      (compiler-backend-object-push-u8! out 0x3d)
-      (compiler-backend-object-push-u32! out value)
-      (compiler-backend-object-bytes-finish out))))
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x3d)
+      (compiler-backend-object-push-u32! (&mut out) value)
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-switch-indirect-jump-bytes) : String
   (compiler-backend-object-bytes-from-hex "49ff24c3"))
@@ -30472,7 +30475,7 @@ tl_memchr:
 
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [i : i64 0]
     [n : i64 (string.string-length hex)]
     (begin
@@ -30483,12 +30486,11 @@ tl_memchr:
           [lo : i64
             (compiler-backend-object-hex-value (string.string-ref hex (+ i 1)))]
           (begin
-            (array-push! out (cast (+ (* hi 16) lo) : u8))
+            (byte_buf_core.byte-buf-builder-push
+              (&mut out)
+              (cast (+ (* hi 16) lo) : u8))
             (set! i (+ i 2)))))
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data out) : (Ptr u8))
-          (array-length out))))))
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
 
 (define (compiler-backend-object-windows-chkstk-bytes) : String
   (compiler-backend-object-bytes-from-hex
@@ -30523,19 +30525,18 @@ tl_memchr:
 
 (define (compiler-backend-object-windows-entry-xdata-bytes) : String
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
       ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
-      (array-push! out (cast 0x01 : u8))
-      (array-push! out (cast 0x04 : u8))
-      (array-push! out (cast 0x01 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (array-push! out (cast 0x04 : u8))
-      (array-push! out (cast 0x42 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (array-push! out (cast 0x00 : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast (array-data out) : (Ptr u8)) 8)))))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x42 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
 
 (define compiler-backend-object-windows-manifest-label : String
   ".L_tl_manifest")

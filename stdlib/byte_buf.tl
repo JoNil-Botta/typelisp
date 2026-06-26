@@ -11,6 +11,9 @@
 ;# constructors are tied to an owner witness so the borrow checker can keep the
 ;# source alive.
 ;#
+;# Compiler-hot append-only builders that do not need borrowed `bytes` views can
+;# import `stdlib.byte_buf_core` directly.
+;#
 ;# Usage: `(import stdlib.byte_buf)`
 ;#
 ;# ```typelisp

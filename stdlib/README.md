@@ -39,6 +39,10 @@ use.
   range reads/writes, clear/reuse, copy-out to arrays or strings, and borrowed
   immutable/mutable `bytes` views over strings, buffers, and byte sub-slices.
   Import it with `(import "stdlib/byte_buf.tl")`.
+- `byte_buf_core.tl`: lightweight append-only binary byte builder for compiler
+  and runtime hot paths that need construction, push, append, reserve, length,
+  and explicit finish/copy boundaries without importing the full borrowed
+  `bytes` view surface. Import it with `(import "stdlib/byte_buf_core.tl")`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `TypeInfo`, and dense sequence wrappers), plus exported compile-time helper
@@ -419,9 +423,10 @@ v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
 should take borrowed text and which should return owned active-arena strings.
 `SPEC.md` also reserves the binary-storage family: `stdlib/byte_buf.tl` exposes
 owned `ByteBuf` helpers for mutable binary data plus borrowed `bytes` views over
-strings, buffers, and byte sub-slices. `TextBuf` remains an append/render text
-builder, and `vector_slice.tl` remains a generated typed collection-slice
-precedent; neither is the raw byte-slice contract.
+strings, buffers, and byte sub-slices, while `stdlib/byte_buf_core.tl` keeps a
+narrow append-builder surface for hot internal code. `TextBuf` remains an
+append/render text builder, and `vector_slice.tl` remains a generated typed
+collection-slice precedent; neither is the raw byte-slice contract.
 The `string_caller_result.tl`, `io_caller_result.tl`, and
 `process_borrowed.tl` companion modules expose lifetime-preserving shapes.
 Borrowed process runtime wrappers copy at the owned boundary, while ordinary
@@ -462,6 +467,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
+| `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from arrays or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing array. The module intentionally omits borrowed `bytes` views and in-place indexed mutation for hot append-only import sites. |
 | `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |

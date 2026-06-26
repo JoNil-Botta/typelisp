@@ -175,6 +175,7 @@ atomic.tl
 args.tl
 array.tl
 byte_buf.tl
+byte_buf_core.tl
 comptime.tl
 core_macros.tl
 io.tl
@@ -231,6 +232,7 @@ stdlib_test_manifest() {
 stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/byte_buf_api.tl|42|-|-
+stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait

@@ -9011,11 +9011,20 @@
         [(CompilerBackendSomeI64 n)
           (let
             [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-            [addr : String (compiler-backend-r10-address disp)]
+            ;; Address-base scratch (was hardcoded %r10): base is loaded here and
+            ;; immediately dereferenced by the compare (dead after), so a single
+            ;; scavenged base suffices. In the NoImmediate sub-branch scav-rhs must
+            ;; exclude this base (both live across the cmp) -- see below.
+            [scav-base : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10")]
+            [addr : String (compiler-backend-base-address disp scav-base)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               base
-              "%r10")
+              scav-base)
               [(OkCompilerBackend base-asm)
                 (match (compiler-backend-immediate-operand rhs)
                   [(CompilerBackendSomeImmediate imm)
@@ -9037,8 +9046,8 @@
                     (let
                       [scav-rhs : String
                         (compiler-backend-scavenge-reg-here
-                          (compiler-backend-binop-scavenge-exclude-build)
-                          5
+                          (compiler-backend-scavenge-exclude-with scav-base)
+                          6
                           "%r8")]
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
@@ -10254,10 +10263,22 @@
             (compiler-backend-binop-scavenge-exclude-build)
             5
             "%r8")]
+        ;; Fold-base scratch (was hardcoded %r10). For non-SIB scales the scaled
+        ;; index is folded into a register, which must not clobber the base's live
+        ;; home, so the base is copied into this scratch first; it also serves as
+        ;; the load fallback when the base is spilled. Scavenged AFTER scav-idx and
+        ;; excluding it (so the two scratch never collide); the sound freeness query
+        ;; keeps it off every live operand home (base/offset/value all read OCCUPIED
+        ;; here). Actively picks a non-%r10 register (the exclude lists %r10).
+        [scav-fold : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-with scav-idx)
+            6
+            "%r10")]
         (match (compiler-backend-emit-address-base-with-avoid
           assignments
           base
-          "%r10"
+          scav-fold
           scav-idx)
           [(OkCompilerBackendAddressBase base-plan)
             (match (compiler-backend-emit-load-value-with-plan
@@ -10272,14 +10293,14 @@
                   [addr-asm : String
                     (if (string-eq addr "")
                       (str-cat
-                        (if (string-eq base-reg "%r10")
+                        (if (string-eq base-reg scav-fold)
                           ""
-                          (str-cat "    movq " base-reg ", " "%r10" "\n"))
-                        (compiler-backend-gep-index-r10-asm scale scav-idx))
+                          (str-cat "    movq " base-reg ", " scav-fold "\n"))
+                        (compiler-backend-gep-index-base-asm scav-fold scale scav-idx))
                       "")]
                   [store-addr : String
                     (if (string-eq addr "")
-                      "(%r10)"
+                      (compiler-backend-base-deref scav-fold)
                       addr)]
                   (match (compiler-backend-emit-store-value-to-address
                     assignments
@@ -23137,8 +23158,8 @@
 ;; backend uses them untracked, so the liveness query cannot certify them free.
 ;; NB: %r10/%r11 are intentionally NOT scavenge candidates while the backend still
 ;; has hardcoded %r10/%r11 uses (addressing, magic-division, c-abi, indirect call).
-;; The allocator may HOME a var in %r10/%r11 (they are in the pool), but the
-;; scavenger must not pick them as scratch: a scratch %r10 chosen inside an
+;; The allocator does NOT home vars in %r10/%r11 (they are NOT in the pool); the
+;; scavenger likewise must not pick them as scratch: a scratch %r10 chosen inside an
 ;; instruction whose template also hardcodes %r10 would self-collide -- invisible
 ;; to the freeness query (the scratch IS free; the template use is untracked).
 ;; Re-add them here only once every hardcoded %r10/%r11 emit site is scavenged.

@@ -13918,6 +13918,69 @@
       "%r10"
       "%r11")))
 
+;; #phi-temp-pool: the phi parallel-copy cycle break no longer ties up %r10/%r11.
+;; find-unblocked drains the acyclic "trees" first, so the remaining core is a
+;; pure PERMUTATION (each home written once and read once): every saved value has
+;; exactly ONE consumer, and saves nest to depth 1 (after a save there is always
+;; an unblocked copy until the Temp is consumed). That makes a register-free STACK
+;; swap sound: pushq the cycle-entry dst's home, popq it into the single Temp
+;; consumer. Int scalars/group-words use pushq/popq (freeing %r10/%r11); float
+;; scalars and SSE group words use the reserved %xmm14/%xmm15 (never in the
+;; allocator pool). home-operand is reg or %rbp-relative -- unaffected by the %rsp
+;; delta, and the intervening cycle moves never touch %rsp -> the bracket balances.
+(define (compiler-backend-phi-temp-home-operand
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]) : ResultCompilerBackend
+  (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
+    (ErrCompilerBackend
+      (compiler-diagnostic-at-start
+        ""
+        "backend: phi temp save of forwarded addr-of dst (unexpected)"))
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home) (OkCompilerBackend home)]
+          [(CompilerRegRegisterPair home _) (OkCompilerBackend home)]
+          [(CompilerRegSpill offset)
+            (OkCompilerBackend (compiler-backend-frame-offset offset))]
+          [(CompilerRegRemat _)
+            (ErrCompilerBackend
+              (compiler-diagnostic-at-start
+                ""
+                "backend: phi temp save of rematerialised dst (unexpected)"))])]
+      [(CompilerRegNoLocation)
+        (OkCompilerBackend (compiler-backend-slot var-id))])))
+
+(define (compiler-backend-emit-phi-group-word-save
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]
+  [index : i64]
+  [vars : i64]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-group-word-operand assignments var index vars)
+    [(OkCompilerBackend operand)
+      (OkCompilerBackend
+        (if (compiler-backend-group-word-sse? program-index ty index)
+          (str-cat "    movsd " operand ", " (if (= index 0) "%xmm14" "%xmm15") "\n")
+          (str-cat "    pushq " operand "\n")))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-phi-group-word-restore
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]
+  [index : i64]
+  [vars : i64]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match (compiler-backend-group-word-operand assignments var index vars)
+    [(OkCompilerBackend operand)
+      (OkCompilerBackend
+        (if (compiler-backend-group-word-sse? program-index ty index)
+          (str-cat "    movsd " (if (= index 0) "%xmm14" "%xmm15") ", " operand "\n")
+          (str-cat "    popq " operand "\n")))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-phi-temp-save
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -13925,17 +13988,24 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (compiler-backend-group-type? program-index ty)
-    (compiler-backend-emit-group-load
-      assignments
-      (IrValueVar dst)
-      (compiler-backend-phi-group-temp-reg program-index ty 0)
-      (compiler-backend-phi-group-temp-reg program-index ty 1)
-      vars
-      ty
-      program-index)
-    (OkCompilerBackend
-      (compiler-backend-emit-load-var-with-plan assignments dst "%r11"))))
+    (match (compiler-backend-emit-phi-group-word-save
+      assignments dst 0 vars ty program-index)
+      [(OkCompilerBackend w0)
+        (match (compiler-backend-emit-phi-group-word-save
+          assignments dst 1 vars ty program-index)
+          [(OkCompilerBackend w1) (OkCompilerBackend (string-append w0 w1))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+    (match (compiler-backend-phi-temp-home-operand assignments dst)
+      [(OkCompilerBackend operand)
+        (OkCompilerBackend
+          (if (compiler-backend-float-type? ty)
+            (str-cat "    movsd " operand ", %xmm15\n")
+            (str-cat "    pushq " operand "\n")))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+;; Restore reverses the word order (word1 then word0) so the int pushq/popq stay
+;; LIFO-balanced; the %xmm14/%xmm15 SSE words are stack-independent so order is moot.
 (define (compiler-backend-emit-phi-temp-restore
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -13943,16 +14013,21 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (compiler-backend-group-type? program-index ty)
-    (compiler-backend-emit-group-store
-      assignments
-      dst
-      (compiler-backend-phi-group-temp-reg program-index ty 0)
-      (compiler-backend-phi-group-temp-reg program-index ty 1)
-      vars
-      ty
-      program-index)
-    (OkCompilerBackend
-      (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))))
+    (match (compiler-backend-emit-phi-group-word-restore
+      assignments dst 1 vars ty program-index)
+      [(OkCompilerBackend w1)
+        (match (compiler-backend-emit-phi-group-word-restore
+          assignments dst 0 vars ty program-index)
+          [(OkCompilerBackend w0) (OkCompilerBackend (string-append w1 w0))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+    (match (compiler-backend-phi-temp-home-operand assignments dst)
+      [(OkCompilerBackend operand)
+        (OkCompilerBackend
+          (if (compiler-backend-float-type? ty)
+            (str-cat "    movsd %xmm15, " operand "\n")
+            (str-cat "    popq " operand "\n")))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-phi-source-load-store
   [assignments : CompilerRegAssignmentList]

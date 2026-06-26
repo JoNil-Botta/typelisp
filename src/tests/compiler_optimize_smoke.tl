@@ -556,6 +556,159 @@
       [(not (= redefined-index 1)) 5]
       [else 42])))
 
+(define (smoke-ssa-iv-bce-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (IrParam "text" (AstTyString) 2)
+    (compiler-ir-param-cons
+      (IrParam "other" (AstTyString) 20)
+      (compiler-ir-param-cons (IrParam "start" (AstTyI64) 30) (IrParamNil)))))
+
+(define (smoke-ssa-iv-bce-entry) : CompilerIrBlock
+  (compiler-ir-block
+    "entry"
+    (compiler-ir-instr-cons
+      (IrInstrGep 3 (IrValueVar 2) (IrValueI64 1) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 3) (AstTyI64))
+        (compiler-ir-instr-cons (IrInstrJump "header") (IrInstrNil))))))
+
+(define (smoke-ssa-iv-bce-header
+  [start : CompilerIrValue]
+  [next-var : i64]
+  [op : CompilerIrBinOp]
+  [upper-var : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "header"
+    (compiler-ir-instr-cons
+      (IrInstrPhi
+        0
+        (compiler-ir-phi-input-cons
+          start
+          "entry"
+          (compiler-ir-phi-input-cons
+            (IrValueVar next-var)
+            "body"
+            (IrPhiInputNil)))
+        (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrBinOp 4 op (IrValueVar 0) (IrValueVar upper-var) (AstTyBool))
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 4) "body" "exit")
+          (IrInstrNil))))))
+
+(define (smoke-ssa-iv-bce-body
+  [object-var : i64]
+  [step : i64]
+  [next-var : i64]
+  [with-call : bool]
+  [redefine-index : bool]) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (let
+      [tail : CompilerIrInstrList
+        (opt-loop-bce-string-test-ref-instrs
+          object-var
+          40
+          (compiler-ir-instr-cons
+            (IrInstrBinOp
+              next-var
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueI64 step)
+              (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "header") (IrInstrNil))))]
+      [after-call : CompilerIrInstrList
+        (if with-call
+          (compiler-ir-instr-cons
+            (IrInstrCall
+              80
+              "touch"
+              (IrCallArgsOne (IrValueVar object-var))
+              (AstTyUnit))
+            tail)
+          tail)]
+      (if redefine-index
+        (compiler-ir-instr-cons
+          (IrInstrMov 0 (IrValueI64 (- 0 1)) (AstTyI64))
+          after-call)
+        after-call))))
+
+(define (smoke-ssa-iv-bce-blocks
+  [start : CompilerIrValue]
+  [step : i64]
+  [op : CompilerIrBinOp]
+  [upper-var : i64]
+  [object-var : i64]
+  [with-call : bool]
+  [redefine-index : bool]) : CompilerIrBlockList
+  (let
+    [next-var : i64 90]
+    (compiler-ir-block-cons
+      (smoke-ssa-iv-bce-entry)
+      (compiler-ir-block-cons
+        (smoke-ssa-iv-bce-header start next-var op upper-var)
+        (compiler-ir-block-cons
+          (smoke-ssa-iv-bce-body
+            object-var
+            step
+            next-var
+            with-call
+            redefine-index)
+          (compiler-ir-block-cons (opt-loop-bce-test-exit) (IrBlockNil)))))))
+
+(define (smoke-ssa-iv-bce-count
+  [start : CompilerIrValue]
+  [step : i64]
+  [op : CompilerIrBinOp]
+  [upper-var : i64]
+  [object-var : i64]
+  [with-call : bool]
+  [redefine-index : bool]) : i64
+  (opt-count-bounds-blocks
+    (opt-loop-bce-blocks
+      (opt-loop-bce-test-summaries false false)
+      (smoke-ssa-iv-bce-params)
+      (smoke-ssa-iv-bce-blocks
+        start
+        step
+        op
+        upper-var
+        object-var
+        with-call
+        redefine-index))))
+
+(define (smoke-ssa-iv-bce-self-test) : i64
+  (let
+    [positive : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 1 (IrBinLt) 1 2 false false)]
+    [negative-start : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 (- 0 1)) 1 (IrBinLt) 1 2 false false)]
+    [unknown-start : i64
+      (smoke-ssa-iv-bce-count (IrValueVar 30) 1 (IrBinLt) 1 2 false false)]
+    [negative-step : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) (- 0 1) (IrBinLt) 1 2 false false)]
+    [nonunit-unknown-bound : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 2 (IrBinLt) 1 2 false false)]
+    [inclusive-guard : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 1 (IrBinLe) 1 2 false false)]
+    [mismatched-object : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 1 (IrBinLt) 1 20 false false)]
+    [call-clears-length : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 1 (IrBinLt) 1 2 true false)]
+    [redefined-index : i64
+      (smoke-ssa-iv-bce-count (IrValueI64 0) 1 (IrBinLt) 1 2 false true)]
+    (cond
+      [(not (= positive 0)) 1]
+      [(not (= negative-start 1)) 2]
+      [(not (= unknown-start 1)) 3]
+      [(not (= negative-step 1)) 4]
+      [(not (= nonunit-unknown-bound 1)) 5]
+      [(not (= inclusive-guard 1)) 6]
+      [(not (= mismatched-object 1)) 7]
+      [(not (= call-clears-length 1)) 8]
+      [(not (= redefined-index 1)) 9]
+      [else 42])))
+
 (define (smoke-nonlength-guard-header [op : CompilerIrBinOp]) : CompilerIrBlock
   (compiler-ir-block
     "header"
@@ -845,6 +998,7 @@
     (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
     (unless (= (smoke-object-bounds-self-test) 42) (return 1))
     (unless (= (smoke-range-bce-self-test) 42) (return 1))
+    (unless (= (smoke-ssa-iv-bce-self-test) 42) (return 1))
     (unless (= (smoke-nonlength-guard-bce-self-test) 42) (return 1))
     (unless (= (smoke-additive-bce-self-test) 42) (return 1))
     (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))

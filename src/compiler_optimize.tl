@@ -18153,12 +18153,262 @@
                 (and ok seen-init seen-latch)]))
           false))]))
 
+(define (opt-loop-bce-induction-start-nonnegative?
+  [start : CompilerIrValue]
+  [ty : AstType]) : bool
+  (match (opt-normalize-scalar-to-i64 start ty)
+    [(OptSomeI64 value) (>= value 0)]
+    [(OptNoI64) false]))
+
+(define (opt-loop-bce-induction-step-safe?
+  [step : i64]
+  [upper : OptLoopBceExpr]
+  [upper-inclusive : bool]
+  [ty : AstType]) : bool
+  (if (<= step 0)
+    false
+    (if (and (= step 1) (not upper-inclusive))
+      true
+      (match (opt-range-expr-i64 upper ty)
+        [(OptSomeI64 value)
+          (if upper-inclusive
+            (<= value (- 9223372036854775807 step))
+            (<= value (+ (- 9223372036854775807 step) 1)))]
+        [(OptNoI64) false]))))
+
+(define (opt-loop-bce-induction-fact-safe?
+  [fact : OptInductionFact]
+  [upper : OptLoopBceExpr]
+  [upper-inclusive : bool]) : bool
+  (match fact
+    [(OptInductionFact _ start _ step ty)
+      (and
+        (opt-induction-i64-type? ty)
+        (opt-loop-bce-induction-start-nonnegative? start ty)
+        (opt-loop-bce-induction-step-safe? step upper upper-inclusive ty))]))
+
+(define (opt-loop-bce-induction-fact-for-var-instr-seq-from
+  [body-blocks : CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptMaybeInductionFact
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptNoInductionFact)
+    (match (opt-induction-fact-from-phi
+      body-blocks
+      loop
+      preheader
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptSomeInductionFact fact)
+        (match fact
+          [(OptInductionFact phi-var _ _ _ _)
+            (if (= phi-var var)
+              (OptSomeInductionFact fact)
+              (opt-loop-bce-induction-fact-for-var-instr-seq-from
+                body-blocks
+                loop
+                preheader
+                instrs
+                (+ index 1)
+                var))])]
+      [(OptNoInductionFact)
+        (opt-loop-bce-induction-fact-for-var-instr-seq-from
+          body-blocks
+          loop
+          preheader
+          instrs
+          (+ index 1)
+          var)])))
+
+(define (opt-loop-bce-induction-fact-for-var
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [loop : OptNaturalLoop]
+  [preheader : String]
+  [var : i64]) : OptMaybeInductionFact
+  (let
+    [body-blocks : CompilerIrBlockList
+      (opt-natural-loop-current-body-blocks index loop blocks)]
+    (match (opt-cfg-find-block body-blocks (opt-natural-loop-header loop))
+      [(OptSomeBlock block)
+        (match block
+          [(IrBlock _ instrs)
+            (opt-loop-bce-induction-fact-for-var-instr-seq-from
+              body-blocks
+              loop
+              preheader
+              instrs
+              0
+              var)])]
+      [(OptNoBlock) (OptNoInductionFact)])))
+
+(define (opt-loop-bce-canonical-iv-loop
+  [doms : OptDomInfo]
+  [loops : OptNaturalLoopList]
+  [header-label : String]
+  [body-label : String]) : OptMaybeNaturalLoop
+  (match loops
+    [(OptNaturalLoopNil) (OptNoNaturalLoop)]
+    [(OptNaturalLoopCons loop rest)
+      (if (and
+        (string.string-eq (opt-natural-loop-header loop) header-label)
+        (opt-label-contains (opt-natural-loop-body loop) body-label)
+        (opt-dom-dominates? doms header-label body-label))
+        (OptSomeNaturalLoop loop)
+        (opt-loop-bce-canonical-iv-loop
+          doms
+          (box-get rest)
+          header-label
+          body-label))]))
+
+(define (opt-loop-bce-canonical-iv-proof?
+  [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [sources : hashmap.I64I64Map]
+  [header-label : String]
+  [body-label : String]
+  [iv : OptLoopBceExpr]
+  [upper : OptLoopBceExpr]
+  [upper-inclusive : bool]) : bool
+  (and
+    (opt-range-expr-stable? sources iv)
+    (opt-range-expr-stable? sources upper)
+    (match (opt-loop-bce-expr-var iv)
+      [(OptLoopBceNoVar) false]
+      [(OptLoopBceSomeVar iv-var)
+        (match (opt-loop-bce-canonical-iv-loop
+          doms
+          loops
+          header-label
+          body-label)
+          [(OptSomeNaturalLoop loop)
+            (match (opt-natural-loop-preheader loop)
+              [(OptSomeLoopPreheader preheader)
+                (match (opt-loop-bce-induction-fact-for-var
+                  blocks
+                  index
+                  loop
+                  preheader
+                  iv-var)
+                  [(OptSomeInductionFact fact)
+                    (opt-loop-bce-induction-fact-safe?
+                      fact
+                      upper
+                      upper-inclusive)]
+                  [(OptNoInductionFact) false])]
+              [(OptNoLoopPreheader) false])]
+          [(OptNoNaturalLoop) false])])))
+
+(define (opt-loop-bce-add-canonical-iv-facts-for-bound
+  [facts : OptRangeFacts]
+  [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [sources : hashmap.I64I64Map]
+  [header-label : String]
+  [body-label : String]
+  [iv : OptLoopBceExpr]
+  [upper : OptLoopBceExpr]
+  [upper-inclusive : bool]) : OptRangeFacts
+  (if (opt-loop-bce-canonical-iv-proof?
+    blocks
+    doms
+    index
+    loops
+    sources
+    header-label
+    body-label
+    iv
+    upper
+    upper-inclusive)
+    (opt-range-facts-add-nonnegative
+      (if upper-inclusive
+        (opt-range-facts-add-less-than-or-eq facts body-label iv upper)
+        (opt-range-facts-add-less-than facts body-label iv upper))
+      body-label
+      iv)
+    facts))
+
+(define (opt-loop-bce-add-canonical-iv-facts
+  [facts : OptRangeFacts]
+  [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [sources : hashmap.I64I64Map]
+  [header-label : String]
+  [body-label : String]
+  [op : CompilerIrBinOp]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]) : OptRangeFacts
+  (match op
+    [(IrBinLt)
+      (opt-loop-bce-add-canonical-iv-facts-for-bound
+        facts
+        blocks
+        doms
+        index
+        loops
+        sources
+        header-label
+        body-label
+        lhs
+        rhs
+        false)]
+    [(IrBinGt)
+      (opt-loop-bce-add-canonical-iv-facts-for-bound
+        facts
+        blocks
+        doms
+        index
+        loops
+        sources
+        header-label
+        body-label
+        rhs
+        lhs
+        false)]
+    [(IrBinLe)
+      (opt-loop-bce-add-canonical-iv-facts-for-bound
+        facts
+        blocks
+        doms
+        index
+        loops
+        sources
+        header-label
+        body-label
+        lhs
+        rhs
+        true)]
+    [(IrBinGe)
+      (opt-loop-bce-add-canonical-iv-facts-for-bound
+        facts
+        blocks
+        doms
+        index
+        loops
+        sources
+        header-label
+        body-label
+        rhs
+        lhs
+        true)]
+    [_ facts]))
+
 (define (opt-loop-bce-branch-state
   [state : OptLoopBceState]
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [block-label : String]
   [cond : CompilerIrValue]
   [true-label : String]
@@ -18191,8 +18441,21 @@
                 lhs
                 rhs
                 ty)]
+            [canonical-ranges : OptRangeFacts
+              (opt-loop-bce-add-canonical-iv-facts
+                false-ranges
+                blocks
+                doms
+                index
+                loops
+                sources
+                block-label
+                true-label
+                op
+                lhs
+                rhs)]
             [range-state : OptLoopBceState
-              (opt-loop-bce-state-bind-ranges state false-ranges)]
+              (opt-loop-bce-state-bind-ranges state canonical-ranges)]
             [range-nonnegative : bool
               (or
                 (opt-range-nonnegative-contains?
@@ -18378,7 +18641,9 @@
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [block-label : String]
   [instr : CompilerIrInstr]) : OptLoopBceState
   (match instr
@@ -18510,7 +18775,9 @@
         sources
         types
         blocks
+        doms
         index
+        loops
         block-label
         cond
         true-label
@@ -18587,7 +18854,9 @@
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [block-label : String]
   [instrs : CompilerIrInstrList]) : OptLoopBceRewrite
   (match instrs
@@ -18606,7 +18875,9 @@
             sources
             types
             blocks
+            doms
             index
+            loops
             block-label
             (box-get rest))
           (let
@@ -18617,7 +18888,9 @@
                 sources
                 types
                 blocks
+                doms
                 index
+                loops
                 block-label
                 instr)]
             (match (opt-loop-bce-rewrite-instrs
@@ -18626,7 +18899,9 @@
               sources
               types
               blocks
+              doms
               index
+              loops
               block-label
               (box-get rest))
               [(OptLoopBceRewrite out-state out-rest)
@@ -18640,7 +18915,9 @@
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [block : CompilerIrBlock]) : OptLoopBceBlockRewrite
   (match block
     [(IrBlock label instrs)
@@ -18650,7 +18927,9 @@
         sources
         types
         blocks
+        doms
         index
+        loops
         label
         (compiler-ir-instr-seq-to-list instrs))
         [(OptLoopBceRewrite out-state out-instrs)
@@ -18958,7 +19237,9 @@
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [cfg-index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [children : OptCfgCsr]
   [out : (Array OptLoopBceBlockResult)]
   [id : i64]
@@ -18977,7 +19258,9 @@
               sources
               types
               blocks
+              doms
               cfg-index
+              loops
               block)
               [(OptLoopBceBlockRewrite next-state rewritten)
                 (begin
@@ -18987,7 +19270,9 @@
                     sources
                     types
                     blocks
+                    doms
                     cfg-index
+                    loops
                     children
                     out
                     id
@@ -18999,7 +19284,9 @@
   [sources : hashmap.I64I64Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
   [cfg-index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
   [children : OptCfgCsr]
   [out : (Array OptLoopBceBlockResult)]
   [parent-id : i64]
@@ -19024,7 +19311,9 @@
               sources
               types
               blocks
+              doms
               cfg-index
+              loops
               children
               out
               child-id
@@ -19046,6 +19335,8 @@
       [cfg-index : OptCfgIndex (struct-get context index)]
       [count : i64 (opt-cfg-index-block-count cfg-index)]
       [children : OptCfgCsr (opt-gvn-dom-children doms)]
+      [loops : OptNaturalLoopList
+        (opt-cfg-natural-loops-with-context blocks context)]
       [out : (Array OptLoopBceBlockResult)
         (make-array OptLoopBceBlockResult count)]
       [sources : hashmap.I64I64Map
@@ -19068,7 +19359,9 @@
                 sources
                 types
                 blocks
+                doms
                 cfg-index
+                loops
                 children
                 out
                 entry-id

@@ -3783,6 +3783,32 @@
           (compiler-symbol-module-key "stdlib.string" base)))
       state)))
 
+(define (lower-reach-used-types-add-type! [ty : AstType]) : unit
+  (set!
+    lower-reach-active-body-used-types
+    (lower-used-types-add-type lower-reach-active-body-used-types "" ty)))
+
+(define (lower-reach-used-types-add-maybe-type! [maybe-ty : AstMaybeType]) : unit
+  (set!
+    lower-reach-active-body-used-types
+    (lower-used-types-add-maybe-type
+      lower-reach-active-body-used-types
+      ""
+      maybe-ty)))
+
+(define (lower-reach-used-types-add-param-list! [params : AstParamList]) : unit
+  (set!
+    lower-reach-active-body-used-types
+    (lower-used-types-add-param-list
+      lower-reach-active-body-used-types
+      ""
+      params)))
+
+(define (lower-reach-used-types-add-pattern! [pattern : AstPattern]) : unit
+  (set!
+    lower-reach-active-body-used-types
+    (lower-used-types-add-pattern lower-reach-active-body-used-types "" pattern)))
+
 (define (lower-reach-expr-list
   [all-functions : hashmap.StringI64Map]
   [names : LowerNameCache]
@@ -3811,14 +3837,16 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ value-box)
+          [(AstLetBinding _ maybe-ty value-box)
             (let
               [value : AstExpr (ast-node-get value-box)]
-              (lower-reach-let-bindings
-                all-functions
-                names
-                (lower-reach-expr all-functions names state value)
-                rest))]))]))
+              (begin
+                (lower-reach-used-types-add-maybe-type! maybe-ty)
+                (lower-reach-let-bindings
+                  all-functions
+                  names
+                  (lower-reach-expr all-functions names state value)
+                  rest)))]))]))
 
 (define (lower-reach-match-arms
   [all-functions : hashmap.StringI64Map]
@@ -3831,14 +3859,16 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm pattern body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (lower-reach-match-arms
-                all-functions
-                names
-                (lower-reach-expr all-functions names state body)
-                rest))]))]))
+              (begin
+                (lower-reach-used-types-add-pattern! pattern)
+                (lower-reach-match-arms
+                  all-functions
+                  names
+                  (lower-reach-expr all-functions names state body)
+                  rest)))]))]))
 
 (define (lower-reach-resource-bindings
   [all-functions : hashmap.StringI64Map]
@@ -4958,17 +4988,20 @@
               body))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body-box)
+        [(AstLambda params ret body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (lower-reach-expr
-              all-functions
-              names
-              (lower-reach-add-string-snapshot-runtime
+            (begin
+              (lower-reach-used-types-add-param-list! params)
+              (lower-reach-used-types-add-maybe-type! ret)
+              (lower-reach-expr
                 all-functions
                 names
-                state)
-              body))])]
+                (lower-reach-add-string-snapshot-runtime
+                  all-functions
+                  names
+                  state)
+                body)))])]
     [(AstExprTuple values)
       (lower-reach-expr-list all-functions names state values)]
     [(AstExprTupleRef value-box _)
@@ -4977,10 +5010,12 @@
         (lower-reach-expr all-functions names state value))]
     [(AstExprArray values)
       (lower-reach-expr-list all-functions names state values)]
-    [(AstExprMakeArray _ len-box)
+    [(AstExprMakeArray ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
-        (lower-reach-expr all-functions names state len))]
+        (begin
+          (lower-reach-used-types-add-type! ty)
+          (lower-reach-expr all-functions names state len)))]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -5039,14 +5074,18 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lower-reach-expr all-functions names state value))]
-    [(AstExprAnn inner-box _)
+    [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
-    [(AstExprCast inner-box _)
+        (begin
+          (lower-reach-used-types-add-type! ty)
+          (lower-reach-expr all-functions names state inner)))]
+    [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-reach-expr all-functions names state inner))]
+        (begin
+          (lower-reach-used-types-add-type! ty)
+          (lower-reach-expr all-functions names state inner)))]
     [(AstExprBorrow _ _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5063,31 +5102,13 @@
               arms))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ _ source-box init-box body-box)
+        [(AstForeach _ index-ty source-box init-box body-box)
           (let
             [source : AstExpr (ast-node-get source-box)]
             [init : AstExpr (ast-node-get init-box)]
             [body : AstExpr (ast-node-get body-box)]
-            (lower-reach-expr
-              all-functions
-              names
-              (lower-reach-expr
-                all-functions
-                names
-                (lower-reach-expr all-functions names state source)
-                init)
-              body))])]
-    [(AstExprSpmdReduce reduce-box)
-      (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ _ source-box init-box map-expr-box reduce-expr-box)
-          (let
-            [source : AstExpr (ast-node-get source-box)]
-            [init : AstExpr (ast-node-get init-box)]
-            [map-expr : AstExpr (ast-node-get map-expr-box)]
-            [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
-            (lower-reach-expr
-              all-functions
-              names
+            (begin
+              (lower-reach-used-types-add-type! index-ty)
               (lower-reach-expr
                 all-functions
                 names
@@ -5096,20 +5117,24 @@
                   names
                   (lower-reach-expr all-functions names state source)
                   init)
-                map-expr)
-              reduce-expr))])]
-    [(AstExprSpmdScan scan-box)
-      (match (box-get scan-box)
-        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+                body)))])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce
+            _
+            _
+            index-ty
+            source-box
+            init-box
+            map-expr-box
+            reduce-expr-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
+            [source : AstExpr (ast-node-get source-box)]
             [init : AstExpr (ast-node-get init-box)]
-            [value : AstExpr (ast-node-get value-box)]
-            [body : AstExpr (ast-node-get body-box)]
-            (lower-reach-expr
-              all-functions
-              names
+            [map-expr : AstExpr (ast-node-get map-expr-box)]
+            [reduce-expr : AstExpr (ast-node-get reduce-expr-box)]
+            (begin
+              (lower-reach-used-types-add-type! index-ty)
               (lower-reach-expr
                 all-functions
                 names
@@ -5119,11 +5144,49 @@
                   (lower-reach-expr
                     all-functions
                     names
-                    (lower-reach-expr all-functions names state start)
-                    end)
-                  init)
-                value)
-              body))])]
+                    (lower-reach-expr all-functions names state source)
+                    init)
+                  map-expr)
+                reduce-expr)))])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan
+            _
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (begin
+              (lower-reach-used-types-add-type! index-ty)
+              (lower-reach-used-types-add-type! prefix-ty)
+              (lower-reach-expr
+                all-functions
+                names
+                (lower-reach-expr
+                  all-functions
+                  names
+                  (lower-reach-expr
+                    all-functions
+                    names
+                    (lower-reach-expr
+                      all-functions
+                      names
+                      (lower-reach-expr all-functions names state start)
+                      end)
+                    init)
+                  value)
+                body)))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -5212,8 +5275,14 @@
           names
           (lower-reach-expr all-functions names state inner)
           value))]
-    [(AstExprTypeLiteral _) state]
-    [(AstExprInit _) state]
+    [(AstExprTypeLiteral ty)
+      (begin
+        (lower-reach-used-types-add-type! ty)
+        state)]
+    [(AstExprInit maybe-ty)
+      (begin
+        (lower-reach-used-types-add-maybe-type! maybe-ty)
+        state)]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5238,7 +5307,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-reach-expr all-functions names state inner))]
-    [(AstExprPtrNull _) state]
+    [(AstExprPtrNull ty)
+      (begin
+        (lower-reach-used-types-add-type! ty)
+        state)]
     [(AstExprPtrNullCheck value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -5266,18 +5338,22 @@
           names
           (lower-reach-expr all-functions names state ptr)
           offset))]
-    [(AstExprPtrCast ptr-box _)
+    [(AstExprPtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
-        (lower-reach-expr all-functions names state ptr))]
+        (begin
+          (lower-reach-used-types-add-type! ty)
+          (lower-reach-expr all-functions names state ptr)))]
     [(AstExprPtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lower-reach-expr all-functions names state ptr))]
-    [(AstExprIntToPtr value-box _)
+    [(AstExprIntToPtr value-box ty)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (lower-reach-expr all-functions names state value))]
+        (begin
+          (lower-reach-used-types-add-type! ty)
+          (lower-reach-expr all-functions names state value)))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -5850,12 +5926,6 @@
                       lower-reach-active-runtime-paths
                       (intern body-path)
                       1))
-                  (set!
-                    lower-reach-active-body-used-types
-                    (lower-used-types-add-expr
-                      lower-reach-active-body-used-types
-                      ""
-                      body))
                   (lower-reach-process
                     all-functions
                     names
@@ -6107,11 +6177,15 @@
   [_module : String]
   [name : i64]) : hashmap.I64I64Map
   (let
+    [source : String (intern-str name)]
     [with-source : hashmap.I64I64Map (hashmap.i64-i64-map-put used name 1)]
-    [leaf : String (lower-used-type-name-leaf (intern-str name))]
-    (if (string.string-eq leaf (intern-str name))
-      with-source
-      (hashmap.i64-i64-map-put with-source (intern leaf) 1))))
+    (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
+      (let
+        [leaf : String (lower-used-type-name-leaf source)]
+        (if (string.string-eq leaf source)
+          with-source
+          (hashmap.i64-i64-map-put with-source (intern leaf) 1)))
+      with-source)))
 
 (define (lower-used-type-name-contains?
   [used : hashmap.I64I64Map]

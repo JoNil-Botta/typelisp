@@ -3824,6 +3824,34 @@
     (array-set! compiler-backend-scavenge-used-callee 3 false)
     (array-set! compiler-backend-scavenge-used-callee 4 false)))
 
+;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
+;; occupied -- genuine register pressure, not param pressure), it must not silently
+;; degrade to the occupied fallback (that clobbers a live value). Instead the
+;; instruction's asm is wrapped `movq R, off(%rbp) ; <instr> ; movq off(%rbp), R`,
+;; saving the occupied value in R before the scratch use and restoring it after.
+;; rbp-relative (no rsp shift, so a call inside the instruction stays aligned). The
+;; slot is at off = -(frame-size + 8) -- below the locals, so it shifts nothing --
+;; and the frame is extended by 16 (alignment) ONLY when an emergency fired, so
+;; while no register is pooled (no emergency) the frame is unchanged -> byte-identical.
+(define compiler-backend-emergency-pending : bool false)
+(define compiler-backend-emergency-reg : String "")
+(define compiler-backend-emergency-used : bool false)
+(define compiler-backend-emergency-slot-offset : i64 0)
+
+(define (compiler-backend-emergency-wrap [head : String]) : String
+  (if compiler-backend-emergency-pending
+    (let
+      [reg : String compiler-backend-emergency-reg]
+      [off : String (int->string compiler-backend-emergency-slot-offset)]
+      (begin
+        (set! compiler-backend-emergency-pending false)
+        (string-append
+          (str-cat "    movq " reg ", " off "(%rbp)\n")
+          (string-append
+            head
+            (str-cat "    movq " off "(%rbp), " reg "\n")))))
+    head))
+
 ;; A callee-saved reg must be saved by the prologue iff the allocator homes a
 ;; value there OR the scavenge used it on demand.
 (define (compiler-backend-callee-needs-save?
@@ -17273,7 +17301,7 @@
   [use-counts : (Array i64)]
   [buf : TextBuf]) : ResultCompilerBackend
   (let
-    [next-buf : TextBuf (text-buf-append buf head)]
+    [next-buf : TextBuf (text-buf-append buf (compiler-backend-emergency-wrap head))]
     (match instr
       [(IrInstrCall dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -17483,7 +17511,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        (text-buf-append buf (compiler-backend-emergency-wrap head)))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-rax-forwardable-consumer?
@@ -17663,7 +17691,7 @@
                       spans
                       func-diag
                       use-counts
-                      (text-buf-append buf head))
+                      (text-buf-append buf (compiler-backend-emergency-wrap head)))
                     (compiler-backend-emit-instrs
                       target
                       function
@@ -17684,7 +17712,7 @@
                       spans
                       func-diag
                       use-counts
-                      (text-buf-append buf head)))]
+                      (text-buf-append buf (compiler-backend-emergency-wrap head))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
             (compiler-backend-emit-instrs-materialize-rax
               target
@@ -18038,7 +18066,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        (text-buf-append buf (compiler-backend-emergency-wrap head)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
         (compiler-backend-apply-instr-diagnostic
@@ -18115,7 +18143,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        (text-buf-append buf (compiler-backend-emergency-wrap head)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
         (compiler-backend-apply-instr-diagnostic
@@ -18197,7 +18225,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        (text-buf-append buf (compiler-backend-emergency-wrap head)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
         (compiler-backend-apply-instr-diagnostic
@@ -18548,7 +18576,7 @@
         spans
         func-diag
         use-counts
-        (text-buf-append buf head))]
+        (text-buf-append buf (compiler-backend-emergency-wrap head)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
         (compiler-backend-apply-instr-diagnostic
@@ -21494,7 +21522,7 @@
                   spans
                   func-diag
                   use-counts
-                  (text-buf-append buf head))]
+                  (text-buf-append buf (compiler-backend-emergency-wrap head)))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])
             (if (and
               (compiler-backend-compare-op? op)
@@ -22261,7 +22289,7 @@
               spans
               func-diag
               use-counts
-              (text-buf-append buf head))]
+              (text-buf-append buf (compiler-backend-emergency-wrap head)))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(IrBlockArray seq)
       (compiler-backend-emit-blocks-into
@@ -22833,7 +22861,16 @@
   [i : i64]
   [n : i64]) : String
   (if (>= i n)
-    fallback
+    (begin
+      (set! compiler-backend-emergency-pending true)
+      (set! compiler-backend-emergency-reg
+        (cond
+          [(string-eq fallback "%r10") "%r10"]
+          [(string-eq fallback "%r11") "%r11"]
+          [(string-eq fallback "%rax") "%rax"]
+          [else "%r8"]))
+      (set! compiler-backend-emergency-used true)
+      fallback)
     (if (compiler-backend-scavenge-candidate-ok?
       starts
       ends
@@ -22901,7 +22938,9 @@
   [vars : i64]
   [point : i64]
   [reg : String]) : unit
-  (if (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)
+  (if (or
+    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point reg)
+    compiler-backend-emergency-pending)
     unit
     (panic
       (str-cat
@@ -23447,6 +23486,26 @@
                     (set!
                       compiler-backend-identity-tail-forwarder-active
                       identity-tail-forwarder?)]
+                  [_emergency-init : unit
+                    (begin
+                      (set! compiler-backend-emergency-used false)
+                      (set! compiler-backend-emergency-pending false)
+                      (set!
+                        compiler-backend-emergency-slot-offset
+                        (-
+                          0
+                          (+
+                            (+
+                              (compiler-backend-frame-size
+                                (compiler-backend-frame-slots-with-groups
+                                  slot-vars
+                                  assignments
+                                  has-group-vars))
+                              (compiler-backend-outgoing-frame-space
+                                target
+                                emit-blocks-list
+                                program-index))
+                            8))))]
                   (match (compiler-backend-emit-blocks
                     target
                     label-scope
@@ -23469,15 +23528,17 @@
                       (let
                         [frame : i64
                           (+
-                            (compiler-backend-frame-size
-                              (compiler-backend-frame-slots-with-groups
-                                slot-vars
-                                assignments
-                                has-group-vars))
-                            (compiler-backend-outgoing-frame-space
-                              target
-                              emit-blocks-list
-                              program-index))]
+                            (+
+                              (compiler-backend-frame-size
+                                (compiler-backend-frame-slots-with-groups
+                                  slot-vars
+                                  assignments
+                                  has-group-vars))
+                              (compiler-backend-outgoing-frame-space
+                                target
+                                emit-blocks-list
+                                program-index))
+                            (if compiler-backend-emergency-used 16 0))]
                         [_addr-forward-done : unit
                           (begin
                             (set!
@@ -23685,7 +23746,7 @@
             span-index
             emit-entry
             crt-entry
-            (text-buf-append buf head))]
+            (text-buf-append buf (compiler-backend-emergency-wrap head)))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(IrFunctionArray seq)
       (compiler-backend-emit-functions-into
@@ -23827,7 +23888,7 @@
                 span-index
                 emit-entry
                 crt-entry
-                (text-buf-append buf head)))]
+                (text-buf-append buf (compiler-backend-emergency-wrap head))))]
           [(ErrCompilerBackend message)
             (begin
               (cfg
@@ -24129,7 +24190,7 @@
                 externs
                 plan
                 program-index
-                (text-buf-append buf head))]
+                (text-buf-append buf (compiler-backend-emergency-wrap head)))]
             [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]
         [(CompilerBackendNoSignature)
           (compiler-backend-emit-closure-entry-adapters-buffer-into
@@ -24857,7 +24918,7 @@
           (compiler-backend-emit-globals-buffer-into
             target
             (box-get rest)
-            (text-buf-append buf head)
+            (text-buf-append buf (compiler-backend-emergency-wrap head))
             program-index)]
         [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
 

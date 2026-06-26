@@ -4,6 +4,7 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
+(import stdlib.array)
 (import stdlib.io)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
@@ -6562,7 +6563,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ParseAstDeclVec (make-array AstDecl cap) 0)))
+    (ParseAstDeclVec (array.make-array AstDecl cap) 0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec
   (parse-ast-decl-vec-with-capacity 16))
@@ -6571,14 +6572,14 @@
   (struct-get v len))
 
 (define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
-  (array-length (struct-get v slots)))
+  (array.array-length (struct-get v slots)))
 
 (define (parse-ast-decl-vec-get
   [v : (& v ParseAstDeclVec)]
   [index : i64]
   [fallback : AstDecl]) : AstDecl
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref (struct-get v slots) index)
+    (array.array-ref (struct-get v slots) index)
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
@@ -6589,18 +6590,18 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (array.array-set! dst index (array.array-ref src index))
       (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
 
 (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
   (let
     [n : i64 (struct-get v len)]
-    [old-cap : i64 (array-length (struct-get v slots))]
+    [old-cap : i64 (array.array-length (struct-get v slots))]
     [new-cap : i64
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
+    [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
@@ -6609,13 +6610,13 @@
   [v : (&mut v ParseAstDeclVec)]
   [value : AstDecl]) : unit
   (begin
-    (if (< (struct-get v len) (array-length (struct-get v slots)))
+    (if (< (struct-get v len) (array.array-length (struct-get v slots)))
       unit
       (parse-ast-decl-vec-grow v))
     (let
       [index : i64 (struct-get v len)]
       (begin
-        (array-set! (struct-get v slots) index value)
+        (array.array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ index 1))))))
 
 (define (parse-ast-decl-vec-push-list!
@@ -6707,11 +6708,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (match (parse-ast-program-forms dispatch pools toks cur)
         [(OkAstDeclList decls) (OkAstProgram (ast-program decls))]
         [(ErrAstDeclList message) (ErrAstProgram message)]))))
@@ -6777,11 +6778,11 @@
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks)
       (let
-        [cur : (Array i64) (make-array i64 1)]
+        [cur : (Array i64) (array.make-array i64 1)]
         [dispatch : SymI64Env (parse-ast-program-dispatch)]
         (begin
           (sp-node-pool-reset!)
-          (array-set! cur 0 0)
+          (array.array-set! cur 0 0)
           (if (= (peek-spanned-tag toks cur) (tag-end))
             (ErrAstReplItem "parse: expected REPL input")
             (match (read-form-spanned-result toks cur)
@@ -6907,11 +6908,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
         [(OkAstDeclListDiagnostic decls)
           (OkAstProgramDiagnostic (ast-program decls))]
@@ -7420,9 +7421,9 @@
       (match (lex-spanned-result src)
         [(OkSpannedTokens toks)
           (let
-            [cur : (Array i64) (make-array i64 1)]
+            [cur : (Array i64) (array.make-array i64 1)]
             (begin
-              (array-set! cur 0 0)
+              (array.array-set! cur 0 0)
               (match (read-form-spanned-result toks cur)
                 [(OkSpannedSexpr form)
                   (let

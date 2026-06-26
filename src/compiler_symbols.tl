@@ -3,6 +3,7 @@
 ;; Handles are packed as kind * stride + declaration index, where index is the
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
+(import stdlib.array)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import "sym_i64_env.tl")
@@ -171,8 +172,8 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (make-array AstDecl decl-count)
-    (make-array String decl-count)))
+    (array.make-array AstDecl decl-count)
+    (array.make-array String decl-count)))
 
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
@@ -1913,8 +1914,8 @@
   (let
     [indexed : AstDecl (compiler-symbol-indexed-decl decl)]
     (begin
-      (array-set! (compiler-symbols-decls symbols) index indexed)
-      (array-set!
+      (array.array-set! (compiler-symbols-decls symbols) index indexed)
+      (array.array-set!
         (compiler-symbols-owner-names symbols)
         index
         (compiler-symbol-owner-name-for-decl indexed module)))))
@@ -1924,10 +1925,10 @@
   [target : i64]) : CompilerMaybeString
   (let
     [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
-    (if (or (< target 0) (>= target (array-length owner-names)))
+    (if (or (< target 0) (>= target (array.array-length owner-names)))
       (CompilerNoString)
       (let
-        [owner-name : String (array-ref owner-names target)]
+        [owner-name : String (array.array-ref owner-names target)]
         (if (> (string.string-length owner-name) 0)
           (CompilerSomeString owner-name)
           (CompilerNoString))))))
@@ -2872,9 +2873,9 @@
   [target : i64]) : ResultAstDecl
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
-    (if (or (< target 0) (>= target (array-length decls)))
+    (if (or (< target 0) (>= target (array.array-length decls)))
       (ErrAstDecl "symbols: declaration index not found")
-      (OkAstDecl (array-ref decls target)))))
+      (OkAstDecl (array.array-ref decls target)))))
 
 (define (compiler-variant-types-at-index
   [variants : AstVariantDefList]

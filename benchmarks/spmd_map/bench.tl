@@ -13,6 +13,7 @@
 ;# and the trip count `base-reps + (arg-count)` (arg-count is 1 with no extra
 ;# arguments, matching C `argc`) keeps the result deterministic while
 ;# preventing whole-loop constant folding.
+(import stdlib.array)
 (import "stdlib/io.tl")
 
 (define array-len : i64
@@ -25,15 +26,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
-        (array-set! b i (* i 2))
+        (array.array-set! a i (+ i 1))
+        (array.array-set! b i (* i 2))
         (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 array-len)]
-    [b : (Array i64) (make-array i64 array-len)]
-    [out : (Array i64) (make-array i64 array-len)]
+    [a : (Array i64) (array.make-array i64 array-len)]
+    [b : (Array i64) (array.make-array i64 array-len)]
+    [out : (Array i64) (array.make-array i64 array-len)]
     [reps : i64 (+ base-reps (arg-count))]
     [acc : i64 0]
     [r : i64 0]
@@ -43,7 +44,10 @@
         (begin
           (foreach
             ([i : i64 0 array-len])
-            (array-set! out i (+ (+ (array-ref a i) (array-ref b i)) r)))
-          (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
+            (array.array-set!
+              out
+              i
+              (+ (+ (array.array-ref a i) (array.array-ref b i)) r)))
+          (set! acc (+ acc (array.array-ref out (bit-and r (- array-len 1)))))
           (set! r (+ r 1))))
       (bit-and acc 255))))

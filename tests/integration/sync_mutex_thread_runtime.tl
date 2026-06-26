@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/sync.tl")
 (import "stdlib/thread.tl")
 
@@ -52,7 +53,10 @@
   [mutex : MutexI64]) : unit
   (begin
     (mutex-i64-store-raw! mutex ctx 0)
-    (array-set! ctx mutex-i64-raw-field-count sync-mutex-integration-count)))
+    (array.array-set!
+      ctx
+      mutex-i64-raw-field-count
+      sync-mutex-integration-count)))
 
 (define (sync-mutex-integration-total [mutex : MutexI64]) : i64
   (with ([guard (mutex-i64-lock mutex) mutex-i64-unlock]) (mutex-i64-get guard)))
@@ -75,8 +79,8 @@
 
 (define (sync-mutex-integration-run [mutex : MutexI64]) : i64
   (let
-    [ctx-a : (Array i64) (make-array i64 (+ mutex-i64-raw-field-count 1))]
-    [ctx-b : (Array i64) (make-array i64 (+ mutex-i64-raw-field-count 1))]
+    [ctx-a : (Array i64) (array.make-array i64 (+ mutex-i64-raw-field-count 1))]
+    [ctx-b : (Array i64) (array.make-array i64 (+ mutex-i64-raw-field-count 1))]
     (begin
       (sync-mutex-integration-pack-context! ctx-a mutex)
       (sync-mutex-integration-pack-context! ctx-b mutex)

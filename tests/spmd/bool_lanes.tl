@@ -1,17 +1,19 @@
+(import stdlib.array)
+
 (define (init-bool [flags : (Array bool)] [values : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! flags i (< i 5))
-        (array-set! values i (- i 4))
+        (array.array-set! flags i (< i 5))
+        (array.array-set! values i (- i 4))
         (set! i (+ i 1))))))
 
 (define (fill-bool-copy-foreach
   [src : (Array bool)]
   [out : (Array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (array-ref src i))))
+  (foreach ([i : i64 0 n]) (array.array-set! out i (array.array-ref src i))))
 
 (define (fill-bool-copy-scalar
   [src : (Array bool)]
@@ -21,14 +23,16 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (array-ref src i))
+        (array.array-set! out i (array.array-ref src i))
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-foreach
   [values : (Array i64)]
   [out : (Array bool)]
   [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (< (array-ref values i) 0))))
+  (foreach
+    ([i : i64 0 n])
+    (array.array-set! out i (< (array.array-ref values i) 0))))
 
 (define (fill-bool-compare-scalar
   [values : (Array i64)]
@@ -38,7 +42,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (< (array-ref values i) 0))
+        (array.array-set! out i (< (array.array-ref values i) 0))
         (set! i (+ i 1))))))
 
 (define (eq-bool [a : (Array bool)] [b : (Array bool)] [n : i64]) : bool
@@ -48,11 +52,11 @@
     (begin
       (while (< i n)
         (begin
-          (if (array-ref a i)
-            (if (array-ref b i)
+          (if (array.array-ref a i)
+            (if (array.array-ref b i)
               unit
               (set! ok false))
-            (if (array-ref b i)
+            (if (array.array-ref b i)
               (set! ok false)
               unit))
           (set! i (+ i 1))))
@@ -60,12 +64,12 @@
 
 (define (case-bool [n : i64]) : bool
   (let
-    [flags : (Array bool) (make-array bool n)]
-    [values : (Array i64) (make-array i64 n)]
-    [copy-got : (Array bool) (make-array bool n)]
-    [copy-want : (Array bool) (make-array bool n)]
-    [cmp-got : (Array bool) (make-array bool n)]
-    [cmp-want : (Array bool) (make-array bool n)]
+    [flags : (Array bool) (array.make-array bool n)]
+    [values : (Array i64) (array.make-array i64 n)]
+    [copy-got : (Array bool) (array.make-array bool n)]
+    [copy-want : (Array bool) (array.make-array bool n)]
+    [cmp-got : (Array bool) (array.make-array bool n)]
+    [cmp-want : (Array bool) (array.make-array bool n)]
     (begin
       (init-bool flags values n)
       (fill-bool-copy-foreach flags copy-got n)

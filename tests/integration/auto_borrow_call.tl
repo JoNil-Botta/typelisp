@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/string.tl")
 
 (defstruct Pair
@@ -19,7 +20,7 @@
   5)
 
 (define (array-second [a : (& a (Array i64))]) : i64
-  (array-ref a 1))
+  (array.array-ref a 1))
 
 (define (text-len [text : (& text str)]) : i64
   (string-length text))
@@ -47,16 +48,16 @@
   (let
     [p : Pair (Pair 11 13)]
     [t : (Tuple i64 i64) (tuple 5 37)]
-    [items : (Array i64) (make-array i64 3)]
+    [items : (Array i64) (array.make-array i64 3)]
     [text : String "borrow"]
     [nums : Numbers (Numbers 3 4)]
     [f : (-> (& p Pair) i64)
       (lambda ([arg : (& p Pair)]) : i64
         (sum-pair arg))]
     (begin
-      (array-set! items 0 17)
-      (array-set! items 1 19)
-      (array-set! items 2 23)
+      (array.array-set! items 0 17)
+      (array.array-set! items 1 19)
+      (array.array-set! items 2 23)
       (let
         [direct : i64 (sum-pair p)]
         [explicit : i64 (sum-pair (& p))]
@@ -73,7 +74,9 @@
         [projection-value : i64
           (+
             (ref-score (struct-get nums first))
-            (+ (ref-score (tuple-ref t 1)) (ref-score (array-ref items 2))))]
+            (+
+              (ref-score (tuple-ref t 1))
+              (ref-score (array.array-ref items 2))))]
         [scoped-value : i64 (scoped-use-after-auto-borrow "scope")]
         (if (and
           (= direct 24)

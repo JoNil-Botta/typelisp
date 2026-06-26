@@ -5,6 +5,8 @@
 ;; 42, avx2 = 106, avx512 = 170. A bad SIMD result returns a small failure code
 ;; instead of the tag. Keep the SPMD loop directly inside each variant while
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
+(import stdlib.array)
+
 (define (dispatch_seed_a [i : i64]) : i64
   (+ i 1))
 
@@ -16,8 +18,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (dispatch_seed_a i))
-        (array-set! b i (dispatch_seed_b i))
+        (array.array-set! a i (dispatch_seed_a i))
+        (array.array-set! b i (dispatch_seed_b i))
         (set! i (+ i 1))))))
 
 (define (dispatch_checksum [out : (Array i64)] [n : i64]) : i64
@@ -27,21 +29,21 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array-ref out i)))
+          (set! acc (+ acc (array.array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 
 (define (dispatch_scalar [n : i64]) : i64
   (let
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [out : (Array i64) (make-array i64 n)]
+    [a : (Array i64) (array.make-array i64 n)]
+    [b : (Array i64) (array.make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         42
@@ -49,15 +51,15 @@
 
 (define (dispatch_avx2 [n : i64]) : i64
   (let
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [out : (Array i64) (make-array i64 n)]
+    [a : (Array i64) (array.make-array i64 n)]
+    [b : (Array i64) (array.make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         106
@@ -65,15 +67,15 @@
 
 (define (dispatch_avx512 [n : i64]) : i64
   (let
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [out : (Array i64) (make-array i64 n)]
+    [a : (Array i64) (array.make-array i64 n)]
+    [b : (Array i64) (array.make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs a b n)
       (foreach
         ([i : i64 0 n])
-        (array-set! out i (+ (array-ref a i) (array-ref b i))))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i))))
       (set! acc (dispatch_checksum out n))
       (if (= (bit-and acc 0xff) 247)
         170

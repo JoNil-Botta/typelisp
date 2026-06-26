@@ -1,6 +1,7 @@
 ; Capturing nested aggregate fields in closure environments (#584).
 ; Returned closures read through copied nested handles after the creator frame
 ; has returned. `main` yields 42 only if every case holds.
+(import stdlib.array)
 (import "stdlib/string.tl")
 
 (defstruct Label
@@ -21,13 +22,13 @@
 
 (define (make-bag-reader) : (-> i64)
   (let
-    [a : (Array i64) (make-array i64 1)]
+    [a : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! a 0 42)
+      (array.array-set! a 0 42)
       (let
         [b : Bag (Bag a)]
         (lambda () : i64
-          (array-ref (struct-get b items) 0))))))
+          (array.array-ref (struct-get b items) 0))))))
 
 (define (case-struct-dynarray) : bool
   (= ((make-bag-reader)) 42))

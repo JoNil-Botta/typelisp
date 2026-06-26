@@ -1,5 +1,7 @@
 ;; #2601: exact aligned f64 fields in <=16-byte aggregates are register-resident
 ;; SSE eightbytes. #2855 covers packed f32 SSE eightbytes in the sibling fixture.
+(import stdlib.array)
+
 (defstruct PairF64
   (x f64)
   (y f64))
@@ -86,12 +88,12 @@
 
 (define (case-array) : bool
   (let
-    [items : (Array PairF64) (make-array PairF64 2)]
+    [items : (Array PairF64) (array.make-array PairF64 2)]
     (begin
-      (array-set! items 0 (PairF64 3.0 4.0))
-      (array-set! items 1 (PairF64 5.0 6.0))
-      (if (= (pair-sum (array-ref items 0)) 7.0)
-        (= (struct-get (array-ref items 1) y) 6.0)
+      (array.array-set! items 0 (PairF64 3.0 4.0))
+      (array.array-set! items 1 (PairF64 5.0 6.0))
+      (if (= (pair-sum (array.array-ref items 0)) 7.0)
+        (= (struct-get (array.array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

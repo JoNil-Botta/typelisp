@@ -1,12 +1,16 @@
 ;: SPEC borrow contract: mutable borrows conflict across ancestor/descendant paths.
+;: Compatibility exception for #3772: borrow-place syntax still requires the
+;: bare array-ref alias until qualified array macro calls become places.
+(import stdlib.array)
+
 (defstruct Bags
   (left (Array i64))
   (right (Array i64)))
 
 (define (main) : unit
   (let
-    [left-items : (Array i64) (make-array i64 1)]
-    [right-items : (Array i64) (make-array i64 1)]
+    [left-items : (Array i64) (array.make-array i64 1)]
+    [right-items : (Array i64) (array.make-array i64 1)]
     [bags : Bags (Bags left-items right-items)]
     (let
       [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]

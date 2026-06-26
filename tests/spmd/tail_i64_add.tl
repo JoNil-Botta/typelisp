@@ -5,19 +5,21 @@
 ;; the result. The comparison harness builds this at scalar/avx2/avx512 and
 ;; asserts identical exit codes. a[i]=i+1, b[i]=2i, out[i]=3i+1; the n=13
 ;; checksum is 247, so every mode must exit 247.
+(import stdlib.array)
+
 (define (init [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
-        (array-set! b i (* i 2))
+        (array.array-set! a i (+ i 1))
+        (array.array-set! b i (* i 2))
         (set! i (+ i 1))))))
 
 (define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (checksum [out : (Array i64)] [n : i64]) : i64
   (let
@@ -26,16 +28,16 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array-ref out i)))
+          (set! acc (+ acc (array.array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 
 (define (main) : i64
   (let
     [n : i64 13]
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [out : (Array i64) (make-array i64 n)]
+    [a : (Array i64) (array.make-array i64 n)]
+    [b : (Array i64) (array.make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
     (begin
       (init a b n)
       (fill a b out n)

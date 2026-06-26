@@ -1,4 +1,6 @@
 ;: SPEC SPMD contract: foreach bodies do not support try-style early exits.
+(import stdlib.array)
+
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 i64))
@@ -7,7 +9,7 @@
   (begin
     (foreach
       ([i : i64 0 n])
-      (array-set!
+      (array.array-set!
         out
         i
         (try

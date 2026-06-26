@@ -40,6 +40,7 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
+(import stdlib.array)
 (import "stdlib/io.tl")
 (import stdlib.vector)
 (import "token.tl")
@@ -159,7 +160,7 @@
 ;; there is no separate token representation to keep in sync.
 ;; Current cursor position.
 (define (cur-pos [cur : (Array i64 1)]) : i64
-  (array-ref cur 0))
+  (array.array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
 (define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
@@ -171,7 +172,7 @@
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64 1)]) : unit
-  (array-set! cur 0 (+ (cur-pos cur) 1)))
+  (array.array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then

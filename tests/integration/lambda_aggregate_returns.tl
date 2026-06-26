@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/string.tl")
 
 (defenum Box
@@ -17,7 +18,7 @@
         (BoxI 11))]
     [mk-array : (-> (Array i64))
       (lambda () : (Array i64)
-        (make-array i64 13))]
+        (array.make-array i64 13))]
     [mk-struct : (-> Pair)
       (lambda () : Pair
         (Pair 1 13))]
@@ -26,4 +27,4 @@
       (+
         (match (mk-enum)
           [(BoxI n) n])
-        (+ (array-length (mk-array)) (struct-get (mk-struct) y))))))
+        (+ (array.array-length (mk-array)) (struct-get (mk-struct) y))))))

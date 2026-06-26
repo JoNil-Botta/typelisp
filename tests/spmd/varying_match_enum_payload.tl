@@ -1,5 +1,7 @@
 ;; SPMD varying-match enum payload corpus (#3776): tag-only and payload arms
 ;; inside a foreach body. The n = 13 length exercises mixed arms plus a tail.
+(import stdlib.array)
+
 (defenum Choice
   (Zero)
   (Add i64)
@@ -18,15 +20,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! items i (choice-at i))
+        (array.array-set! items i (choice-at i))
         (set! i (+ i 1))))))
 
 (define (fill-match [items : (Array Choice)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
-      [choice : Choice (array-ref items i)]
-      (array-set!
+      [choice : Choice (array.array-ref items i)]
+      (array.array-set!
         out
         i
         (match choice
@@ -48,8 +50,8 @@
     (while (< i n)
       (begin
         (let
-          [choice : Choice (array-ref items i)]
-          (array-set!
+          [choice : Choice (array.array-ref items i)]
+          (array.array-set!
             out
             i
             (match choice
@@ -73,7 +75,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -82,9 +84,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [items : (Array Choice) (make-array Choice n)]
-    [got : (Array i64) (make-array i64 n)]
-    [want : (Array i64) (make-array i64 n)]
+    [items : (Array Choice) (array.make-array Choice n)]
+    [got : (Array i64) (array.make-array i64 n)]
+    [want : (Array i64) (array.make-array i64 n)]
     (begin
       (init-choices items n)
       (fill-match items got n)

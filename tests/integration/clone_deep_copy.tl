@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/string.tl")
 
@@ -29,15 +30,16 @@
       (+
         (score-bool (string-eq (tuple-ref (struct-get bundle pair) 1) "t1"))
         (+
-          (score-bool (string-eq (array-ref (struct-get bundle fixed) 0) "f0"))
+          (score-bool
+            (string-eq (array.array-ref (struct-get bundle fixed) 0) "f0"))
           (+
             (score-bool
-              (string-eq (array-ref (struct-get bundle fixed) 1) "f1"))
+              (string-eq (array.array-ref (struct-get bundle fixed) 1) "f1"))
             (+
               (score-bool
-                (string-eq (array-ref (struct-get bundle items) 0) "d0"))
+                (string-eq (array.array-ref (struct-get bundle items) 0) "d0"))
               (score-bool
-                (string-eq (array-ref (struct-get bundle items) 1) "d1")))))))))
+                (string-eq (array.array-ref (struct-get bundle items) 1) "d1")))))))))
 
 (define (make-bundle [items : (Array String)]) : Bundle
   (Bundle
@@ -56,10 +58,10 @@
     (unsafe
       (arena-set! scratch))
     (let
-      [items : (Array String) (make-array String 2)]
+      [items : (Array String) (array.make-array String 2)]
       (begin
-        (array-set! items 0 (string-append "d" "0"))
-        (array-set! items 1 (string-append "d" "1"))
+        (array.array-set! items 0 (string-append "d" "0"))
+        (array.array-set! items 1 (string-append "d" "1"))
         (let
           [bundle : Bundle (make-bundle items)]
           [list : StringList (make-list)]

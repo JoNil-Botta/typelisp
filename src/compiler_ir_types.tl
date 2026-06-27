@@ -4,6 +4,7 @@
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import stdlib.string)
+(import stdlib.array)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat)
 
@@ -392,13 +393,13 @@
     [(IrInstrNil) unit]
     [(IrInstrCons instr rest)
       (begin
-        (array-set! slots index instr)
+        (array.array-set! slots index instr)
         (compiler-ir-instr-list-fill-array (box-get rest) slots (+ index 1)))]))
 
 (define (compiler-ir-instr-seq-from-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
   (let
     [count : i64 (compiler-ir-instr-list-count instrs)]
-    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
     (begin
       (compiler-ir-instr-list-fill-array instrs slots 0)
       (CompilerIrInstrSeq slots count))))
@@ -413,7 +414,7 @@
     (begin
       (while (>= cursor 0)
         (begin
-          (set! out (IrInstrCons (array-ref slots cursor) (box out)))
+          (set! out (IrInstrCons (array.array-ref slots cursor) (box out)))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -429,18 +430,18 @@
 (define (compiler-ir-instr-seq-empty? [instrs : CompilerIrInstrSeq]) : bool
   (= (struct-get instrs len) 0))
 
-;; #2357: MUST stay `array-ref`. `CompilerIrInstr` is an inline-by-value enum
+;; #2357: MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum
 ;; (#1867), so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
-;; garbage; `array-ref` lowers with the correct element size.
+;; garbage; the array macro lowers with the correct element size.
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (array-ref (struct-get instrs slots) index))
+  (array.array-ref (struct-get instrs slots) index))
 
 (define (compiler-ir-instr-seq-set!
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [instr : CompilerIrInstr]) : unit
-  (array-set! (struct-get instrs slots) index instr))
+  (array.array-set! (struct-get instrs slots) index instr))
 
 (define (compiler-ir-instr-seq-rewrite!
   [instrs : CompilerIrInstrSeq]
@@ -502,7 +503,7 @@
     [(IrBlockNil) unit]
     [(IrBlockCons block rest)
       (begin
-        (array-set! slots index block)
+        (array.array-set! slots index block)
         (compiler-ir-block-list-fill-array (box-get rest) slots (+ index 1)))]
     [(IrBlockArray seq)
       (let
@@ -510,13 +511,16 @@
         [n : i64 (struct-get seq len)]
         (while (< i n)
           (begin
-            (array-set! slots (+ index i) (array-ref (struct-get seq slots) i))
+            (array.array-set!
+              slots
+              (+ index i)
+              (array.array-ref (struct-get seq slots) i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
-    [slots : (Array CompilerIrBlock) (make-array CompilerIrBlock count)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array blocks slots 0)
       (CompilerIrBlockSeq slots count))))
@@ -531,7 +535,7 @@
     (begin
       (while (>= cursor 0)
         (begin
-          (set! out (compiler-ir-block-cons (array-ref slots cursor) out))
+          (set! out (compiler-ir-block-cons (array.array-ref slots cursor) out))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -544,9 +548,9 @@
 (define (compiler-ir-block-seq-count [blocks : CompilerIrBlockSeq]) : i64
   (struct-get blocks len))
 
-;; #2357: MUST stay `array-ref` (see compiler-ir-instr-seq-ref above).
+;; #2357: MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
 (define (compiler-ir-block-seq-ref [blocks : CompilerIrBlockSeq] [index : i64]) : CompilerIrBlock
-  (array-ref (struct-get blocks slots) index))
+  (array.array-ref (struct-get blocks slots) index))
 
 (define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -593,7 +597,7 @@
     [(IrFunctionNil) unit]
     [(IrFunctionCons func rest)
       (begin
-        (array-set! slots index func)
+        (array.array-set! slots index func)
         (compiler-ir-function-list-fill-array (box-get rest) slots (+ index 1)))]
     [(IrFunctionArray seq)
       (let
@@ -602,14 +606,15 @@
         [src : (Array CompilerIrFunction) (struct-get seq slots)]
         (while (< i n)
           (begin
-            (array-set! slots (+ index i) (array-ref src i))
+            (array.array-set! slots (+ index i) (array.array-ref src i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-function-seq-from-list
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
   (let
     [count : i64 (compiler-ir-function-list-count-cons functions)]
-    [slots : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    [slots : (Array CompilerIrFunction)
+      (array.make-array CompilerIrFunction count)]
     (begin
       (compiler-ir-function-list-fill-array functions slots 0)
       (CompilerIrFunctionSeq slots count))))
@@ -624,7 +629,9 @@
     (begin
       (while (>= cursor 0)
         (begin
-          (set! out (compiler-ir-function-cons (array-ref slots cursor) out))
+          (set!
+            out
+            (compiler-ir-function-cons (array.array-ref slots cursor) out))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -637,12 +644,12 @@
 (define (compiler-ir-function-seq-count [functions : CompilerIrFunctionSeq]) : i64
   (struct-get functions len))
 
-;; Keep `array-ref`; aggregate enum array elements need the checked array path,
+;; Keep the checked array-ref path; aggregate enum array elements need the array macro,
 ;; as with instruction and block sequences.
 (define (compiler-ir-function-seq-ref
   [functions : CompilerIrFunctionSeq]
   [index : i64]) : CompilerIrFunction
-  (array-ref (struct-get functions slots) index))
+  (array.array-ref (struct-get functions slots) index))
 
 (define (compiler-ir-function-list-force-cons
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -1127,14 +1134,17 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (compiler-ir-clone-instr (array-ref src index)))
+      (array.array-set!
+        dst
+        index
+        (compiler-ir-clone-instr (array.array-ref src index)))
       (compiler-ir-clone-instr-seq-fill src dst (+ index 1) count))))
 
 (define (compiler-ir-clone-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (let
     [count : i64 (struct-get instrs len)]
     [src : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [dst : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
+    [dst : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
     (begin
       (compiler-ir-clone-instr-seq-fill src dst 0 count)
       (CompilerIrInstrSeq dst count))))
@@ -1520,13 +1530,13 @@
     [(IrValueNil) unit]
     [(IrValueCons value rest)
       (begin
-        (array-set! out index value)
+        (array.array-set! out index value)
         (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]))
 
 (define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
   (let
     [count : i64 (compiler-ir-value-list-count values)]
-    [out : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+    [out : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
     (begin
       (compiler-ir-value-list-fill-array values out 0)
       (IrCallArgsArray out))))
@@ -1545,11 +1555,11 @@
 (define (compiler-ir-call-args-array-render
   [values : (Array CompilerIrValue)]
   [index : i64]) : String
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     ""
     (str_cat.str-cat
-      (compiler-ir-value-render (array-ref values index))
-      (if (= (+ index 1) (array-length values))
+      (compiler-ir-value-render (array.array-ref values index))
+      (if (= (+ index 1) (array.array-length values))
         ""
         (str_cat.str-cat
           ", "
@@ -1571,7 +1581,7 @@
     [(IrCallArgsNil) 0]
     [(IrCallArgsOne _) 1]
     [(IrCallArgsTwo _ _) 2]
-    [(IrCallArgsArray values) (array-length values)]))
+    [(IrCallArgsArray values) (array.array-length values)]))
 
 (define (compiler-ir-tail-call-render
   [name : String]
@@ -2397,7 +2407,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (compiler-ir-instr-call-arg-count (array-ref slots index))))))
+      (+ acc (compiler-ir-instr-call-arg-count (array.array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-call-arg-count [instrs : CompilerIrInstrSeq]) : i64
   (compiler-ir-instr-seq-call-arg-count-from
@@ -2425,7 +2435,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (compiler-ir-instr-phi-input-count (array-ref slots index))))))
+      (+ acc (compiler-ir-instr-phi-input-count (array.array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-phi-input-count [instrs : CompilerIrInstrSeq]) : i64
   (compiler-ir-instr-seq-phi-input-count-from
@@ -2557,7 +2567,9 @@
         (begin
           (set!
             acc
-            (+ acc (compiler-ir-function-block-count (array-ref slots index))))
+            (+
+              acc
+              (compiler-ir-function-block-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2575,7 +2587,8 @@
             acc
             (+
               acc
-              (compiler-ir-function-instruction-count (array-ref slots index))))
+              (compiler-ir-function-instruction-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2593,7 +2606,8 @@
             acc
             (+
               acc
-              (compiler-ir-function-empty-block-count (array-ref slots index))))
+              (compiler-ir-function-empty-block-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2612,7 +2626,7 @@
             (compiler-ir-max-i64
               acc
               (compiler-ir-function-max-instruction-count
-                (array-ref slots index))))
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2631,7 +2645,7 @@
             (compiler-ir-max-i64
               acc
               (compiler-ir-function-max-block-instruction-count
-                (array-ref slots index))))
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2649,7 +2663,8 @@
             acc
             (+
               acc
-              (compiler-ir-function-call-arg-count (array-ref slots index))))
+              (compiler-ir-function-call-arg-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2667,7 +2682,8 @@
             acc
             (+
               acc
-              (compiler-ir-function-phi-input-count (array-ref slots index))))
+              (compiler-ir-function-phi-input-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2682,7 +2698,9 @@
         (begin
           (set!
             acc
-            (+ acc (compiler-ir-function-var-count (array-ref slots index))))
+            (+
+              acc
+              (compiler-ir-function-var-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2938,11 +2956,11 @@
 (define (compiler-ir-call-args-array-describe
   [values : (Array CompilerIrValue)]
   [index : i64]) : String
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     ""
     (str_cat.str-cat
-      (compiler-ir-value-describe (array-ref values index))
-      (if (= (+ index 1) (array-length values))
+      (compiler-ir-value-describe (array.array-ref values index))
+      (if (= (+ index 1) (array.array-length values))
         ""
         (str_cat.str-cat
           ", "

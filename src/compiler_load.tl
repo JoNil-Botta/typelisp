@@ -1384,6 +1384,16 @@
             [(CompilerLoadSomePath embedded-path) embedded-path]
             [(CompilerLoadNoPath) module-path]))])))
 
+(define (compiler-load-resolve-root-module-path
+  [module-path : String]
+  [stdlib-roots : vector.StringVec]) : CompilerLoadMaybePath
+  (compiler-load-resolve-stdlib-root-raw module-path stdlib-roots))
+
+(define (compiler-load-nested-import-root? [root : String]) : bool
+  (or
+    (compiler-load-string-contains? root "/")
+    (compiler-load-string-contains? root "\\")))
+
 (define (compiler-load-resolve-module-import-with-roots
   [import-root : String]
   [module-name : String]
@@ -1393,9 +1403,19 @@
     (if (compiler-load-stdlib-import? module-path)
       (OkPkgResolve
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
-      (OkPkgResolve
-        (compiler-load-normalize-path
-          (compiler-load-join-root-path import-root module-path))))))
+      (let
+        [primary : String
+          (compiler-load-normalize-path
+            (compiler-load-join-root-path import-root module-path))]
+        (if (compiler-load-nested-import-root? import-root)
+          (if (io.file-exists? primary)
+            (OkPkgResolve primary)
+            (match (compiler-load-resolve-root-module-path
+              module-path
+              stdlib-roots)
+              [(CompilerLoadSomePath root-path) (OkPkgResolve root-path)]
+              [(CompilerLoadNoPath) (OkPkgResolve primary)]))
+          (OkPkgResolve primary))))))
 
 (define (compiler-load-resolve-import-spec-with-roots
   [importer-path : String]
@@ -6290,6 +6310,42 @@
           (sym-i64-contains seen "root_leaf"))]
       [(ErrCompilerLoadWithPaths _) false])))
 
+(define (compiler-load-dotted-source-root-fallback-ok?) : bool
+  (let
+    [root : String "target/cl_dotted_src_fallback/src"]
+    [tests : String (compiler-load-join-root-path root "tests")]
+    [leaf : String (compiler-load-join-root-path root "leaf.tl")]
+    [mid : String (compiler-load-join-root-path root "mid.tl")]
+    [entry : String (compiler-load-join-root-path tests "entry.tl")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) root)]
+    (begin
+      (compiler-load-test-mkdir "target/cl_dotted_src_fallback")
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir tests)
+      (io.write-file leaf "(module leaf)
+(define leaf-val : i64 1)")
+      (io.write-file
+        mid
+        "(module mid)
+(import leaf)
+(define mid-val : i64 leaf.leaf-val)")
+      (io.write-file
+        entry
+        "(module fallback.entry)
+(import \"../mid.tl\")
+(define (main) : i64 mid-val)")
+      (match (compiler-load-file-with-paths-and-roots
+        entry
+        (sym-i64-empty)
+        roots)
+        [(OkCompilerLoadWithPaths _ _ _ seen)
+          (and
+            (sym-i64-contains seen "fallback.entry")
+            (sym-i64-contains seen "mid")
+            (sym-i64-contains seen "leaf"))]
+        [(ErrCompilerLoadWithPaths _) false]))))
+
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
   (let
     [deps : CompilerPkgDeps (compiler-load-pkg-resolve-deps)]
@@ -8839,6 +8895,10 @@
     (unless
       (compiler-load-dotted-source-root-ok?)
       (return (io.panic "compiler-load: dotted source root smoke mismatch")))
+    (unless
+      (compiler-load-dotted-source-root-fallback-ok?)
+      (return
+        (io.panic "compiler-load: dotted source root fallback smoke mismatch")))
     (unless
       (compiler-load-package-dotted-import-resolution-ok?)
       (return

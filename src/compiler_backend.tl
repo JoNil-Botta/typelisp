@@ -11787,11 +11787,6 @@
                   " %xmm0, %xmm0\n")
                 (str-cat done-symbol ":\n" "")))))))))
 
-(define (compiler-backend-float-to-int-cast-asm [from-ty : AstType]) : String
-  (match from-ty
-    [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
-    [_ "    cvttsd2siq %xmm0, %rax\n"]))
-
 (define (compiler-backend-float-to-int-cast-reg-asm
   [from-ty : AstType]
   [src-reg : String]
@@ -11954,23 +11949,47 @@
         (not (string-eq src-reg ""))))
       (OkCompilerBackend
         (compiler-backend-float-to-int-cast-reg-asm from-ty src-reg dst-home))
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        src
-        from-ty
-        "%xmm0")
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
+      (let
+        [src-tmp : String
+          (if (string-eq src-reg "")
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              (make-array String 0)
+              0
+              "%xmm2")
+            src-reg)]
+        [dst-reg : String
+          (if (and
+            (not (string-eq dst-home ""))
+            (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0)))
+            dst-home
+            (compiler-backend-scavenge-reg
+              dst
+              (make-array String 0)
+              0
+              "%r8"))]
+        (match (if (string-eq src-reg "")
+          (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            src
+            from-ty
+            src-tmp)
+          (OkCompilerBackend ""))
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
               (string-append
-                (compiler-backend-float-to-int-cast-asm from-ty)
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%rax"
-                  to-ty))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                load
+                (string-append
+                  (compiler-backend-float-to-int-cast-reg-asm
+                    from-ty
+                    src-tmp
+                    dst-reg)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    dst-reg
+                    to-ty))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-cast
   [function : String]

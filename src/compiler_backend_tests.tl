@@ -8983,7 +8983,7 @@
       "    addss %xmm0, %xmm0\n")
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
-      "    cvttsd2siq %xmm0, %rax\n")
+      "    cvttsd2siq %xmm2, %r8\n")
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
       "    cvtsd2ss %xmm2, %xmm2\n")
@@ -9192,6 +9192,47 @@
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-spill-float-to-int-cast-asm
+  [from-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-cast
+    "test_cast"
+    "entry"
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    from-ty
+    (AstTyI64)
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-spill-float-to-int-cast-home-ok?) : bool
+  (match (compiler-backend-spill-float-to-int-cast-asm (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-spill-float-to-int-cast-asm (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (compiler-backend-string-contains?
+              f64-asm
+              "    cvttsd2siq %xmm3, %r8\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    cvttss2siq %xmm3, %r8\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movq %r8, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? f64-asm "%rax"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%rax"))
             (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
@@ -13236,6 +13277,7 @@
           (compiler-backend-direct-int-to-float-cast-home-ok?)
           (compiler-backend-spill-int-to-float-cast-home-ok?)
           (compiler-backend-direct-float-to-int-cast-home-ok?)
+          (compiler-backend-spill-float-to-int-cast-home-ok?)
           (compiler-backend-spill-int-cast-home-ok?))
         (compiler-backend-implicit-main-ok?))
       (and

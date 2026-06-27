@@ -361,7 +361,7 @@
 ;; Whether scalar functions get full register allocation (#perf). Register
 ;; allocation makes the EMITTED binary faster but its planning + register-aware
 ;; emission cost more compile time than it saves on a single self-compile, so it
-;; is reserved for opt level 2 â€” the high-quality path whose extra cost the
+;; is reserved for opt level 2 Ã¢â‚¬â€ the high-quality path whose extra cost the
 ;; benchmark's 2x budget accommodates. opt levels 0-2 stay on the cheap
 ;; stack-only homing. The driver sets this from the opt level before emitting;
 ;; it is set deterministically per compile so a given opt level always produces
@@ -3720,7 +3720,7 @@
 ;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
 ;; occupies idx 4. Reserve the %rbx slot only when the plan actually homes a
 ;; value there, so functions that use only r12-r15 keep their previous frame
-;; size (and byte-identical prologue) — %rbx, added last to the pool, is rare.
+;; size (and byte-identical prologue) â€” %rbx, added last to the pool, is rare.
 (define (compiler-backend-frame-slots
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
@@ -8398,8 +8398,18 @@
               ", "
               dst-reg
               "\n")
-            (str-cat "    " mnem " " imm ", " dst-reg "\n"))))]
-    [_ (CompilerBackendSomeAsm (str-cat "    " mnem " " imm ", " dst-reg "\n"))]))
+            (compiler-backend-binop-reg-asm
+              mnem
+              ty
+              imm
+              (compiler-backend-sized-reg dst-reg ty)))))]
+    [_
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-reg-asm
+          mnem
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)))]))
 
 (define (compiler-backend-emit-binop-direct-compare
   [assignments : CompilerRegAssignmentList]
@@ -8955,15 +8965,25 @@
 ;; excluded (they need %rax/%rdx/%rcx or setcc) and return "".
 (define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinAdd) "addq"]
-    [(IrBinSub) "subq"]
-    [(IrBinMul) "imulq"]
-    [(IrBinAnd) "andq"]
-    [(IrBinOr) "orq"]
-    [(IrBinBitAnd) "andq"]
-    [(IrBinBitOr) "orq"]
-    [(IrBinBitXor) "xorq"]
+    [(IrBinAdd) "add"]
+    [(IrBinSub) "sub"]
+    [(IrBinMul) "imul"]
+    [(IrBinAnd) "and"]
+    [(IrBinOr) "or"]
+    [(IrBinBitAnd) "and"]
+    [(IrBinBitOr) "or"]
+    [(IrBinBitXor) "xor"]
     [_ ""]))
+
+(define (compiler-backend-binop-direct-width-ok?
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : bool
+  (not
+    (and
+      (= (compiler-backend-type-size ty) 1)
+      (match op
+        [(IrBinMul) true]
+        [_ false]))))
 
 (define (compiler-backend-binop-shift-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -9166,18 +9186,22 @@
     [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
     (if (and
       (not (string-eq lhs-reg ""))
-      (match op
-        [(IrBinMul) true]
-        [_ false]))
+      (and
+        (= (compiler-backend-type-size ty) 8)
+        (match op
+          [(IrBinMul) true]
+          [_ false])))
       (OkCompilerBackend
         (str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
       (if (and
         (not (string-eq lhs-reg ""))
         (not (string-eq lhs-reg dst-home))
         (not (string-eq imm "$0"))
-        (match op
-          [(IrBinAdd) true]
-          [_ false]))
+        (and
+          (= (compiler-backend-type-size ty) 8)
+          (match op
+            [(IrBinAdd) true]
+            [_ false])))
         (OkCompilerBackend
           (str-cat
             "    leaq "
@@ -9304,7 +9328,11 @@
                 (compiler-backend-sized-reg result-reg operand-ty)
                 (compiler-backend-compare-setcc op operand-ty)
                 result-reg)
-              (str-cat "    " mnem " " rhs-operand ", " result-reg "\n"))]
+              (compiler-backend-binop-reg-asm
+                mnem
+                operand-ty
+                rhs-operand
+                (compiler-backend-sized-reg result-reg operand-ty)))]
           (OkCompilerBackend
             (str-cat
               lhs-asm
@@ -9415,11 +9443,12 @@
       (if (if (string-eq dst-home "")
         (match (compiler-backend-immediate-operand rhs)
           [(CompilerBackendSomeImmediate _)
-            (if (= (compiler-backend-type-size operand-ty) 8)
-              (compiler-backend-binop-direct-immediate-ok? mnem op rhs operand-ty)
-              false)]
+            (and
+              (compiler-backend-binop-direct-width-ok? op operand-ty)
+              (compiler-backend-binop-direct-immediate-ok? mnem op rhs operand-ty))]
           [(CompilerBackendNoImmediate)
-            (if (= (compiler-backend-type-size operand-ty) 8)
+            (and
+              (compiler-backend-binop-direct-width-ok? op operand-ty)
               (and
                 (or
                   (compiler-backend-compare-op? op)
@@ -9430,11 +9459,10 @@
                       assignments
                       rhs
                       operand-ty)
-                    "")))
-              false)])
+                    ""))))])
         (or
           (compiler-backend-compare-op? op)
-          (if (= (compiler-backend-type-size operand-ty) 8)
+          (if (compiler-backend-binop-direct-width-ok? op operand-ty)
             (or
               (not (string-eq mnem ""))
               (or
@@ -9515,7 +9543,7 @@
                         (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
                         7
                         "%r8")]
-                    (if (if (string-eq mnem "addq")
+                    (if (if (string-eq mnem "add")
                       (if (string-eq lhs-reg "")
                         false
                         (not (string-eq rhs-reg "")))
@@ -9543,12 +9571,11 @@
                             (OkCompilerBackend
                               (string-append
                                 lhs-asm
-                                (str-cat
-                                  "    "
+                                (compiler-backend-binop-reg-asm
                                   mnem
-                                  " "
-                                  rhs-reg
-                                  (string-append ", " (string-append dst-home "\n")))))]
+                                  operand-ty
+                                  (compiler-backend-sized-reg rhs-reg operand-ty)
+                                  (compiler-backend-sized-reg dst-home operand-ty))))]
                           [(ErrCompilerBackend message) (ErrCompilerBackend message)])
                         (match (compiler-backend-emit-load-value-with-plan
                           assignments
@@ -9565,14 +9592,15 @@
                                     rhs-asm
                                     (string-append
                                       lhs-asm
-                                      (str-cat
-                                        "    "
+                                      (compiler-backend-binop-reg-asm
                                         mnem
-                                        " "
-                                        scav-rhs
-                                        ", "
-                                        dst-home
-                                        "\n"))))]
+                                        operand-ty
+                                        (compiler-backend-sized-reg
+                                          scav-rhs
+                                          operand-ty)
+                                        (compiler-backend-sized-reg
+                                          dst-home
+                                          operand-ty)))))]
                               [(ErrCompilerBackend message)
                                 (ErrCompilerBackend message)])]
                           [(ErrCompilerBackend message)
@@ -31101,11 +31129,11 @@ tl_boot_pool:
 ;;
 ;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
 ;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
-;; object per executable Ã¢â‚¬â€ the entry/executable object (`emit-entry=true`).
+;; object per executable ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the entry/executable object (`emit-entry=true`).
 ;; Library/dependency objects (`emit-entry=false`) emit none of the runtime and
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
-;; in the entry object Ã¢â‚¬â€ no `multiple definition` collision.
+;; in the entry object ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no `multiple definition` collision.
 (define (compiler-backend-runtime-linux-arena-functions [profile : bool]) : String
   (string-append
     "    .globl tl_thread_init
@@ -31842,7 +31870,7 @@ tl_alloc:
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
 ;; 32=retired list link/head, 40=root, 48=kind/lock, 56=atomic-current; the arena header sits at the VirtualAlloc
 ;; base). Nonzero reset retires newer chunks; reset-all releases chunks with
-;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` Ã¢â‚¬â€ the
+;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
 (define (compiler-backend-runtime-windows-region-reset-functions
@@ -32406,8 +32434,8 @@ tl_memcpy:
   (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
-;; recurses far deeper than the default 8 MiB stack rlimit allows Ã¢â‚¬â€ type-directed
-;; `clone` of large IR values during arena escapes (#1633) is the worst case Ã¢â‚¬â€ so
+;; recurses far deeper than the default 8 MiB stack rlimit allows ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â type-directed
+;; `clone` of large IR values during arena escapes (#1633) is the worst case ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â so
 ;; a self-hosted compiler segfaults compiling a large program on the default
 ;; stack. argc/argv/envp are already captured into globals before this runs, so
 ;; switching %rsp is safe (main reads them from globals, not the stack). A failed

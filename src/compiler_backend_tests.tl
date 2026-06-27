@@ -4659,10 +4659,10 @@
                   "    movq -16(%rbp), %r9\n"))
               (string-eq
                 (compiler-backend-binop-direct-mnemonic (IrBinAnd))
-                "andq")
+                "and")
               (string-eq
                 (compiler-backend-binop-direct-mnemonic (IrBinOr))
-                "orq"))]
+                "or"))]
           [(ErrCompilerBackend _) false])]
       [(ErrCompilerBackend _) false])))
 
@@ -13104,15 +13104,15 @@
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    addl -16(%rbp), %eax\n"
-        "    addq %r8, %rax\n")
+        "    addl -16(%rbp), %r8d\n"
+        "%rax")
       (compiler-backend-narrow-binop-shape?
         (IrBinMul)
         (AstTyI32)
         (AstTyI32)
         (AstTyI32)
-        "    imull -16(%rbp), %eax\n"
-        "    imulq %r8, %rax\n")
+        "    imull -16(%rbp), %r8d\n"
+        "%rax")
       (compiler-backend-narrow-binop-shape?
         (IrBinDiv)
         (AstTyI32)
@@ -13125,22 +13125,22 @@
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    addb -16(%rbp), %al\n"
-        "    addq %r8, %rax\n")
+        "    addb -16(%rbp), %r8b\n"
+        "%rax")
       (compiler-backend-narrow-binop-shape?
         (IrBinSub)
         (AstTyI8)
         (AstTyI8)
         (AstTyI8)
-        "    subb -16(%rbp), %al\n"
-        "    subq %r8, %rax\n")
+        "    subb -16(%rbp), %r8b\n"
+        "%rax")
       (compiler-backend-narrow-binop-shape?
         (IrBinLt)
         (AstTyI8)
         (AstTyI8)
         (AstTyBool)
-        "    cmpb -16(%rbp), %al\n    setl %al\n"
-        "    cmpq %r8, %rax\n")
+        "    cmpb -16(%rbp), %r8b\n    setl %r8b\n"
+        "%rax")
       (compiler-backend-narrow-binop-shape?
         (IrBinMod)
         (AstTyI8)
@@ -13153,8 +13153,8 @@
         (AstTyI16)
         (AstTyI16)
         (AstTyI16)
-        "    andw -16(%rbp), %ax\n"
-        "    andq %r8, %rax\n"))
+        "    andw -16(%rbp), %r8w\n"
+        "%rax"))
     (backend-and4
       (compiler-backend-narrow-binop-shape?
         (IrBinDiv)
@@ -13198,8 +13198,8 @@
           (AstTyU8)
           (AstTyU8)
           (AstTyBool)
-          "    cmpb -16(%rbp), %al\n    setb %al\n"
-          "    setl %al\n")))))
+          "    cmpb -16(%rbp), %r8b\n    setb %r8b\n"
+          "%rax")))))
 
 (define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList
   (CompilerBackendGlobalTypeCons

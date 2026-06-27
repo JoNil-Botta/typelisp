@@ -11212,6 +11212,14 @@
     [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
     [_ "    cvttsd2siq %xmm0, %rax\n"]))
 
+(define (compiler-backend-float-to-int-cast-reg-asm
+  [from-ty : AstType]
+  [src-reg : String]
+  [dst-reg : String]) : String
+  (match from-ty
+    [(AstTyF32) (str-cat "    cvttss2siq " src-reg ", " dst-reg "\n")]
+    [_ (str-cat "    cvttsd2siq " src-reg ", " dst-reg "\n")]))
+
 (define (compiler-backend-emit-float-to-float-cast
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -11311,23 +11319,33 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-float-value-with-plan
-    assignments
-    src
-    from-ty
-    "%xmm0")
-    [(OkCompilerBackend load)
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [src-reg : String (compiler-backend-float-value-register assignments src)]
+    (if (and
+      (not (string-eq dst-home ""))
+      (and
+        (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0))
+        (not (string-eq src-reg ""))))
       (OkCompilerBackend
-        (string-append
-          load
-          (string-append
-            (compiler-backend-float-to-int-cast-asm from-ty)
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              "%rax"
-              to-ty))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        (compiler-backend-float-to-int-cast-reg-asm from-ty src-reg dst-home))
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        src
+        from-ty
+        "%xmm0")
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (string-append
+                (compiler-backend-float-to-int-cast-asm from-ty)
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  to-ty))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-cast
   [function : String]

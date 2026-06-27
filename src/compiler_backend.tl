@@ -10138,24 +10138,31 @@
                 (OkCompilerBackend (string-append src-asm op-asm))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-        (match (compiler-backend-emit-load-f64-value-with-plan
-          assignments
-          src
-          "%xmm0")
-          [(OkCompilerBackend src-asm)
-            (match (compiler-backend-f64-unop-asm op)
-              [(OkCompilerBackend op-asm)
-                (OkCompilerBackend
-                  (string-append
-                    src-asm
+        (let
+          [result-reg : String
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              (make-array String 0)
+              0
+              "%xmm2")]
+          (match (compiler-backend-emit-load-f64-value-with-plan
+            assignments
+            src
+            result-reg)
+            [(OkCompilerBackend src-asm)
+              (match (compiler-backend-f64-unop-reg-asm op result-reg)
+                [(OkCompilerBackend op-asm)
+                  (OkCompilerBackend
                     (string-append
-                      op-asm
-                      (compiler-backend-emit-store-f64-var-with-plan
-                        assignments
-                        dst
-                        "%xmm0"))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                      src-asm
+                      (string-append
+                        op-asm
+                        (compiler-backend-emit-store-f64-var-with-plan
+                          assignments
+                          dst
+                          result-reg))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       (if (string-eq dst-home "")

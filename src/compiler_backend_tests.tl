@@ -10015,6 +10015,27 @@
         (not (compiler-backend-string-contains? asm "%xmm0")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-f64-neg-home-ok?) : bool
+  (match (compiler-backend-emit-unop
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrUnNeg)
+    (IrValueVar 0)
+    (AstTyF64))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movsd %xmm3, %xmm2\n")
+        (compiler-backend-string-contains?
+          asm
+          "    xorpd .L_tl_f64_sign_bit(%rip), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd %xmm2, -16(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%xmm0")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-f32-literal-binop-source) : String
   "(define (main) : i64
   (let
@@ -12857,6 +12878,7 @@
         (compiler-backend-f64-ok?)
         (compiler-backend-f64-neg-sign-mask-ok?)
         (compiler-backend-direct-f64-neg-home-ok?)
+        (compiler-backend-spill-f64-neg-home-ok?)
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)

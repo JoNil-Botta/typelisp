@@ -428,6 +428,10 @@
   (if (= tc-prefix-snapshot-cache-arena 0)
     unit
     (begin
+      (if (= (tl_arena_current) tc-prefix-snapshot-cache-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
       (unsafe
         (tl_arena_destroy tc-prefix-snapshot-cache-arena))
       (set! tc-prefix-snapshot-cache-arena 0))))
@@ -31658,96 +31662,119 @@
   [moved : TcMovedSet]
   [bound : TcStringList]
   [seen : TcStringList]
+  [remaining : i64]
   [body : AstExpr]) : TcMoveResult
-  (match env
-    [(TcTypeNil) (OkTcMove moved)]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _)
-      (tc-move-check-lambda-owner-captures-scan
-        ctx
-        root
-        (box-get rest)
-        locals
-        loop-carried
-        moved
-        bound
-        seen
-        body)]
-    [(TcTypeBind key ty rest)
-      (let
-        [rest-env : TcTypeEnv (box-get rest)]
-        [name : String (intern-str key)]
-        (cond
-          [(or
-              (= key (tc-region-marker-id))
-              (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key ty))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(tc-string-list-contains seen name)
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(not (tc-moved-contains? locals name))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [(not (tc-expr-uses-free-name? body name bound))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [else
-            (match (tc-lookup-id root key)
-              [(OkTcType visible-ty)
-                (if (tc-type-consuming-by-value-now? ctx visible-ty)
-                  (if (or
-                    (tc-moved-contains? moved name)
-                    (tc-moved-partial? moved name))
-                    (tc-move-rich-use-conflict-result
-                      (tc-moved-root-conflict moved name)
-                      name
-                      body
-                      name)
-                    (if (tc-moved-contains? loop-carried name)
-                      (tc-move-rich-loop-carried-result name body)
-                      (tc-move-check-lambda-owner-captures-scan
-                        ctx
-                        root
-                        rest-env
-                        locals
-                        loop-carried
-                        (tc-moved-add-origin moved name body)
-                        bound
-                        (tc-string-list-add seen name)
-                        body)))
+  (if (<= remaining 0)
+    (OkTcMove moved)
+    (match env
+      [(TcTypeNil) (OkTcMove moved)]
+      [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            (box-get rest)
+            locals
+            loop-carried
+            moved
+            bound
+            seen
+            remaining
+            body)
+          (OkTcMove moved))]
+      [(TcTypeBind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(or
+                (= key (tc-region-marker-id))
+                (tc-cleanup-owner-marker-entry? key ty))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(tc-string-list-contains seen name)
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(not (tc-moved-contains? locals name))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(not (tc-expr-uses-free-name? body name bound))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                body)]
+            [else
+              (match (tc-lookup-id root key)
+                [(OkTcType visible-ty)
+                  (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                    (if (or
+                      (tc-moved-contains? moved name)
+                      (tc-moved-partial? moved name))
+                      (tc-move-rich-use-conflict-result
+                        (tc-moved-root-conflict moved name)
+                        name
+                        body
+                        name)
+                      (if (tc-moved-contains? loop-carried name)
+                        (tc-move-rich-loop-carried-result name body)
+                        (tc-move-check-lambda-owner-captures-scan
+                          ctx
+                          root
+                          rest-env
+                          locals
+                          loop-carried
+                          (tc-moved-add-origin moved name body)
+                          bound
+                          (tc-string-list-add seen name)
+                          (- remaining 1)
+                          body)))
+                    (tc-move-check-lambda-owner-captures-scan
+                      ctx
+                      root
+                      rest-env
+                      locals
+                      loop-carried
+                      moved
+                      bound
+                      (tc-string-list-add seen name)
+                      (- remaining 1)
+                      body))]
+                [(ErrTcType _)
                   (tc-move-check-lambda-owner-captures-scan
                     ctx
                     root
@@ -31757,18 +31784,8 @@
                     moved
                     bound
                     (tc-string-list-add seen name)
-                    body))]
-              [(ErrTcType _)
-                (tc-move-check-lambda-owner-captures-scan
-                  ctx
-                  root
-                  rest-env
-                  locals
-                  loop-carried
-                  moved
-                  bound
-                  (tc-string-list-add seen name)
-                  body)])]))]))
+                    (- remaining 1)
+                    body)])]))])))
 
 (define (tc-move-check-lambda-owner-captures
   [ctx : TcContext]
@@ -31787,6 +31804,7 @@
     moved
     (tc-param-bound-names params)
     TcStringNil
+    (tc-moved-len locals)
     body))
 
 (define (tc-move-check-exprs-with-types-no-auto
@@ -46335,6 +46353,10 @@
   (if (= tc-fn-scratch-arena 0)
     unit
     (begin
+      (if (= (tl_arena_current) tc-fn-scratch-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
       (unsafe
         (tl_arena_destroy tc-fn-scratch-arena))
       (set! tc-fn-scratch-arena 0))))

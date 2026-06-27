@@ -47,6 +47,34 @@
     [r : (& x i64) (& x)]
     (lambda () : unit (let [copy : (& x i64) r] unit))))")
 
+(define (compiler-typecheck-lambda-large-global-env-source-from
+  [index : i64]
+  [limit : i64]
+  [out : String]) : String
+  (if (>= index limit)
+    (string.string-append
+      out
+      "(define (main) : unit
+  (let
+    [f : (-> unit) (lambda () : unit unit)]
+    unit))
+")
+    (compiler-typecheck-lambda-large-global-env-source-from
+      (+ index 1)
+      limit
+      (string.string-append
+        out
+        (string.string-append
+          "(define (lambda-global-"
+          (string.string-append
+            (string.int->string index)
+            (string.string-append
+              ") : i64 "
+              (string.string-append (string.int->string index) ")\n"))))))))
+
+(define (compiler-typecheck-lambda-large-global-env-source) : String
+  (compiler-typecheck-lambda-large-global-env-source-from 0 192 ""))
+
 (define (compiler-typecheck-reference-lambda-immediate-ok-source) : String
   "(define (read [r : (& n i64)]) : i64 42)
 (define (main [n : i64]) : i64
@@ -991,6 +1019,7 @@
       (compiler-typecheck-reference-lambda-local-ok-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-lambda-while-ok-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-large-global-env-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-lambda-nested-ok-source))
     (compiler-typecheck-ok?

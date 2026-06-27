@@ -9480,6 +9480,69 @@
       rhs
       ty)))
 
+(define (compiler-backend-emit-float-arith-return
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fty : AstType]
+  [return-tail : String]) : ResultCompilerBackend
+  (let
+    [rhs-operand : String
+      (compiler-backend-float-direct-rhs-operand assignments rhs fty "%xmm0")]
+    (if (not (string-eq rhs-operand ""))
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        lhs
+        fty
+        "%xmm0")
+        [(OkCompilerBackend lhs-asm)
+          (OkCompilerBackend
+            (str-cat
+              lhs-asm
+              "    "
+              (compiler-backend-float-arith-mnemonic op)
+              (compiler-backend-float-suffix fty)
+              " "
+              rhs-operand
+              ", %xmm0\n"
+              return-tail))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (let
+        [lhs-reg : String (compiler-backend-float-value-register assignments lhs)]
+        [exclude : (Array String)
+          (if (string-eq lhs-reg "")
+            (make-array String 0)
+            (compiler-backend-one-exclude lhs-reg))]
+        [exclude-n : i64 (if (string-eq lhs-reg "") 0 1)]
+        [rhs-temp : String
+          (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")]
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          rhs
+          fty
+          rhs-temp)
+          [(OkCompilerBackend rhs-asm)
+            (match (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              lhs
+              fty
+              "%xmm0")
+              [(OkCompilerBackend lhs-asm)
+                (OkCompilerBackend
+                  (str-cat
+                    rhs-asm
+                    lhs-asm
+                    "    "
+                    (compiler-backend-float-arith-mnemonic op)
+                    (compiler-backend-float-suffix fty)
+                    " "
+                    rhs-temp
+                    ", %xmm0\n"
+                    return-tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+
 (define (compiler-backend-emit-binop-return
   [source-function : String]
   [blocks : CompilerIrBlockList]
@@ -9498,29 +9561,37 @@
       (let
         [fty : AstType
           (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
-        (match (compiler-backend-emit-load-float-value-with-plan
-          assignments
-          lhs
-          fty
-          "%xmm0")
-          [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              rhs
-              fty
-              "%xmm1")
-              [(OkCompilerBackend rhs-asm)
-                (match (compiler-backend-float-binop-asm op fty)
-                  [(OkCompilerBackend op-asm)
-                    (OkCompilerBackend
-                      (string-append
-                        lhs-asm
+        (if (compiler-backend-float-arith-op? op)
+          (compiler-backend-emit-float-arith-return
+            assignments
+            op
+            lhs
+            rhs
+            fty
+            return-tail)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            lhs
+            fty
+            "%xmm0")
+            [(OkCompilerBackend lhs-asm)
+              (match (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                rhs
+                fty
+                "%xmm1")
+                [(OkCompilerBackend rhs-asm)
+                  (match (compiler-backend-float-binop-asm op fty)
+                    [(OkCompilerBackend op-asm)
+                      (OkCompilerBackend
                         (string-append
-                          rhs-asm
-                          (string-append op-asm return-tail))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                          lhs-asm
+                          (string-append
+                            rhs-asm
+                            (string-append op-asm return-tail))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
       (let
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]

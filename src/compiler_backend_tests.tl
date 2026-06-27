@@ -10350,6 +10350,58 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-float-return-binop-asm
+  [lhs-home : String]
+  [rhs-home : String]) : ResultCompilerBackend
+  (compiler-backend-emit-binop-return
+    "ret_float"
+    IrBlockNil
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyF64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 (AstTyF64))
+        CompilerRegVarTypeNil))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister lhs-home))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister rhs-home))
+        CompilerRegAssignmentNil))
+    2
+    (IrBinAdd)
+    (IrValueVar 0)
+    (IrValueVar 1)
+    (AstTyF64)))
+
+(define (compiler-backend-float-return-binop-home-ok?) : bool
+  (match (compiler-backend-float-return-binop-asm "%xmm2" "%xmm3")
+    [(OkCompilerBackend home-asm)
+      (match (compiler-backend-float-return-binop-asm "%xmm3" "%xmm0")
+        [(OkCompilerBackend clobber-asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                home-asm
+                "    movsd %xmm2, %xmm0\n")
+              (compiler-backend-string-contains?
+                home-asm
+                "    addsd %xmm3, %xmm0\n")
+              (compiler-backend-string-contains?
+                clobber-asm
+                "    movsd %xmm0, %xmm2\n")
+              (compiler-backend-string-contains?
+                clobber-asm
+                "    movsd %xmm3, %xmm0\n")
+              (compiler-backend-string-contains?
+                clobber-asm
+                "    addsd %xmm2, %xmm0\n")
+              (not (compiler-backend-string-contains? home-asm "%xmm1"))
+              (not (compiler-backend-string-contains? clobber-asm "%xmm1"))
+              true)
+            (not (compiler-backend-string-contains? clobber-asm "%rax")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -13016,6 +13068,7 @@
         (compiler-backend-direct-float-compare-home-ok?)
         (compiler-backend-spill-float-compare-home-ok?)
         (compiler-backend-fallback-float-binop-home-ok?)
+        (compiler-backend-float-return-binop-home-ok?)
         (and
           (compiler-backend-bitcast-shape-ok?)
           (compiler-backend-direct-bitcast-home-ok?)))

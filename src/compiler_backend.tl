@@ -8421,6 +8421,61 @@
                   [(CompilerBackendNoAsm) ""])))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
+(define (compiler-backend-binop-direct-immediate-ok?
+  [mnem : String]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (or
+    (compiler-backend-compare-op? op)
+    (or
+      (not (string-eq mnem ""))
+      (compiler-backend-binop-valid-immediate-shift? op rhs ty))))
+
+(define (compiler-backend-emit-binop-spill-direct-immediate
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [mnem : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [operand-ty : AstType]
+  [result-ty : AstType]
+  [imm : String]) : ResultCompilerBackend
+  (let
+    [result-reg : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-binop-scavenge-exclude-for-op op)
+        5
+        "%r8")]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      lhs
+      result-reg)
+      [(OkCompilerBackend lhs-asm)
+        (match (compiler-backend-binop-immediate-direct-reg-asm
+          mnem
+          op
+          operand-ty
+          imm
+          result-reg)
+          [(CompilerBackendSomeAsm op-asm)
+            (OkCompilerBackend
+              (str-cat
+                lhs-asm
+                op-asm
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  result-reg
+                  result-ty)))]
+          [(CompilerBackendNoAsm)
+            (ErrCompilerBackend
+              (compiler-diagnostic-at-start
+                ""
+                "backend: unsupported immediate spill binop"))])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -8511,7 +8566,12 @@
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [mnem : String (compiler-backend-binop-direct-mnemonic op)]
       (if (if (string-eq dst-home "")
-        false
+        (match (compiler-backend-immediate-operand rhs)
+          [(CompilerBackendSomeImmediate _)
+            (if (= (compiler-backend-type-size operand-ty) 8)
+              (compiler-backend-binop-direct-immediate-ok? mnem op rhs operand-ty)
+              false)]
+          [(CompilerBackendNoImmediate) false])
         (or
           (compiler-backend-compare-op? op)
           (if (= (compiler-backend-type-size operand-ty) 8)
@@ -8535,14 +8595,24 @@
         ;; loading lhs first would clobber rhs.
         (match (compiler-backend-immediate-operand rhs)
           [(CompilerBackendSomeImmediate imm)
-            (compiler-backend-emit-binop-direct-immediate
-              assignments
-              dst-home
-              mnem
-              op
-              lhs
-              operand-ty
-              imm)]
+            (if (string-eq dst-home "")
+              (compiler-backend-emit-binop-spill-direct-immediate
+                assignments
+                dst
+                mnem
+                op
+                lhs
+                operand-ty
+                ty
+                imm)
+              (compiler-backend-emit-binop-direct-immediate
+                assignments
+                dst-home
+                mnem
+                op
+                lhs
+                operand-ty
+                imm))]
           [(CompilerBackendNoImmediate)
             (if (compiler-backend-compare-op? op)
               (compiler-backend-emit-binop-direct-compare

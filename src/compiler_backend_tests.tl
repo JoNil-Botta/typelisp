@@ -10510,6 +10510,53 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-immediate-binop-asm
+  [op : CompilerIrBinOp]
+  [result-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyI64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 result-ty)
+        CompilerRegVarTypeNil))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    op
+    (IrValueVar 0)
+    (IrValueI64 7)
+    result-ty))
+
+(define (compiler-backend-spill-immediate-binop-home-ok?) : bool
+  (match (compiler-backend-spill-immediate-binop-asm
+    (IrBinAdd)
+    (AstTyI64))
+    [(OkCompilerBackend add-asm)
+      (match (compiler-backend-spill-immediate-binop-asm
+        (IrBinLt)
+        (AstTyBool))
+        [(OkCompilerBackend cmp-asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains?
+                add-asm
+                "    movq %r12, %r8\n")
+              (compiler-backend-string-contains? add-asm "    addq $7, %r8\n")
+              (compiler-backend-string-contains?
+                cmp-asm
+                "    cmpq $7, %r8\n")
+              (compiler-backend-string-contains? cmp-asm "    setl %r8b\n"))
+            (compiler-backend-string-contains? add-asm "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains? cmp-asm "    movq %r8, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? add-asm "%rax"))
+            (not (compiler-backend-string-contains? cmp-asm "%rax")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -12759,7 +12806,8 @@
         (compiler-backend-bit-and-low-mask-direct-ok?)
         (compiler-backend-direct-compare-home-ok?)
         (compiler-backend-direct-immediate-shift-home-ok?)
-        (compiler-backend-direct-rcx-shift-home-ok?))
+        (compiler-backend-direct-rcx-shift-home-ok?)
+        (compiler-backend-spill-immediate-binop-home-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

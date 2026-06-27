@@ -9084,6 +9084,75 @@
         (IrInstrBitcast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
         "unsupported bitcast"))))
 
+(define (compiler-backend-direct-bitcast-asm
+  [from-ty : AstType]
+  [to-ty : AstType]
+  [src-home : String]
+  [dst-home : String]) : ResultCompilerBackend
+  (compiler-backend-emit-bitcast
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister src-home))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister dst-home))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    from-ty
+    to-ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-direct-bitcast-home-ok?) : bool
+  (match (compiler-backend-direct-bitcast-asm
+    (AstTyF32)
+    (AstTyU64)
+    "%xmm2"
+    "%r12")
+    [(OkCompilerBackend f32-to-int)
+      (match (compiler-backend-direct-bitcast-asm
+        (AstTyF64)
+        (AstTyU64)
+        "%xmm2"
+        "%r12")
+        [(OkCompilerBackend f64-to-int)
+          (match (compiler-backend-direct-bitcast-asm
+            (AstTyU64)
+            (AstTyF32)
+            "%r12"
+            "%xmm2")
+            [(OkCompilerBackend int-to-f32)
+              (match (compiler-backend-direct-bitcast-asm
+                (AstTyU64)
+                (AstTyF64)
+                "%r12"
+                "%xmm2")
+                [(OkCompilerBackend int-to-f64)
+                  (and
+                    (backend-and4
+                      (compiler-backend-string-contains?
+                        f32-to-int
+                        "    movd %xmm2, %r12d\n")
+                      (compiler-backend-string-contains?
+                        f64-to-int
+                        "    movq %xmm2, %r12\n")
+                      (compiler-backend-string-contains?
+                        int-to-f32
+                        "    movd %r12d, %xmm2\n")
+                      (compiler-backend-string-contains?
+                        int-to-f64
+                        "    movq %r12, %xmm2\n"))
+                    (not (compiler-backend-string-contains? f32-to-int "%rax"))
+                    (not (compiler-backend-string-contains? f64-to-int "%rax"))
+                    (not (compiler-backend-string-contains? int-to-f32 "%rax"))
+                    (not (compiler-backend-string-contains? int-to-f64 "%rax"))
+                    (not (compiler-backend-string-contains? f32-to-int "%xmm0"))
+                    (not (compiler-backend-string-contains? f64-to-int "%xmm0"))
+                    (not (compiler-backend-string-contains? int-to-f32 "%xmm0"))
+                    (not (compiler-backend-string-contains? int-to-f64 "%xmm0")))]
+                [(ErrCompilerBackend _) false])]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
@@ -12600,7 +12669,9 @@
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-direct-float-compare-home-ok?)
-        (compiler-backend-bitcast-shape-ok?))
+        (and
+          (compiler-backend-bitcast-shape-ok?)
+          (compiler-backend-direct-bitcast-home-ok?)))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)

@@ -178,6 +178,7 @@ byte_buf.tl
 byte_buf_core.tl
 comptime.tl
 core_macros.tl
+io_core.tl
 io.tl
 io_caller_result.tl
 iterator.tl

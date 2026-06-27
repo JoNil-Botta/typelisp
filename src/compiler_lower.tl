@@ -6,6 +6,7 @@
 ;; explicit future work.
 (import stdlib.io)
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.vector)
 (import "compiler_typecheck.tl")
 (import "compiler_builtin_ids.tl")
@@ -51,7 +52,7 @@
 (define lower-active-global-name-cache : LowerNameCache
   (LowerNameCache
     (hashmap.string-i64-map-with-capacity 8)
-    (make-array String 0)
+    (array.make-array String 0)
     (LowerNameParentNone)))
 
 ;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
@@ -595,13 +596,13 @@
     [(IrInstrNil) unit]
     [(IrInstrCons head rest)
       (begin
-        (array-set! slots index head)
+        (array.array-set! slots index head)
         (lower-instr-list-fill-array-reversed (box-get rest) slots (- index 1)))]))
 
 (define (lower-instr-seq-from-reversed-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
   (let
     [count : i64 (compiler-ir-instr-list-count instrs)]
-    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
     (begin
       (lower-instr-list-fill-array-reversed instrs slots (- count 1))
       (CompilerIrInstrSeq slots count))))
@@ -736,7 +737,7 @@
         (let
           [next : i64 (hashmap.string-i64-map-len ids)]
           (begin
-            (array-set! values next logical-name)
+            (array.array-set! values next logical-name)
             (LowerNameCache
               (hashmap.string-i64-map-put ids source-name next)
               values
@@ -767,7 +768,7 @@
       names
       (LowerNameCache
         (hashmap.string-i64-map-with-capacity (lower-name-cache-capacity count))
-        (make-array String count)
+        (array.make-array String count)
         (LowerNameParentNone)))))
 
 ;; #3759: build a small overlay name cache from `names` (the module-local names
@@ -780,7 +781,7 @@
       names
       (LowerNameCache
         (hashmap.string-i64-map-with-capacity (lower-name-cache-capacity count))
-        (make-array String count)
+        (array.make-array String count)
         (LowerNameParentGlobal)))))
 
 (define (lower-name-cache-resolve
@@ -788,7 +789,7 @@
   [source-name : String]) : String
   (match (hashmap.string-i64-map-get (struct-get cache ids) source-name)
     [(hashmap.StringI64MapFound index)
-      (array-ref (struct-get cache values) index)]
+      (array.array-ref (struct-get cache values) index)]
     [(hashmap.StringI64MapMissing)
       (match (struct-get cache parent)
         [(LowerNameParentNone) source-name]
@@ -871,7 +872,7 @@
         [(hashmap.StringI64MapFound _) cache]
         [(hashmap.StringI64MapMissing)
           (begin
-            (array-set! values next ty)
+            (array.array-set! values next ty)
             (LowerSomeTypeCache
               (hashmap.string-i64-map-put ids name next)
               values
@@ -897,7 +898,7 @@
       env
       (LowerSomeTypeCache
         (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
-        (make-array AstType count)
+        (array.make-array AstType count)
         0
         (LowerTypeParentNone)))))
 
@@ -911,7 +912,7 @@
       env
       (LowerSomeTypeCache
         (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
-        (make-array AstType count)
+        (array.make-array AstType count)
         0
         (LowerTypeParentGlobal)))))
 
@@ -921,7 +922,8 @@
       (ErrTcType (string.string-append "typecheck: unbound name " name))]
     [(LowerSomeTypeCache ids values _ parent)
       (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound index) (OkTcType (array-ref values index))]
+        [(hashmap.StringI64MapFound index)
+          (OkTcType (array.array-ref values index))]
         [(hashmap.StringI64MapMissing)
           (match parent
             [(LowerTypeParentNone)
@@ -5649,7 +5651,7 @@
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
     (hashmap.string-i64-map-with-capacity 8192)
-    (make-array LowerMaybeFunctionBody count)
+    (array.make-array LowerMaybeFunctionBody count)
     0))
 
 ;; #3786: accumulate a module's local decl names onto `base-names` while
@@ -5762,7 +5764,10 @@
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
-      (array-set! bodies next (LowerSomeFunctionBody body names decl-path))
+      (array.array-set!
+        bodies
+        next
+        (LowerSomeFunctionBody body names decl-path))
       (LowerFunctionBodyIndex
         (hashmap.string-i64-map-put ids logical-name next)
         bodies
@@ -5773,7 +5778,7 @@
   [target : String]) : LowerMaybeFunctionBody
   (match (hashmap.string-i64-map-get (struct-get index ids) target)
     [(hashmap.StringI64MapFound body-index)
-      (array-ref (struct-get index bodies) body-index)]
+      (array.array-ref (struct-get index bodies) body-index)]
     [(hashmap.StringI64MapMissing) (LowerNoFunctionBody)]))
 
 (define (lower-function-body-index-from-decls-in-module
@@ -12276,7 +12281,7 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (array-ref items index)
+        (match (array.array-ref items index)
           [(LowerCapture capture-name _ _ _)
             (if (string.string-eq capture-name name)
               (set! found true)
@@ -12287,7 +12292,7 @@
   (struct-get captures count))
 
 (define (lower-capture-list-empty) : LowerCaptureList
-  (LowerCaptureList (make-array LowerCapture 0) 0))
+  (LowerCaptureList (array.make-array LowerCapture 0) 0))
 
 (define (lower-capture-list-add-front
   [captures : LowerCaptureList]
@@ -12296,7 +12301,7 @@
     [items : (Array LowerCapture) (struct-get captures items)]
     [count : i64 (struct-get captures count)]
     (begin
-      (array-push! items capture)
+      (array.array-push! items capture)
       (LowerCaptureList items (+ count 1)))))
 
 (define (lower-capture-list-storage-entry?
@@ -12307,7 +12312,7 @@
   [offset : i64]) : bool
   (if (or (< index 0) (>= index (struct-get captures count)))
     false
-    (match (array-ref (struct-get captures items) index)
+    (match (array.array-ref (struct-get captures items) index)
       [(LowerCapture capture-name capture-var-id _ capture-offset)
         (and
           (string.string-eq capture-name name)
@@ -12983,7 +12988,7 @@
   (if (< index 0)
     (OkLowerState state)
     (let
-      [capture : LowerCapture (array-ref items index)]
+      [capture : LowerCapture (array.array-ref items index)]
       (match capture
         [(LowerCapture _ var-id capture-ty offset)
           (match (lower-capture-snapshot-value
@@ -13098,7 +13103,7 @@
   (if (< index 0)
     (OkLowerEnv state env type-env)
     (let
-      [capture : LowerCapture (array-ref items index)]
+      [capture : LowerCapture (array.array-ref items index)]
       (match capture
         [(LowerCapture name _ capture-ty offset)
           (match (if (lower-type-register-group? ctx capture-ty)
@@ -13588,7 +13593,7 @@
         (box (lower-diagnostic "lower: missing arena restore binding")))]))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (make-array String 0) (make-array String 0) 0))
+  (LowerCleanupStack (array.make-array String 0) (array.make-array String 0) 0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
@@ -13599,8 +13604,8 @@
     [cleanup-names : (Array String) (struct-get cleanups cleanup-names)]
     [count : i64 (struct-get cleanups count)]
     (begin
-      (array-push! hidden-names hidden-name)
-      (array-push! cleanup-names cleanup-name)
+      (array.array-push! hidden-names hidden-name)
+      (array.array-push! cleanup-names cleanup-name)
       (LowerCleanupStack hidden-names cleanup-names (+ count 1)))))
 
 (define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
@@ -13615,10 +13620,10 @@
     false
     (and
       (string.string-eq
-        (array-ref (struct-get cleanups hidden-names) index)
+        (array.array-ref (struct-get cleanups hidden-names) index)
         hidden-name)
       (string.string-eq
-        (array-ref (struct-get cleanups cleanup-names) index)
+        (array.array-ref (struct-get cleanups cleanup-names) index)
         cleanup-name))))
 
 (define (lower-emit-cleanup-stack-at
@@ -13632,8 +13637,8 @@
     (match (lower-emit-cleanup-call
       state
       env
-      (array-ref hidden-names index)
-      (array-ref cleanup-names index))
+      (array.array-ref hidden-names index)
+      (array.array-ref cleanup-names index))
       [(OkLowerState next-state)
         (lower-emit-cleanup-stack-at
           next-state
@@ -15114,7 +15119,7 @@
       (ErrLowerCallArg (box (lower-diagnostic-at-expr arg message)))]))
 
 (define (lower-arg-writeback-list-empty) : LowerArgWritebackList
-  (LowerArgWritebackList (make-array LowerArgWriteback 0) 0))
+  (LowerArgWritebackList (array.make-array LowerArgWriteback 0) 0))
 
 (define (lower-arg-writeback-list-count [writebacks : LowerArgWritebackList]) : i64
   (struct-get writebacks count))
@@ -15122,7 +15127,7 @@
 (define (lower-arg-writeback-list-ref
   [writebacks : LowerArgWritebackList]
   [index : i64]) : LowerArgWriteback
-  (array-ref (struct-get writebacks items) index))
+  (array.array-ref (struct-get writebacks items) index))
 
 (define (lower-arg-writeback-list-add
   [writebacks : LowerArgWritebackList]
@@ -15130,14 +15135,15 @@
   (let
     [items : (Array LowerArgWriteback) (struct-get writebacks items)]
     [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
+    [out : (Array LowerArgWriteback)
+      (array.make-array LowerArgWriteback (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! out index (array-ref items index))
+          (array.array-set! out index (array.array-ref items index))
           (set! index (+ index 1))))
-      (array-set! out count writeback)
+      (array.array-set! out count writeback)
       (LowerArgWritebackList out (+ count 1)))))
 
 (define (lower-arg-writeback-list-add-front
@@ -15146,13 +15152,14 @@
   (let
     [items : (Array LowerArgWriteback) (struct-get writebacks items)]
     [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
+    [out : (Array LowerArgWriteback)
+      (array.make-array LowerArgWriteback (+ count 1))]
     [index : i64 0]
     (begin
-      (array-set! out 0 writeback)
+      (array.array-set! out 0 writeback)
       (while (< index count)
         (begin
-          (array-set! out (+ index 1) (array-ref items index))
+          (array.array-set! out (+ index 1) (array.array-ref items index))
           (set! index (+ index 1))))
       (LowerArgWritebackList out (+ count 1)))))
 
@@ -16996,11 +17003,11 @@
 (define tc-rtf-cap : i64
   1048576)
 (define tc-rtf-gen-arr : (Array i64)
-  (make-array i64 1048576))
+  (array.make-array i64 1048576))
 (define tc-rtf-id-arr : (Array i64)
-  (make-array i64 1048576))
+  (array.make-array i64 1048576))
 (define tc-rtf-ty-arr : (Array AstType)
-  (make-array AstType 1048576))
+  (array.make-array AstType 1048576))
 (define tc-rtf-current-gen : i64
   0)
 (define tc-rtf-filled : bool
@@ -17014,7 +17021,7 @@
       (begin
         (while (< i tc-rtf-cap)
           (begin
-            (array-set! tc-rtf-gen-arr i 0)
+            (array.array-set! tc-rtf-gen-arr i 0)
             (set! i (+ i 1))))
         (set! tc-rtf-filled true)))))
 
@@ -17033,10 +17040,10 @@
     [(AstExprSpanned inner-box _)
       (let
         [slot : i64 (% inner-box tc-rtf-cap)]
-        (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
-          (= (array-ref tc-rtf-id-arr slot) inner-box)
+        (if (if (= (array.array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
+          (= (array.array-ref tc-rtf-id-arr slot) inner-box)
           false)
-          (OkTcType (array-ref tc-rtf-ty-arr slot))
+          (OkTcType (array.array-ref tc-rtf-ty-arr slot))
           (match (lower-expr-result-type-fast
             ctx
             env
@@ -17045,9 +17052,9 @@
             (ast-node-get inner-box))
             [(OkTcType ty)
               (begin
-                (array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
-                (array-set! tc-rtf-id-arr slot inner-box)
-                (array-set! tc-rtf-ty-arr slot ty)
+                (array.array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
+                (array.array-set! tc-rtf-id-arr slot inner-box)
+                (array.array-set! tc-rtf-ty-arr slot ty)
                 (OkTcType ty))]
             [(ErrTcType message) (ErrTcType message)])))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
@@ -19914,23 +19921,23 @@
   (struct-get slots count))
 
 (define (lower-c-abi-slot-list-ref [slots : LowerCAbiSlotList] [index : i64]) : LowerCAbiSlot
-  (array-ref (struct-get slots items) index))
+  (array.array-ref (struct-get slots items) index))
 
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
+    [items : (Array LowerCAbiSlot) (array.make-array LowerCAbiSlot 1)]
     (begin
-      (array-set! items 0 slot)
+      (array.array-set! items 0 slot)
       (LowerCAbiSlotList items 1))))
 
 (define (lower-c-abi-slot-list-pair
   [first : LowerCAbiSlot]
   [second : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
+    [items : (Array LowerCAbiSlot) (array.make-array LowerCAbiSlot 2)]
     (begin
-      (array-set! items 0 first)
-      (array-set! items 1 second)
+      (array.array-set! items 0 first)
+      (array.array-set! items 1 second)
       (LowerCAbiSlotList items 2))))
 
 (define (lower-c-abi-sysv-register-aggregate-from-slots
@@ -27970,7 +27977,7 @@
     [_ LowerNoIrValue]))
 
 (define (lower-array-var-set-empty) : LowerArrayVarSet
-  (LowerArrayVarSet (make-array i64 0) (make-array i64 0) 0))
+  (LowerArrayVarSet (array.make-array i64 0) (array.make-array i64 0) 0))
 
 (define (lower-array-var-set-add
   [set : LowerArrayVarSet]
@@ -27984,18 +27991,18 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (if (= (array-ref vars index) var)
+        (if (= (array.array-ref vars index) var)
           (begin
-            (if (> offset (array-ref offsets index))
-              (array-set! offsets index offset)
+            (if (> offset (array.array-ref offsets index))
+              (array.array-set! offsets index offset)
               unit)
             (set! found true))
           (set! index (+ index 1))))
       (if found
         (LowerArrayVarSet vars offsets count)
         (begin
-          (array-push! vars var)
-          (array-push! offsets offset)
+          (array.array-push! vars var)
+          (array.array-push! offsets offset)
           (LowerArrayVarSet vars offsets (+ count 1)))))))
 
 (define (lower-array-var-set-merge
@@ -28014,8 +28021,8 @@
             out
             (lower-array-var-set-add
               out
-              (array-ref vars index)
-              (array-ref offsets index)))
+              (array.array-ref vars index)
+              (array.array-ref offsets index)))
           (set! index (+ index 1))))
       out)))
 
@@ -28028,7 +28035,7 @@
     (begin
       (while (< index count)
         (let
-          [offset : i64 (array-ref offsets index)]
+          [offset : i64 (array.array-ref offsets index)]
           (begin
             (if (> offset max-offset)
               (set! max-offset offset)
@@ -28056,14 +28063,14 @@
     [offsets : (Array i64) (struct-get merged offsets)]
     (and
       (= (struct-get merged count) 3)
-      (= (array-length vars) 3)
-      (= (array-length offsets) 3)
-      (= (array-ref vars 0) 10)
-      (= (array-ref offsets 0) 4)
-      (= (array-ref vars 1) 20)
-      (= (array-ref offsets 1) 2)
-      (= (array-ref vars 2) 30)
-      (= (array-ref offsets 2) 3)
+      (= (array.array-length vars) 3)
+      (= (array.array-length offsets) 3)
+      (= (array.array-ref vars 0) 10)
+      (= (array.array-ref offsets 0) 4)
+      (= (array.array-ref vars 1) 20)
+      (= (array.array-ref offsets 1) 2)
+      (= (array.array-ref vars 2) 30)
+      (= (array.array-ref offsets 2) 3)
       (= (lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-masked-vector-index-literal-offset [expr : AstExpr]) : i64
@@ -32675,8 +32682,8 @@
     (begin
       (while (< index count)
         (let
-          [array-var : i64 (array-ref (struct-get arrays vars) index)]
-          [offset : i64 (array-ref (struct-get arrays offsets) index)]
+          [array-var : i64 (array.array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array.array-ref (struct-get arrays offsets) index)]
           (begin
             (match (lower-avx512-index-plus-offset s next-index offset)
               [(LowerExpr index-state limit-index _)
@@ -32717,8 +32724,8 @@
     (begin
       (while (< index count)
         (let
-          [array-var : i64 (array-ref (struct-get arrays vars) index)]
-          [offset : i64 (array-ref (struct-get arrays offsets) index)]
+          [array-var : i64 (array.array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array.array-ref (struct-get arrays offsets) index)]
           (begin
             (match (lower-avx512-index-plus-offset s end-value offset)
               [(LowerExpr index-state limit-index _)
@@ -39077,27 +39084,27 @@
 
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
-    [scratch : (Array i64) (make-array i64 1)]
-    [ir : (Array i64) (make-array i64 1)]
+    [scratch : (Array i64) (array.make-array i64 1)]
+    [ir : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! scratch 0 0)
-      (array-set! ir 0 0)
+      (array.array-set! scratch 0 0)
+      (array.array-set! ir 0 0)
       (CompilerLowerArenaState scratch ir))))
 
 (define (compiler-lower-arena-state-scratch-arena
   [state : CompilerLowerArenaState]) : i64
-  (array-ref (struct-get state scratch-arena) 0))
+  (array.array-ref (struct-get state scratch-arena) 0))
 
 (define (compiler-lower-arena-state-ir-arena [state : CompilerLowerArenaState]) : i64
-  (array-ref (struct-get state ir-arena) 0))
+  (array.array-ref (struct-get state ir-arena) 0))
 
 (define (compiler-lower-arena-state-set!
   [state : CompilerLowerArenaState]
   [scratch : i64]
   [ir : i64]) : unit
   (begin
-    (array-set! (struct-get state scratch-arena) 0 scratch)
-    (array-set! (struct-get state ir-arena) 0 ir)))
+    (array.array-set! (struct-get state scratch-arena) 0 scratch)
+    (array.array-set! (struct-get state ir-arena) 0 ir)))
 
 (define (compiler-lower-arena-state-capture-from-globals!
   [state : CompilerLowerArenaState]) : unit
@@ -43580,10 +43587,10 @@
   [values : (Array CompilerIrValue)]
   [name : String]
   [index : i64]) : i64
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     0
     (+
-      (lower-test-value-function-count (array-ref values index) name)
+      (lower-test-value-function-count (array.array-ref values index) name)
       (lower-test-call-args-array-function-count values name (+ index 1)))))
 
 (define (lower-test-instr-return-function-count
@@ -44201,7 +44208,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-phi-count (array-ref slots index))))
+            (+ acc (lower-test-instr-phi-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44216,7 +44223,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-load-count (array-ref slots index))))
+            (+ acc (lower-test-instr-load-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44231,7 +44238,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-branch-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-branch-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44246,7 +44255,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-bounds-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-bounds-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44261,7 +44272,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-return-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-return-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44278,7 +44291,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-call-count (array-ref slots index) name)))
+            (+
+              acc
+              (lower-test-instr-call-count (array.array-ref slots index) name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -44296,7 +44311,7 @@
     (begin
       (while (and (< index count) (not done))
         (let
-          [instr : CompilerIrInstr (array-ref slots index)]
+          [instr : CompilerIrInstr (array.array-ref slots index)]
           (begin
             (if (lower-test-instr-call-name? instr second)
               (begin
@@ -44319,7 +44334,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-cpuid-count (array-ref slots index))))
+            (+ acc (lower-test-instr-cpuid-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44334,7 +44349,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-xgetbv-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-xgetbv-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44351,7 +44368,8 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-call-count (array-ref slots index))))
+              (lower-test-instr-indirect-call-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44370,7 +44388,7 @@
             (+
               acc
               (lower-test-instr-indirect-tail-call-count
-                (array-ref slots index))))
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44388,7 +44406,8 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-c-call-count (array-ref slots index))))
+              (lower-test-instr-indirect-c-call-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44405,7 +44424,8 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-unit-count (array-ref slots index))))
+              (lower-test-instr-indirect-unit-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44425,7 +44445,7 @@
             (+
               acc
               (lower-test-instr-return-function-count
-                (array-ref slots index)
+                (array.array-ref slots index)
                 function-name)))
           (set! index (+ index 1))))
       acc)))
@@ -44446,7 +44466,7 @@
             (+
               acc
               (lower-test-instr-indirect-callee-function-count
-                (array-ref slots index)
+                (array.array-ref slots index)
                 function-name)))
           (set! index (+ index 1))))
       acc)))
@@ -44468,7 +44488,7 @@
             (+
               acc
               (lower-test-instr-call-arg-function-count
-                (array-ref slots index)
+                (array.array-ref slots index)
                 call-name
                 function-name)))
           (set! index (+ index 1))))
@@ -44489,7 +44509,9 @@
             acc
             (+
               acc
-              (lower-test-instr-tail-call-count (array-ref slots index) name)))
+              (lower-test-instr-tail-call-count
+                (array.array-ref slots index)
+                name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -44504,7 +44526,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-store-ptr-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-store-ptr-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44519,7 +44543,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-copy-bytes-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-copy-bytes-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44534,7 +44560,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-alloc-count (array-ref slots index))))
+            (+ acc (lower-test-instr-alloc-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44549,7 +44575,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-addr-of-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-addr-of-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44564,7 +44592,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-vector-load-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-vector-load-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44581,7 +44611,8 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-binop-count (array-ref slots index))))
+              (lower-test-instr-vector-binop-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44598,7 +44629,8 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-reduce-count (array-ref slots index))))
+              (lower-test-instr-vector-reduce-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44615,7 +44647,8 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-store-count (array-ref slots index))))
+              (lower-test-instr-vector-store-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44633,7 +44666,8 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-load-count (array-ref slots index))))
+              (lower-test-instr-predicated-load-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44651,7 +44685,8 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-store-count (array-ref slots index))))
+              (lower-test-instr-predicated-store-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44666,7 +44701,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-select-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-select-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44681,7 +44718,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-tail-mask-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-tail-mask-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44702,7 +44741,7 @@
             (+
               acc
               (lower-test-instr-vector-shape-count
-                (array-ref slots index)
+                (array.array-ref slots index)
                 lanes
                 elem-ty)))
           (set! index (+ index 1))))
@@ -44719,7 +44758,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-u64-mov-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-u64-mov-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44736,7 +44777,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-binop-op-count (array-ref slots index) op)))
+            (+
+              acc
+              (lower-test-instr-binop-op-count (array.array-ref slots index) op)))
           (set! index (+ index 1))))
       acc)))
 
@@ -44751,7 +44794,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-cast-count (array-ref slots index))))
+            (+ acc (lower-test-instr-cast-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44766,7 +44809,9 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-bitcast-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-bitcast-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -44785,7 +44830,9 @@
             acc
             (+
               acc
-              (lower-test-instr-store-global-count (array-ref slots index) name)))
+              (lower-test-instr-store-global-count
+                (array.array-ref slots index)
+                name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -47364,7 +47411,9 @@
             acc
             (+
               acc
-              (lower-test-instr-i64-mov-count (array-ref slots index) want)))
+              (lower-test-instr-i64-mov-count
+                (array.array-ref slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -47383,7 +47432,9 @@
             acc
             (+
               acc
-              (lower-test-instr-f64-mov-count (array-ref slots index) want)))
+              (lower-test-instr-f64-mov-count
+                (array.array-ref slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -47398,7 +47449,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-binop-count (array-ref slots index))))
+            (+ acc (lower-test-instr-binop-count (array.array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -47417,7 +47468,9 @@
             acc
             (+
               acc
-              (lower-test-instr-gep-offset-count (array-ref slots index) want)))
+              (lower-test-instr-gep-offset-count
+                (array.array-ref slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 

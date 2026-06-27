@@ -1,5 +1,6 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
 (import stdlib.text_buf)
+(import stdlib.array)
 (import "compiler_ctfe.tl")
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
@@ -245,7 +246,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! values index (SpecNoTemplate))
+      (array.array-set! values index (SpecNoTemplate))
       (spec-template-values-fill-empty values (+ index 1) count))))
 
 (define (spec-template-index-build
@@ -261,7 +262,7 @@
           (if (hashmap.string-i64-map-contains? index name)
             (spec-template-index-build (box-get rest) index values slot)
             (begin
-              (array-set! values slot (SpecSomeTemplate template))
+              (array.array-set! values slot (SpecSomeTemplate template))
               (spec-template-index-build
                 (box-get rest)
                 (hashmap.string-i64-map-put index name slot)
@@ -271,7 +272,8 @@
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
     [count : i64 (spec-template-list-count templates)]
-    [values : (Array SpecMaybeTemplate) (make-array SpecMaybeTemplate count)]
+    [values : (Array SpecMaybeTemplate)
+      (array.make-array SpecMaybeTemplate count)]
     (begin
       (spec-template-values-fill-empty values 0 count)
       (SpecTemplateEnv
@@ -288,7 +290,7 @@
     (SpecNoTemplate)
     (match (hashmap.string-i64-map-get (struct-get templates index) name)
       [(hashmap.StringI64MapFound slot)
-        (array-ref (struct-get templates values) slot)]
+        (array.array-ref (struct-get templates values) slot)]
       [(hashmap.StringI64MapMissing) (SpecNoTemplate)])))
 
 (define (spec-template-env-shadow-name
@@ -605,13 +607,13 @@
 (define (gen-registry-empty) : GenRegistry
   (let
     [capacity : i64 64]
-    [decls : (Array AstDecl) (make-array AstDecl capacity)]
+    [decls : (Array AstDecl) (array.make-array AstDecl capacity)]
     (GenRegistry (hashmap.string-i64-map-with-capacity capacity) decls 0)))
 
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
   (match (hashmap.string-i64-map-get (struct-get registry index) key)
     [(hashmap.StringI64MapFound slot)
-      (GenSomeEntry (array-ref (struct-get registry decls) slot))]
+      (GenSomeEntry (array.array-ref (struct-get registry decls) slot))]
     [(hashmap.StringI64MapMissing) (GenNoEntry)]))
 
 (define (gen-registry-copy-decls
@@ -622,7 +624,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (array.array-set! dst index (array.array-ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
@@ -630,12 +632,12 @@
     [old-index : hashmap.StringI64Map (struct-get registry index)]
     [old-decls : (Array AstDecl) (struct-get registry decls)]
     [old-len : i64 (struct-get registry len)]
-    [old-capacity : i64 (array-length old-decls)]
+    [old-capacity : i64 (array.array-length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    [new-decls : (Array AstDecl) (make-array AstDecl new-capacity)]
+    [new-decls : (Array AstDecl) (array.make-array AstDecl new-capacity)]
     (begin
       (gen-registry-copy-decls old-decls new-decls 0 old-len)
       (GenRegistry old-index new-decls old-len))))
@@ -648,14 +650,14 @@
     [ready : GenRegistry
       (if (>=
         (struct-get registry len)
-        (array-length (struct-get registry decls)))
+        (array.array-length (struct-get registry decls)))
         (gen-registry-grow registry)
         registry)]
     [slot : i64 (struct-get ready len)]
     [decls : (Array AstDecl) (struct-get ready decls)]
     [index : hashmap.StringI64Map (struct-get ready index)]
     (begin
-      (array-set! decls slot decl)
+      (array.array-set! decls slot decl)
       (GenRegistry (hashmap.string-i64-map-put index key slot) decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
@@ -1154,6 +1156,39 @@
     arg-key
     (gen-full-key module generator item arg-key)))
 
+(define (gen-qualified-local-name-start-from
+  [name : String]
+  [index : i64]
+  [n : i64]
+  [start : i64]) : i64
+  (if (>= index n)
+    start
+    (gen-qualified-local-name-start-from
+      name
+      (+ index 1)
+      n
+      (if (= (cast (string.string-ref name index) : i64) 46)
+        (+ index 1)
+        start))))
+
+(define (gen-qualified-local-name-start [name : String]) : i64
+  (gen-qualified-local-name-start-from name 0 (string.string-length name) 0))
+
+(define (gen-qualified-local-name [name : String]) : String
+  (let
+    [n : i64 (string.string-length name)]
+    [start : i64 (gen-qualified-local-name-start name)]
+    (string.substring name start (- n start))))
+
+(define (gen-qualified-function-prefix
+  [item-name : String]
+  [local-prefix : String]) : String
+  (let
+    [start : i64 (gen-qualified-local-name-start item-name)]
+    (if (= start 0)
+      local-prefix
+      (string.string-append (string.substring item-name 0 start) local-prefix))))
+
 (define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start
     ""
@@ -1386,9 +1421,9 @@
 
 (define (gen-hashmap-one-byte-string [code : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 1)]
+    [buf : (Array u8) (array.make-array u8 1)]
     (begin
-      (array-set! buf 0 (cast code : u8))
+      (array.array-set! buf 0 (cast code : u8))
       (unsafe
         (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 1)))))
 
@@ -4955,12 +4990,14 @@
     [value-prefix : String (gen-hashmap-type-info-prefix value-info)]
     [expected-map : String
       (string.string-append key-name (string.string-append value-name "Map"))]
-    [prefix : String
+    [map-local-name : String (gen-qualified-local-name map-name)]
+    [local-prefix : String
       (string.string-append
         key-prefix
         (string.string-append "-" (string.string-append value-prefix "-map")))]
+    [prefix : String (gen-qualified-function-prefix map-name local-prefix)]
     (cond
-      [(not (string.string-eq map-name expected-map))
+      [(not (string.string-eq map-local-name expected-map))
         (ErrGenHashmapSource
           (box
             (gen-hashmap-diag
@@ -10071,15 +10108,15 @@
         "String")]
     [i64-source : String
       (gen-hashmap-source-i64-key "hashmap.I64I64Map" "i64-i64-map" "i64")]
-    [string-round-needle : String "hashmap.string-string-map-round-capacity"]
-    [i64-round-needle : String "hashmap.i64-i64-map-round-capacity"]
+    [string-round-needle : String "string-string-map-round-capacity"]
+    [i64-round-needle : String "i64-i64-map-round-capacity"]
     [mask-needle : String "(bit-and hash (- capacity 1))"]
     [modulo-needle : String "(% hash capacity)"]
     [string-mut-entry-needle : String "hashmap.StringStringMapMutEntry"]
     [string-mut-entry-macro-needle : String
-      "hashmap.string-string-map-get-mut-entry-borrowed"]
+      "string-string-map-get-mut-entry-borrowed"]
     [i64-mut-entry-needle : String "hashmap.I64I64MapMutEntry"]
-    [i64-mut-entry-macro-needle : String "hashmap.i64-i64-map-get-mut-entry"]
+    [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
     [metadata-len-mutation-needle : String
       "(set!\n              (struct-get map len)"]
     [metadata-deleted-mutation-needle : String "(set! (struct-get map deleted)"]

@@ -1,5 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.io)
+(import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_backend.tl")
 (import "compiler_builtin_ids.tl")
@@ -3614,7 +3615,7 @@
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
-    [counts : (Array i64) (make-array i64 12)]
+    [counts : (Array i64) (array.make-array i64 12)]
     (begin
       (compiler-backend-count-instr-uses
         counts
@@ -3644,16 +3645,16 @@
           (AstTyI64)))
       (and
         (backend-and8
-          (= (array-ref counts 1) 1)
-          (= (array-ref counts 2) 1)
-          (= (array-ref counts 3) 1)
-          (= (array-ref counts 4) 1)
-          (= (array-ref counts 5) 1)
-          (= (array-ref counts 6) 1)
-          (= (array-ref counts 7) 1)
-          (= (array-ref counts 8) 1))
-        (= (array-ref counts 9) 1)
-        (= (array-ref counts 10) 1)))))
+          (= (array.array-ref counts 1) 1)
+          (= (array.array-ref counts 2) 1)
+          (= (array.array-ref counts 3) 1)
+          (= (array.array-ref counts 4) 1)
+          (= (array.array-ref counts 5) 1)
+          (= (array.array-ref counts 6) 1)
+          (= (array.array-ref counts 7) 1)
+          (= (array.array-ref counts 8) 1))
+        (= (array.array-ref counts 9) 1)
+        (= (array.array-ref counts 10) 1)))))
 
 (define (compiler-backend-ir-walker-collections-ok?) : bool
   (let
@@ -3691,13 +3692,13 @@
 
 (define (compiler-backend-ir-walker-program-collections-ok?) : bool
   (let
-    [call-array : (Array CompilerIrValue) (make-array CompilerIrValue 2)]
+    [call-array : (Array CompilerIrValue) (array.make-array CompilerIrValue 2)]
     (begin
-      (array-set!
+      (array.array-set!
         call-array
         0
         (IrValueF64 (compiler-backend-test-f64-bits "8.5")))
-      (array-set! call-array 1 (IrValueBytes "arg-bytes"))
+      (array.array-set! call-array 1 (IrValueBytes "arg-bytes"))
       (let
         [instrs : CompilerIrInstrSeq
           (compiler-ir-instr-seq-from-list
@@ -4201,17 +4202,17 @@
   (let
     [count : i64 compiler-backend-long-block-instr-count]
     [total : i64 (+ count 1)]
-    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr total)]
+    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr total)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set!
+          (array.array-set!
             slots
             index
             (IrInstrMov index (IrValueI64 index) (AstTyI64)))
           (set! index (+ index 1))))
-      (array-set!
+      (array.array-set!
         slots
         count
         (IrInstrReturn (IrSomeValue (IrValueVar (- count 1)))))

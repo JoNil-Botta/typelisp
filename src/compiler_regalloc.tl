@@ -7,6 +7,7 @@
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
 (import stdlib.io)
+(import stdlib.array)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import stdlib.hashmap)
@@ -611,11 +612,11 @@
   (let
     [present : (Array i64) (struct-get types present)]
     [items : (Array AstType) (struct-get types items)]
-    (if (or (< var 0) (>= var (array-length present)))
+    (if (or (< var 0) (>= var (array.array-length present)))
       CompilerRegNoType
-      (if (= (array-ref present var) 0)
+      (if (= (array.array-ref present var) 0)
         CompilerRegNoType
-        (CompilerRegSomeType (array-ref items var))))))
+        (CompilerRegSomeType (array.array-ref items var))))))
 
 (define (compiler-reg-param-types
   [params : CompilerIrParamList]
@@ -678,11 +679,11 @@
   [types : (Array AstType)]
   [var : i64]
   [ty : AstType]) : unit
-  (if (or (< var 0) (>= var (array-length present)))
+  (if (or (< var 0) (>= var (array.array-length present)))
     unit
     (begin
-      (array-set! present var 1)
-      (array-set! types var ty))))
+      (array.array-set! present var 1)
+      (array.array-set! types var ty))))
 
 (define (compiler-reg-param-types-array!
   [params : CompilerIrParamList]
@@ -746,7 +747,7 @@
       (while (< index count)
         (begin
           (compiler-reg-instr-def-type-array!
-            (array-ref slots index)
+            (array.array-ref slots index)
             present
             types)
           (set! index (+ index 1))))
@@ -781,18 +782,18 @@
       present
       types
       (- index 1)
-      (if (= (array-ref present index) 0)
+      (if (= (array.array-ref present index) 0)
         acc
         (compiler-reg-var-type-cons
-          (CompilerRegVarType index (array-ref types index))
+          (CompilerRegVarType index (array.array-ref types index))
           acc)))))
 
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypes
   (match func
     [(IrFunction _ params _ vars blocks)
       (let
-        [present : (Array i64) (make-array i64 vars)]
-        [types : (Array AstType) (make-array AstType vars)]
+        [present : (Array i64) (array.make-array i64 vars)]
+        [types : (Array AstType) (array.make-array AstType vars)]
         (begin
           (compiler-reg-fill-i64-array present 0)
           (compiler-reg-param-types-array! params present types)
@@ -917,7 +918,10 @@
         (begin
           (set!
             out
-            (compiler-reg-instr-moves (array-ref slots index) out strict-pairs))
+            (compiler-reg-instr-moves
+              (array.array-ref slots index)
+              out
+              strict-pairs))
           (set! index (- index 1))))
       out)))
 
@@ -950,11 +954,11 @@
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
-    [count : i64 (array-length items)]
+    [count : i64 (array.array-length items)]
     (begin
       (while (< index count)
         (begin
-          (array-set! items index value)
+          (array.array-set! items index value)
           (set! index (+ index 1))))
       unit)))
 
@@ -967,8 +971,8 @@
         [(CompilerIrInstrSelectPayload dst _ _ false-value _ _)
           (match false-value
             [(IrValueVar false-var)
-              (if (and (>= dst 0) (< dst (array-length preferences)))
-                (array-set! preferences dst false-var)
+              (if (and (>= dst 0) (< dst (array.array-length preferences)))
+                (array.array-set! preferences dst false-var)
                 unit)]
             [_ unit])])]
     [_ unit]))
@@ -984,7 +988,7 @@
       (while (< index count)
         (begin
           (compiler-reg-select-false-preference-instr!
-            (array-ref slots index)
+            (array.array-ref slots index)
             preferences)
           (set! index (+ index 1))))
       unit)))
@@ -1011,7 +1015,7 @@
   [func : CompilerIrFunction]
   [vars : i64]) : (Array i64)
   (let
-    [preferences : (Array i64) (make-array i64 vars)]
+    [preferences : (Array i64) (array.make-array i64 vars)]
     (begin
       (compiler-reg-fill-i64-array preferences -1)
       (match func
@@ -1024,11 +1028,11 @@
   [value : CompilerRegLocation]) : unit
   (let
     [index : i64 0]
-    [count : i64 (array-length items)]
+    [count : i64 (array.array-length items)]
     (begin
       (while (< index count)
         (begin
-          (array-set! items index value)
+          (array.array-set! items index value)
           (set! index (+ index 1))))
       unit)))
 
@@ -1044,20 +1048,21 @@
           [(CompilerRegAssignment var location)
             (if (or
               (< var 0)
-              (>= var (array-length present))
-              (not (= (array-ref present var) 0)))
+              (>= var (array.array-length present))
+              (not (= (array.array-ref present var) 0)))
               unit
               (begin
-                (array-set! present var 1)
-                (array-set! items var location)))])
+                (array.array-set! present var 1)
+                (array.array-set! items var location)))])
         (compiler-reg-assignment-index-fill! (box-get rest) present items))]))
 
 (define (compiler-reg-assignment-index-build
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : CompilerRegAssignmentIndex
   (let
-    [present : (Array i64) (make-array i64 vars)]
-    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation vars)]
+    [present : (Array i64) (array.make-array i64 vars)]
+    [items : (Array CompilerRegLocation)
+      (array.make-array CompilerRegLocation vars)]
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegSpill 0))
@@ -1070,11 +1075,11 @@
   (let
     [present : (Array i64) (struct-get index present)]
     [items : (Array CompilerRegLocation) (struct-get index items)]
-    (if (or (< var 0) (>= var (array-length present)))
+    (if (or (< var 0) (>= var (array.array-length present)))
       CompilerRegNoLocation
-      (if (= (array-ref present var) 0)
+      (if (= (array.array-ref present var) 0)
         CompilerRegNoLocation
-        (CompilerRegSomeLocation (array-ref items var))))))
+        (CompilerRegSomeLocation (array.array-ref items var))))))
 
 (define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
   (let
@@ -1082,8 +1087,9 @@
       (if (< vars 1)
         1
         vars)]
-    [present : (Array i64) (make-array i64 n)]
-    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation n)]
+    [present : (Array i64) (array.make-array i64 n)]
+    [items : (Array CompilerRegLocation)
+      (array.make-array CompilerRegLocation n)]
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegSpill 0))
@@ -1097,11 +1103,11 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (begin
-      (if (or (< var 0) (>= var (array-length present)))
+      (if (or (< var 0) (>= var (array.array-length present)))
         unit
         (begin
-          (array-set! present var 1)
-          (array-set! items var location)))
+          (array.array-set! present var 1)
+          (array.array-set! items var location)))
       assignments)))
 
 (define (compiler-reg-assignment-table-lookup
@@ -1110,11 +1116,11 @@
   (let
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
-    (if (or (< var 0) (>= var (array-length present)))
+    (if (or (< var 0) (>= var (array.array-length present)))
       CompilerRegNoLocation
-      (if (= (array-ref present var) 0)
+      (if (= (array.array-ref present var) 0)
         CompilerRegNoLocation
-        (CompilerRegSomeLocation (array-ref items var))))))
+        (CompilerRegSomeLocation (array.array-ref items var))))))
 
 (define (compiler-reg-assignment-table-has-spill-from?
   [assignments : CompilerRegAssignmentTable]
@@ -1123,11 +1129,11 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array-length present)) false]
-      [(= (array-ref present index) 0)
+      [(>= index (array.array-length present)) false]
+      [(= (array.array-ref present index) 0)
         (compiler-reg-assignment-table-has-spill-from? assignments (+ index 1))]
       [else
-        (match (array-ref items index)
+        (match (array.array-ref items index)
           [(CompilerRegSpill _) true]
           [_
             (compiler-reg-assignment-table-has-spill-from?
@@ -1150,17 +1156,17 @@
       (compiler-reg-assignment-table-to-list-from
         assignments
         (- index 1)
-        (if (= (array-ref present index) 0)
+        (if (= (array.array-ref present index) 0)
           out
           (compiler-reg-assignment-cons
-            (CompilerRegAssignment index (array-ref items index))
+            (CompilerRegAssignment index (array.array-ref items index))
             out))))))
 
 (define (compiler-reg-assignment-table-to-list
   [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentList
   (compiler-reg-assignment-table-to-list-from
     assignments
-    (- (array-length (struct-get assignments present)) 1)
+    (- (array.array-length (struct-get assignments present)) 1)
     CompilerRegAssignmentNil))
 
 (define (compiler-reg-interval-index-fill!
@@ -1175,22 +1181,22 @@
           [(CompilerRegInterval var start end)
             (if (or
               (< var 0)
-              (>= var (array-length starts))
-              (>= (array-ref starts var) 0))
+              (>= var (array.array-length starts))
+              (>= (array.array-ref starts var) 0))
               unit
               (begin
-                (array-set! starts var start)
-                (array-set! ends var end)))])
+                (array.array-set! starts var start)
+                (array.array-set! ends var end)))])
         (compiler-reg-interval-index-fill! (box-get rest) starts ends))]))
 
 (define (compiler-reg-interval-index-build
   [intervals : CompilerRegIntervalList]
   [vars : i64]) : CompilerRegIntervalIndex
   (let
-    [starts : (Array i64) (make-array i64 vars)]
-    [ends : (Array i64) (make-array i64 vars)]
+    [starts : (Array i64) (array.make-array i64 vars)]
+    [ends : (Array i64) (array.make-array i64 vars)]
     [segments : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList 0)]
+      (array.make-array CompilerRegIntervalList 0)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
@@ -1203,12 +1209,15 @@
   (let
     [starts : (Array i64) (struct-get index starts)]
     [ends : (Array i64) (struct-get index ends)]
-    (if (or (< var 0) (>= var (array-length starts)))
+    (if (or (< var 0) (>= var (array.array-length starts)))
       CompilerRegNoInterval
-      (if (< (array-ref starts var) 0)
+      (if (< (array.array-ref starts var) 0)
         CompilerRegNoInterval
         (CompilerRegSomeInterval
-          (CompilerRegInterval var (array-ref starts var) (array-ref ends var)))))))
+          (CompilerRegInterval
+            var
+            (array.array-ref starts var)
+            (array.array-ref ends var)))))))
 
 (define (compiler-reg-interval-list-empty? [segments : CompilerRegIntervalList]) : bool
   (match segments
@@ -1222,22 +1231,22 @@
   [point : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array-length starts))
+    (if (>= var (array.array-length starts))
       unit
       (let
-        [start : i64 (array-ref starts var)]
-        [end : i64 (array-ref ends var)]
+        [start : i64 (array.array-ref starts var)]
+        [end : i64 (array.array-ref ends var)]
         (begin
           (if (< start 0)
             (begin
-              (array-set! starts var point)
-              (array-set! ends var point))
+              (array.array-set! starts var point)
+              (array.array-set! ends var point))
             (begin
               (if (< point start)
-                (array-set! starts var point)
+                (array.array-set! starts var point)
                 unit)
               (if (> point end)
-                (array-set! ends var point)
+                (array.array-set! ends var point)
                 unit)))
           unit)))))
 
@@ -1280,17 +1289,23 @@
   [starts : (Array i64)]
   [ends : (Array i64)]
   [var : i64]) : unit
-  (if (or (< var 0) (>= var (array-length starts)) (< (array-ref starts var) 0))
+  (if (or
+    (< var 0)
+    (>= var (array.array-length starts))
+    (< (array.array-ref starts var) 0))
     unit
     (begin
-      (array-set!
+      (array.array-set!
         segments
         var
         (compiler-reg-interval-cons
-          (CompilerRegInterval var (array-ref starts var) (array-ref ends var))
-          (array-ref segments var)))
-      (array-set! starts var -1)
-      (array-set! ends var -1)
+          (CompilerRegInterval
+            var
+            (array.array-ref starts var)
+            (array.array-ref ends var))
+          (array.array-ref segments var)))
+      (array.array-set! starts var -1)
+      (array.array-set! ends var -1)
       unit)))
 
 (define (compiler-reg-segment-note-point!
@@ -1299,22 +1314,22 @@
   [ends : (Array i64)]
   [var : i64]
   [point : i64]) : unit
-  (if (or (< var 0) (>= var (array-length starts)))
+  (if (or (< var 0) (>= var (array.array-length starts)))
     unit
-    (if (< (array-ref starts var) 0)
+    (if (< (array.array-ref starts var) 0)
       (begin
-        (array-set! starts var point)
-        (array-set! ends var point))
+        (array.array-set! starts var point)
+        (array.array-set! ends var point))
       (let
-        [end : i64 (array-ref ends var)]
+        [end : i64 (array.array-ref ends var)]
         (if (<= point (+ end 1))
           (if (> point end)
-            (array-set! ends var point)
+            (array.array-set! ends var point)
             unit)
           (begin
             (compiler-reg-segment-flush-var! segments starts ends var)
-            (array-set! starts var point)
-            (array-set! ends var point)))))))
+            (array.array-set! starts var point)
+            (array.array-set! ends var point)))))))
 
 (define (compiler-reg-extend-segment-set-word-bits!
   [starts : (Array i64)]
@@ -1554,8 +1569,8 @@
       (while (< index count)
         (let
           [live-after : CompilerLiveI64Set
-            (if (< index (array-length after-items))
-              (array-ref after-items index)
+            (if (< index (array.array-length after-items))
+              (array.array-ref after-items index)
               (compiler-live-set-empty))]
           (begin
             (compiler-reg-extend-instr
@@ -1563,7 +1578,7 @@
               ends
               live-after
               out-point
-              (array-ref slots index))
+              (array.array-ref slots index))
             (set! out-point (+ out-point 2))
             (set! index (+ index 1)))))
       out-point)))
@@ -1617,8 +1632,8 @@
   (if (< index 0)
     acc
     (let
-      [start : i64 (array-ref starts index)]
-      [end : i64 (array-ref ends index)]
+      [start : i64 (array.array-ref starts index)]
+      [end : i64 (array.array-ref ends index)]
       (if (< start 0)
         (compiler-reg-interval-arrays-to-list starts ends (- index 1) acc)
         (compiler-reg-interval-arrays-to-list
@@ -1633,8 +1648,8 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [starts : (Array i64) (make-array i64 vars)]
-        [ends : (Array i64) (make-array i64 vars)]
+        [starts : (Array i64) (array.make-array i64 vars)]
+        [ends : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
@@ -1669,10 +1684,10 @@
       (while (< index count)
         (let
           [live-after : CompilerLiveI64Set
-            (if (< index (array-length after-items))
-              (array-ref after-items index)
+            (if (< index (array.array-length after-items))
+              (array.array-ref after-items index)
               (compiler-live-set-empty))]
-          [instr : CompilerIrInstr (array-ref slots index)]
+          [instr : CompilerIrInstr (array.array-ref slots index)]
           (begin
             (compiler-reg-extend-segment-instr!
               starts
@@ -1738,12 +1753,12 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [starts : (Array i64) (make-array i64 vars)]
-        [ends : (Array i64) (make-array i64 vars)]
+        [starts : (Array i64) (array.make-array i64 vars)]
+        [ends : (Array i64) (array.make-array i64 vars)]
         [segments : (Array CompilerRegIntervalList)
-          (make-array CompilerRegIntervalList vars)]
-        [segment-starts : (Array i64) (make-array i64 vars)]
-        [segment-ends : (Array i64) (make-array i64 vars)]
+          (array.make-array CompilerRegIntervalList vars)]
+        [segment-starts : (Array i64) (array.make-array i64 vars)]
+        [segment-ends : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
@@ -1796,7 +1811,7 @@
 (define (compiler-reg-bits-set! [row : (Array i64)] [base : i64] [var : i64]) : unit
   (let
     [w : i64 (+ base (/ var 63))]
-    (array-set! row w (bit-or (array-ref row w) (shl 1 (% var 63))))))
+    (array.array-set! row w (bit-or (array.array-ref row w) (shl 1 (% var 63))))))
 
 (define (compiler-reg-chunk->row!
   [row : (Array i64)]
@@ -1856,7 +1871,7 @@
       (match block
         [(CompilerLiveBlock label uses defs _ _ _ _)
           (begin
-            (array-set! arr index block)
+            (array.array-set! arr index block)
             (compiler-reg-set->row! uses use-rows (* index words))
             (compiler-reg-set->row! defs def-rows (* index words))
             (compiler-reg-bits-build-rows!
@@ -1877,7 +1892,7 @@
     (begin
       (while (< w words)
         (begin
-          (array-set! row (+ base w) 0)
+          (array.array-set! row (+ base w) 0)
           (set! w (+ w 1))))
       unit)))
 
@@ -1892,10 +1907,12 @@
     (begin
       (while (< w words)
         (begin
-          (array-set!
+          (array.array-set!
             dst
             (+ dbase w)
-            (bit-or (array-ref dst (+ dbase w)) (array-ref src (+ sbase w))))
+            (bit-or
+              (array.array-ref dst (+ dbase w))
+              (array.array-ref src (+ sbase w))))
           (set! w (+ w 1))))
       unit)))
 
@@ -1943,15 +1960,15 @@
           [idx : i64 (+ base w)]
           [next : i64
             (bit-or
-              (array-ref use-rows idx)
+              (array.array-ref use-rows idx)
               (bit-and
-                (array-ref live-out idx)
-                (bit-xor (array-ref def-rows idx) -1)))]
+                (array.array-ref live-out idx)
+                (bit-xor (array.array-ref def-rows idx) -1)))]
           (begin
-            (if (= next (array-ref live-in idx))
+            (if (= next (array.array-ref live-in idx))
               unit
               (begin
-                (array-set! live-in idx next)
+                (array.array-set! live-in idx next)
                 (set! changed true)))
             (set! w (+ w 1)))))
       changed)))
@@ -1973,7 +1990,7 @@
       (compiler-reg-bits-or-succs!
         live-out
         live-in
-        (compiler-reg-live-block-succs (array-ref arr b))
+        (compiler-reg-live-block-succs (array.array-ref arr b))
         idmap
         b
         words)
@@ -2061,7 +2078,7 @@
       (while (< w words)
         (begin
           (compiler-reg-bits-extend-word!
-            (array-ref row (+ base w))
+            (array.array-ref row (+ base w))
             (* w 63)
             starts
             ends
@@ -2087,7 +2104,7 @@
             ends
             (compiler-live-set-empty)
             out-point
-            (array-ref slots index))
+            (array.array-ref slots index))
           (set! out-point (+ out-point 2))
           (set! index (+ index 1))))
       out-point)))
@@ -2159,13 +2176,14 @@
         [count : i64 (compiler-reg-live-block-list-count live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
-        [arr : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
-        [use-rows : (Array i64) (make-array i64 cells)]
-        [def-rows : (Array i64) (make-array i64 cells)]
-        [live-in : (Array i64) (make-array i64 cells)]
-        [live-out : (Array i64) (make-array i64 cells)]
-        [starts : (Array i64) (make-array i64 vars)]
-        [ends : (Array i64) (make-array i64 vars)]
+        [arr : (Array CompilerLiveBlock)
+          (array.make-array CompilerLiveBlock count)]
+        [use-rows : (Array i64) (array.make-array i64 cells)]
+        [def-rows : (Array i64) (array.make-array i64 cells)]
+        [live-in : (Array i64) (array.make-array i64 cells)]
+        [live-out : (Array i64) (array.make-array i64 cells)]
+        [starts : (Array i64) (array.make-array i64 vars)]
+        [ends : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array use-rows 0)
           (compiler-reg-fill-i64-array def-rows 0)
@@ -2432,7 +2450,9 @@
     (begin
       (while (< index count)
         (begin
-          (set! out (compiler-reg-ineligible-instr (array-ref slots index) out))
+          (set!
+            out
+            (compiler-reg-ineligible-instr (array.array-ref slots index) out))
           (set! index (+ index 1))))
       out)))
 
@@ -2467,7 +2487,7 @@
         (begin
           (set!
             out
-            (match (array-ref slots index)
+            (match (array.array-ref slots index)
               [(IrInstrCall _ _ _ _)
                 (compiler-live-set-union
                   out
@@ -2529,7 +2549,7 @@
         (begin
           (set!
             out
-            (match (array-ref slots index)
+            (match (array.array-ref slots index)
               [(IrInstrCall _ _ args _)
                 (compiler-live-set-union
                   out
@@ -2763,10 +2783,14 @@
         (begin
           (set!
             out-vector
-            (compiler-reg-vector-defs-instr (array-ref slots index) out-vector))
+            (compiler-reg-vector-defs-instr
+              (array.array-ref slots index)
+              out-vector))
           (set!
             out-mask
-            (compiler-reg-mask-defs-instr (array-ref slots index) out-mask))
+            (compiler-reg-mask-defs-instr
+              (array.array-ref slots index)
+              out-mask))
           (set! index (+ index 1))))
       (CompilerLiveUseDef out-vector out-mask))))
 
@@ -3179,13 +3203,13 @@
       [segments : (Array CompilerRegIntervalList)
         (struct-get intervals segments)]
       [left-segments : CompilerRegIntervalList
-        (if (or (< left 0) (>= left (array-length segments)))
+        (if (or (< left 0) (>= left (array.array-length segments)))
           CompilerRegIntervalNil
-          (array-ref segments left))]
+          (array.array-ref segments left))]
       [right-segments : CompilerRegIntervalList
-        (if (or (< right 0) (>= right (array-length segments)))
+        (if (or (< right 0) (>= right (array.array-length segments)))
           CompilerRegIntervalNil
-          (array-ref segments right))]
+          (array.array-ref segments right))]
       (if (and
         (not (compiler-reg-interval-list-empty? left-segments))
         (not (compiler-reg-interval-list-empty? right-segments)))
@@ -3276,8 +3300,8 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array-length present)) false]
-      [(= (array-ref present index) 0)
+      [(>= index (array.array-length present)) false]
+      [(= (array.array-ref present index) 0)
         (compiler-reg-assignment-table-location-conflicts-from?
           assignments
           intervals
@@ -3294,7 +3318,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array-ref items index) location)
+          (compiler-reg-location-eq? (array.array-ref items index) location)
           (compiler-reg-vars-interfere-index? intervals var index))
         true]
       [else
@@ -3331,8 +3355,8 @@
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (cond
-      [(>= index (array-length present)) false]
-      [(= (array-ref present index) 0)
+      [(>= index (array.array-length present)) false]
+      [(= (array.array-ref present index) 0)
         (compiler-reg-assignment-table-location-conflicts-segmented-from?
           assignments
           intervals
@@ -3349,7 +3373,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array-ref items index) location)
+          (compiler-reg-location-eq? (array.array-ref items index) location)
           (compiler-reg-vars-interfere-segmented-index? intervals var index))
         true]
       [else
@@ -3517,8 +3541,8 @@
     [_ (- 0 1)]))
 
 (define (compiler-reg-count-def! [counts : (Array i64)] [var : i64]) : unit
-  (if (and (>= var 0) (< var (array-length counts)))
-    (array-set! counts var (+ (array-ref counts var) 1))
+  (if (and (>= var 0) (< var (array.array-length counts)))
+    (array.array-set! counts var (+ (array.array-ref counts var) 1))
     unit))
 
 (define (compiler-reg-count-seq-defs!
@@ -3533,7 +3557,7 @@
         (begin
           (compiler-reg-count-def!
             counts
-            (compiler-reg-instr-def-var (array-ref slots index)))
+            (compiler-reg-instr-def-var (array.array-ref slots index)))
           (set! index (+ index 1))))
       unit)))
 
@@ -3554,8 +3578,8 @@
         counts)]))
 
 (define (compiler-reg-mark-phi-def! [phi-defs : (Array i64)] [var : i64]) : unit
-  (if (and (>= var 0) (< var (array-length phi-defs)))
-    (array-set! phi-defs var 1)
+  (if (and (>= var 0) (< var (array.array-length phi-defs)))
+    (array.array-set! phi-defs var 1)
     unit))
 
 (define (compiler-reg-mark-phi-defs-seq!
@@ -3568,7 +3592,7 @@
     (begin
       (while (< index count)
         (begin
-          (match (array-ref slots index)
+          (match (array.array-ref slots index)
             [(IrInstrPhi dst _ _) (compiler-reg-mark-phi-def! phi-defs dst)]
             [_ unit])
           (set! index (+ index 1))))
@@ -3607,7 +3631,7 @@
   (match func
     [(IrFunction _ params _ vars blocks)
       (let
-        [counts : (Array i64) (make-array i64 vars)]
+        [counts : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-param-count-defs! params counts)
@@ -3616,16 +3640,16 @@
 
 ;; Same-value union-find, path-compressed; the class root is its min member id.
 (define (compiler-reg-sv-find [parents : (Array i64)] [x : i64]) : i64
-  (if (or (< x 0) (>= x (array-length parents)))
+  (if (or (< x 0) (>= x (array.array-length parents)))
     (- 0 1)
     (let
-      [p : i64 (array-ref parents x)]
+      [p : i64 (array.array-ref parents x)]
       (if (= p x)
         x
         (let
           [r : i64 (compiler-reg-sv-find parents p)]
           (begin
-            (array-set! parents x r)
+            (array.array-set! parents x r)
             r))))))
 
 (define (compiler-reg-sv-union! [parents : (Array i64)] [a : i64] [b : i64]) : unit
@@ -3635,11 +3659,14 @@
     (if (or (< ra 0) (< rb 0) (= ra rb))
       unit
       (if (< ra rb)
-        (array-set! parents rb ra)
-        (array-set! parents ra rb)))))
+        (array.array-set! parents rb ra)
+        (array.array-set! parents ra rb)))))
 
 (define (compiler-reg-sv-single-def? [counts : (Array i64)] [var : i64]) : bool
-  (and (>= var 0) (< var (array-length counts)) (= (array-ref counts var) 1)))
+  (and
+    (>= var 0)
+    (< var (array.array-length counts))
+    (= (array.array-ref counts var) 1)))
 
 (define (compiler-reg-sv-single-def-non-phi?
   [counts : (Array i64)]
@@ -3647,15 +3674,17 @@
   [var : i64]) : bool
   (and
     (compiler-reg-sv-single-def? counts var)
-    (or (>= var (array-length phi-defs)) (= (array-ref phi-defs var) 0))))
+    (or
+      (>= var (array.array-length phi-defs))
+      (= (array.array-ref phi-defs var) 0))))
 
 (define (compiler-reg-sv-eligible? [eligible : (Array i64)] [var : i64]) : bool
-  (if (= (array-length eligible) 0)
+  (if (= (array.array-length eligible) 0)
     true
     (and
       (>= var 0)
-      (< var (array-length eligible))
-      (= (array-ref eligible var) 1))))
+      (< var (array.array-length eligible))
+      (= (array.array-ref eligible var) 1))))
 
 (define (compiler-reg-sv-add-instr!
   [instr : CompilerIrInstr]
@@ -3691,7 +3720,7 @@
       (while (< index count)
         (begin
           (compiler-reg-sv-add-instr!
-            (array-ref slots index)
+            (array.array-ref slots index)
             counts
             phi-defs
             eligible
@@ -3733,22 +3762,24 @@
     [(IrFunction _ _ _ vars blocks)
       (let
         [counts : (Array i64) (compiler-reg-function-def-counts func)]
-        [phi-defs : (Array i64) (make-array i64 vars)]
-        [parents : (Array i64) (make-array i64 vars)]
+        [phi-defs : (Array i64) (array.make-array i64 vars)]
+        [parents : (Array i64) (array.make-array i64 vars)]
         [index : i64 0]
         (begin
           (compiler-reg-fill-i64-array phi-defs 0)
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
           (while (< index vars)
             (begin
-              (array-set! parents index index)
+              (array.array-set! parents index index)
               (set! index (+ index 1))))
           (compiler-reg-sv-blocks! blocks counts phi-defs eligible parents)
           parents))]))
 
 (define (compiler-reg-function-same-value-parents [func : CompilerIrFunction]) : (Array
     i64)
-  (compiler-reg-function-same-value-parents-filtered func (make-array i64 0)))
+  (compiler-reg-function-same-value-parents-filtered
+    func
+    (array.make-array i64 0)))
 
 (define (compiler-reg-same-value-eligible-vars
   [interval-index : CompilerRegIntervalIndex]
@@ -3756,20 +3787,20 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    [eligible : (Array i64) (make-array i64 (array-length starts))]
+    [eligible : (Array i64) (array.make-array i64 (array.array-length starts))]
     [var : i64 0]
     (begin
       (compiler-reg-fill-i64-array eligible 0)
-      (while (< var (array-length starts))
+      (while (< var (array.array-length starts))
         (begin
           (if (and
-            (>= (array-ref starts var) 0)
+            (>= (array.array-ref starts var) 0)
             (not
               (compiler-reg-call-set-in-range?
                 clobber-points
-                (array-ref starts var)
-                (array-ref ends var))))
-            (array-set! eligible var 1)
+                (array.array-ref starts var)
+                (array.array-ref ends var))))
+            (array.array-set! eligible var 1)
             unit)
           (set! var (+ var 1))))
       eligible)))
@@ -3778,7 +3809,7 @@
   [parents : (Array i64)]
   [left : i64]
   [right : i64]) : bool
-  (if (= (array-length parents) 0)
+  (if (= (array.array-length parents) 0)
     false
     (let
       [rl : i64 (compiler-reg-sv-find parents left)]
@@ -3789,19 +3820,19 @@
   [parents : (Array i64)]
   [sizes : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length parents))
+  (if (>= index (array.array-length parents))
     unit
     (begin
-      (array-set! parents index index)
-      (array-set! sizes index 1)
+      (array.array-set! parents index index)
+      (array.array-set! sizes index 1)
       (compiler-reg-coalesce-map-init! parents sizes (+ index 1)))))
 
 (define (compiler-reg-coalesce-map-root-from-parents
   [parents : (Array i64)]
   [var : i64]) : i64
-  (if (or (< var 0) (>= var (array-length parents)))
+  (if (or (< var 0) (>= var (array.array-length parents)))
     (- 0 1)
-    (array-ref parents var)))
+    (array.array-ref parents var)))
 
 (define (compiler-reg-coalesce-vars-compatible?
   [intervals : CompilerRegIntervalIndex]
@@ -3839,8 +3870,8 @@
   [index : i64]
   [sv-parents : (Array i64)]) : bool
   (cond
-    [(>= index (array-length parents)) true]
-    [(= (array-ref parents index) root)
+    [(>= index (array.array-length parents)) true]
+    [(= (array.array-ref parents index) root)
       (if (compiler-reg-coalesce-vars-compatible?
         intervals
         types
@@ -3883,8 +3914,8 @@
   [index : i64]
   [sv-parents : (Array i64)]) : bool
   (cond
-    [(>= index (array-length parents)) true]
-    [(= (array-ref parents index) left-root)
+    [(>= index (array.array-length parents)) true]
+    [(= (array.array-ref parents index) left-root)
       (if (compiler-reg-coalesce-map-var-compatible-with-root?
         parents
         intervals
@@ -3943,11 +3974,11 @@
   [winner : i64]
   [loser : i64]
   [index : i64]) : unit
-  (if (>= index (array-length parents))
+  (if (>= index (array.array-length parents))
     unit
     (begin
-      (if (= (array-ref parents index) loser)
-        (array-set! parents index winner)
+      (if (= (array.array-ref parents index) loser)
+        (array.array-set! parents index winner)
         unit)
       (compiler-reg-coalesce-map-merge-root-parents-into!
         parents
@@ -3971,20 +4002,20 @@
   [src-start : (Array i64)]
   [src-end : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length root-start))
+  (if (>= index (array.array-length root-start))
     unit
     (begin
-      (array-set!
+      (array.array-set!
         root-start
         index
-        (if (< index (array-length src-start))
-          (array-ref src-start index)
+        (if (< index (array.array-length src-start))
+          (array.array-ref src-start index)
           (- 0 1)))
-      (array-set!
+      (array.array-set!
         root-end
         index
-        (if (< index (array-length src-end))
-          (array-ref src-end index)
+        (if (< index (array.array-length src-end))
+          (array.array-ref src-end index)
           (- 0 1)))
       (compiler-reg-coalesce-init-coarse!
         root-start
@@ -3999,10 +4030,10 @@
   [a : i64]
   [b : i64]) : bool
   (let
-    [a-start : i64 (array-ref root-start a)]
-    [a-end : i64 (array-ref root-end a)]
-    [b-start : i64 (array-ref root-start b)]
-    [b-end : i64 (array-ref root-end b)]
+    [a-start : i64 (array.array-ref root-start a)]
+    [a-end : i64 (array.array-ref root-end a)]
+    [b-start : i64 (array.array-ref root-start b)]
+    [b-end : i64 (array.array-ref root-end b)]
     (if (or (< a-start 0) (< a-end 0) (< b-start 0) (< b-end 0))
       false
       (or (<= a-end b-start) (<= b-end a-start)))))
@@ -4015,26 +4046,26 @@
   [winner : i64]
   [loser : i64]) : unit
   (begin
-    (array-set!
+    (array.array-set!
       sizes
       winner
-      (+ (array-ref sizes winner) (array-ref sizes loser)))
-    (array-set! sizes loser 0)
+      (+ (array.array-ref sizes winner) (array.array-ref sizes loser)))
+    (array.array-set! sizes loser 0)
     (let
-      [loser-start : i64 (array-ref root-start loser)]
-      [loser-end : i64 (array-ref root-end loser)]
-      [winner-start : i64 (array-ref root-start winner)]
-      [winner-end : i64 (array-ref root-end winner)]
+      [loser-start : i64 (array.array-ref root-start loser)]
+      [loser-end : i64 (array.array-ref root-end loser)]
+      [winner-start : i64 (array.array-ref root-start winner)]
+      [winner-end : i64 (array.array-ref root-end winner)]
       (begin
         (if (< winner-start 0)
-          (array-set! root-start winner loser-start)
+          (array.array-set! root-start winner loser-start)
           (if (if (< loser-start 0)
             false
             (< loser-start winner-start))
-            (array-set! root-start winner loser-start)
+            (array.array-set! root-start winner loser-start)
             unit))
         (if (> loser-end winner-end)
-          (array-set! root-end winner loser-end)
+          (array.array-set! root-end winner loser-end)
           unit)))
     (compiler-reg-coalesce-map-merge-root-parents-into! parents winner loser 0)))
 
@@ -4068,8 +4099,8 @@
         false]
       [(or
           (and
-            (= (array-ref sizes left-root) 1)
-            (= (array-ref sizes right-root) 1))
+            (= (array.array-ref sizes left-root) 1)
+            (= (array.array-ref sizes right-root) 1))
           ;; per-pair join fast path: disjoint merged extents => trivially legal.
           (compiler-reg-coalesce-coarse-disjoint?
             root-start
@@ -4179,16 +4210,16 @@
   [vars : i64]
   [sv-parents : (Array i64)]) : CompilerRegCoalesceMap
   (if (compiler-reg-move-list-empty? moves)
-    (CompilerRegCoalesceMap (make-array i64 0))
+    (CompilerRegCoalesceMap (array.make-array i64 0))
     (let
       [n : i64
         (if (< vars 1)
           1
           vars)]
-      [parents : (Array i64) (make-array i64 n)]
-      [sizes : (Array i64) (make-array i64 n)]
-      [root-start : (Array i64) (make-array i64 n)]
-      [root-end : (Array i64) (make-array i64 n)]
+      [parents : (Array i64) (array.make-array i64 n)]
+      [sizes : (Array i64) (array.make-array i64 n)]
+      [root-start : (Array i64) (array.make-array i64 n)]
+      [root-end : (Array i64) (array.make-array i64 n)]
       (begin
         (compiler-reg-coalesce-map-init! parents sizes 0)
         (compiler-reg-coalesce-init-coarse!
@@ -4219,8 +4250,8 @@
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
     (cond
-      [(>= index (array-length parents)) CompilerRegNoLocation]
-      [(or (= index var) (not (= (array-ref parents index) root)))
+      [(>= index (array.array-length parents)) CompilerRegNoLocation]
+      [(or (= index var) (not (= (array.array-ref parents index) root)))
         (compiler-reg-coalesce-location-from-class-from
           coalesce
           assignments
@@ -4294,8 +4325,8 @@
 ;; loop-depth-weighted counts; unweighted/empty arrays still keep the old
 ;; deterministic policy for other stages. Out-of-range vars score 0.
 (define (compiler-reg-spill-weight [ref-counts : (Array i64)] [var : i64]) : i64
-  (if (and (>= var 0) (< var (array-length ref-counts)))
-    (array-ref ref-counts var)
+  (if (and (>= var 0) (< var (array.array-length ref-counts)))
+    (array.array-ref ref-counts var)
     0))
 
 ;; Does `var` already hold a hard register (single or pair) in the table? Used to
@@ -4363,18 +4394,18 @@
   [src : i64]
   [dst : i64]) : unit
   (let
-    [n : i64 (array-length hints)]
+    [n : i64 (array.array-length hints)]
     [root-src : i64
       (if (if (>= src 0)
-        (< src (array-length parents))
+        (< src (array.array-length parents))
         false)
-        (array-ref parents src)
+        (array.array-ref parents src)
         src)]
     [root-dst : i64
       (if (if (>= dst 0)
-        (< dst (array-length parents))
+        (< dst (array.array-length parents))
         false)
-        (array-ref parents dst)
+        (array.array-ref parents dst)
         dst)]
     (if (or
       (= root-src root-dst)
@@ -4384,11 +4415,11 @@
       (>= root-dst n))
       unit
       (begin
-        (if (< (array-ref hints root-src) 0)
-          (array-set! hints root-src root-dst)
+        (if (< (array.array-ref hints root-src) 0)
+          (array.array-set! hints root-src root-dst)
           unit)
-        (if (< (array-ref hints root-dst) 0)
-          (array-set! hints root-dst root-src)
+        (if (< (array.array-ref hints root-dst) 0)
+          (array.array-set! hints root-dst root-src)
           unit)
         unit))))
 
@@ -4412,7 +4443,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]) : (Array i64)
   (let
-    [hints : (Array i64) (make-array i64 n)]
+    [hints : (Array i64) (array.make-array i64 n)]
     [parents : (Array i64) (struct-get coalesce parents)]
     (begin
       (compiler-reg-fill-i64-array hints -1)
@@ -4426,15 +4457,15 @@
   [interval-index : CompilerRegIntervalIndex]
   [var : i64]
   [start : i64]) : CompilerRegMaybeString
-  (if (or (< var 0) (>= var (array-length preferences)))
+  (if (or (< var 0) (>= var (array.array-length preferences)))
     (CompilerRegNoString)
     (let
-      [preferred : i64 (array-ref preferences var)]
+      [preferred : i64 (array.array-ref preferences var)]
       [ends : (Array i64) (struct-get interval-index ends)]
       (if (or
         (< preferred 0)
-        (>= preferred (array-length ends))
-        (> (array-ref ends preferred) start))
+        (>= preferred (array.array-length ends))
+        (> (array.array-ref ends preferred) start))
         (CompilerRegNoString)
         (match (compiler-reg-assignment-table-lookup assignments preferred)
           [(CompilerRegSomeLocation location)
@@ -4541,7 +4572,7 @@
         (begin
           (set!
             out
-            (match (array-ref slots index)
+            (match (array.array-ref slots index)
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirect _ _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrCallIndirectC _ _ _ _) (compiler-live-set-insert out p)]
@@ -4629,7 +4660,8 @@
         (begin
           (set!
             found
-            (compiler-reg-backend-caller-clobber-instr? (array-ref slots index)))
+            (compiler-reg-backend-caller-clobber-instr?
+              (array.array-ref slots index)))
           (set! index (+ index 1))))
       found)))
 
@@ -4669,7 +4701,7 @@
       (while (< index count)
         (begin
           (if (compiler-reg-backend-caller-clobber-instr?
-            (array-ref slots index))
+            (array.array-ref slots index))
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
@@ -4948,7 +4980,7 @@
         (begin
           (set!
             out
-            (match (array-ref slots index)
+            (match (array.array-ref slots index)
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
           (set! p (+ p 2))
@@ -4999,12 +5031,12 @@
       (while (< index count)
         (begin
           (if (compiler-reg-backend-caller-clobber-instr?
-            (array-ref slots index))
+            (array.array-ref slots index))
             (set!
               out
               (compiler-live-set-union
                 out
-                (compiler-reg-clobber-instr-vars (array-ref slots index))))
+                (compiler-reg-clobber-instr-vars (array.array-ref slots index))))
             unit)
           (set! index (+ index 1))))
       out)))
@@ -5070,8 +5102,8 @@
   (match (hashmap.string-i64-map-get ids label)
     [(hashmap.StringI64MapFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
-        (if (> source-id (array-ref loop-ends target-id))
-          (array-set! loop-ends target-id source-id)
+        (if (> source-id (array.array-ref loop-ends target-id))
+          (array.array-set! loop-ends target-id source-id)
           unit)
         unit)]
     [(hashmap.StringI64MapMissing) unit]))
@@ -5122,11 +5154,11 @@
   [depths : (Array i64)]
   [index : i64]
   [end : i64]) : unit
-  (if (or (>= index (array-length depths)) (> index end))
+  (if (or (>= index (array.array-length depths)) (> index end))
     unit
     (begin
-      (if (< (array-ref depths index) (compiler-reg-loop-depth-max))
-        (array-set! depths index (+ (array-ref depths index) 1))
+      (if (< (array.array-ref depths index) (compiler-reg-loop-depth-max))
+        (array.array-set! depths index (+ (array.array-ref depths index) 1))
         unit)
       (compiler-reg-loop-depth-bump-range! depths (+ index 1) end))))
 
@@ -5134,14 +5166,14 @@
   [loop-ends : (Array i64)]
   [depths : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length loop-ends))
+  (if (>= index (array.array-length loop-ends))
     unit
     (begin
-      (if (>= (array-ref loop-ends index) index)
+      (if (>= (array.array-ref loop-ends index) index)
         (compiler-reg-loop-depth-bump-range!
           depths
           index
-          (array-ref loop-ends index))
+          (array.array-ref loop-ends index))
         unit)
       (compiler-reg-loop-depths-from-ends! loop-ends depths (+ index 1)))))
 
@@ -5149,8 +5181,8 @@
     i64)
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
-    [depths : (Array i64) (make-array i64 count)]
-    [loop-ends : (Array i64) (make-array i64 count)]
+    [depths : (Array i64) (array.make-array i64 count)]
+    [loop-ends : (Array i64) (array.make-array i64 count)]
     [ids : hashmap.StringI64Map
       (compiler-reg-loop-depth-block-ids
         blocks
@@ -5175,8 +5207,8 @@
       [i : i64 (compiler-reg-low-bit-index bits)]
       [var : i64 (+ var-base i)]
       (begin
-        (if (and (>= var 0) (< var (array-length counts)))
-          (array-set! counts var (+ (array-ref counts var) weight))
+        (if (and (>= var 0) (< var (array.array-length counts)))
+          (array.array-set! counts var (+ (array.array-ref counts var) weight))
           unit)
         (compiler-reg-ref-counts-add-word-weighted!
           counts
@@ -5263,7 +5295,9 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (compiler-reg-ref-counts-add-instr! counts (array-ref slots index))
+        (compiler-reg-ref-counts-add-instr!
+          counts
+          (array.array-ref slots index))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-ref-counts-seq-weighted!
@@ -5278,7 +5312,7 @@
       (begin
         (compiler-reg-ref-counts-add-instr-weighted!
           counts
-          (array-ref slots index)
+          (array.array-ref slots index)
           weight)
         (set! index (+ index 1))))))
 
@@ -5311,7 +5345,8 @@
             (compiler-reg-ref-counts-seq-weighted!
               counts
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (compiler-reg-loop-depth-weight
+                (array.array-ref depths block-index)))])
         (compiler-reg-ref-counts-blocks-weighted!
           counts
           (box-get rest)
@@ -5407,7 +5442,7 @@
     [i : i64 0]
     (while (< i vars)
       (begin
-        (array-set! vals i (IrValueUnit))
+        (array.array-set! vals i (IrValueUnit))
         (set! i (+ i 1))))))
 
 ;; Record var -> rematerialisable value for every var whose SOLE definition is a
@@ -5423,7 +5458,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrMov dst value _)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
@@ -5431,24 +5466,24 @@
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
-                (if (< dst (array-length flags))
-                  (not (= (array-ref flags dst) 2))
+                (if (< dst (array.array-length flags))
+                  (not (= (array.array-ref flags dst) 2))
                   false)
                 false)
               false)
               (begin
-                (array-set! flags dst 1)
-                (array-set! vals dst value)
+                (array.array-set! flags dst 1)
+                (array.array-set! vals dst value)
                 unit)
               unit)]
           ;; Taking a var's address needs its real storage; poison it so it is
           ;; never rematerialised (its slot must hold the value).
           [(IrInstrAddrOf _ src)
             (if (if (>= src 0)
-              (< src (array-length flags))
+              (< src (array.array-length flags))
               false)
               (begin
-                (array-set! flags src 2)
+                (array.array-set! flags src 2)
                 unit)
               unit)]
           [_ unit])
@@ -5494,8 +5529,8 @@
     [parents : (Array i64) (struct-get coalesce parents)]
     [merged-roots : CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
-    [flags : (Array i64) (make-array i64 vars)]
-    [vals : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
+    [flags : (Array i64) (array.make-array i64 vars)]
+    [vals : (Array CompilerIrValue) (array.make-array CompilerIrValue vars)]
     [v : i64 0]
     (begin
       (compiler-reg-fill-i64-array flags 0)
@@ -5511,8 +5546,8 @@
         (begin
           ;; Skip vars the call-spanning saver shadows: those keep a real slot to
           ;; restore from around calls, so they must not lose it to remat.
-          (if (if (< v (array-length flags))
-            (if (= (array-ref flags v) 1)
+          (if (if (< v (array.array-length flags))
+            (if (= (array.array-ref flags v) 1)
               (if (compiler-live-set-contains? shadows v)
                 false
                 (not
@@ -5530,7 +5565,7 @@
                       (compiler-reg-assignment-table-insert
                         assignments
                         v
-                        (CompilerRegRemat (array-ref vals v)))
+                        (CompilerRegRemat (array.array-ref vals v)))
                       unit)]
                   [_ unit])]
               [(CompilerRegNoLocation) unit])
@@ -5542,12 +5577,12 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [var : i64]) : bool
-  (if (or (< var 0) (>= var (array-length parents)))
+  (if (or (< var 0) (>= var (array.array-length parents)))
     false
     (let
-      [root : i64 (array-ref parents var)]
+      [root : i64 (array.array-ref parents var)]
       [mapped : i64
-        (if (and (>= root 0) (< root (array-length parents)))
+        (if (and (>= root 0) (< root (array.array-length parents)))
           root
           var)]
       (compiler-live-set-contains? merged-roots mapped))))
@@ -5561,22 +5596,22 @@
     [merged-roots : CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
     [var : i64 0]
-    (while (< var (array-length weights))
+    (while (< var (array.array-length weights))
       (begin
         (let
           [status : i64
-            (if (< var (array-length def-status))
-              (array-ref def-status var)
+            (if (< var (array.array-length def-status))
+              (array.array-ref def-status var)
               0)]
           (if (and
             (= (bit-and status 1) 1)
             (= (/ status 2) 1)
             (not
               (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
-            (array-set!
+            (array.array-set!
               weights
               var
-              (compiler-reg-remat-discount-weight (array-ref weights var)))
+              (compiler-reg-remat-discount-weight (array.array-ref weights var)))
             unit))
         (set! var (+ var 1))))))
 
@@ -5598,7 +5633,8 @@
         (begin
           (set!
             found
-            (compiler-reg-remat-instr-mutates-memory? (array-ref slots index)))
+            (compiler-reg-remat-instr-mutates-memory?
+              (array.array-ref slots index)))
           (set! index (+ index 1))))
       found)))
 
@@ -5630,22 +5666,31 @@
       (if (and
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
-        (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (< dst (array.array-length def-status)))
+        (array.array-set!
+          def-status
+          dst
+          (bit-or (array.array-ref def-status dst) 1))
         unit)]
     [(IrInstrGep dst base offset _)
       (if (and
         (compiler-reg-remat-gep? base offset)
         (>= dst 0)
-        (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (< dst (array.array-length def-status)))
+        (array.array-set!
+          def-status
+          dst
+          (bit-or (array.array-ref def-status dst) 1))
         unit)]
     [(IrInstrLoad dst src _)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
-        (< dst (array-length def-status)))
-        (array-set! def-status dst (bit-or (array-ref def-status dst) 1))
+        (< dst (array.array-length def-status)))
+        (array.array-set!
+          def-status
+          dst
+          (bit-or (array.array-ref def-status dst) 1))
         unit)]
     [_ unit]))
 
@@ -5683,7 +5728,7 @@
           (compiler-reg-ref-counts-add-instr-weighted-remat!
             counts
             def-status
-            (array-ref slots index)
+            (array.array-ref slots index)
             weight
             allow-invariant-loads)
           (set! index (+ index 1))))
@@ -5706,7 +5751,8 @@
               counts
               def-status
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index))
+              (compiler-reg-loop-depth-weight
+                (array.array-ref depths block-index))
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
@@ -5729,7 +5775,7 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [counts : (Array i64) (make-array i64 vars)]
+        [counts : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
           (compiler-reg-ref-counts-blocks! counts blocks)
@@ -5740,7 +5786,7 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [counts : (Array i64) (make-array i64 vars)]
+        [counts : (Array i64) (array.make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
         (begin
           (compiler-reg-fill-i64-array counts 0)
@@ -5753,8 +5799,8 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [counts : (Array i64) (make-array i64 vars)]
-        [def-status : (Array i64) (make-array i64 vars)]
+        [counts : (Array i64) (array.make-array i64 vars)]
+        [def-status : (Array i64) (array.make-array i64 vars)]
         [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
@@ -5785,7 +5831,7 @@
 
 (define (compiler-reg-interval-index-has-segment-table?
   [index : CompilerRegIntervalIndex]) : bool
-  (> (array-length (struct-get index segments)) 0))
+  (> (array.array-length (struct-get index segments)) 0))
 
 (define (compiler-reg-interval-index-var-has-segments?
   [index : CompilerRegIntervalIndex]
@@ -5794,8 +5840,8 @@
     [segments : (Array CompilerRegIntervalList) (struct-get index segments)]
     (and
       (>= var 0)
-      (< var (array-length segments))
-      (not (compiler-reg-interval-list-empty? (array-ref segments var))))))
+      (< var (array.array-length segments))
+      (not (compiler-reg-interval-list-empty? (array.array-ref segments var))))))
 
 (define (compiler-reg-call-split-boundary-vars-blocks
   [blocks : CompilerLiveBlockList]
@@ -5863,7 +5909,10 @@
   [label : String]) : unit
   (match (hashmap.string-i64-map-get ids label)
     [(hashmap.StringI64MapFound index)
-      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))]
+      (array.array-set!
+        pred-counts
+        index
+        (+ (array.array-ref pred-counts index) 1))]
     [(hashmap.StringI64MapMissing) unit]))
 
 (define (compiler-reg-edge-copy-count-preds-succs!
@@ -5885,13 +5934,13 @@
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length blocks))
+  (if (>= index (array.array-length blocks))
     unit
     (begin
       (compiler-reg-edge-copy-count-preds-succs!
         ids
         pred-counts
-        (compiler-reg-live-block-succs (array-ref blocks index)))
+        (compiler-reg-live-block-succs (array.array-ref blocks index)))
       (compiler-reg-edge-copy-count-preds-blocks!
         ids
         blocks
@@ -5902,7 +5951,8 @@
   [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]) : (Array i64)
   (let
-    [pred-counts : (Array i64) (make-array i64 (array-length blocks))]
+    [pred-counts : (Array i64)
+      (array.make-array i64 (array.array-length blocks))]
     (begin
       (compiler-reg-fill-i64-array pred-counts 0)
       (compiler-reg-edge-copy-count-preds-blocks! ids blocks pred-counts 0)
@@ -5957,7 +6007,7 @@
   (match (hashmap.string-i64-map-get ids to-label)
     [(hashmap.StringI64MapFound to-index)
       (let
-        [to-block : CompilerLiveBlock (array-ref blocks to-index)]
+        [to-block : CompilerLiveBlock (array.array-ref blocks to-index)]
         [to-inside : bool (compiler-reg-region-label? region to-label)]
         (if (or
           (= from-inside to-inside)
@@ -5968,7 +6018,7 @@
             from-label
             to-label
             from-succs
-            (array-ref pred-counts to-index))
+            (array.array-ref pred-counts to-index))
             [(CompilerRegEdgeCopyPlacementOk placement)
               (if to-inside
                 (CompilerRegEdgeCopyPlan
@@ -6060,11 +6110,11 @@
   [ty : AstType]
   [index : i64]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
-  (if (>= index (array-length blocks))
+  (if (>= index (array.array-length blocks))
     (CompilerRegEdgeCopyPlan
       (compiler-reg-edge-copy-list-reverse-onto acc CompilerRegEdgeCopyNil))
     (let
-      [block : CompilerLiveBlock (array-ref blocks index)]
+      [block : CompilerLiveBlock (array.array-ref blocks index)]
       [label : String (compiler-reg-edge-copy-live-block-label block)]
       [succs : CompilerLiveLabelSet (compiler-reg-live-block-succs block)]
       (match (compiler-reg-edge-copy-boundary-succs
@@ -6308,9 +6358,9 @@
   (let
     [segments : (Array CompilerRegIntervalList) (struct-get intervals segments)]
     [var-segments : CompilerRegIntervalList
-      (if (or (< var 0) (>= var (array-length segments)))
+      (if (or (< var 0) (>= var (array.array-length segments)))
         CompilerRegIntervalNil
-        (array-ref segments var))]
+        (array.array-ref segments var))]
     (if (not (compiler-reg-interval-list-empty? var-segments))
       (compiler-reg-interval-list-overlaps? var-segments region-intervals)
       (match (compiler-reg-interval-index-lookup intervals var)
@@ -6604,22 +6654,22 @@
             [next-point : i64
               (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
             [depth : i64
-              (if (< block-index (array-length depths))
-                (array-ref depths block-index)
+              (if (< block-index (array.array-length depths))
+                (array.array-ref depths block-index)
                 0)]
             (if (and
-              (< block-index (array-length live-blocks))
+              (< block-index (array.array-length live-blocks))
               (> depth 0)
               (not (compiler-reg-loop-split-instr-seq-has-phi? instrs))
               (compiler-reg-loop-split-succs-has-backedge?
                 ids
                 block-index
                 (compiler-reg-live-block-succs
-                  (array-ref live-blocks block-index))))
+                  (array.array-ref live-blocks block-index))))
               (match (compiler-reg-loop-split-select-var
                 func
                 label
-                (array-ref live-blocks block-index)
+                (array.array-ref live-blocks block-index)
                 instrs
                 point
                 next-point
@@ -6696,7 +6746,7 @@
       (compiler-reg-region-label-map
         (compiler-reg-string-cons region-label CompilerRegStringNil))]
     (begin
-      (array-set! remap stack-var vars)
+      (array.array-set! remap stack-var vars)
       (match (compiler-reg-edge-copy-apply
         (compiler-reg-loop-split-region-remap-blocks blocks region-map remap)
         copies)
@@ -6771,7 +6821,7 @@
                 type-info
                 group-vars
                 vars
-                (make-array i64 0))]
+                (array.make-array i64 0))]
             [parents : (Array i64) (struct-get coalesce parents)]
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
@@ -6963,8 +7013,8 @@
     [clobbers : i64
       (compiler-reg-call-set-count-in-range-model clobber-points start end)]
     [ref-count : i64
-      (if (and (>= var 0) (< var (array-length ref-counts)))
-        (array-ref ref-counts var)
+      (if (and (>= var 0) (< var (array.array-length ref-counts)))
+        (array.array-ref ref-counts var)
         0)]
     (and
       (> calls 0)
@@ -7055,7 +7105,7 @@
   [index : i64]) : CompilerRegAssignmentTable
   (let
     [present : (Array i64) (struct-get assignments present)]
-    (if (>= index (array-length present))
+    (if (>= index (array.array-length present))
       assignments
       (begin
         (if (compiler-live-set-contains? splits index)
@@ -7143,7 +7193,7 @@
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-call-span-census-empty) : CompilerRegCallSpanCensus
-    (CompilerRegCallSpanCensus (make-array i64 12))))
+    (CompilerRegCallSpanCensus (array.make-array i64 12))))
 
 (cfg
   (any regalloc-census test)
@@ -7182,7 +7232,7 @@
         (compiler-reg-call-span-census-index
           (compiler-reg-call-span-bucket calls)
           outcome)]
-      (array-set! counts index (+ (array-ref counts index) 1)))))
+      (array.array-set! counts index (+ (array.array-ref counts index) 1)))))
 
 (cfg
   (any regalloc-census test)
@@ -7190,7 +7240,7 @@
     [census : CompilerRegCallSpanCensus]
     [bucket : i64]
     [outcome : i64]) : i64
-    (array-ref
+    (array.array-ref
       (struct-get census counts)
       (compiler-reg-call-span-census-index bucket outcome))))
 
@@ -7271,12 +7321,14 @@
       [src-counts : (Array i64) (struct-get src counts)]
       [index : i64 0]
       (begin
-        (while (< index (array-length dst-counts))
+        (while (< index (array.array-length dst-counts))
           (begin
-            (array-set!
+            (array.array-set!
               dst-counts
               index
-              (+ (array-ref dst-counts index) (array-ref src-counts index)))
+              (+
+                (array.array-ref dst-counts index)
+                (array.array-ref src-counts index)))
             (set! index (+ index 1))))
         unit))))
 
@@ -7353,7 +7405,7 @@
 (cfg
   regalloc-census
   (define compiler-reg-move-census-counts : (Array i64)
-    (make-array i64 16)))
+    (array.make-array i64 16)))
 
 (cfg
   regalloc-census
@@ -7365,22 +7417,22 @@
   (define (compiler-reg-move-census-bump! [slot : i64]) : unit
     (if (if (< slot 0)
       true
-      (>= slot (array-length compiler-reg-move-census-counts)))
+      (>= slot (array.array-length compiler-reg-move-census-counts)))
       unit
-      (array-set!
+      (array.array-set!
         compiler-reg-move-census-counts
         slot
-        (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
+        (+ (array.array-ref compiler-reg-move-census-counts slot) 1)))))
 
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-find [parents : (Array i64)] [v : i64]) : i64
     (if (if (< v 0)
       true
-      (>= v (array-length parents)))
+      (>= v (array.array-length parents)))
       v
       (let
-        [p : i64 (array-ref parents v)]
+        [p : i64 (array.array-ref parents v)]
         (if (= p v)
           v
           (compiler-reg-move-census-find parents p))))))
@@ -7471,27 +7523,38 @@
       (io.print-error
         (str_cat.str-cat
           "regalloc-move-census|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 0))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 0))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 1))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 1))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 2))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 2))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 3))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 3))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 4))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 4))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 5))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 5))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 6))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 6))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 7))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 7))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 8))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 8))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 9))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 9))
           "|"
-          (string.int->string (array-ref compiler-reg-move-census-counts 10))
+          (string.int->string
+            (array.array-ref compiler-reg-move-census-counts 10))
           "\n")))))
 
 (define (compiler-reg-var-float? [type-info : CompilerRegVarTypes] [var : i64]) : bool
@@ -7837,11 +7900,11 @@
     [orig-segs : (Array CompilerRegIntervalList)
       (struct-get interval-index segments)]
     [parents : (Array i64) (struct-get coalesce parents)]
-    [n : i64 (array-length orig-starts)]
-    [root-starts : (Array i64) (make-array i64 n)]
-    [root-ends : (Array i64) (make-array i64 n)]
+    [n : i64 (array.array-length orig-starts)]
+    [root-starts : (Array i64) (array.make-array i64 n)]
+    [root-ends : (Array i64) (array.make-array i64 n)]
     [root-segs : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList n)]
+      (array.make-array CompilerRegIntervalList n)]
     [v : i64 0]
     (begin
       (compiler-reg-fill-i64-array root-starts -1)
@@ -7852,16 +7915,16 @@
       ;; later (interference check / call-spanning shadow) dereferences it.
       (while (< v n)
         (begin
-          (array-set! root-segs v CompilerRegIntervalNil)
+          (array.array-set! root-segs v CompilerRegIntervalNil)
           (set! v (+ v 1))))
       (set! v 0)
       (while (< v n)
         (begin
-          (if (>= (array-ref orig-starts v) 0)
+          (if (>= (array.array-ref orig-starts v) 0)
             (let
               [r : i64
-                (if (< v (array-length parents))
-                  (array-ref parents v)
+                (if (< v (array.array-length parents))
+                  (array.array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r n))
@@ -7869,27 +7932,34 @@
                   v)]
               (begin
                 (if (or
-                  (< (array-ref root-starts rr) 0)
-                  (< (array-ref orig-starts v) (array-ref root-starts rr)))
-                  (array-set! root-starts rr (array-ref orig-starts v))
+                  (< (array.array-ref root-starts rr) 0)
+                  (<
+                    (array.array-ref orig-starts v)
+                    (array.array-ref root-starts rr)))
+                  (array.array-set!
+                    root-starts
+                    rr
+                    (array.array-ref orig-starts v))
                   unit)
-                (if (> (array-ref orig-ends v) (array-ref root-ends rr))
-                  (array-set! root-ends rr (array-ref orig-ends v))
+                (if (>
+                  (array.array-ref orig-ends v)
+                  (array.array-ref root-ends rr))
+                  (array.array-set! root-ends rr (array.array-ref orig-ends v))
                   unit)
                 ;; #3489 (PR4) + #3788: the root carries the UNION of its
                 ;; members' segments. Normal coalescing only merges
                 ;; non-interfering members, but same-value coalescing deliberately
                 ;; admits overlapping members, so keep the root segment list
                 ;; sorted and non-overlapping while preserving genuine holes.
-                (array-set!
+                (array.array-set!
                   root-segs
                   rr
                   (compiler-reg-union-segments
-                    (if (< v (array-length orig-segs))
-                      (array-ref orig-segs v)
+                    (if (< v (array.array-length orig-segs))
+                      (array.array-ref orig-segs v)
                       CompilerRegIntervalNil)
                     rr
-                    (array-ref root-segs rr)))))
+                    (array.array-ref root-segs rr)))))
             unit)
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex root-starts root-ends root-segs))))
@@ -7901,16 +7971,16 @@
   [parents : (Array i64)]
   [index : i64]
   [out : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index (array-length parents))
+  (if (>= index (array.array-length parents))
     out
     (let
-      [root : i64 (array-ref parents index)]
+      [root : i64 (array.array-ref parents index)]
       (compiler-reg-coalesce-merged-root-set-from
         parents
         (+ index 1)
         (if (and
           (>= root 0)
-          (< root (array-length parents))
+          (< root (array.array-length parents))
           (not (= root index)))
           (compiler-live-set-insert out root)
           out)))))
@@ -7927,12 +7997,12 @@
   [source : CompilerLiveI64Set]
   [index : i64]
   [out : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (if (>= index (array-length parents))
+  (if (>= index (array.array-length parents))
     out
     (let
-      [root : i64 (array-ref parents index)]
+      [root : i64 (array.array-ref parents index)]
       [mapped : i64
-        (if (and (>= root 0) (< root (array-length parents)))
+        (if (and (>= root 0) (< root (array.array-length parents)))
           root
           index)]
       (compiler-reg-coalesce-root-set-from-vars-from
@@ -7948,7 +8018,7 @@
   [source : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
-    (if (= (array-length parents) 0)
+    (if (= (array.array-length parents) 0)
       source
       (compiler-reg-coalesce-root-set-from-vars-from
         parents
@@ -7974,12 +8044,12 @@
       (while (< v vars)
         (begin
           (if (and
-            (< v (array-length orig-starts))
-            (>= (array-ref orig-starts v) 0))
+            (< v (array.array-length orig-starts))
+            (>= (array.array-ref orig-starts v) 0))
             (let
               [r : i64
-                (if (< v (array-length parents))
-                  (array-ref parents v)
+                (if (< v (array.array-length parents))
+                  (array.array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r vars))
@@ -8009,25 +8079,25 @@
   [vars : i64]) : (Array i64)
   (let
     [parents : (Array i64) (struct-get coalesce parents)]
-    [out : (Array i64) (make-array i64 vars)]
+    [out : (Array i64) (array.make-array i64 vars)]
     [v : i64 0]
     (begin
       (compiler-reg-fill-i64-array out 0)
       (while (< v vars)
         (begin
-          (if (< v (array-length ref-counts))
+          (if (< v (array.array-length ref-counts))
             (let
               [r : i64
-                (if (< v (array-length parents))
-                  (array-ref parents v)
+                (if (< v (array.array-length parents))
+                  (array.array-ref parents v)
                   v)]
               [rr : i64
                 (if (and (>= r 0) (< r vars))
                   r
                   v)]
-              [w : i64 (array-ref ref-counts v)]
-              (if (> w (array-ref out rr))
-                (array-set! out rr w)
+              [w : i64 (array.array-ref ref-counts v)]
+              (if (> w (array.array-ref out rr))
+                (array.array-set! out rr w)
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -8061,8 +8131,8 @@
     [(CompilerRegStringNil) unit]
     [(CompilerRegStringCons reg rest)
       (begin
-        (if (< i (array-length out))
-          (array-set! out i reg)
+        (if (< i (array.array-length out))
+          (array.array-set! out i reg)
           unit)
         (compiler-reg-greedy-string-list-to-array (box-get rest) out (+ i 1)))]))
 
@@ -8106,8 +8176,8 @@
         (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
         (let
           [w : i64
-            (if (< idx (array-length ref-counts))
-              (array-ref ref-counts idx)
+            (if (< idx (array.array-length ref-counts))
+              (array.array-ref ref-counts idx)
               0)]
           (if (> w acc)
             w
@@ -8145,7 +8215,7 @@
   (if (>= ridx rcount)
     ""
     (let
-      [reg : String (array-ref reg-arr ridx)]
+      [reg : String (array.array-ref reg-arr ridx)]
       (if (compiler-reg-greedy-reg-free?
         assignments
         interval-index
@@ -8174,10 +8244,10 @@
   [regs : CompilerRegStringList]
   [var : i64]
   [n : i64]) : String
-  (if (or (< var 0) (>= var (array-length copy-hints)))
+  (if (or (< var 0) (>= var (array.array-length copy-hints)))
     ""
     (let
-      [nb : i64 (array-ref copy-hints var)]
+      [nb : i64 (array.array-ref copy-hints var)]
       (if (< nb 0)
         ""
         (match (compiler-reg-assignment-table-lookup assignments nb)
@@ -8215,14 +8285,14 @@
   (if (>= ridx rcount)
     ""
     (let
-      [reg : String (array-ref reg-arr ridx)]
+      [reg : String (array.array-ref reg-arr ridx)]
       [m : i64
         (compiler-reg-greedy-interferer-max
           assignments
           interval-index
           ref-counts
           var
-          (array-ref reg-arr ridx)
+          (array.array-ref reg-arr ridx)
           0
           n
           (- 0 1))]
@@ -8375,8 +8445,8 @@
               (compiler-reg-greedy-stage-rs-assign))
             (let
               [weight : i64
-                (if (< var (array-length ref-counts))
-                  (array-ref ref-counts var)
+                (if (< var (array.array-length ref-counts))
+                  (array.array-ref ref-counts var)
                   0)]
               [ev : String
                 (compiler-reg-greedy-first-evictable
@@ -8424,8 +8494,8 @@
       (match interval
         [(CompilerRegInterval var _ _)
           (begin
-            (if (< i (array-length out))
-              (array-set! out i var)
+            (if (< i (array.array-length out))
+              (array.array-set! out i var)
               unit)
             (compiler-reg-greedy-collect-vars (box-get rest) out (+ i 1)))])]))
 
@@ -8435,12 +8505,12 @@
   [b : i64]) : bool
   (let
     [wa : i64
-      (if (< a (array-length ref-counts))
-        (array-ref ref-counts a)
+      (if (< a (array.array-length ref-counts))
+        (array.array-ref ref-counts a)
         0)]
     [wb : i64
-      (if (< b (array-length ref-counts))
-        (array-ref ref-counts b)
+      (if (< b (array.array-length ref-counts))
+        (array.array-ref ref-counts b)
         0)]
     (if (> wa wb)
       true
@@ -8455,12 +8525,12 @@
   (if (<= j 0)
     unit
     (let
-      [cur : i64 (array-ref arr j)]
-      [prev : i64 (array-ref arr (- j 1))]
+      [cur : i64 (array.array-ref arr j)]
+      [prev : i64 (array.array-ref arr (- j 1))]
       (if (compiler-reg-greedy-weight-before? ref-counts cur prev)
         (begin
-          (array-set! arr j prev)
-          (array-set! arr (- j 1) cur)
+          (array.array-set! arr j prev)
+          (array.array-set! arr (- j 1) cur)
           (compiler-reg-greedy-sort-insert! arr ref-counts (- j 1)))
         unit))))
 
@@ -8491,8 +8561,8 @@
   [discounted : (Array i64)]
   [raw : (Array i64)]) : (Array i64)
   (let
-    [n : i64 (array-length discounted)]
-    [out : (Array i64) (make-array i64 n)]
+    [n : i64 (array.array-length discounted)]
+    [out : (Array i64) (array.make-array i64 n)]
     [max-raw : i64 0]
     [v : i64 0]
     (begin
@@ -8500,8 +8570,8 @@
         (begin
           (let
             [r : i64
-              (if (< v (array-length raw))
-                (array-ref raw v)
+              (if (< v (array.array-length raw))
+                (array.array-ref raw v)
                 0)]
             (if (> r max-raw)
               (set! max-raw r)
@@ -8511,12 +8581,12 @@
       (while (< v n)
         (begin
           (let
-            [d : i64 (array-ref discounted v)]
+            [d : i64 (array.array-ref discounted v)]
             [r : i64
-              (if (< v (array-length raw))
-                (array-ref raw v)
+              (if (< v (array.array-length raw))
+                (array.array-ref raw v)
                 0)]
-            (array-set! out v (+ (* d (+ max-raw 1)) r)))
+            (array.array-set! out v (+ (* d (+ max-raw 1)) r)))
           (set! v (+ v 1))))
       out)))
 
@@ -8544,7 +8614,7 @@
   (if (>= i count)
     unit
     (let
-      [v : i64 (array-ref arr i)]
+      [v : i64 (array.array-ref arr i)]
       [stg : i64
         (compiler-reg-greedy-alloc-one!
           assignments
@@ -8561,8 +8631,8 @@
           callee-regs
           caller-saved-count)]
       (begin
-        (if (and (>= v 0) (< v (array-length stages)))
-          (array-set! stages v stg)
+        (if (and (>= v 0) (< v (array.array-length stages)))
+          (array.array-set! stages v stg)
           unit)
         (compiler-reg-greedy-alloc-all!
           arr
@@ -8612,11 +8682,11 @@
   (let
     [starts : (Array i64) (struct-get interval-index starts)]
     [ends : (Array i64) (struct-get interval-index ends)]
-    (if (and (>= var 0) (< var (array-length starts)))
+    (if (and (>= var 0) (< var (array.array-length starts)))
       (compiler-reg-call-set-in-range?
         clobber-points
-        (array-ref starts var)
-        (array-ref ends var))
+        (array.array-ref starts var)
+        (array.array-ref ends var))
       true)))
 
 (define (compiler-reg-greedy-state
@@ -8631,28 +8701,28 @@
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : CompilerRegAssignState
   (let
-    [n : i64 (array-length (struct-get assignments present))]
+    [n : i64 (array.array-length (struct-get assignments present))]
     [rcount : i64 (compiler-reg-string-list-count regs)]
     [reg-arr : (Array String)
-      (make-array
+      (array.make-array
         String
         (if (< (compiler-reg-string-list-count regs) 1)
           1
           (compiler-reg-string-list-count regs)))]
     [order : (Array i64)
-      (make-array
+      (array.make-array
         i64
-        (if (< (array-length (struct-get assignments present)) 1)
+        (if (< (array.array-length (struct-get assignments present)) 1)
           1
-          (array-length (struct-get assignments present))))]
+          (array.array-length (struct-get assignments present))))]
     ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
     ;; split rescues the RS_Split entries.
     [stages : (Array i64)
-      (make-array
+      (array.make-array
         i64
-        (if (< (array-length (struct-get assignments present)) 1)
+        (if (< (array.array-length (struct-get assignments present)) 1)
           1
-          (array-length (struct-get assignments present))))]
+          (array.array-length (struct-get assignments present))))]
     (begin
       (compiler-reg-greedy-string-list-to-array regs reg-arr 0)
       (let
@@ -8725,9 +8795,9 @@
           interval-index
           type-info
           group-vars
-          (array-length (struct-get interval-index starts))
+          (array.array-length (struct-get interval-index starts))
           sv-parents)
-        (CompilerRegCoalesceMap (make-array i64 0)))]
+        (CompilerRegCoalesceMap (array.make-array i64 0)))]
     ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run
     ;; the allocation passes over those roots with an EMPTY coalesce map (the
     ;; merge already realised coalescing, so no per-member coalesce-location is
@@ -8759,7 +8829,7 @@
         (compiler-reg-interval-arrays-to-list
           (struct-get eff-index starts)
           (struct-get eff-index ends)
-          (- (array-length (struct-get eff-index starts)) 1)
+          (- (array.array-length (struct-get eff-index starts)) 1)
           CompilerRegIntervalNil)
         intervals)]
     ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
@@ -8774,7 +8844,7 @@
       (compiler-reg-function-copy-hints
         moves
         coalesce
-        (array-length (struct-get interval-index starts)))]
+        (array.array-length (struct-get interval-index starts)))]
     ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -8813,12 +8883,12 @@
           (compiler-reg-merge-ref-counts
             coalesce
             (compiler-reg-function-spill-weights-remat func coalesce)
-            (array-length (struct-get interval-index starts)))
+            (array.array-length (struct-get interval-index starts)))
           (compiler-reg-merge-ref-counts
             coalesce
             (compiler-reg-function-spill-weights func)
-            (array-length (struct-get interval-index starts))))
-        (make-array i64 0))]
+            (array.array-length (struct-get interval-index starts))))
+        (array.make-array i64 0))]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
     ;; non-call-spanning scratch in the caller-saved pool (%r9/%rcx/%rdx) itself,
     ;; so the old scalar prepass-partition + caller-saved-overflow passes are gone.
@@ -8903,8 +8973,8 @@
         integer-call-assignments
         eff-index
         (compiler-live-set-empty)
-        (make-array i64 0)
-        (make-array i64 0)
+        (array.make-array i64 0)
+        (array.make-array i64 0)
         clobber-points
         CompilerRegStringNil
         (compiler-reg-string-list-count (compiler-reg-xmm-registers)))]
@@ -8920,7 +8990,7 @@
     [vector-preferences : (Array i64)
       (compiler-reg-function-select-false-preferences
         func
-        (array-length (struct-get interval-index starts)))]
+        (array.array-length (struct-get interval-index starts)))]
     [vector-state : CompilerRegAssignState
       (compiler-reg-assign-fixed-candidates
         (compiler-reg-special-candidates intervals vector-vars blocked)
@@ -8938,7 +9008,7 @@
         (compiler-reg-mask-registers)
         CompilerRegActiveNil
         vector-assignments
-        (make-array i64 0)
+        (array.make-array i64 0)
         interval-index)]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
@@ -8953,11 +9023,11 @@
             assignments
             coalesce
             (struct-get interval-index starts)
-            (array-length (struct-get interval-index starts)))
+            (array.array-length (struct-get interval-index starts)))
           func
           coalesce
           call-save-shadows
-          (array-length (struct-get interval-index starts)))
+          (array.array-length (struct-get interval-index starts)))
         assignments)]
     (CompilerRegPlan
       (compiler-reg-assignment-table-to-list final-assignments)
@@ -9105,8 +9175,8 @@
       (match item
         [(CompilerRegVarType var ty)
           (begin
-            (if (< var (array-length flags))
-              (array-set!
+            (if (< var (array.array-length flags))
+              (array.array-set!
                 flags
                 var
                 (or
@@ -9151,15 +9221,15 @@
               (if (and
                 (< left count)
                 (compiler-reg-color-interval-before?
-                  (array-ref items pick)
-                  (array-ref items left)))
+                  (array.array-ref items pick)
+                  (array.array-ref items left)))
                 (set! pick left)
                 unit)
               (if (and
                 (< right count)
                 (compiler-reg-color-interval-before?
-                  (array-ref items pick)
-                  (array-ref items right)))
+                  (array.array-ref items pick)
+                  (array.array-ref items right)))
                 (set! pick right)
                 unit)
               pick))]
@@ -9167,12 +9237,12 @@
           (set! done true)
           (let
             [node-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array-ref items node))]
+              (compiler-reg-color-interval-copy (array.array-ref items node))]
             [largest-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array-ref items largest))]
+              (compiler-reg-color-interval-copy (array.array-ref items largest))]
             (begin
-              (array-set! items node largest-item)
-              (array-set! items largest node-item)
+              (array.array-set! items node largest-item)
+              (array.array-set! items largest node-item)
               (set! node largest))))))))
 
 (define (compiler-reg-color-heapsort
@@ -9190,12 +9260,12 @@
       (while (> last 0)
         (let
           [root-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items 0))]
+            (compiler-reg-color-interval-copy (array.array-ref items 0))]
           [last-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items last))]
+            (compiler-reg-color-interval-copy (array.array-ref items last))]
           (begin
-            (array-set! items 0 last-item)
-            (array-set! items last root-item)
+            (array.array-set! items 0 last-item)
+            (array.array-set! items last root-item)
             (compiler-reg-color-sift-down items 0 last)
             (set! last (- last 1))))))))
 
@@ -9214,14 +9284,15 @@
     [(CompilerRegIntervalNil) unit]
     [(CompilerRegIntervalCons head rest)
       (begin
-        (array-set! items index head)
+        (array.array-set! items index head)
         (compiler-reg-color-interval-fill (box-get rest) items (+ index 1)))]))
 
 (define (compiler-reg-color-sorted-array [intervals : CompilerRegIntervalList]) : (Array
     CompilerRegInterval)
   (let
     [count : i64 (compiler-reg-color-interval-count intervals)]
-    [items : (Array CompilerRegInterval) (make-array CompilerRegInterval count)]
+    [items : (Array CompilerRegInterval)
+      (array.make-array CompilerRegInterval count)]
     (begin
       (compiler-reg-color-interval-fill intervals items 0)
       (compiler-reg-color-heapsort items count)
@@ -9235,20 +9306,23 @@
   [items : (Array CompilerRegInterval)]
   [vars : i64]) : (Array i64)
   (let
-    [ends : (Array i64) (make-array i64 vars)]
+    [ends : (Array i64) (array.make-array i64 vars)]
     [i : i64 0]
     (begin
       (while (< i vars)
         (begin
-          (array-set! ends i (- 0 1))
+          (array.array-set! ends i (- 0 1))
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i (array-length items))
-        (match (array-ref items i)
+      (while (< i (array.array-length items))
+        (match (array.array-ref items i)
           [(CompilerRegInterval var _ end)
             (begin
-              (if (and (>= var 0) (< var vars) (> end (array-ref ends var)))
-                (array-set! ends var end)
+              (if (and
+                (>= var 0)
+                (< var vars)
+                (> end (array.array-ref ends var)))
+                (array.array-set! ends var end)
                 unit)
               (set! i (+ i 1)))]))
       ends)))
@@ -9260,9 +9334,9 @@
 (define (compiler-reg-color-next-free-slot
   [slot-ends : (Array i64)]
   [from : i64]) : i64
-  (if (>= from (array-length slot-ends))
+  (if (>= from (array.array-length slot-ends))
     from
-    (if (= (array-ref slot-ends from) 9223372036854775807)
+    (if (= (array.array-ref slot-ends from) 9223372036854775807)
       (compiler-reg-color-next-free-slot slot-ends (+ from 1))
       from)))
 
@@ -9278,7 +9352,7 @@
   [index : i64]) : i64
   (if (>= index used)
     used
-    (if (< (array-ref slot-ends index) start)
+    (if (< (array.array-ref slot-ends index) start)
       index
       (compiler-reg-color-find-slot slot-ends used start (+ index 1)))))
 
@@ -9296,15 +9370,15 @@
   [remap : (Array i64)]) : i64
   (if (>= index count)
     used
-    (match (array-ref items index)
+    (match (array.array-ref items index)
       [(CompilerRegInterval var start end)
         (if (or
           ;; Already renumbered: parameter identity pins (the prologue's
           ;; param spill targets the ORIGINAL id's formula slot, so a pinned
           ;; id must never be reassigned mid-walk) and split intervals (the
           ;; first interval wins; revisiting would leak the first slot).
-          (>= (array-ref remap var) 0)
-          (not (array-ref colorable var))
+          (>= (array.array-ref remap var) 0)
+          (not (array.array-ref colorable var))
           (compiler-live-set-contains? pinned var)
           (compiler-live-set-contains? ineligible var)
           ;; Spilled scalars are re-homed by the id remap (the stale
@@ -9341,10 +9415,11 @@
               (if (>= found used)
                 (+ slot 1)
                 used)]
-            [full-end : i64 (compiler-reg-max end (array-ref extent-ends var))]
+            [full-end : i64
+              (compiler-reg-max end (array.array-ref extent-ends var))]
             (begin
-              (array-set! slot-ends slot full-end)
-              (array-set! remap var slot)
+              (array.array-set! slot-ends slot full-end)
+              (array.array-set! remap var slot)
               (compiler-reg-color-walk
                 items
                 count
@@ -9368,10 +9443,10 @@
       (begin
         (match head
           [(CompilerRegInterval var start end)
-            (if (and (>= var 0) (< var (array-length starts)))
+            (if (and (>= var 0) (< var (array.array-length starts)))
               (begin
-                (array-set! starts var start)
-                (array-set! ends var end))
+                (array.array-set! starts var start)
+                (array.array-set! ends var end))
               unit)])
         (compiler-reg-color-fill-interval-bounds (box-get rest) starts ends))]))
 
@@ -9384,8 +9459,10 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
-          (array-set! range-of-var (+ first i) range-id)
+        (if (and
+          (>= (+ first i) 0)
+          (< (+ first i) (array.array-length range-of-var)))
+          (array.array-set! range-of-var (+ first i) range-id)
           unit)
         (set! i (+ i 1))))))
 
@@ -9406,7 +9483,7 @@
     (begin
       (while (< i len)
         (begin
-          (match (array-ref slots i)
+          (match (array.array-ref slots i)
             [(IrInstrAlloc dst _)
               (if (or (= run-count 0) (= dst (+ run-last 1)))
                 (begin
@@ -9425,10 +9502,10 @@
                   (> run-count 0)
                   (= src run-last)
                   (= run-first (+ (- src run-count) 1))
-                  (< ranges (array-length range-base)))
+                  (< ranges (array.array-length range-base)))
                   (begin
-                    (array-set! range-base ranges src)
-                    (array-set! range-size ranges run-count)
+                    (array.array-set! range-base ranges src)
+                    (array.array-set! range-size ranges run-count)
                     (compiler-reg-color-mark-storage-vars
                       range-of-var
                       run-first
@@ -9494,8 +9571,8 @@
   [value : CompilerIrValue]) : i64
   (match value
     [(IrValueVar var)
-      (if (and (>= var 0) (< var (array-length roots)))
-        (array-ref roots var)
+      (if (and (>= var 0) (< var (array.array-length roots)))
+        (array.array-ref roots var)
         (- 0 1))]
     [_ (- 0 1)]))
 
@@ -9547,24 +9624,24 @@
   [invalid : (Array bool)]
   [dst : i64]
   [root : i64]) : bool
-  (if (or (< root 0) (< dst 0) (>= dst (array-length roots)))
+  (if (or (< root 0) (< dst 0) (>= dst (array.array-length roots)))
     false
     (let
-      [old : i64 (array-ref roots dst)]
+      [old : i64 (array.array-ref roots dst)]
       (if (= old root)
         false
         (if (< old 0)
           (begin
-            (array-set! roots dst root)
+            (array.array-set! roots dst root)
             true)
           (begin
-            (if (< old (array-length invalid))
-              (array-set! invalid old true)
+            (if (< old (array.array-length invalid))
+              (array.array-set! invalid old true)
               unit)
-            (if (< root (array-length invalid))
-              (array-set! invalid root true)
+            (if (< root (array.array-length invalid))
+              (array.array-set! invalid root true)
               unit)
-            (array-set! roots dst (- 0 2))
+            (array.array-set! roots dst (- 0 2))
             true))))))
 
 (define (compiler-reg-color-propagate-root-instr
@@ -9574,12 +9651,12 @@
   [invalid : (Array bool)]) : bool
   (match instr
     [(IrInstrAddrOf dst src)
-      (if (and (>= src 0) (< src (array-length range-of-var)))
+      (if (and (>= src 0) (< src (array.array-length range-of-var)))
         (compiler-reg-color-set-root!
           roots
           invalid
           dst
-          (array-ref range-of-var src))
+          (array.array-ref range-of-var src))
         false)]
     [(IrInstrGep dst base _ _)
       (compiler-reg-color-set-root!
@@ -9626,7 +9703,7 @@
       (while (< i len)
         (begin
           (if (compiler-reg-color-propagate-root-instr
-            (array-ref slots i)
+            (array.array-ref slots i)
             range-of-var
             roots
             invalid)
@@ -9686,7 +9763,7 @@
   (let
     [changed : bool true]
     [rounds : i64 0]
-    [limit : i64 (array-length roots)]
+    [limit : i64 (array.array-length roots)]
     (while (and changed (< rounds limit))
       (begin
         (set!
@@ -9701,8 +9778,8 @@
 (define (compiler-reg-color-invalidate-root!
   [invalid : (Array bool)]
   [root : i64]) : unit
-  (if (and (>= root 0) (< root (array-length invalid)))
-    (array-set! invalid root true)
+  (if (and (>= root 0) (< root (array.array-length invalid)))
+    (array.array-set! invalid root true)
     unit))
 
 (define (compiler-reg-color-invalidate-value!
@@ -9747,13 +9824,13 @@
     [(IrCallArgsArray items)
       (let
         [i : i64 0]
-        [len : i64 (array-length items)]
+        [len : i64 (array.array-length items)]
         (while (< i len)
           (begin
             (compiler-reg-color-invalidate-value!
               roots
               invalid
-              (array-ref items i))
+              (array.array-ref items i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-reg-color-invalidate-phi!
@@ -9787,8 +9864,8 @@
         (if (and
           (>= root 0)
           (or
-            (>= dst (array-length roots))
-            (not (= (array-ref roots dst) root))))
+            (>= dst (array.array-length roots))
+            (not (= (array.array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! invalid root)
           unit))]
     [(IrInstrGep dst base _ _)
@@ -9797,8 +9874,8 @@
         (if (and
           (>= root 0)
           (or
-            (>= dst (array-length roots))
-            (not (= (array-ref roots dst) root))))
+            (>= dst (array.array-length roots))
+            (not (= (array.array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! invalid root)
           unit))]
     [(IrInstrStorePtr dst src _)
@@ -9848,8 +9925,8 @@
             [left : i64 (compiler-reg-color-value-root roots true-value)]
             [right : i64 (compiler-reg-color-value-root roots false-value)]
             [dst-root : i64
-              (if (and (>= dst 0) (< dst (array-length roots)))
-                (array-ref roots dst)
+              (if (and (>= dst 0) (< dst (array.array-length roots)))
+                (array.array-ref roots dst)
                 (- 0 1))]
             (begin
               (compiler-reg-color-invalidate-value! roots invalid mask)
@@ -9934,8 +10011,8 @@
       (compiler-reg-color-invalidate-phi!
         roots
         invalid
-        (if (and (>= dst 0) (< dst (array-length roots)))
-          (array-ref roots dst)
+        (if (and (>= dst 0) (< dst (array.array-length roots)))
+          (array.array-ref roots dst)
           (- 0 1))
         inputs)]
     [_ unit]))
@@ -9950,7 +10027,10 @@
     [i : i64 0]
     (while (< i len)
       (begin
-        (compiler-reg-color-invalidate-instr! (array-ref slots i) roots invalid)
+        (compiler-reg-color-invalidate-instr!
+          (array.array-ref slots i)
+          roots
+          invalid)
         (set! i (+ i 1))))))
 
 (define (compiler-reg-color-invalidate-blocks!
@@ -9984,21 +10064,21 @@
   (let
     [i : i64 0]
     [_max-start : i64 9223372036854775807]
-    (while (< i (array-length roots))
+    (while (< i (array.array-length roots))
       (let
-        [root : i64 (array-ref roots i)]
+        [root : i64 (array.array-ref roots i)]
         (begin
-          (if (and (>= root 0) (< root (array-length range-starts)))
+          (if (and (>= root 0) (< root (array.array-length range-starts)))
             (let
-              [start : i64 (array-ref starts i)]
-              [end : i64 (array-ref ends i)]
+              [start : i64 (array.array-ref starts i)]
+              [end : i64 (array.array-ref ends i)]
               (if (>= start 0)
                 (begin
-                  (if (< start (array-ref range-starts root))
-                    (array-set! range-starts root start)
+                  (if (< start (array.array-ref range-starts root))
+                    (array.array-set! range-starts root start)
                     unit)
-                  (if (> end (array-ref range-ends root))
-                    (array-set! range-ends root end)
+                  (if (> end (array.array-ref range-ends root))
+                    (array.array-set! range-ends root end)
                     unit))
                 unit))
             unit)
@@ -10013,12 +10093,12 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (if (> (+ slot size) (array-length slot-ends))
+      (if (> (+ slot size) (array.array-length slot-ends))
         (set! ok false)
         unit)
       (while (and ok (< i size))
         (begin
-          (if (< (array-ref slot-ends (+ slot i)) start)
+          (if (< (array.array-ref slot-ends (+ slot i)) start)
             unit
             (set! ok false))
           (set! i (+ i 1))))
@@ -10048,8 +10128,8 @@
     [i : i64 0]
     (while (< i size)
       (begin
-        (if (< (+ slot i) (array-length slot-ends))
-          (array-set! slot-ends (+ slot i) end)
+        (if (< (+ slot i) (array.array-length slot-ends))
+          (array.array-set! slot-ends (+ slot i) end)
           unit)
         (set! i (+ i 1))))))
 
@@ -10063,8 +10143,8 @@
     [i : i64 0]
     (while (< i size)
       (begin
-        (if (and (>= (+ first i) 0) (< (+ first i) (array-length remap)))
-          (array-set! remap (+ first i) (+ slot i))
+        (if (and (>= (+ first i) 0) (< (+ first i) (array.array-length remap)))
+          (array.array-set! remap (+ first i) (+ slot i))
           unit)
         (set! i (+ i 1))))))
 
@@ -10081,8 +10161,8 @@
         (begin
           (if (and
             (>= (+ first i) 0)
-            (< (+ first i) (array-length remap))
-            (< (array-ref remap (+ first i)) 0))
+            (< (+ first i) (array.array-length remap))
+            (< (array.array-ref remap (+ first i)) 0))
             unit
             (set! ok false))
           (set! i (+ i 1))))
@@ -10105,13 +10185,13 @@
     (begin
       (while (< range range-count)
         (let
-          [start : i64 (array-ref range-starts range)]
-          [end : i64 (array-ref range-ends range)]
-          [size : i64 (array-ref range-size range)]
-          [base : i64 (array-ref range-base range)]
+          [start : i64 (array.array-ref range-starts range)]
+          [end : i64 (array.array-ref range-ends range)]
+          [size : i64 (array.array-ref range-size range)]
+          [base : i64 (array.array-ref range-base range)]
           (begin
             (if (and
-              (not (array-ref invalid range))
+              (not (array.array-ref invalid range))
               (< start max-start)
               (>= end start)
               (> size 0)
@@ -10142,30 +10222,30 @@
   [vars : i64]
   [from : i64]) : i64
   (let
-    [range-of-var : (Array i64) (make-array i64 vars)]
-    [range-base : (Array i64) (make-array i64 vars)]
-    [range-size : (Array i64) (make-array i64 vars)]
-    [range-starts : (Array i64) (make-array i64 vars)]
-    [range-ends : (Array i64) (make-array i64 vars)]
-    [invalid : (Array bool) (make-array bool vars)]
-    [roots : (Array i64) (make-array i64 vars)]
-    [starts : (Array i64) (make-array i64 vars)]
-    [ends : (Array i64) (make-array i64 vars)]
+    [range-of-var : (Array i64) (array.make-array i64 vars)]
+    [range-base : (Array i64) (array.make-array i64 vars)]
+    [range-size : (Array i64) (array.make-array i64 vars)]
+    [range-starts : (Array i64) (array.make-array i64 vars)]
+    [range-ends : (Array i64) (array.make-array i64 vars)]
+    [invalid : (Array bool) (array.make-array bool vars)]
+    [roots : (Array i64) (array.make-array i64 vars)]
+    [starts : (Array i64) (array.make-array i64 vars)]
+    [ends : (Array i64) (array.make-array i64 vars)]
     [max-start : i64 9223372036854775807]
     [_cleared : unit
       (let
         [i : i64 0]
         (while (< i vars)
           (begin
-            (array-set! range-of-var i (- 0 1))
-            (array-set! range-base i (- 0 1))
-            (array-set! range-size i 0)
-            (array-set! range-starts i max-start)
-            (array-set! range-ends i (- 0 1))
-            (array-set! invalid i false)
-            (array-set! roots i (- 0 1))
-            (array-set! starts i (- 0 1))
-            (array-set! ends i (- 0 1))
+            (array.array-set! range-of-var i (- 0 1))
+            (array.array-set! range-base i (- 0 1))
+            (array.array-set! range-size i 0)
+            (array.array-set! range-starts i max-start)
+            (array.array-set! range-ends i (- 0 1))
+            (array.array-set! invalid i false)
+            (array.array-set! roots i (- 0 1))
+            (array.array-set! starts i (- 0 1))
+            (array.array-set! ends i (- 0 1))
             (set! i (+ i 1)))))]
     [range-count : i64
       (compiler-reg-color-detect-storage-blocks
@@ -10229,8 +10309,8 @@
   [vars : i64]
   [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (let
-    [present : (Array i64) (make-array i64 vars)]
-    [items : (Array AstType) (make-array AstType vars)]
+    [present : (Array i64) (array.make-array i64 vars)]
+    [items : (Array AstType) (array.make-array AstType vars)]
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-color-scatter-types remap present items types)
@@ -10259,10 +10339,12 @@
               [_
                 (let
                   [new-id : i64 (compiler-reg-remap-id remap var)]
-                  (if (and (>= new-id 0) (< new-id (array-length present)))
+                  (if (and
+                    (>= new-id 0)
+                    (< new-id (array.array-length present)))
                     (begin
-                      (array-set! present new-id 1)
-                      (array-set! items new-id location))
+                      (array.array-set! present new-id 1)
+                      (array.array-set! items new-id location))
                     unit))])])
         (compiler-reg-color-scatter-assignments
           remap
@@ -10281,10 +10363,10 @@
       present
       items
       (- index 1)
-      (if (= (array-ref present index) 0)
+      (if (= (array.array-ref present index) 0)
         acc
         (compiler-reg-assignment-cons
-          (CompilerRegAssignment index (array-ref items index))
+          (CompilerRegAssignment index (array.array-ref items index))
           acc)))))
 
 (define (compiler-reg-color-rebuild-assignments
@@ -10292,8 +10374,9 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
   (let
-    [present : (Array i64) (make-array i64 vars)]
-    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation vars)]
+    [present : (Array i64) (array.make-array i64 vars)]
+    [items : (Array CompilerRegLocation)
+      (array.make-array CompilerRegLocation vars)]
     (begin
       (compiler-reg-fill-i64-array present 0)
       (compiler-reg-fill-location-array items (CompilerRegSpill 0))
@@ -10318,10 +10401,10 @@
       (match param
         [(IrParam _ _ var-id)
           (begin
-            (if (< var-id (array-length remap))
+            (if (< var-id (array.array-length remap))
               (begin
-                (array-set! remap var-id var-id)
-                (array-set! slot-ends var-id 9223372036854775807))
+                (array.array-set! remap var-id var-id)
+                (array.array-set! slot-ends var-id 9223372036854775807))
               unit)
             (compiler-reg-color-param-pins
               (box-get rest)
@@ -10347,27 +10430,27 @@
       [(CompilerRegIntervalCons _ _)
         (let
           [slots : i64 (+ vars 4)]
-          [slot-ends : (Array i64) (make-array i64 slots)]
+          [slot-ends : (Array i64) (array.make-array i64 slots)]
           [assignments : CompilerRegAssignmentList
             (compiler-reg-plan-assignments plan)]
           [assignment-index : CompilerRegAssignmentIndex
             (compiler-reg-assignment-index-build assignments vars)]
           [ineligible : CompilerLiveI64Set (compiler-reg-plan-ineligible plan)]
-          [colorable : (Array bool) (make-array bool vars)]
-          [remap : (Array i64) (make-array i64 vars)]
+          [colorable : (Array bool) (array.make-array bool vars)]
+          [remap : (Array i64) (array.make-array i64 vars)]
           [_cleared : unit
             (let
               [i : i64 0]
               (begin
                 (while (< i slots)
                   (begin
-                    (array-set! slot-ends i (- 0 1))
+                    (array.array-set! slot-ends i (- 0 1))
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
-                    (array-set! colorable i false)
-                    (array-set! remap i (- 0 1))
+                    (array.array-set! colorable i false)
+                    (array.array-set! remap i (- 0 1))
                     (set! i (+ i 1))))))]
           [_flagged : unit
             (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
@@ -10380,7 +10463,7 @@
           [stack-prefix : i64
             (compiler-reg-color-walk
               sorted
-              (array-length sorted)
+              (array.array-length sorted)
               0
               assignment-index
               group-vars
@@ -10410,7 +10493,7 @@
               (begin
                 (while (< i vars)
                   (begin
-                    (if (>= (array-ref remap i) 0)
+                    (if (>= (array.array-ref remap i) 0)
                       unit
                       (match (compiler-reg-assignment-index-lookup
                         assignment-index
@@ -10424,7 +10507,7 @@
                                     slot-ends
                                     next)]
                                 (begin
-                                  (array-set! remap i slot)
+                                  (array.array-set! remap i slot)
                                   (set! next (+ slot 1))))]
                             [_ unit])]
                         [(CompilerRegNoLocation)
@@ -10432,7 +10515,7 @@
                             [slot : i64
                               (compiler-reg-color-next-free-slot slot-ends next)]
                             (begin
-                              (array-set! remap i slot)
+                              (array.array-set! remap i slot)
                               (set! next (+ slot 1))))]))
                     (set! i (+ i 1))))
                 next))]
@@ -10445,33 +10528,33 @@
             ;; arrays and side tables. A register-homed variable never touches
             ;; its formula slot, so a free id below the watermark is safe.
             (let
-              [taken : (Array bool) (make-array bool vars)]
+              [taken : (Array bool) (array.make-array bool vars)]
               [i : i64 0]
               [free : i64 0]
               (begin
                 (while (< i vars)
                   (begin
-                    (array-set! taken i false)
+                    (array.array-set! taken i false)
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
                     (if (and
-                      (>= (array-ref remap i) 0)
-                      (< (array-ref remap i) vars))
-                      (array-set! taken (array-ref remap i) true)
+                      (>= (array.array-ref remap i) 0)
+                      (< (array.array-ref remap i) vars))
+                      (array.array-set! taken (array.array-ref remap i) true)
                       unit)
                     (set! i (+ i 1))))
                 (set! i 0)
                 (while (< i vars)
                   (begin
-                    (if (< (array-ref remap i) 0)
+                    (if (< (array.array-ref remap i) 0)
                       (begin
                         (while (if (< free vars)
-                          (array-ref taken free)
+                          (array.array-ref taken free)
                           false)
                           (set! free (+ free 1)))
-                        (array-set! remap i free)
+                        (array.array-set! remap i free)
                         (set! free (+ free 1)))
                       unit)
                     (set! i (+ i 1))))))]
@@ -10486,8 +10569,8 @@
 ;; params and register-homed variables keep or receive non-slot ids, so the
 ;; rebuilt assignment table and formula slots stay valid.
 (define (compiler-reg-remap-id [remap : (Array i64)] [id : i64]) : i64
-  (if (and (>= id 0) (< id (array-length remap)))
-    (array-ref remap id)
+  (if (and (>= id 0) (< id (array.array-length remap)))
+    (array.array-ref remap id)
     id))
 
 (define (compiler-reg-remap-value
@@ -10519,16 +10602,16 @@
         (compiler-reg-remap-value remap b))]
     [(IrCallArgsArray items)
       (let
-        [count : i64 (array-length items)]
-        [out : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+        [count : i64 (array.array-length items)]
+        [out : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
         [i : i64 0]
         (begin
           (while (< i count)
             (begin
-              (array-set!
+              (array.array-set!
                 out
                 i
-                (compiler-reg-remap-value remap (array-ref items i)))
+                (compiler-reg-remap-value remap (array.array-ref items i)))
               (set! i (+ i 1))))
           (IrCallArgsArray out)))]))
 
@@ -10928,15 +11011,15 @@
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length remap))
+  (if (>= index (array.array-length remap))
     unit
     (begin
-      (array-set! remap index index)
+      (array.array-set! remap index index)
       (compiler-reg-caller-save-remap-fill! remap (+ index 1)))))
 
 (define (compiler-reg-caller-save-remap [vars : i64]) : (Array i64)
   (let
-    [remap : (Array i64) (make-array i64 vars)]
+    [remap : (Array i64) (array.make-array i64 vars)]
     (begin
       (compiler-reg-caller-save-remap-fill! remap 0)
       remap)))
@@ -10994,11 +11077,11 @@
             (< start point)
             (< point end)
             (>= var 0)
-            (< var (array-length current))
-            (>= (array-ref current var) 0))
+            (< var (array.array-length current))
+            (>= (array.array-ref current var) 0))
             (CompilerRegSomeCallSaveActive
               var
-              (array-ref current var)
+              (array.array-ref current var)
               (compiler-reg-caller-save-var-type type-info var))
             (compiler-reg-caller-save-active-at
               (box-get rest)
@@ -11061,8 +11144,8 @@
                 [next-extra-types : CompilerRegVarTypeList
                   (compiler-reg-var-type-insert extra-types after-var ty)]
                 (begin
-                  (array-set! current var after-var)
-                  (array-set! remap var after-var)
+                  (array.array-set! current var after-var)
+                  (array.array-set! remap var after-var)
                   (compiler-reg-caller-save-rewrite-instrs-rev
                     (box-get rest)
                     (+ point 2)
@@ -11099,8 +11182,8 @@
                   [ty : AstType
                     (compiler-reg-caller-save-var-type type-info split-def)]
                   (begin
-                    (array-set! current split-def out-next-var)
-                    (array-set! remap split-def out-next-var)
+                    (array.array-set! current split-def out-next-var)
+                    (array.array-set! remap split-def out-next-var)
                     (set!
                       out-extra-assignments
                       (compiler-reg-caller-save-segment-assignment
@@ -11270,7 +11353,7 @@
         CompilerRegAssignmentNil
         CompilerRegVarTypeNil)
       (let
-        [current : (Array i64) (make-array i64 vars)]
+        [current : (Array i64) (array.make-array i64 vars)]
         [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
         [reset-each-block : bool (> (compiler-ir-block-list-count blocks) 1)]
         [_current-init : unit (compiler-reg-fill-i64-array current (- 0 1))]
@@ -11323,38 +11406,38 @@
           (if (and
             (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (< dst (array.array-length candidates)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-mov))
-              (array-set! values dst value)
-              (array-set! op-types dst ty)
-              (array-set! types dst ty))
+              (array.array-set! candidates dst 1)
+              (array.array-set! kinds dst (compiler-reg-remat-kind-mov))
+              (array.array-set! values dst value)
+              (array.array-set! op-types dst ty)
+              (array.array-set! types dst ty))
             unit)]
         [(IrInstrGep dst base offset ty)
           (if (and
             (compiler-reg-remat-gep? base offset)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (< dst (array.array-length candidates)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-gep))
-              (array-set! values dst base)
-              (array-set! offsets dst offset)
-              (array-set! op-types dst ty)
-              (array-set! types dst (compiler-reg-addr-of-result-type)))
+              (array.array-set! candidates dst 1)
+              (array.array-set! kinds dst (compiler-reg-remat-kind-gep))
+              (array.array-set! values dst base)
+              (array.array-set! offsets dst offset)
+              (array.array-set! op-types dst ty)
+              (array.array-set! types dst (compiler-reg-addr-of-result-type)))
             unit)]
         [(IrInstrLoad dst src ty)
           (if (and
             (compiler-reg-remat-load? src allow-invariant-loads)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (< dst (array.array-length candidates)))
             (begin
-              (array-set! candidates dst 1)
-              (array-set! kinds dst (compiler-reg-remat-kind-load))
-              (array-set! values dst src)
-              (array-set! op-types dst ty)
-              (array-set! types dst ty))
+              (array.array-set! candidates dst 1)
+              (array.array-set! kinds dst (compiler-reg-remat-kind-load))
+              (array.array-set! values dst src)
+              (array.array-set! op-types dst ty)
+              (array.array-set! types dst ty))
             unit)]
         [_ unit]))))
 
@@ -11370,7 +11453,7 @@
       (begin
         (compiler-reg-remat-table-record-def!
           table
-          (array-ref slots index)
+          (array.array-ref slots index)
           allow-invariant-loads)
         (set! index (+ index 1))))))
 
@@ -11402,13 +11485,15 @@
   (match func
     [(IrFunction _ _ _ vars blocks)
       (let
-        [def-counts : (Array i64) (make-array i64 vars)]
-        [candidates : (Array i64) (make-array i64 vars)]
-        [kinds : (Array i64) (make-array i64 vars)]
-        [values : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
-        [offsets : (Array CompilerIrValue) (make-array CompilerIrValue vars)]
-        [op-types : (Array AstType) (make-array AstType vars)]
-        [types : (Array AstType) (make-array AstType vars)]
+        [def-counts : (Array i64) (array.make-array i64 vars)]
+        [candidates : (Array i64) (array.make-array i64 vars)]
+        [kinds : (Array i64) (array.make-array i64 vars)]
+        [values : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue vars)]
+        [offsets : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue vars)]
+        [op-types : (Array AstType) (array.make-array AstType vars)]
+        [types : (Array AstType) (array.make-array AstType vars)]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
         [table : CompilerRegRematTable
@@ -11451,9 +11536,9 @@
     [candidates : (Array i64) (struct-get table candidates)]
     (and
       (>= var 0)
-      (< var (array-length def-counts))
-      (= (array-ref def-counts var) 1)
-      (= (array-ref candidates var) 1)
+      (< var (array.array-length def-counts))
+      (= (array.array-ref def-counts var) 1)
+      (= (array.array-ref candidates var) 1)
       (compiler-reg-remat-var-spilled? assignments var)
       (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
 
@@ -11529,10 +11614,10 @@
   [var : i64]) : CompilerRegMaybeString
   (let
     [types : (Array AstType) (struct-get table types)]
-    (if (or (< var 0) (>= var (array-length types)))
+    (if (or (< var 0) (>= var (array.array-length types)))
       CompilerRegNoString
       (compiler-reg-remat-first-free-register-at
-        (compiler-reg-remat-registers-for-type (array-ref types var))
+        (compiler-reg-remat-registers-for-type (array.array-ref types var))
         assignments
         intervals
         point
@@ -11548,13 +11633,17 @@
     [offsets : (Array CompilerIrValue) (struct-get table offsets)]
     [op-types : (Array AstType) (struct-get table op-types)]
     [types : (Array AstType) (struct-get table types)]
-    [ty : AstType (array-ref types var)]
-    [value : CompilerIrValue (array-ref values var)]
+    [ty : AstType (array.array-ref types var)]
+    [value : CompilerIrValue (array.array-ref values var)]
     (cond
-      [(= (array-ref kinds var) (compiler-reg-remat-kind-load))
+      [(= (array.array-ref kinds var) (compiler-reg-remat-kind-load))
         (IrInstrLoad temp value ty)]
-      [(= (array-ref kinds var) (compiler-reg-remat-kind-gep))
-        (IrInstrGep temp value (array-ref offsets var) (array-ref op-types var))]
+      [(= (array.array-ref kinds var) (compiler-reg-remat-kind-gep))
+        (IrInstrGep
+          temp
+          value
+          (array.array-ref offsets var)
+          (array.array-ref op-types var))]
       [else (IrInstrMov temp value ty)])))
 
 (define (compiler-reg-remat-use-site-ok? [instr : CompilerIrInstr]) : bool
@@ -11600,7 +11689,7 @@
                 (let
                   [var : i64 (+ base bit)]
                   (if (< var vars)
-                    (array-set! remap var var)
+                    (array.array-set! remap var var)
                     unit))
                 unit)
               (set! bits (shr bits 1))
@@ -11668,9 +11757,9 @@
                           [(CompilerRegSomeString reg)
                             (let
                               [temp : i64 out-next-var]
-                              [ty : AstType (array-ref types var)]
+                              [ty : AstType (array.array-ref types var)]
                               (begin
-                                (array-set! remap var temp)
+                                (array.array-set! remap var temp)
                                 (set!
                                   prefix
                                   (compiler-ir-instr-cons
@@ -11922,7 +12011,7 @@
               type-info
               group-vars
               vars
-              (make-array i64 0))]
+              (array.make-array i64 0))]
           [parents : (Array i64) (struct-get coalesce parents)]
           [merged-roots : CompilerLiveI64Set
             (compiler-reg-coalesce-merged-root-set coalesce)]
@@ -13368,7 +13457,7 @@
     (let
       [func : CompilerIrFunction (compiler-reg-remat-weight-function)]
       [empty-coalesce : CompilerRegCoalesceMap
-        (CompilerRegCoalesceMap (make-array i64 0))]
+        (CompilerRegCoalesceMap (array.make-array i64 0))]
       [raw : (Array i64) (compiler-reg-function-spill-weights func)]
       [discounted : (Array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
@@ -13379,24 +13468,24 @@
         (compiler-reg-function-spill-weights-remat
           (compiler-reg-remat-multi-def-function)
           empty-coalesce)]
-      [parents : (Array i64) (make-array i64 2)]
+      [parents : (Array i64) (array.make-array i64 2)]
       (begin
-        (array-set! parents 0 0)
-        (array-set! parents 1 0)
+        (array.array-set! parents 0 0)
+        (array.array-set! parents 1 0)
         (let
           [coalesced : (Array i64)
             (compiler-reg-function-spill-weights-remat
               func
               (CompilerRegCoalesceMap parents))]
           (and
-            (= (array-ref raw 0) 3)
-            (= (array-ref raw 1) 2)
-            (= (array-ref discounted 0) 1)
-            (= (array-ref discounted 1) 2)
-            (= (array-ref coalesced 0) 3)
-            (= (array-ref coalesced 1) 2)
-            (= (array-ref multi-raw 0) 2)
-            (= (array-ref multi-discounted 0) 2)))))))
+            (= (array.array-ref raw 0) 3)
+            (= (array.array-ref raw 1) 2)
+            (= (array.array-ref discounted 0) 1)
+            (= (array.array-ref discounted 1) 2)
+            (= (array.array-ref coalesced 0) 3)
+            (= (array.array-ref coalesced 1) 2)
+            (= (array.array-ref multi-raw 0) 2)
+            (= (array.array-ref multi-discounted 0) 2)))))))
 
 (cfg
   test
@@ -13500,15 +13589,15 @@
       [func : CompilerIrFunction
         (compiler-reg-remat-spill-weight-eviction-function)]
       [empty-coalesce : CompilerRegCoalesceMap
-        (CompilerRegCoalesceMap (make-array i64 0))]
+        (CompilerRegCoalesceMap (array.make-array i64 0))]
       [raw : (Array i64) (compiler-reg-function-spill-weights func)]
       [discounted : (Array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
       (match (compiler-reg-plan-function-scalar func)
         [(CompilerRegPlan assignments _ _ _ _)
           (and
-            (> (array-ref raw 0) (array-ref raw 1))
-            (< (array-ref discounted 0) (array-ref discounted 1))
+            (> (array.array-ref raw 0) (array.array-ref raw 1))
+            (< (array.array-ref discounted 0) (array.array-ref discounted 1))
             ;; The non-remat var1 is KEPT in a register: the remat discount ranks
             ;; the rematerialisable values (var0, var2-5) below it, so a remat
             ;; value -- never the costly-to-spill non-remat one -- is the victim.
@@ -13724,8 +13813,12 @@
       (match (compiler-reg-plan-function-scalar func)
         [(CompilerRegPlan assignments _ _ _ _)
           (and
-            (= (array-ref static-counts 0) (array-ref static-counts 1))
-            (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
+            (=
+              (array.array-ref static-counts 0)
+              (array.array-ref static-counts 1))
+            (>
+              (array.array-ref weighted-counts 0)
+              (array.array-ref weighted-counts 1))
             (compiler-reg-location-any-register?
               (compiler-reg-assignment-lookup assignments 0))
             (compiler-reg-location-spill-offset?
@@ -15420,24 +15513,24 @@
 
 (define (compiler-reg-segmented-interference-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 5)]
-    [ends : (Array i64) (make-array i64 5)]
+    [starts : (Array i64) (array.make-array i64 5)]
+    [ends : (Array i64) (array.make-array i64 5)]
     [segments : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList 5)]
+      (array.make-array CompilerRegIntervalList 5)]
     [segment-index : CompilerRegIntervalIndex
       (CompilerRegIntervalIndex starts ends segments)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 8)
-      (array-set! starts 1 0)
-      (array-set! ends 1 8)
-      (array-set! starts 3 3)
-      (array-set! ends 3 5)
-      (array-set! starts 4 7)
-      (array-set! ends 4 9)
-      (array-set!
+      (array.array-set! starts 0 0)
+      (array.array-set! ends 0 8)
+      (array.array-set! starts 1 0)
+      (array.array-set! ends 1 8)
+      (array.array-set! starts 3 3)
+      (array.array-set! ends 3 5)
+      (array.array-set! starts 4 7)
+      (array.array-set! ends 4 9)
+      (array.array-set!
         segments
         1
         (compiler-reg-interval-cons
@@ -15445,13 +15538,13 @@
           (compiler-reg-interval-cons
             (CompilerRegInterval 1 6 8)
             CompilerRegIntervalNil)))
-      (array-set!
+      (array.array-set!
         segments
         3
         (compiler-reg-interval-cons
           (CompilerRegInterval 3 3 5)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         4
         (compiler-reg-interval-cons
@@ -15465,10 +15558,10 @@
 
 (define (compiler-reg-hole-aware-register-reuse-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 5)]
-    [ends : (Array i64) (make-array i64 5)]
+    [starts : (Array i64) (array.make-array i64 5)]
+    [ends : (Array i64) (array.make-array i64 5)]
     [segments : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList 5)]
+      (array.make-array CompilerRegIntervalList 5)]
     [segment-index : CompilerRegIntervalIndex
       (CompilerRegIntervalIndex starts ends segments)]
     [one-reg : CompilerRegStringList
@@ -15482,55 +15575,55 @@
         (CompilerRegActive 1 10 "%r12")
         CompilerRegActiveNil)]
     [hole-aware : CompilerLiveI64Set (compiler-live-set3 0 2 3)]
-    [parents : (Array i64) (make-array i64 5)]
+    [parents : (Array i64) (array.make-array i64 5)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 10)
-      (array-set! starts 1 4)
-      (array-set! ends 1 6)
-      (array-set! starts 2 4)
-      (array-set! ends 2 6)
-      (array-set! starts 3 1)
-      (array-set! ends 3 3)
-      (array-set! starts 4 8)
-      (array-set! ends 4 9)
-      (array-set!
+      (array.array-set! starts 0 0)
+      (array.array-set! ends 0 10)
+      (array.array-set! starts 1 4)
+      (array.array-set! ends 1 6)
+      (array.array-set! starts 2 4)
+      (array.array-set! ends 2 6)
+      (array.array-set! starts 3 1)
+      (array.array-set! ends 3 3)
+      (array.array-set! starts 4 8)
+      (array.array-set! ends 4 9)
+      (array.array-set!
         segments
         0
         (compiler-reg-interval-cons
           (CompilerRegInterval 0 0 2)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         1
         (compiler-reg-interval-cons
           (CompilerRegInterval 1 4 6)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         2
         (compiler-reg-interval-cons
           (CompilerRegInterval 2 4 6)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         3
         (compiler-reg-interval-cons
           (CompilerRegInterval 3 1 3)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         4
         (compiler-reg-interval-cons
           (CompilerRegInterval 4 8 9)
           CompilerRegIntervalNil))
-      (array-set! parents 0 0)
-      (array-set! parents 1 0)
-      (array-set! parents 2 2)
-      (array-set! parents 3 2)
-      (array-set! parents 4 4)
+      (array.array-set! parents 0 0)
+      (array.array-set! parents 1 0)
+      (array.array-set! parents 2 2)
+      (array.array-set! parents 3 2)
+      (array.array-set! parents 4 4)
       (let
         ;; #3489 -> general hole-filling: the allocator runs on the merged-root
         ;; index, whose per-candidate segments are COMPLETE -- a singleton carries
@@ -15602,15 +15695,15 @@
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : CompilerRegVarTypes
   (let
-    [present : (Array i64) (make-array i64 vars)]
-    [types : (Array AstType) (make-array AstType vars)]
+    [present : (Array i64) (array.make-array i64 vars)]
+    [types : (Array AstType) (array.make-array AstType vars)]
     [index : i64 0]
     (begin
       (compiler-reg-fill-i64-array present 0)
       (while (< index vars)
         (begin
-          (array-set! present index 1)
-          (array-set! types index (compiler-reg-i64-ty))
+          (array.array-set! present index 1)
+          (array.array-set! types index (compiler-reg-i64-ty))
           (set! index (+ index 1))))
       (CompilerRegVarTypes
         (compiler-reg-var-type-arrays-to-list
@@ -15643,24 +15736,24 @@
 
 (define (compiler-reg-coalesce-test-segment-index) : CompilerRegIntervalIndex
   (let
-    [starts : (Array i64) (make-array i64 2)]
-    [ends : (Array i64) (make-array i64 2)]
+    [starts : (Array i64) (array.make-array i64 2)]
+    [ends : (Array i64) (array.make-array i64 2)]
     [segments : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList 2)]
+      (array.make-array CompilerRegIntervalList 2)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array-set! starts 0 0)
-      (array-set! ends 0 10)
-      (array-set! starts 1 0)
-      (array-set! ends 1 10)
-      (array-set!
+      (array.array-set! starts 0 0)
+      (array.array-set! ends 0 10)
+      (array.array-set! starts 1 0)
+      (array.array-set! ends 1 10)
+      (array.array-set!
         segments
         0
         (compiler-reg-interval-cons
           (CompilerRegInterval 0 0 2)
           CompilerRegIntervalNil))
-      (array-set!
+      (array.array-set!
         segments
         1
         (compiler-reg-interval-cons
@@ -15686,7 +15779,7 @@
         types
         (compiler-live-set-empty)
         3
-        (make-array i64 0))]
+        (array.make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 3)
@@ -15722,7 +15815,7 @@
         types
         (compiler-live-set-empty)
         2
-        (make-array i64 0))]
+        (array.make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
@@ -15746,7 +15839,7 @@
         types
         (compiler-live-set-empty)
         2
-        (make-array i64 0))]
+        (array.make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
@@ -15770,7 +15863,7 @@
         types
         (compiler-live-set-empty)
         2
-        (make-array i64 0))]
+        (array.make-array i64 0))]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-insert
         (compiler-reg-assignment-table-make 2)
@@ -15800,22 +15893,22 @@
 
 (define (compiler-reg-merged-root-overlap-segments-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 3)]
-    [ends : (Array i64) (make-array i64 3)]
+    [starts : (Array i64) (array.make-array i64 3)]
+    [ends : (Array i64) (array.make-array i64 3)]
     [segments : (Array CompilerRegIntervalList)
-      (make-array CompilerRegIntervalList 3)]
-    [parents : (Array i64) (make-array i64 3)]
+      (array.make-array CompilerRegIntervalList 3)]
+    [parents : (Array i64) (array.make-array i64 3)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
-      (array-set! segments 0 CompilerRegIntervalNil)
-      (array-set! segments 1 CompilerRegIntervalNil)
-      (array-set! segments 2 CompilerRegIntervalNil)
-      (array-set! starts 0 0)
-      (array-set! ends 0 6)
-      (array-set! starts 1 2)
-      (array-set! ends 1 8)
-      (array-set!
+      (array.array-set! segments 0 CompilerRegIntervalNil)
+      (array.array-set! segments 1 CompilerRegIntervalNil)
+      (array.array-set! segments 2 CompilerRegIntervalNil)
+      (array.array-set! starts 0 0)
+      (array.array-set! ends 0 6)
+      (array.array-set! starts 1 2)
+      (array.array-set! ends 1 8)
+      (array.array-set!
         segments
         0
         (compiler-reg-interval-cons
@@ -15823,26 +15916,26 @@
           (compiler-reg-interval-cons
             (CompilerRegInterval 0 5 6)
             CompilerRegIntervalNil)))
-      (array-set!
+      (array.array-set!
         segments
         1
         (compiler-reg-interval-cons
           (CompilerRegInterval 1 2 8)
           CompilerRegIntervalNil))
-      (array-set! parents 0 0)
-      (array-set! parents 1 0)
-      (array-set! parents 2 2)
+      (array.array-set! parents 0 0)
+      (array.array-set! parents 1 0)
+      (array.array-set! parents 2 2)
       (let
         [merged : CompilerRegIntervalIndex
           (compiler-reg-merged-root-index
             (CompilerRegCoalesceMap parents)
             (CompilerRegIntervalIndex starts ends segments))]
         (and
-          (= (array-ref (struct-get merged starts) 0) 0)
-          (= (array-ref (struct-get merged ends) 0) 8)
-          (< (array-ref (struct-get merged starts) 1) 0)
+          (= (array.array-ref (struct-get merged starts) 0) 0)
+          (= (array.array-ref (struct-get merged ends) 0) 8)
+          (< (array.array-ref (struct-get merged starts) 1) 0)
           (compiler-reg-single-segment-range?
-            (array-ref (struct-get merged segments) 0)
+            (array.array-ref (struct-get merged segments) 0)
             0
             0
             8))))))
@@ -16186,10 +16279,16 @@
         [(CompilerRegColoringRemap split-remap split-slots)
           (and
             (= share-slots 2)
-            (= (array-ref share-remap 0) (array-ref share-remap 1))
-            (not (= (array-ref share-remap 0) (array-ref share-remap 2)))
+            (= (array.array-ref share-remap 0) (array.array-ref share-remap 1))
+            (not
+              (=
+                (array.array-ref share-remap 0)
+                (array.array-ref share-remap 2)))
             (= split-slots 2)
-            (not (= (array-ref split-remap 0) (array-ref split-remap 1))))]
+            (not
+              (=
+                (array.array-ref split-remap 0)
+                (array.array-ref split-remap 1))))]
         [(CompilerRegColoringNone) false])]
     [(CompilerRegColoringNone) false]))
 
@@ -16208,9 +16307,9 @@
     [(CompilerRegColoringRemap remap slots)
       (and
         (= slots 2)
-        (= (array-ref remap 1) 1)
-        (= (array-ref remap 0) (array-ref remap 2))
-        (not (= (array-ref remap 0) 1)))]
+        (= (array.array-ref remap 1) 1)
+        (= (array.array-ref remap 0) (array.array-ref remap 2))
+        (not (= (array.array-ref remap 0) 1)))]
     [(CompilerRegColoringNone) false]))
 
 (define (compiler-reg-color-storage-ranges-ok?) : bool
@@ -16230,10 +16329,10 @@
         [(CompilerRegColoringRemap remap slots)
           (and
             (= slots 2)
-            (= (array-ref remap 0) 0)
-            (= (array-ref remap 1) 1)
-            (= (array-ref remap 3) 0)
-            (= (array-ref remap 4) 1))]
+            (= (array.array-ref remap 0) 0)
+            (= (array.array-ref remap 1) 1)
+            (= (array.array-ref remap 3) 0)
+            (= (array.array-ref remap 4) 1))]
         [(CompilerRegColoringNone) false])]))
 
 (define (compiler-reg-color-stack-group-ok?) : bool
@@ -16259,8 +16358,8 @@
       [(CompilerRegColoringRemap remap slots)
         (and
           (= slots 1)
-          (= (array-ref remap group-var) 0)
-          (<= (+ (array-ref remap group-var) 1) slots))]
+          (= (array.array-ref remap group-var) 0)
+          (<= (+ (array.array-ref remap group-var) 1) slots))]
       [(CompilerRegColoringNone) false])))
 
 (define (compiler-regalloc-core-self-test?) : bool

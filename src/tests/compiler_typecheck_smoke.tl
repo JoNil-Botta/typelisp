@@ -1952,6 +1952,120 @@
 (define (compiler-typecheck-smoke-qualified-array-ok?) : bool
   (compiler-typecheck-ok? (compiler-typecheck-smoke-qualified-array-source)))
 
+(define (compiler-typecheck-smoke-lazy-import-explicit-alias-source) : String
+  "(module helper.module)
+(define value : i64 41)
+(define (get) : i64 value)
+(defstruct Item (n i64))
+(defenum Choice (Empty) (Full i64))
+(extern (foreign [x : i64]) : i64)
+(module entry.module)
+(import helper.module as helper)
+(define (score [item : helper.Item]) : i64
+  (+
+    (helper.get)
+    (+
+      helper.value
+      (match (helper.Choice.Full (struct-get item n))
+        [(helper.Choice.Full n) n]
+        [(helper.Choice.Empty) 0]))))
+(define (main) : i64 (score (helper.Item 1)))")
+
+(define (compiler-typecheck-smoke-lazy-import-stdlib-summary-source) : String
+  "(module main)
+(import stdlib.vector as vec)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?) : bool
+  (let
+    [ok : bool
+      (match (parse-ast-source-diagnostic
+        ""
+        (compiler-typecheck-smoke-lazy-import-explicit-alias-source))
+        [(OkAstProgramDiagnostic program)
+          (match (typecheck-compiler-program-with-paths-checked
+            program
+            AstDeclPathNil)
+            [(OkCompilerTypecheckChecked _ ctx env)
+              (let
+                [entry-ctx : TcContext
+                  (tc-context-with-module ctx "entry.module")]
+                (and
+                  (= (tc-lazy-import-stub-count) 1)
+                  (not
+                    (tc-name-bound?
+                      env
+                      (compiler-symbol-module-key "helper" "value")))
+                  (tc-name-bound?
+                    env
+                    (compiler-symbol-module-key "helper.module" "value"))
+                  (match (tc-lookup-dotted-source-visible
+                    entry-ctx
+                    env
+                    "helper.value")
+                    [(OkTcType _) true]
+                    [(ErrTcType _) false])
+                  (match (tc-lookup-dotted-source-visible
+                    entry-ctx
+                    env
+                    "helper.get")
+                    [(OkTcType _) true]
+                    [(ErrTcType _) false])
+                  (match (tc-lookup-dotted-source-visible
+                    entry-ctx
+                    env
+                    "helper.Choice.Full")
+                    [(OkTcType _) true]
+                    [(ErrTcType _) false])
+                  (match (tc-dotted-type-name-lookup-key
+                    entry-ctx
+                    "helper.Item")
+                    [(OkTcString key)
+                      (string.string-eq key "helper.module/Item")]
+                    [(ErrTcString _) false])
+                  (match (tc-module-local-env entry-ctx env "entry.module")
+                    [(OkTcEnv local-env)
+                      (and
+                        (not
+                          (tc-name-bound?
+                            local-env
+                            (compiler-symbol-module-key "helper" "value")))
+                        (match (tc-lookup-dotted-source-visible
+                          entry-ctx
+                          local-env
+                          "helper.value")
+                          [(OkTcType _) true]
+                          [(ErrTcType _) false]))]
+                    [(ErrTcEnv _) false])))]
+            [(ErrCompilerTypecheckChecked _) false])]
+        [(ErrAstProgramDiagnostic _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      ok)))
+
+(define (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?) : bool
+  (let
+    [ok : bool
+      (match (typecheck-compiler-source-load
+        (compiler-typecheck-smoke-lazy-import-stdlib-summary-source))
+        [(OkCompilerLoadWithPaths decls paths _ _)
+          (match (typecheck-compiler-program-with-paths-checked
+            (ast-program decls)
+            paths)
+            [(OkCompilerTypecheckChecked _ _ env)
+              (and
+                (> (tc-lazy-import-summary-backed-stub-count) 0)
+                (not
+                  (tc-name-bound?
+                    env
+                    (compiler-symbol-module-key "vec" "I64Vec"))))]
+            [(ErrCompilerTypecheckChecked _) false])]
+        [(ErrCompilerLoadWithPaths _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -1985,6 +2099,12 @@
     (unless
       (compiler-typecheck-smoke-qualified-array-ok?)
       (io.panic "typecheck: qualified array smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?)
+      (io.panic "typecheck: lazy import alias fanout smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
+      (io.panic "typecheck: lazy import summary smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (io.panic "typecheck: prefix cache root smoke failed"))

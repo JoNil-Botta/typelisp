@@ -2082,8 +2082,11 @@
 ;; 9-16B register-group from a C function reserves a caller sret buffer (passed
 ;; as a scalar-pointer hidden first arg) and materializes the result back into
 ;; the 2-word register group (see lower-c-abi-finish-call-result). Assert the
-;; sret codegen IS emitted -- both the direct call and the indirect (`call
-;; *%rax`) call site -- and that nothing is rejected as unsupported.
+(define (compiler-backend-register-indirect-call? [asm : String]) : bool
+  (compiler-backend-string-contains? asm "    call *%"))
+
+;; sret codegen IS emitted -- both the direct call and the indirect register
+;; call site -- and that nothing is rejected as unsupported.
 (define (compiler-backend-c-abi-sret-aggregate-windows-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-sret-aggregate-source)
@@ -2096,7 +2099,7 @@
             asm
             ".extern tl_cabi_wide_make_ptr\n")
           (compiler-backend-string-contains? asm "    call tl_cabi_wide_make\n")
-          (compiler-backend-string-contains? asm "    call *%rax\n"))
+          (compiler-backend-register-indirect-call? asm))
         (not
           (compiler-backend-string-contains?
             asm
@@ -2138,7 +2141,7 @@
         (compiler-backend-string-contains?
           asm
           "    call tl_cabi_wide_arg_score\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-register-indirect-call? asm)
         ;; #2357: with inline-by-value aggregates (#1867) a WideArg construction
         ;; no longer heap-allocates -- the value is built in inline storage. So
         ;; the two by-value call sites need exactly the two 16-byte byref buffers
@@ -2232,7 +2235,7 @@
           (compiler-backend-string-contains?
             asm
             "    call tl_win64_return_choice_make\n")
-          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-register-indirect-call? asm)
           (compiler-backend-string-contains-alloc-size? asm 16)
           (compiler-backend-string-contains-alloc-size? asm 24)
           (not
@@ -2355,7 +2358,7 @@
         (compiler-backend-string-contains?
           asm
           "    call tl_cabi_wide_mem_score\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-register-indirect-call? asm)
         (compiler-backend-string-contains?
           asm
           "    call tl_cabi_wide_mem_make\n")
@@ -2423,7 +2426,7 @@
         (compiler-backend-string-contains?
           asm
           "    call tl_cabi_pair_i64_make\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-register-indirect-call? asm)
         (backend-and8
           (compiler-backend-string-contains? asm "    movq %rdx, 8(%r11)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm0, 8(%r11)\n")
@@ -2482,7 +2485,7 @@
         (compiler-backend-string-contains? asm ".extern tl_test_raw_value\n")
         (compiler-backend-string-contains? asm ".extern tl_test_raw_fn\n")
         (compiler-backend-string-contains? asm ".extern tl_test_direct_fn\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-register-indirect-call? asm)
         (compiler-backend-string-contains? asm "    call tl_test_direct_fn\n")
         (compiler-backend-string-contains? asm "tl_test_raw_fn(%rip)")
         (not
@@ -2500,19 +2503,39 @@
   [target : CompilerBackendTarget]
   [func : CompilerIrValue]
   [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
-  (compiler-backend-emit-indirect-c-call
-    target
-    2
-    func
-    (IrCallArgsNil)
-    (AstTyI64)
-    assignments
-    CompilerRegVarTypeNil
-    IrFunctionNil
-    IrExternNil
-    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
-    3
-    (compiler-diagnostic-at-start "" "")))
+  (let
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrCallIndirectC 2 func (IrCallArgsNil) (AstTyI64))
+        IrInstrNil)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "indirect_c_call_shape"
+          IrParamNil
+          (AstTyI64)
+          3
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 1)
+        (set! compiler-backend-emit-current-count 1))]
+    (compiler-backend-emit-indirect-c-call
+      target
+      2
+      func
+      (IrCallArgsNil)
+      (AstTyI64)
+      assignments
+      CompilerRegVarTypeNil
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      3
+      (compiler-diagnostic-at-start "" ""))))
 
 (define (compiler-backend-indirect-c-call-reg-assignments [home : String]) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
@@ -2542,8 +2565,10 @@
     (compiler-backend-indirect-c-call-reg-assignments "%rcx"))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %rcx, %rax\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (compiler-backend-string-contains? asm "    movq %rcx, %r13\n")
+        (compiler-backend-string-contains? asm "    call *%r13\n")
+        (not (compiler-backend-string-contains? asm "    movq %rcx, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%rax\n"))
         (not (compiler-backend-string-contains? asm "    call *%rcx\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -2559,8 +2584,74 @@
         CompilerRegAssignmentNil)))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n")
-        (compiler-backend-string-contains? asm "    call *%rax\n"))]
+        (compiler-backend-string-contains? asm "    movq 16(%rbp), %r13\n")
+        (compiler-backend-string-contains? asm "    call *%r13\n")
+        (not
+          (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-indirect-c-abi-store-result-call-shape-asm
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (let
+    [slots : CompilerIrCAbiReturnSlotList
+      (IrCAbiReturnSlotCons
+        (IrCAbiReturnSlot (AstTyI64) 0)
+        (box (IrCAbiReturnSlotNil)))]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+            CompilerRegAssignmentNil)))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (ir-instr-call-indirect-cabi-store-result
+          (IrValueVar 0)
+          (IrValueVar 1)
+          (IrCallArgsNil)
+          slots)
+        IrInstrNil)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "indirect_c_abi_store_result_shape"
+          IrParamNil
+          (AstTyUnit)
+          3
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 1)
+        (set! compiler-backend-emit-current-count 1))]
+    (compiler-backend-emit-indirect-c-abi-store-result-call
+      target
+      (IrValueVar 0)
+      (IrValueVar 1)
+      (IrCallArgsNil)
+      slots
+      assignments
+      CompilerRegVarTypeNil
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      3
+      (compiler-diagnostic-at-start "" ""))))
+
+(define (compiler-backend-indirect-c-abi-store-result-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-indirect-c-abi-store-result-call-shape-asm target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %rcx, %r13\n")
+        (compiler-backend-string-contains? asm "    call *%r13\n")
+        (not (compiler-backend-string-contains? asm "    movq %rcx, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-indirect-c-call-home-shape-ok?) : bool
@@ -2576,6 +2667,10 @@
     (compiler-backend-indirect-c-call-stack-home-target-ok?
       (BackendTargetLinux))
     (compiler-backend-indirect-c-call-stack-home-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-indirect-c-abi-store-result-call-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-indirect-c-abi-store-result-call-target-ok?
       (BackendTargetWindows))))
 
 (define (compiler-backend-program-argv-entry-capture-source) : String

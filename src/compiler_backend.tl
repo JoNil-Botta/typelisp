@@ -21976,6 +21976,14 @@
       home
       "")))
 
+(define (compiler-backend-scavenge-call-target-reg) : String
+  ;; Indirect call targets are materialized after argument marshalling. Do not
+  ;; reuse pooled caller-arg candidates that may already hold in-flight args.
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-scavenge-exclude-with-r8 "%r9")
+    7
+    "%r11"))
+
 (define (compiler-backend-emit-indirect-c-call
   [target : CompilerBackendTarget]
   [dst : i64]
@@ -22041,33 +22049,37 @@
       vars)
       [(OkCompilerBackend args-asm)
         (if (string-eq direct-home "")
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            func
-            "%rax")
-            [(OkCompilerBackend func-asm)
-              (OkCompilerBackend
-                (string-append
-                  (compiler-backend-emit-call-space-sub call-space)
+          (let
+            [call-reg : String (compiler-backend-scavenge-call-target-reg)]
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              func
+              call-reg)
+              [(OkCompilerBackend func-asm)
+                (OkCompilerBackend
                   (string-append
-                    args-asm
+                    (compiler-backend-emit-call-space-sub call-space)
                     (string-append
-                      func-asm
-                      (str-cat
-                        "    call *%rax\n"
-                        (compiler-backend-emit-call-space-add call-space)
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          (if (compiler-backend-float-type? ty)
-                            "%xmm0"
-                            "%rax")
-                          ty)
-                        ""
-                        "")))))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))])
+                      args-asm
+                      (string-append
+                        func-asm
+                        (str-cat
+                          "    call *"
+                          call-reg
+                          "\n"
+                          (compiler-backend-emit-call-space-add call-space)
+                          (compiler-backend-emit-store-typed-var-with-plan
+                            assignments
+                            dst
+                            (if (compiler-backend-float-type? ty)
+                              "%xmm0"
+                              "%rax")
+                            ty)
+                          ""
+                          ""))))))]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackend
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))]))
           (OkCompilerBackend
             (string-append
               (compiler-backend-emit-call-space-sub call-space)
@@ -22240,31 +22252,38 @@
           base
           call-space)
           [(OkCompilerBackend base-save)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              func
-              "%rax")
-              [(OkCompilerBackend func-asm)
-                (OkCompilerBackend
-                  (string-append
-                    (compiler-backend-emit-call-space-sub total-space)
+            (let
+              [call-reg : String (compiler-backend-scavenge-call-target-reg)]
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                func
+                call-reg)
+                [(OkCompilerBackend func-asm)
+                  (OkCompilerBackend
                     (string-append
-                      args-asm
+                      (compiler-backend-emit-call-space-sub total-space)
                       (string-append
-                        base-save
+                        args-asm
                         (string-append
-                          func-asm
-                          (backend-cat5
-                            "    call *%rax\n"
-                            (compiler-backend-emit-c-abi-return-stores
-                              call-space
-                              slots)
-                            (compiler-backend-emit-call-space-add total-space)
-                            ""
-                            ""))))))]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                          base-save
+                          (string-append
+                            func-asm
+                            (str-cat
+                              "    call *"
+                              call-reg
+                              "\n"
+                              (string-append
+                                (compiler-backend-emit-c-abi-return-stores
+                                  call-space
+                                  slots)
+                                (compiler-backend-emit-call-space-add
+                                  total-space))
+                              ""
+                              ""
+                              ""))))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]

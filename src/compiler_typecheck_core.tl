@@ -415,7 +415,7 @@
 (define (tc-prefix-snapshot-cache-arena-handle) : i64
   (begin
     (if (= tc-prefix-snapshot-cache-arena 0)
-      (set! tc-prefix-snapshot-cache-arena (tl_arena_make))
+      (set! tc-prefix-snapshot-cache-arena (arena.tl_arena_make))
       unit)
     tc-prefix-snapshot-cache-arena))
 
@@ -423,12 +423,12 @@
   (if (= tc-prefix-snapshot-cache-arena 0)
     unit
     (begin
-      (if (= (tl_arena_current) tc-prefix-snapshot-cache-arena)
+      (if (= (arena.tl_arena_current) tc-prefix-snapshot-cache-arena)
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         unit)
       (unsafe
-        (tl_arena_destroy tc-prefix-snapshot-cache-arena))
+        (arena.tl_arena_destroy tc-prefix-snapshot-cache-arena))
       (set! tc-prefix-snapshot-cache-arena 0))))
 
 (define (tc-prefix-snapshot-cache-clear!) : unit
@@ -559,11 +559,11 @@
   [module : String]
   [summary : CompilerTypecheckSummary]) : bool
   (let
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     (begin
       (tc-prefix-snapshot-cache-ensure!)
       (unsafe
-        (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
+        (arena.tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
       (let
         [persistent-key : String (string.string-copy (& key))]
         [persistent-module : String (string.string-copy (& module))]
@@ -573,11 +573,11 @@
             count
             persistent-module
             summary)]
-        [cache-head : i64 (tl_arena_current)]
+        [cache-head : i64 (arena.tl_arena_current)]
         (begin
           (set! tc-prefix-snapshot-cache-arena cache-head)
           (unsafe
-            (tl_arena_set prev-arena))
+            (arena.tl_arena_set prev-arena))
           stored)))))
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
@@ -2311,7 +2311,7 @@
 (define (tc-marker-name-id-arena-handle) : i64
   (begin
     (if (= tc-marker-name-id-arena 0)
-      (set! tc-marker-name-id-arena (tl_arena_make))
+      (set! tc-marker-name-id-arena (arena.tl_arena_make))
       unit)
     tc-marker-name-id-arena))
 
@@ -2319,31 +2319,31 @@
   (if (= tc-marker-name-id-arena 0)
     unit
     (begin
-      (if (= (tl_arena_current) tc-marker-name-id-arena)
+      (if (= (arena.tl_arena_current) tc-marker-name-id-arena)
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         unit)
       (unsafe
-        (tl_arena_destroy tc-marker-name-id-arena))
+        (arena.tl_arena_destroy tc-marker-name-id-arena))
       (set! tc-marker-name-id-arena 0))))
 
 (define (tc-marker-name-id [name : String]) : i64
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [id : i64
       (begin
         (if prev-persist
           (intern-persistent-storage-disable!)
           unit)
         (unsafe
-          (tl_arena_set (tc-marker-name-id-arena-handle)))
+          (arena.tl_arena_set (tc-marker-name-id-arena-handle)))
         (let
           [stable-name : String (string.string-copy (& name))]
           [stable-id : i64 (tc-name-id stable-name)]
           (begin
             (unsafe
-              (tl_arena_set prev-arena))
+              (arena.tl_arena_set prev-arena))
             (if prev-persist
               (intern-persistent-storage-enable!)
               unit)
@@ -3488,7 +3488,7 @@
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
 ;; whose allocations land in scratch arenas; the cache's (box ...) cells and
 ;; the cached env internals allocated there dangle once the scratch arena is
-;; reclaimed, and a later tl_arena_make reuses the pages (observed: a fresh
+;; reclaimed, and a later arena.tl_arena_make reuses the pages (observed: a fresh
 ;; arena header written over a live cache node, then a garbage module String
 ;; crashing string.string-eq). Build cache entries inside this dedicated persistent
 ;; arena instead (same idiom as the node pools' base arena).
@@ -3498,7 +3498,7 @@
 (define (tc-hygiene-module-env-cache-arena-handle) : i64
   (begin
     (if (= tc-hygiene-module-env-cache-arena 0)
-      (set! tc-hygiene-module-env-cache-arena (tl_arena_make))
+      (set! tc-hygiene-module-env-cache-arena (arena.tl_arena_make))
       unit)
     tc-hygiene-module-env-cache-arena))
 
@@ -3598,7 +3598,7 @@
       unit
       (begin
         (unsafe
-          (tl_arena_destroy tc-hygiene-module-env-cache-arena))
+          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
         (set! tc-hygiene-module-env-cache-arena 0)))))
 
 (define (tc-unsafe-marker-name) : String
@@ -5369,10 +5369,10 @@
       ;; tc-hygiene-module-env-cache-arena) so the chain stored in the global
       ;; survives the scratch arenas active during per-decl typechecking.
       (let
-        [prev-arena : i64 (tl_arena_current)]
+        [prev-arena : i64 (arena.tl_arena_current)]
         [_switched : unit
           (unsafe
-            (tl_arena_set (tc-hygiene-module-env-cache-arena-handle)))]
+            (arena.tl_arena_set (tc-hygiene-module-env-cache-arena-handle)))]
         (match (tc-module-local-env-cached
           ctx
           tc-hygiene-active-top-env
@@ -5380,20 +5380,20 @@
           tc-hygiene-module-env-cache)
           [(OkTcModuleLocalEnv def-env next-cache)
             (let
-              [cache-head : i64 (tl_arena_current)]
+              [cache-head : i64 (arena.tl_arena_current)]
               (begin
                 (set! tc-hygiene-module-env-cache-arena cache-head)
                 (set! tc-hygiene-module-env-cache next-cache)
                 (unsafe
-                  (tl_arena_set prev-arena))
+                  (arena.tl_arena_set prev-arena))
                 (OkTcEnv def-env)))]
           [(ErrTcModuleLocalEnv message)
             (let
-              [cache-head : i64 (tl_arena_current)]
+              [cache-head : i64 (arena.tl_arena_current)]
               (begin
                 (set! tc-hygiene-module-env-cache-arena cache-head)
                 (unsafe
-                  (tl_arena_set prev-arena))
+                  (arena.tl_arena_set prev-arena))
                 (ErrTcEnv message)))])))
     (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
 
@@ -23239,15 +23239,15 @@
   [key : i64]
   [layout : TcInlineAggregateLayout]) : unit
   (let
-    [prev : i64 (tl_arena_current)]
+    [prev : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
-        (tl_arena_set node-pool-base-arena))
+        (arena.tl_arena_set node-pool-base-arena))
       (let
         [persistent : TcInlineAggregateLayout (clone layout)]
         (begin
           (unsafe
-            (tl_arena_set prev))
+            (arena.tl_arena_set prev))
           (array.array-set!
             tc-agg-layout-cache
             key
@@ -46441,7 +46441,7 @@
 (define (tc-fn-scratch-arena-get) : i64
   (if (= tc-fn-scratch-arena 0)
     (let
-      [scratch : i64 (tl_arena_make)]
+      [scratch : i64 (arena.tl_arena_make)]
       (begin
         (set! tc-fn-scratch-arena scratch)
         scratch))
@@ -46451,12 +46451,12 @@
   (if (= tc-fn-scratch-arena 0)
     unit
     (begin
-      (if (= (tl_arena_current) tc-fn-scratch-arena)
+      (if (= (arena.tl_arena_current) tc-fn-scratch-arena)
         (unsafe
-          (tl_arena_set node-pool-base-arena))
+          (arena.tl_arena_set node-pool-base-arena))
         unit)
       (unsafe
-        (tl_arena_destroy tc-fn-scratch-arena))
+        (arena.tl_arena_destroy tc-fn-scratch-arena))
       (set! tc-fn-scratch-arena 0))))
 
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
@@ -46480,31 +46480,31 @@
   [body-box : i64]) : ResultTcUnit
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [enclosing : i64 (tl_arena_current)]
+    [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get)]
     (begin
       (intern-persistent-storage-enable!)
       (unsafe
-        (tl_arena_set scratch))
+        (arena.tl_arena_set scratch))
       (let
-        [mark : i64 (tl_region_mark)]
+        [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
           (tc-check-fn-decl-body ctx global-env params ret body-box)]
-        [scratch-head : i64 (tl_arena_current)]
+        [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
-            (tl_arena_set enclosing))
+            (arena.tl_arena_set enclosing))
           (let
             [escaped : ResultTcUnit
               (match raw
                 [(OkTcUnit) OkTcUnit]
                 [(ErrTcUnit message) (ErrTcUnit (clone message))])]
-            [new-enclosing : i64 (tl_arena_current)]
+            [new-enclosing : i64 (arena.tl_arena_current)]
             (begin
               (unsafe
-                (tl_arena_set scratch-head)
-                (tl_region_reset mark)
-                (tl_arena_set new-enclosing))
+                (arena.tl_arena_set scratch-head)
+                (arena.tl_region_reset mark)
+                (arena.tl_arena_set new-enclosing))
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))
@@ -47368,7 +47368,7 @@
       unit
       (begin
         (unsafe
-          (tl_arena_destroy tc-hygiene-module-env-cache-arena))
+          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
         (set! tc-hygiene-module-env-cache-arena 0)))
     (set! macro-expand-active-module "")
     (set! macro-expand-macro-names (TcStringNil))

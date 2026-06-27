@@ -22,18 +22,18 @@
 
 ;: Local arena hooks keep this module import-free while letting persistent
 ;: intern entries survive scoped compile arenas.
-(extern (intern-arena-make) : i64 (:symbol "tl_arena_make"))
-(extern (intern-arena-current) : i64 (:symbol "tl_arena_current"))
-(extern (intern-region-mark) : i64 (:symbol "tl_region_mark"))
+(extern (tl_arena_make) : i64)
+(extern (tl_arena_current) : i64)
+(extern (tl_region_mark) : i64)
 
 (unsafe
-  (extern (intern-arena-set! [arg0 : i64]) : unit (:symbol "tl_arena_set")))
+  (extern (tl_arena_set [arg0 : i64]) : unit))
 
 (unsafe
-  (extern (intern-arena-destroy! [arg0 : i64]) : unit (:symbol "tl_arena_destroy")))
+  (extern (tl_arena_destroy [arg0 : i64]) : unit))
 
 (unsafe
-  (extern (intern-region-reset! [arg0 : i64]) : unit (:symbol "tl_region_reset")))
+  (extern (tl_region_reset [arg0 : i64]) : unit))
 
 (define (intern-private-string-length [text : String]) : i64
   (cfg
@@ -195,7 +195,7 @@
 (define intern-slice-cache3-ready : bool
   false)
 (define intern-persistent-arena : i64
-  (intern-arena-make))
+  (tl_arena_make))
 (define intern-persistent-arena-floor-mark : i64
   0)
 (define intern-persistent-storage-enabled : bool
@@ -213,28 +213,28 @@
 (define (intern-persistent-arena-reset!) : unit
   (let
     [old-arena : i64 intern-persistent-arena]
-    [new-arena : i64 (intern-arena-make)]
-    [prev-arena : i64 (intern-arena-current)]
+    [new-arena : i64 (tl_arena_make)]
+    [prev-arena : i64 (tl_arena_current)]
     (begin
       (set! intern-persistent-arena new-arena)
       (set! intern-persistent-arena-floor-mark 0)
       (if (= prev-arena old-arena)
         (unsafe
-          (intern-arena-set! new-arena))
+          (tl_arena_set new-arena))
         unit)
       (unsafe
-        (intern-arena-destroy! old-arena))
+        (tl_arena_destroy old-arena))
       (intern-persistent-arena-floor-refresh!))))
 
 (define (intern-persistent-arena-floor-refresh!) : unit
   (let
-    [prev-arena : i64 (intern-arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     (begin
       (unsafe
-        (intern-arena-set! intern-persistent-arena))
-      (set! intern-persistent-arena-floor-mark (intern-region-mark))
+        (tl_arena_set intern-persistent-arena))
+      (set! intern-persistent-arena-floor-mark (tl_region_mark))
       (unsafe
-        (intern-arena-set! prev-arena)))))
+        (tl_arena_set prev-arena)))))
 
 (define (intern-persistent-arena-floor-ensure!) : unit
   (if (= intern-persistent-arena-floor-mark 0)
@@ -243,13 +243,13 @@
 
 (define (intern-persistent-arena-reset-to-floor!) : unit
   (let
-    [prev-arena : i64 (intern-arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     (begin
       (intern-persistent-arena-floor-ensure!)
       (unsafe
-        (intern-arena-set! intern-persistent-arena)
-        (intern-region-reset! intern-persistent-arena-floor-mark)
-        (intern-arena-set! prev-arena)))))
+        (tl_arena_set intern-persistent-arena)
+        (tl_region_reset intern-persistent-arena-floor-mark)
+        (tl_arena_set prev-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
@@ -337,24 +337,24 @@
 
 (define (intern-persistent-substring [text : String] [start : i64] [len : i64]) : String
   (let
-    [prev-arena : i64 (intern-arena-current)]
+    [prev-arena : i64 (tl_arena_current)]
     (if (= prev-arena intern-persistent-arena)
       (intern-substring text start len)
       (let
         [out : String
           (begin
             (unsafe
-              (intern-arena-set! intern-persistent-arena))
+              (tl_arena_set intern-persistent-arena))
             (let
               [copied : String (intern-substring text start len)]
               (begin
                 (unsafe
-                  (intern-arena-set! prev-arena))
+                  (tl_arena_set prev-arena))
                 copied)))]
         out))))
 
 (define (intern-persistent-copy [text : String]) : String
-  (if (= (intern-arena-current) intern-persistent-arena)
+  (if (= (tl_arena_current) intern-persistent-arena)
     text
     (intern-persistent-substring
       text
@@ -811,20 +811,20 @@
     (intern-reset!)
     (intern-persistent-storage-enable!)
     (let
-      [home : i64 (intern-arena-current)]
-      [scratch : i64 (intern-arena-make)]
+      [home : i64 (tl_arena_current)]
+      [scratch : i64 (tl_arena_make)]
       [id : i64
         (begin
           (unsafe
-            (intern-arena-set! scratch))
+            (tl_arena_set scratch))
           (let
             [name : String (intern-substring "persist/entry" 0 13)]
             [stored : i64 (intern name)]
             (begin
               (unsafe
-                (intern-arena-set! home))
+                (tl_arena_set home))
               (unsafe
-                (intern-arena-destroy! scratch))
+                (tl_arena_destroy scratch))
               stored)))]
       [again : i64 (intern "persist/entry")]
       [ok : bool

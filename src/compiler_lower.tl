@@ -5001,16 +5001,16 @@
   ;; reuse). Persistent intern storage is enabled across the region so names
   ;; interned during discovery never dangle the global intern table.
   (let
-    [prev-arena : i64 (tl_arena_current)]
+    [prev-arena : i64 (arena.tl_arena_current)]
     [prev-persist : bool (intern-persistent-storage-on?)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
       (tc-nominal-owner-cache-reset!)
       (intern-persistent-storage-enable!)
       (unsafe
-        (tl_arena_set scratch))
+        (arena.tl_arena_set scratch))
       (let
-        [mark : i64 (tl_region_mark)]
+        [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
@@ -5035,20 +5035,20 @@
                   (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
             [(ErrCompilerSymbols message)
               (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
-        [scratch-head : i64 (tl_arena_current)]
+        [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           ;; Re-home the result in the persistent arena while the scratch is
           ;; still live, then rewind the scratch arena.
           (unsafe
-            (tl_arena_set prev-arena))
+            (arena.tl_arena_set prev-arena))
           (let
             [result : ResultLowerCloneRoots
               (lower-clone-roots-result-escape raw)]
             (begin
               (unsafe
-                (tl_arena_set scratch-head)
-                (tl_region_reset mark)
-                (tl_arena_set prev-arena))
+                (arena.tl_arena_set scratch-head)
+                (arena.tl_region_reset mark)
+                (arena.tl_arena_set prev-arena))
               ;; The nominal-owner cache may now hold name strings allocated in
               ;; the rewound scratch arena; clear them so no slot compares
               ;; against freed memory before the real typecheck repopulates it.
@@ -7463,7 +7463,7 @@
         ;; AstNodeId) and interned strings, never the scratch maps, so they are
         ;; safe to keep in the persistent arena after the rewind (mirrors the
         ;; scratch+escape pattern in lower-function-escaping).
-        [prev-arena : i64 (tl_arena_current)]
+        [prev-arena : i64 (arena.tl_arena_current)]
         [prev-persist : bool (intern-persistent-storage-on?)]
         [scratch : i64 (lower-scratch-arena-get)]
         (begin
@@ -7472,9 +7472,9 @@
           ;; pointer into memory freed by the rewind below.
           (intern-persistent-storage-enable!)
           (unsafe
-            (tl_arena_set scratch))
+            (arena.tl_arena_set scratch))
           (let
-            [mark : i64 (tl_region_mark)]
+            [mark : i64 (arena.tl_region_mark)]
             [all-functions : hashmap.StringI64Map
               (lower-function-set-from-decls decls paths entry-path)]
             [body-index : LowerFunctionBodyIndex
@@ -7566,12 +7566,12 @@
                                     reachable
                                     dispatch-variants
                                     reachable-path-type-names)))])]
-                        [scratch-head : i64 (tl_arena_current)]
+                        [scratch-head : i64 (arena.tl_arena_current)]
                         (begin
                           ;; Materialize the pruned program back in the persistent
                           ;; arena before rewinding the scratch arena.
                           (unsafe
-                            (tl_arena_set prev-arena))
+                            (arena.tl_arena_set prev-arena))
                           (let
                             [filtered : LowerFilteredReachable
                               (lower-filter-reachable-decls-and-paths
@@ -7590,20 +7590,20 @@
                                   (LowerPrunedProgram
                                     (ast-program filtered-decls)
                                     filtered-paths)])]
-                            [new-prev-arena : i64 (tl_arena_current)]
+                            [new-prev-arena : i64 (arena.tl_arena_current)]
                             (begin
                               (unsafe
-                                (tl_arena_set scratch-head)
-                                (tl_region_reset mark)
-                                (tl_arena_set new-prev-arena))
+                                (arena.tl_arena_set scratch-head)
+                                (arena.tl_region_reset mark)
+                                (arena.tl_arena_set new-prev-arena))
                               pruned))))]))
                 (let
-                  [scratch-head : i64 (tl_arena_current)]
+                  [scratch-head : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
-                      (tl_arena_set scratch-head)
-                      (tl_region_reset mark)
-                      (tl_arena_set prev-arena))
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set prev-arena))
                     (LowerPrunedProgram program paths))))]
             (begin
               (if prev-persist
@@ -39159,7 +39159,7 @@
 (define (lower-scratch-arena-get) : i64
   (if (= lower-scratch-arena 0)
     (let
-      [scratch : i64 (tl_arena_make)]
+      [scratch : i64 (arena.tl_arena_make)]
       (begin
         (set! lower-scratch-arena scratch)
         scratch))
@@ -39170,7 +39170,7 @@
     unit
     (begin
       (unsafe
-        (tl_arena_destroy lower-scratch-arena))
+        (arena.tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
 ;; #2596: dedicated arena for the escaped (lowered) IR function bodies. The
@@ -39190,7 +39190,7 @@
 (define (lower-ir-arena-get) : i64
   (if (= lower-ir-arena 0)
     (let
-      [arena : i64 (tl_arena_make)]
+      [arena : i64 (arena.tl_arena_make)]
       (begin
         (set! lower-ir-arena arena)
         arena))
@@ -39201,7 +39201,7 @@
     unit
     (begin
       (unsafe
-        (tl_arena_destroy lower-ir-arena))
+        (arena.tl_arena_destroy lower-ir-arena))
       (set! lower-ir-arena 0))))
 
 (define (lower-arenas-release!) : unit
@@ -39262,7 +39262,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [enclosing : i64 (tl_arena_current)]
+    [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (lower-scratch-arena-get)]
     (begin
       ;; Type-name/owner caches may contain keys allocated by earlier
@@ -39275,9 +39275,9 @@
       ;; function's (and never outlive this function's scratch arena).
       (tc-rtf-next-gen!)
       (unsafe
-        (tl_arena_set scratch))
+        (arena.tl_arena_set scratch))
       (let
-        [mark : i64 (tl_region_mark)]
+        [mark : i64 (arena.tl_region_mark)]
         (match (lower-function
           ctx
           top-env
@@ -39291,7 +39291,7 @@
           mode)
           [(OkLowerFunction fns _function-spans)
             (let
-              [scratch-head : i64 (tl_arena_current)]
+              [scratch-head : i64 (arena.tl_arena_current)]
               (begin
                 ;; The IR function clones go to the dedicated lowered-IR
                 ;; arena (released by the driver after optimization); the
@@ -39300,23 +39300,23 @@
                 ;; the arena's grown head, or every later allocation re-walks
                 ;; the overflow path from the full first segment.
                 (unsafe
-                  (tl_arena_set (lower-ir-arena-get)))
+                  (arena.tl_arena_set (lower-ir-arena-get)))
                 (let
                   [escaped-fns : CompilerIrFunctionList
                     (compiler-ir-clone-function-list fns)]
                   (begin
-                    (set! lower-ir-arena (tl_arena_current))
+                    (set! lower-ir-arena (arena.tl_arena_current))
                     (unsafe
-                      (tl_arena_set enclosing))
+                      (arena.tl_arena_set enclosing))
                     (let
                       [escaped-spans : CompilerSourceSpans
                         (lower-record-function-span spans logical-name body)]
-                      [new-enclosing : i64 (tl_arena_current)]
+                      [new-enclosing : i64 (arena.tl_arena_current)]
                       (begin
                         (unsafe
-                          (tl_arena_set scratch-head)
-                          (tl_region_reset mark)
-                          (tl_arena_set new-enclosing))
+                          (arena.tl_arena_set scratch-head)
+                          (arena.tl_region_reset mark)
+                          (arena.tl_arena_set new-enclosing))
                         (tc-nominal-owner-cache-reset!)
                         (if prev-persist
                           unit
@@ -39324,18 +39324,18 @@
                         (OkLowerFunction escaped-fns escaped-spans)))))))]
           [(ErrLowerFunction message)
             (let
-              [scratch-head : i64 (tl_arena_current)]
+              [scratch-head : i64 (arena.tl_arena_current)]
               (begin
                 (unsafe
-                  (tl_arena_set enclosing))
+                  (arena.tl_arena_set enclosing))
                 (let
                   [escaped-message : (Box CompilerDiagnostic) (clone message)]
-                  [new-enclosing : i64 (tl_arena_current)]
+                  [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
-                      (tl_arena_set scratch-head)
-                      (tl_region_reset mark)
-                      (tl_arena_set new-enclosing))
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set new-enclosing))
                     (tc-nominal-owner-cache-reset!)
                     (if prev-persist
                       unit

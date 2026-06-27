@@ -5,6 +5,7 @@
 ;; diagnostics for full-document open/change notifications.
 (import stdlib.fs)
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.json)
 (import stdlib.vector)
@@ -3576,11 +3577,11 @@
     (if (struct-get doc decls-valid)
       cached
       (let
-        [active-arena : i64 (tl_arena_current)]
+        [active-arena : i64 (arena.tl_arena_current)]
         (begin
           (if (> lsp-document-cache-arena 0)
             (unsafe
-              (tl_arena_set lsp-document-cache-arena))
+              (arena.tl_arena_set lsp-document-cache-arena))
             unit)
           (let
             [scanned : LspDeclList
@@ -3588,7 +3589,7 @@
             (begin
               (if (> lsp-document-cache-arena 0)
                 (unsafe
-                  (tl_arena_set active-arena))
+                  (arena.tl_arena_set active-arena))
                 unit)
               scanned)))))))
 
@@ -4753,22 +4754,22 @@
           (if (not handled)
             (begin
               (let
-                [enclosing : i64 (tl_arena_current)]
-                [scratch : i64 (tl_arena_make)]
+                [enclosing : i64 (arena.tl_arena_current)]
+                [scratch : i64 (arena.tl_arena_make)]
                 [old-cache-arena : i64 lsp-document-cache-arena]
                 (begin
                   (set! lsp-document-cache-arena enclosing)
                   (unsafe
-                    (tl_arena_set scratch))
+                    (arena.tl_arena_set scratch))
                   (lsp-handle-tool-message! method message docs stdlib-roots)
                   (let
-                    [scratch-head : i64 (tl_arena_current)]
+                    [scratch-head : i64 (arena.tl_arena_current)]
                     (begin
                       (unsafe
-                        (tl_arena_set enclosing))
+                        (arena.tl_arena_set enclosing))
                       (set! lsp-document-cache-arena old-cache-arena)
                       (unsafe
-                        (tl_arena_destroy scratch-head))))))
+                        (arena.tl_arena_destroy scratch-head))))))
               (set! result (LspContinue docs)))
             unit)
           result))]

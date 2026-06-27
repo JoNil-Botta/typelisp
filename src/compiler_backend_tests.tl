@@ -6222,7 +6222,23 @@
       (AstTyI64)
       (compiler-diagnostic-at-start "" ""))
       [(OkCompilerBackend asm)
-        (string-eq asm "    movq %r12, %rax\n    vpbroadcastq %rax, %zmm6\n")]
+        (and
+          (string-eq asm "    movq %r12, %r8\n    vpbroadcastq %r8, %zmm6\n")
+          (not (compiler-backend-string-contains? asm "%rax")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-avx512-splat
+      (compiler-backend-stack-splat-float-register-assignments)
+      0
+      (IrValueVar 1)
+      8
+      (AstTyF64)
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend asm)
+        (and
+          (string-eq
+            asm
+            "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %zmm6\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-stack-splat-broadcast-ok?) : bool

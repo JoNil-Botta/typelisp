@@ -12726,8 +12726,10 @@
         (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
         (compiler-backend-string-contains? asm "    addq $16, %rsp\n")
         (compiler-backend-stack-add-call-ok? asm)
-        (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n")
-        (compiler-backend-string-contains? asm "    movq 24(%rbp), %rax\n"))]
+        (compiler-backend-string-contains? asm "    movq 16(%rbp), %r8\n")
+        (compiler-backend-string-contains? asm "    movq 24(%rbp), %r8\n")
+        (not (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq 24(%rbp), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
@@ -12741,8 +12743,10 @@
         (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
         (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq %r11, 8(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n")
-        (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n"))]
+        (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm2\n")
+        (not (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n"))
+        (not (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a mixed call spilling one int and one f64 keeps the integer and float
@@ -12771,7 +12775,8 @@
         (compiler-backend-string-contains? asm "    call _tl_add8\n")
         (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq %r11, 56(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n"))]
+        (compiler-backend-string-contains? asm "    movq 48(%rbp), %r8\n")
+        (not (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-i64-type-list8) : AstTypeList

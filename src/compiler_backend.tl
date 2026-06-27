@@ -25276,33 +25276,30 @@
                   vars)
                   [(OkCompilerBackend tail)
                     (OkCompilerBackend
-                      (str-cat
-                        (if is-float
+                      (let
+                        [addr : String
                           (str-cat
-                            "    "
-                            (compiler-backend-float-move ty)
-                            " "
                             (int->string
                               (compiler-backend-incoming-stack-arg-offset
                                 target
                                 stack-idx))
-                            "(%rbp), %xmm0\n")
-                          (str-cat
-                            "    movq "
-                            (int->string
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))
-                            "(%rbp), %rax\n"
-                            ""))
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          var-id
+                            "(%rbp)"
+                            "")]
+                        (str-cat
                           (if is-float
-                            "%xmm0"
-                            "%rax")
-                          ty)
-                        tail))]
+                            (compiler-backend-emit-load-float-address-to-var
+                              assignments
+                              var-id
+                              addr
+                              ty)
+                            (compiler-backend-emit-load-scalar-address-to-var
+                              assignments
+                              var-id
+                              addr
+                              ty
+                              (compiler-backend-addr-scavenge-exclude)
+                              0))
+                          tail)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg

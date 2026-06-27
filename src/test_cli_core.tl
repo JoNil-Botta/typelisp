@@ -3157,37 +3157,39 @@
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)]
           [(SourceToolCommandOk)
-            (match (tltest-run-harness-output source bin-path target)
-              [(process.OkProcessOutput output)
-                (let
-                  [status : i64 (process.process-output-status output)]
+            (begin
+              (compiler-driver-reset-analysis-state!)
+              (match (tltest-run-harness-output source bin-path target)
+                [(process.OkProcessOutput output)
+                  (let
+                    [status : i64 (process.process-output-status output)]
+                    (begin
+                      (source-tool-forward-output output)
+                      (if (= status 0)
+                        unit
+                        (tltest-report-child-status output))
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        true)
+                      ;; A failed test executable (including one that
+                      ;; panics/aborts, which exits 134) is a test
+                      ;; FAILURE, not a host crash: report the raw status
+                      ;; above, but exit cleanly with 1 so CI does not retry
+                      ;; it as a transient #1204 segfault.
+                      (if (= status 0)
+                        0
+                        1)))]
+                [(process.ErrProcessOutput error)
                   (begin
-                    (source-tool-forward-output output)
-                    (if (= status 0)
-                      unit
-                      (tltest-report-child-status output))
-                    (source-tool-clean-temp
-                      temp-dir
-                      asm-path
-                      obj-path
-                      bin-path
-                      true)
-                    ;; A failed test executable (including one that
-                    ;; panics/aborts, which exits 134) is a test
-                    ;; FAILURE, not a host crash: report the raw status
-                    ;; above, but exit cleanly with 1 so CI does not retry
-                    ;; it as a transient #1204 segfault.
-                    (if (= status 0)
-                      0
-                      1)))]
-              [(process.ErrProcessOutput error)
-                (begin
-                  (io.print-error
-                    (tltest-run-executable-error-message
-                      bin-path
-                      temp-dir
-                      error))
-                  1)])])]
+                    (io.print-error
+                      (tltest-run-executable-error-message
+                        bin-path
+                        temp-dir
+                        error))
+                    1)]))])]
       [(ErrCompilerLower diag)
         (begin
           (io.print-error

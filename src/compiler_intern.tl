@@ -22,12 +22,16 @@
 ;: intern entries survive scoped compile arenas.
 (extern (intern-arena-make) : i64 (:symbol "tl_arena_make"))
 (extern (intern-arena-current) : i64 (:symbol "tl_arena_current"))
+(extern (intern-region-mark) : i64 (:symbol "tl_region_mark"))
 
 (unsafe
   (extern (intern-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
 
 (unsafe
   (extern (intern-arena-destroy [arg0 : i64]) : unit (:symbol "tl_arena_destroy")))
+
+(unsafe
+  (extern (intern-region-reset [arg0 : i64]) : unit (:symbol "tl_region_reset")))
 
 (define (intern-private-string-length [text : String]) : i64
   (cfg
@@ -190,6 +194,8 @@
   false)
 (define intern-persistent-arena : i64
   (intern-arena-make))
+(define intern-persistent-arena-floor-mark : i64
+  0)
 (define intern-persistent-storage-enabled : bool
   false)
 
@@ -206,10 +212,42 @@
   (let
     [old-arena : i64 intern-persistent-arena]
     [new-arena : i64 (intern-arena-make)]
+    [prev-arena : i64 (intern-arena-current)]
     (begin
       (set! intern-persistent-arena new-arena)
+      (set! intern-persistent-arena-floor-mark 0)
+      (if (= prev-arena old-arena)
+        (unsafe
+          (intern-arena-set new-arena))
+        unit)
       (unsafe
-        (intern-arena-destroy old-arena)))))
+        (intern-arena-destroy old-arena))
+      (intern-persistent-arena-floor-refresh!))))
+
+(define (intern-persistent-arena-floor-refresh!) : unit
+  (let
+    [prev-arena : i64 (intern-arena-current)]
+    (begin
+      (unsafe
+        (intern-arena-set intern-persistent-arena))
+      (set! intern-persistent-arena-floor-mark (intern-region-mark))
+      (unsafe
+        (intern-arena-set prev-arena)))))
+
+(define (intern-persistent-arena-floor-ensure!) : unit
+  (if (= intern-persistent-arena-floor-mark 0)
+    (intern-persistent-arena-floor-refresh!)
+    unit))
+
+(define (intern-persistent-arena-reset-to-floor!) : unit
+  (let
+    [prev-arena : i64 (intern-arena-current)]
+    (begin
+      (intern-persistent-arena-floor-ensure!)
+      (unsafe
+        (intern-arena-set intern-persistent-arena)
+        (intern-region-reset intern-persistent-arena-floor-mark)
+        (intern-arena-set prev-arena)))))
 
 ;: Word-at-a-time multiply-mix hash over the raw bytes. The hash only affects
 ;: bucket placement, never the id a string gets (ids are insertion-ordered),
@@ -823,6 +861,31 @@
         (intern-persistent-storage-disable!)
         ok))))
 
+(define (intern-persistent-floor-reset-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (intern-persistent-arena-reset!)
+    (intern-persistent-storage-enable!)
+    (let
+      [kept : i64 (intern "floor_keep")]
+      (begin
+        (intern-persistent-arena-floor-refresh!)
+        (let
+          [drop-id : i64 (intern "floor_drop")]
+          [ok : bool true]
+          (begin
+            (intern-reset-to! (+ kept 1))
+            (intern-persistent-arena-reset-to-floor!)
+            (unless (= (intern "floor_keep") kept) (set! ok false))
+            (match (intern-lookup "floor_drop")
+              [(InternLookupMissing) unit]
+              [(InternLookupFound _) (set! ok false)])
+            (unless (= (intern "floor_drop") drop-id) (set! ok false))
+            (intern-reset!)
+            (intern-persistent-storage-disable!)
+            (intern-persistent-arena-reset!)
+            ok))))))
+
 (define (intern-qualified-metadata-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -868,5 +931,6 @@
         (unless (intern-slice-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))
+        (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))
         (intern-reset!)
         ok))))

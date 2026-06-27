@@ -2305,18 +2305,50 @@
 (define (tc-name-id [name : String]) : i64
   (intern name))
 
-(define (tc-name-id-persistent [name : String]) : i64
+(define tc-marker-name-id-arena : i64
+  0)
+
+(define (tc-marker-name-id-arena-handle) : i64
+  (begin
+    (if (= tc-marker-name-id-arena 0)
+      (set! tc-marker-name-id-arena (tl_arena_make))
+      unit)
+    tc-marker-name-id-arena))
+
+(define (tc-marker-name-id-arena-reset!) : unit
+  (if (= tc-marker-name-id-arena 0)
+    unit
+    (begin
+      (if (= (tl_arena_current) tc-marker-name-id-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
+      (unsafe
+        (tl_arena_destroy tc-marker-name-id-arena))
+      (set! tc-marker-name-id-arena 0))))
+
+(define (tc-marker-name-id [name : String]) : i64
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    (begin
-      (intern-persistent-storage-enable!)
-      (let
-        [id : i64 (tc-name-id name)]
-        (begin
-          (if prev-persist
-            unit
-            (intern-persistent-storage-disable!))
-          id)))))
+    [prev-arena : i64 (tl_arena_current)]
+    [id : i64
+      (begin
+        (if prev-persist
+          (intern-persistent-storage-disable!)
+          unit)
+        (unsafe
+          (tl_arena_set (tc-marker-name-id-arena-handle)))
+        (let
+          [stable-name : String (string.string-copy (& name))]
+          [stable-id : i64 (tc-name-id stable-name)]
+          (begin
+            (unsafe
+              (tl_arena_set prev-arena))
+            (if prev-persist
+              (intern-persistent-storage-enable!)
+              unit)
+            stable-id)))]
+    id))
 
 (define (tc-builtin-name-id [name : String]) : i64
   (begin
@@ -2504,7 +2536,7 @@
   (array.make-array i64 262144))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id-persistent (tc-unsafe-decl-marker-name (intern-str name-id))))
+  (tc-marker-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
 
 (define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -2548,7 +2580,7 @@
   (array.make-array i64 262144))
 
 (define (tc-c-abi-fnptr-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id-persistent (tc-c-abi-fnptr-marker-name (intern-str name-id))))
+  (tc-marker-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
 
 (define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -46408,9 +46440,10 @@
 ;; clone-out shape of lower-function-escaping; do NOT re-run the check to
 ;; regenerate the message -- the body check is not idempotent and a second
 ;; run can surface a different diagnostic). New intern entries made while
-;; the scratch is active (e.g. first-use marker names) must outlive it, so
-;; persistent intern storage is forced on for the scope (the intern pool
-;; copies new strings into its global-init base arena; see compiler_intern).
+;; the scratch is active must outlive it, so persistent intern storage is
+;; forced on for the scope (the intern pool copies new strings into its
+;; global-init base arena; see compiler_intern). Synthetic marker names use
+;; tc-marker-name-id, which routes them to file-state storage instead.
 ;; Node pools already grow in the persistent base arena (#2357).
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
@@ -47318,3 +47351,6 @@
     (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))
+
+(define (compiler-typecheck-reset-intern-owned-state!) : unit
+  (tc-marker-name-id-arena-reset!))

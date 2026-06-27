@@ -11223,6 +11223,20 @@
       (array-set! a 4 extra)
       a)))
 
+(define (compiler-backend-c-abi-stage-exclude-with2
+  [extra1 : String]
+  [extra2 : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rcx")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%r8")
+      (array-set! a 3 "%r9")
+      (array-set! a 4 extra1)
+      (array-set! a 5 extra2)
+      a)))
+
 ;; Like scavenge-exclude-with but ALSO reserves %r8. Used at the 3-scratch
 ;; copy-bytes-from-gep site, where the index scratch falls back to %r8: an active
 ;; base/src scavenge must not pick %r8 (a candidate) or, under register pressure,
@@ -11276,39 +11290,57 @@
     [(= chunk 2) (AstTyU16)]
     [else (AstTyU8)]))
 
+(define (compiler-backend-copy-xmm-scratch [size : i64]) : String
+  (if (>= size 16)
+    (let
+      [no-exclude : (Array String) (make-array String 0)]
+      (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2"))
+    ""))
+
+(define (compiler-backend-copy-needs-gp-scratch?
+  [size : i64]
+  [xmm-scratch : String]) : bool
+  (if (> (string-length xmm-scratch) 0)
+    (not (= (% size 16) 0))
+    (> size 0)))
+
 (define (compiler-backend-emit-copy-bytes-chunks
   [dst-reg : String]
   [src-reg : String]
+  [gp-scratch : String]
+  [xmm-scratch : String]
   [offset : i64]
   [remaining : i64]) : String
   (if (<= remaining 0)
     ""
-    (if (>= remaining 16)
-      ;; 16-byte chunks through %xmm15 (the per-instruction float scratch, see
-      ;; the stack-passed-arg path): movups tolerates the 8-byte alignment of
-      ;; inline aggregates and halves the instruction count of large copies
-      ;; versus unrolled 8-byte mov pairs (#2371).
+    (if (and (>= remaining 16) (> (string-length xmm-scratch) 0))
       (string-append
         (str-cat
           "    movups "
           (compiler-backend-copy-address offset src-reg)
-          ", %xmm15\n"
+          ", "
+          xmm-scratch
+          "\n"
           "")
         (string-append
           (str-cat
-            "    movups %xmm15, "
+            "    movups "
+            xmm-scratch
+            ", "
             (compiler-backend-copy-address offset dst-reg)
             "\n"
             "")
           (compiler-backend-emit-copy-bytes-chunks
             dst-reg
             src-reg
+            gp-scratch
+            xmm-scratch
             (+ offset 16)
             (- remaining 16))))
       (let
         [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
         [chunk-ty : AstType (compiler-backend-copy-chunk-type chunk)]
-        [reg : String (compiler-backend-sized-reg "%rax" chunk-ty)]
+        [reg : String (compiler-backend-sized-reg gp-scratch chunk-ty)]
         (string-append
           (str-cat
             "    mov"
@@ -11334,6 +11366,8 @@
                     (compiler-backend-emit-copy-bytes-chunks
                       dst-reg
                       src-reg
+                      gp-scratch
+                      xmm-scratch
                       (+ offset chunk)
                       (- remaining chunk))))))))))))
 
@@ -11367,6 +11401,14 @@
                   6
                   "%r11")
                 src-home)]
+            [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+            [copy-gp : String
+              (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-regs2 dst-reg src-reg)
+                  7
+                  "%r8")
+                "")]
             (match (if (string-eq src-home "")
               (compiler-backend-emit-load-value-with-plan
                 assignments
@@ -11382,6 +11424,8 @@
                       (compiler-backend-emit-copy-bytes-chunks
                         dst-reg
                         src-reg
+                        copy-gp
+                        copy-xmm
                         0
                         size))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
@@ -11421,6 +11465,14 @@
                 (compiler-backend-scavenge-exclude-with-r8 scav-base)
                 7
                 "%r11")]
+            [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+            [copy-gp : String
+              (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-regs2 scav-base scav-src)
+                  7
+                  "%r8")
+                "")]
             (match (compiler-backend-value-as-i64 offset)
               [(CompilerBackendSomeI64 n)
                 (match (compiler-backend-gep-immediate-base-asm scav-base (* n scale))
@@ -11440,6 +11492,8 @@
                                 (compiler-backend-emit-copy-bytes-chunks
                                   scav-base
                                   scav-src
+                                  copy-gp
+                                  copy-xmm
                                   0
                                   size)))))]
                       [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -11485,6 +11539,8 @@
                                     (compiler-backend-emit-copy-bytes-chunks
                                       scav-base
                                       scav-src
+                                      copy-gp
+                                      copy-xmm
                                       0
                                       size))))))]
                         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -11508,6 +11564,11 @@
         (compiler-backend-c-abi-stage-exclude-with src-reg)
         5
         "%r10")]
+    [copy-gp : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-c-abi-stage-exclude-with2 src-reg dst-reg)
+        6
+        "%r8")]
     (match (compiler-backend-emit-load-value-with-plan assignments value src-reg)
       [(OkCompilerBackend src-asm)
         (OkCompilerBackend
@@ -11521,7 +11582,13 @@
                 "(%rsp), "
                 dst-reg
                 "\n")
-              (compiler-backend-emit-copy-bytes-chunks dst-reg src-reg 0 size))))]
+              (compiler-backend-emit-copy-bytes-chunks
+                dst-reg
+                src-reg
+                copy-gp
+                ""
+                0
+                size)))))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-from-gep

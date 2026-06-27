@@ -2364,7 +2364,7 @@
             asm
             "    call tl_cabi_nested_mem_score\n")
           (compiler-backend-string-contains? asm "    leaq 0(%rsp), %r10\n")
-          (compiler-backend-string-contains? asm "    movups ")
+          (not (compiler-backend-string-contains? asm "%xmm15"))
           (not
             (compiler-backend-string-contains?
               asm
@@ -8556,7 +8556,9 @@
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
         (compiler-backend-string-contains? asm "    addq $8, %r10\n")
         (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
-        (compiler-backend-string-contains? asm "    movups (%r11), %xmm15\n")
+        (compiler-backend-string-contains? asm "    movups (%r11), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movq 16(%r11), %r8\n")
+        (not (compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
         (not
@@ -8578,6 +8580,8 @@
         (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
         (compiler-backend-string-contains? asm "    leaq (%r10,%r8,8), %r10\n")
         (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
+        (compiler-backend-string-contains? asm "    movups (%r11), %xmm2\n")
+        (not (compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -32(%rbp)\n"))
         (not
@@ -8731,14 +8735,15 @@
           (backend-and4
             (compiler-backend-string-contains?
               asm
-              "    movups (%r13), %xmm15\n")
+              "    movups (%r13), %xmm2\n")
             (compiler-backend-string-contains?
               asm
-              "    movups %xmm15, (%r12)\n")
-            (compiler-backend-string-contains? asm "    movq 16(%r13), %rax\n")
-            (compiler-backend-string-contains? asm "    movq %rax, 16(%r12)\n"))
+              "    movups %xmm2, (%r12)\n")
+            (compiler-backend-string-contains? asm "    movq 16(%r13), %r8\n")
+            (compiler-backend-string-contains? asm "    movq %r8, 16(%r12)\n"))
           (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
-          (not (compiler-backend-string-contains? asm "    movq %r13, %r11\n")))]
+          (not (compiler-backend-string-contains? asm "    movq %r13, %r11\n"))
+          (not (compiler-backend-string-contains? asm "%xmm15")))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-widening-cast-direct-home-shape-ok?) : bool

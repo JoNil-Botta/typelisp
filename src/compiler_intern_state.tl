@@ -6,7 +6,9 @@
 ;; functions below without touching the process-global compatibility table,
 ;; builtin-id cache, backend symbol cache, or typecheck caches keyed by
 ;; intern-generation.
-(import "compiler_intern.tl")
+(module compiler_intern_state)
+
+(import compiler_intern as ci)
 
 (defstruct InternState
   (pool-slots (Array String))
@@ -16,7 +18,7 @@
   (pool-module-id-slots (Array i64))
   (pool-base-id-slots (Array i64))
   (pool-count (Array i64))
-  (map-slots (Array InternSlot))
+  (map-slots (Array ci.InternSlot))
   (map-ready (Array bool))
   (reset-generation (Array i64)))
 
@@ -37,7 +39,7 @@
         (make-array i64 262144)
         (make-array i64 262144)
         pool-count
-        (make-array InternSlot 262144)
+        (make-array ci.InternSlot 262144)
         map-ready
         reset-generation))))
 
@@ -69,7 +71,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! (struct-get state map-slots) index (InternEmpty))
+      (array-set! (struct-get state map-slots) index (ci.InternEmpty))
       (intern-state-fill-empty state (+ index 1) count))))
 
 (define (intern-state-map-insert-existing-from
@@ -83,32 +85,32 @@
   (if (>= steps capacity)
     unit
     (match (array-ref (struct-get state map-slots) cursor)
-      [(InternEmpty)
+      [(ci.InternEmpty)
         (array-set!
           (struct-get state map-slots)
           cursor
-          (InternUsed name id hash))]
+          (ci.InternUsed name id hash))]
       [_
         (intern-state-map-insert-existing-from
           state
           name
           id
           hash
-          (intern-bucket (+ cursor 1) capacity)
+          (ci.intern-bucket (+ cursor 1) capacity)
           (+ steps 1)
           capacity)])))
 
 (define (intern-state-map-insert-existing! [state : InternState] [id : i64]) : unit
   (let
     [name : String (array-ref (struct-get state pool-slots) id)]
-    [hash : i64 (intern-hash name)]
+    [hash : i64 (ci.intern-hash name)]
     [capacity : i64 (array-length (struct-get state map-slots))]
     (intern-state-map-insert-existing-from
       state
       name
       id
       hash
-      (intern-bucket hash capacity)
+      (ci.intern-bucket hash capacity)
       0
       capacity)))
 
@@ -149,13 +151,13 @@
   [name : String]) : unit
   (let
     [i : i64 0]
-    [n : i64 (intern-private-string-length name)]
+    [n : i64 (ci.intern-private-string-length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     (begin
       (while (< i n)
         (let
-          [c : char (intern-private-string-ref name i)]
+          [c : char (ci.intern-private-string-ref name i)]
           (begin
             (if (= c '/')
               (set! slash i)
@@ -173,12 +175,12 @@
           (array-set! (struct-get state pool-base-id-slots) id id))
         (let
           [base-start : i64 (+ slash 1)]
-          [module-name : String (intern-substring name 0 slash)]
+          [module-name : String (ci.intern-substring name 0 slash)]
           [base-name : String
-            (intern-substring
+            (ci.intern-substring
               name
               base-start
-              (- (intern-private-string-length name) base-start))]
+              (- (ci.intern-private-string-length name) base-start))]
           (begin
             (array-set! (struct-get state pool-qualified-slots) id true)
             (array-set!
@@ -197,8 +199,8 @@
       (intern-state-reset! state))
     (let
       [capacity : i64 (array-length (struct-get state map-slots))]
-      [hash : i64 (intern-hash name)]
-      [cursor : i64 (intern-bucket hash capacity)]
+      [hash : i64 (ci.intern-hash name)]
+      [cursor : i64 (ci.intern-bucket hash capacity)]
       [steps : i64 0]
       [out : i64 -1]
       [done : bool false]
@@ -207,7 +209,7 @@
           false
           (< steps capacity))
           (match (array-ref (struct-get state map-slots) cursor)
-            [(InternEmpty)
+            [(ci.InternEmpty)
               (let
                 [id : i64 (intern-state-pool-len state)]
                 (begin
@@ -215,53 +217,53 @@
                   (array-set!
                     (struct-get state map-slots)
                     cursor
-                    (InternUsed name id hash))
+                    (ci.InternUsed name id hash))
                   (intern-state-set-pool-len! state (+ id 1))
                   (intern-state-record-qualified-metadata state id name)
                   (set! out id)
                   (set! done true)))]
-            [(InternUsed slot-key slot-id slot-hash)
+            [(ci.InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (intern-private-string-eq slot-key name)
+                (ci.intern-private-string-eq slot-key name)
                 false)
                 (begin
                   (set! out slot-id)
                   (set! done true))
                 (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! cursor (ci.intern-bucket (+ cursor 1) capacity))
                   (set! steps (+ steps 1))))]))
         out))))
 
-(define (intern-state-lookup [state : InternState] [name : String]) : InternLookup
+(define (intern-state-lookup [state : InternState] [name : String]) : ci.InternLookup
   (if (intern-state-map-ready? state)
     (let
       [capacity : i64 (array-length (struct-get state map-slots))]
-      [hash : i64 (intern-hash name)]
-      [cursor : i64 (intern-bucket hash capacity)]
+      [hash : i64 (ci.intern-hash name)]
+      [cursor : i64 (ci.intern-bucket hash capacity)]
       [steps : i64 0]
-      [out : InternLookup InternLookupMissing]
+      [out : ci.InternLookup ci.InternLookupMissing]
       [done : bool false]
       (begin
         (while (if done
           false
           (< steps capacity))
           (match (array-ref (struct-get state map-slots) cursor)
-            [(InternEmpty)
+            [(ci.InternEmpty)
               (begin
-                (set! out (InternLookupMissing))
+                (set! out (ci.InternLookupMissing))
                 (set! done true))]
-            [(InternUsed slot-key slot-id slot-hash)
+            [(ci.InternUsed slot-key slot-id slot-hash)
               (if (if (= slot-hash hash)
-                (intern-private-string-eq slot-key name)
+                (ci.intern-private-string-eq slot-key name)
                 false)
                 (begin
-                  (set! out (InternLookupFound slot-id))
+                  (set! out (ci.InternLookupFound slot-id))
                   (set! done true))
                 (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! cursor (ci.intern-bucket (+ cursor 1) capacity))
                   (set! steps (+ steps 1))))]))
         out))
-    (InternLookupMissing)))
+    (ci.InternLookupMissing)))
 
 (define (intern-state-str [state : InternState] [id : i64]) : String
   (array-ref (struct-get state pool-slots) id))
@@ -298,10 +300,12 @@
   (and
     (= (intern-state-qualified-last-slash state id) last-slash)
     (= (intern-state-qualified? state id) qualified)
-    (intern-private-string-eq
+    (ci.intern-private-string-eq
       (intern-state-qualified-module state id)
       module-name)
-    (intern-private-string-eq (intern-state-qualified-base state id) base-name)))
+    (ci.intern-private-string-eq
+      (intern-state-qualified-base state id)
+      base-name)))
 
 (define (intern-state-isolation-tests-ok?) : bool
   (let
@@ -340,22 +344,23 @@
       (unless (= (intern-state-intern state-a "alpha") 0) (set! ok false))
       (unless (= (intern-state-pool-len state-b) 3) (set! ok false))
       (unless
-        (intern-private-string-eq (intern-state-str state-b b-bravo) "bravo")
+        (ci.intern-private-string-eq (intern-state-str state-b b-bravo) "bravo")
         (set! ok false))
       (match (intern-state-lookup state-b "alpha")
-        [(InternLookupFound found) (unless (= found b-alpha) (set! ok false))]
-        [(InternLookupMissing) (set! ok false)])
+        [(ci.InternLookupFound found)
+          (unless (= found b-alpha) (set! ok false))]
+        [(ci.InternLookupMissing) (set! ok false)])
       (match (intern-state-lookup state-b "drop")
-        [(InternLookupFound found) (unless (= found b-mark) (set! ok false))]
-        [(InternLookupMissing) (set! ok false)])
+        [(ci.InternLookupFound found) (unless (= found b-mark) (set! ok false))]
+        [(ci.InternLookupMissing) (set! ok false)])
       (intern-state-reset-to! state-b b-mark)
       (unless (= (intern-state-pool-len state-b) b-mark) (set! ok false))
       (match (intern-state-lookup state-b "drop")
-        [(InternLookupMissing) unit]
-        [(InternLookupFound _) (set! ok false)])
+        [(ci.InternLookupMissing) unit]
+        [(ci.InternLookupFound _) (set! ok false)])
       (unless (= (intern-state-intern state-b "drop") b-mark) (set! ok false))
       (unless (= (intern-state-pool-len state-a) 1) (set! ok false))
       (unless
-        (intern-private-string-eq (intern-state-str state-a 0) "alpha")
+        (ci.intern-private-string-eq (intern-state-str state-a 0) "alpha")
         (set! ok false))
       ok)))

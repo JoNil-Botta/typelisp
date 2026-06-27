@@ -10844,7 +10844,7 @@
         [(CompilerBackendSomeI64 n)
           (let
             [disp : i64 (* n (compiler-backend-type-size elem-ty))]
-            ;; Address-base scratch (was hardcoded %r10): base is loaded here and
+            ;; Address-base scratch: base is loaded here and
             ;; immediately dereferenced by the compare (dead after), so a single
             ;; scavenged base suffices. In the NoImmediate sub-branch scav-rhs must
             ;; exclude this base (both live across the cmp) -- see below.
@@ -11504,7 +11504,7 @@
     (str-cat (int->string disp) "(%r10)" "" "")))
 
 ;; Base-register-parameterized address: scavenged-register-aware variant of
-;; r10-address so addressing-base scratch is not hardcoded to %r10.
+;; r10-address so addressing-base scratch is not fixed to %r10.
 (define (compiler-backend-base-address [disp : i64] [base : String]) : String
   (if (= disp 0)
     (str-cat "(" base ")")
@@ -11516,7 +11516,7 @@
 
 ;; Minimal exclude for an addressing-base scavenge: the base register only holds
 ;; a pointer that is immediately dereferenced and dead after, so nothing extra
-;; needs excluding (and crucially it must NOT exclude %r10/%r11, the fallbacks).
+;; needs excluding, and it must not exclude the common caller-saved fallbacks.
 (define (compiler-backend-addr-scavenge-exclude) : (Array String)
   (make-array String 0))
 
@@ -12422,7 +12422,7 @@
             (compiler-backend-binop-scavenge-exclude-build)
             5
             "%r8")]
-        ;; Fold-base scratch (was hardcoded %r10). For non-SIB scales the scaled
+        ;; Fold-base scratch. For non-SIB scales the scaled
         ;; index is folded into a register, which must not clobber the base's live
         ;; home, so the base is copied into this scratch first; it also serves as
         ;; the load fallback when the base is spilled. Scavenged AFTER scav-idx and
@@ -24836,8 +24836,7 @@
   0)
 
 ;; r8-collision detector (cfg r8-collision-check): with %r8 pooled, logs every
-;; emitted %r8-write that occurs while a live value occupies %r8 -- a hardcoded-%r8
-;; emission colliding with the pooled %r8. Logs (does not panic) so one compile
+;; emitted %r8-write that occurs while a live value occupies %r8. Logs (does not panic) so one compile
 ;; yields the complete site list.
 (define compiler-backend-r8c-len0 : i64 0)
 (define compiler-backend-r8c-point : i64 0)
@@ -25648,7 +25647,7 @@
 ;; on the FINAL post-rewrite IR (emit-blocks-list + assignments + slot-vars),
 ;; built and self-checked behind --cfg scavenge-self-check but NOT yet used in
 ;; emission (a normal build is byte-identical). The query is the foundation for
-;; handing the backend a guaranteed-free register instead of hardcoded scratch.
+;; handing the backend a guaranteed-free register instead of a fixed scratch.
 ;;
 ;; Point space matches compiler-reg-live-intervals EXACTLY: the global I-th
 ;; emitted instruction (block-list order, then instr-seq order) lives at point
@@ -25838,7 +25837,7 @@
       hit)))
 
 ;; Exclude set for binop scavenging: a safe superset of every binop op's fixed
-;; registers (div: rax/rdx + guard r10/r11; shift: rcx; all: rax=lhs).
+;; registers (div: rax/rdx + guard temps; shift: rcx; all: rax=lhs).
 (define (compiler-backend-binop-scavenge-exclude-build) : (Array String)
   (let
     [a : (Array String) (make-array String 5)]
@@ -25880,14 +25879,12 @@
       a)))
 
 ;; Constant/magic-division 3-scratch discipline. The magic multiply needs a
-;; scratch for the magic constant (kept on %r8), a saved-dividend register (was
-;; hardcoded %r10, read back for the remainder), and a sign-mask register (was
-;; hardcoded %r11, signed only). All three must be mutually distinct AND distinct
-;; from %rax/%rdx (the multiply/idiv clobbers). The freeness query cannot see a
-;; sibling scratch's transient use at the same point, so each scavenge excludes
-;; the already-picked regs + the other scratch fallbacks. Excluding the own
-;; fallback (%r10/%r11) forces an ACTIVE pick (exercised by the division stress),
-;; degrading to the original %r10/%r11 only via emergency spill.
+;; scratch for the magic constant, a saved-dividend register read back for the
+;; remainder, and a sign-mask register for signed cases. All three must be
+;; mutually distinct and distinct from %rax/%rdx (the multiply/idiv clobbers).
+;; The freeness query cannot see a sibling scratch's transient use at the same
+;; point, so each scavenge excludes the already-picked regs plus the other
+;; scratch fallbacks.
 (define (compiler-backend-divmod-dividend-exclude [magic : String]) : (Array String)
   (let
     [a : (Array String) (make-array String 5)]
@@ -25895,7 +25892,7 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%r10")
-      (array-set! a 3 "%r11")
+      (array-set! a 3 "%r9")
       (array-set! a 4 magic)
       a)))
 
@@ -25908,7 +25905,7 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%r10")
-      (array-set! a 3 "%r11")
+      (array-set! a 3 "%r9")
       (array-set! a 4 magic)
       (array-set! a 5 dividend)
       a)))
@@ -26063,7 +26060,7 @@
 ;; are always free then) and it keeps the #32 optimisation open (a free reg needs
 ;; no save/restore). If the fallback is OCCUPIED (a pooled reg now homing a value,
 ;; possibly an operand), use the first NON-EXCLUDED candidate: non-excluded =>
-;; not an operand home AND not a template-hardcoded superset reg, so emergency-
+;; not an operand home AND not a template-fixed superset reg, so emergency-
 ;; wrapping it is sound (even a callee-saved or non-operand-occupied reg -- the
 ;; wrap restores it). All-excluded is pathological/unreachable (exclude is
   ;; superset(5)+a few operand homes vs candidate count) -> fallback last resort.
@@ -26294,11 +26291,8 @@
         " -- pick returned an occupied register (no free scratch)"))))
 
 ;; Return a register free at dst-var's def point (via the proven query),
-;; excluding `exclude`, preferring `fallback`. While the fallback is a reserved
-;; scratch it is always free here -> wiring a hardcoded scratch through this is
-;; byte-identical. The "pick a different free register" branch lands when the
-;; fallback register is pooled (step 15d); until then this returns `fallback`,
-;; which also keeps it from being dead code (the binop sites call it).
+;; excluding `exclude`, preferring `fallback`. If the preferred register is
+;; occupied, pick another free pooled candidate or use the emergency wrapper.
 (define (compiler-backend-scavenge-reg
   [dst-var : i64]
   [exclude : (Array String)]

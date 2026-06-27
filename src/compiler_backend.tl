@@ -8149,6 +8149,22 @@
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op"))]))
 
+(define (compiler-backend-f64-unop-reg-asm
+  [op : CompilerIrUnOp]
+  [reg : String]) : ResultCompilerBackend
+  (match op
+    [(IrUnNeg)
+      (OkCompilerBackend
+        (str-cat
+          "    xorpd "
+          (compiler-backend-f64-sign-bit-label)
+          "(%rip), "
+          reg
+          "\n"))]
+    [_
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op"))]))
+
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
 ;; rhs via "<op>q src, dst"). Comparisons, div/mod and variable shifts are
@@ -9853,24 +9869,37 @@
   [src : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (if (compiler-backend-f64-type? ty)
-    (match (compiler-backend-emit-load-f64-value-with-plan
-      assignments
-      src
-      "%xmm0")
-      [(OkCompilerBackend src-asm)
-        (match (compiler-backend-f64-unop-asm op)
-          [(OkCompilerBackend op-asm)
-            (OkCompilerBackend
-              (string-append
-                src-asm
-                (string-append
-                  op-asm
-                  (compiler-backend-emit-store-f64-var-with-plan
-                    assignments
-                    dst
-                    "%xmm0"))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+    (let
+      [dst-home : String (compiler-backend-var-register-home assignments dst)]
+      (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+        (match (compiler-backend-emit-load-f64-value-with-plan
+          assignments
+          src
+          dst-home)
+          [(OkCompilerBackend src-asm)
+            (match (compiler-backend-f64-unop-reg-asm op dst-home)
+              [(OkCompilerBackend op-asm)
+                (OkCompilerBackend (string-append src-asm op-asm))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (compiler-backend-emit-load-f64-value-with-plan
+          assignments
+          src
+          "%xmm0")
+          [(OkCompilerBackend src-asm)
+            (match (compiler-backend-f64-unop-asm op)
+              [(OkCompilerBackend op-asm)
+                (OkCompilerBackend
+                  (string-append
+                    src-asm
+                    (string-append
+                      op-asm
+                      (compiler-backend-emit-store-f64-var-with-plan
+                        assignments
+                        dst
+                        "%xmm0"))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       (if (string-eq dst-home "")

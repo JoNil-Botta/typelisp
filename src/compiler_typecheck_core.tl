@@ -18909,8 +18909,22 @@
         (tc-spmd-masked-if-call ctx env spmd-env func args expr))]
     [(AstExprSyscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
-    [(AstExprWhile _ _)
-      (tc-spmd-masked-if-unsupported "varying while inside masked branches")]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+          [(OkTcUnit)
+            (match (tc-spmd-expr ctx env spmd-env cond)
+              [(OkTcSpmdExprInfo cond-info)
+                (match cond-info
+                  [(TcSpmdExprInfo _ cond-class cond-env)
+                    (if (tc-spmd-varying? cond-class)
+                      (tc-spmd-masked-if-expr ctx env cond-env body)
+                      (tc-spmd-masked-if-unsupported
+                        "uniform while inside masked branches"))])]
+              [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
@@ -20276,20 +20290,34 @@
           [(OkTcSpmdExprInfo cond-info)
             (match cond-info
               [(TcSpmdExprInfo _ cond-class cond-env)
-                (match (tc-spmd-require-uniform
-                  cond-class
-                  "typecheck: foreach while condition must be uniform")
-                  [(OkTcUnit)
-                    (match (tc-spmd-expr ctx env cond-env body)
-                      [(OkTcSpmdExprInfo body-info)
-                        (match body-info
-                          [(TcSpmdExprInfo _ _ body-env)
-                            (tc-spmd-finish
-                              expr-ty
-                              TcSpmdUniform
-                              (tc-spmd-env-merge-classes cond-env body-env))])]
-                      [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                (if (tc-spmd-varying? cond-class)
+                  (match (tc-spmd-masked-if-expr ctx env spmd-env cond)
+                    [(OkTcUnit)
+                      (match (tc-spmd-masked-if-expr ctx env cond-env body)
+                        [(OkTcUnit)
+                          (match (tc-spmd-expr ctx env cond-env body)
+                            [(OkTcSpmdExprInfo body-info)
+                              (match body-info
+                                [(TcSpmdExprInfo _ _ body-env)
+                                  (tc-spmd-finish
+                                    expr-ty
+                                    TcSpmdUniform
+                                    (tc-spmd-env-merge-classes
+                                      cond-env
+                                      body-env))])]
+                            [(ErrTcSpmdExprInfo message)
+                              (ErrTcSpmdExprInfo message)])]
+                        [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])]
+                    [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])
+                  (match (tc-spmd-expr ctx env cond-env body)
+                    [(OkTcSpmdExprInfo body-info)
+                      (match body-info
+                        [(TcSpmdExprInfo _ _ body-env)
+                          (tc-spmd-finish
+                            expr-ty
+                            TcSpmdUniform
+                            (tc-spmd-env-merge-classes cond-env body-env))])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))])]
           [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
     [(AstExprUnsafe exprs)

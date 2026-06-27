@@ -114,6 +114,8 @@ tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl
 tests/spmd/inline_helper_masked_if_i64.tl
 tests/spmd/masked_if_match_i64.tl
+tests/spmd/varying_while_i64.tl
+tests/spmd/masked_if_varying_while_i64.tl
 tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/bool_lanes.tl
@@ -169,6 +171,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/masked_if_match_i64.tl:avx2)
             printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/varying_while_i64.tl:avx2 | tests/spmd/masked_if_varying_while_i64.tl:avx2)
+            printf '%s\n' "lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/spmd/varying_match_i64.tl:avx2 | tests/spmd/varying_match_enum_payload.tl:avx2)
             printf '%s\n' "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512"

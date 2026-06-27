@@ -3908,7 +3908,7 @@ Private out-of-line SPMD call ABI (v1):
   helper", "SPMD out-of-line calls do not support extern callees", or "SPMD
   out-of-line calls do not support recursion".
 
-Masked varying `if` (v2):
+Masked varying control flow (v2/v3):
 
 - V2 includes varying `if` before gather/scatter, public lane-index builtins,
   public vector types, or public mask types. Lane identity is not required to
@@ -3953,23 +3953,35 @@ Masked varying `if` (v2):
   matching arm, and arm bodies follow the same masked branch restrictions as
   varying `if`. Aggregate, string, borrowed, function, array, public vector,
   public mask, and other non-lane-value pattern bindings remain deferred.
-- Varying `while`, function-local early exits (`return` and `try`
-  propagation), future `break`/`continue` forms, public mask values, gather
-  reads and scatter writes through index arrays inside masked branches,
-  overlapping ordinary writes, general atomics, and user-defined SPMD calls
-  remain deferred.
+- A `while` condition inside `foreach` may be varying when it has type `bool`.
+  Each loop carries an internal active mask. The first condition evaluation uses
+  the parent active mask; each later condition evaluation uses only lanes whose
+  previous loop condition was true. The body executes under the intersection of
+  the parent, tail, loop-carried, and current-condition masks. A lane exits the
+  loop permanently once its condition is false, and the whole loop exits once no
+  lane remains active.
+- Varying `while` bodies follow the same masked branch restrictions as varying
+  `if`: local `let`/`begin`, nested varying `if`, varying `match`, nested
+  varying `while`, supported arithmetic/comparison/boolean operations,
+  contiguous `array-ref`/`array-set!`, and accepted source-known SPMD helper
+  calls. Uniform `while` loops inside masked branches, function-local early
+  exits (`return` and `try` propagation), future `break`/`continue` forms,
+  public mask values, gather reads and scatter writes through index arrays
+  inside masked branches, overlapping ordinary writes, general atomics, and
+  user-defined SPMD calls outside the accepted helper subset remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
   SIMD backend modes, and SIMD backend modes must not silently scalarize an
   unsupported masked branch.
 - Current implementation status: scalar lowering accepts the checked masked-if
-  and varying-match surface as the reference path. AVX-512 supports unit-result
-  masked branches, nested branch-mask composition, scalar-lane literal
-  varying-match arms, enum tag/payload varying matches through scalar reference
-  lowering, contiguous predicated array reads/writes over the covered lane
-  types, and value-producing selects over the covered scalar lane result types.
-  AVX2 emits staged masked-if and varying-match diagnostics.
+  varying-match, and varying-while surface as the reference path. AVX-512
+  supports unit-result masked branches, nested branch-mask composition,
+  scalar-lane literal varying-match arms, enum tag/payload varying matches
+  through scalar reference lowering, loop-carried varying-while masks,
+  contiguous predicated array reads/writes over the covered lane types, and
+  value-producing selects over the covered scalar lane result types. AVX2 emits
+  staged masked-if, varying-match, and varying-while diagnostics.
 
 Explicit SPMD atomic scatter:
 
@@ -4291,8 +4303,7 @@ Unsupported in the current SPMD implementation:
 - Scans, general shuffles, general atomics beyond the explicit integer element
   helpers, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
-- Varying `while`, enum/payload varying `match`, early exits, `break`, and
-  `continue`.
+- Early exits, `break`, and `continue`.
 - Non-inlineable user-defined function calls with varying arguments or varying
   returns remain rejected until the v1 private out-of-line SPMD call ABI above
   is implemented. Direct source-known, non-dispatch helper calls may be inlined
@@ -4307,13 +4318,15 @@ Unsupported in the current SPMD implementation:
 
 Negative examples for later parser/typechecker tests:
 
-```lisp test=ignore name=spmd-reject-varying-while reason="varying while remains deferred after masked varying if"
+```lisp test=ignore name=spmd-reject-uniform-masked-while reason="uniform while inside masked branches remains deferred"
 (import stdlib.array)
 
 (define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (while (< (array.array-ref xs i) 0)
-      (array.array-set! out i 0))))
+    (if (< (array.array-ref xs i) 0)
+      (while (> n 0)
+        (array.array-set! out i 0))
+      unit)))
 ```
 
 ```lisp test=ignore name=spmd-reject-non-atomic-scatter reason="scatter writes remain deferred after masked varying if"

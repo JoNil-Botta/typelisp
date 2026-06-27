@@ -12136,6 +12136,57 @@
     (compiler-backend-profile-runtime-target-ok? (BackendTargetLinux))
     (compiler-backend-profile-runtime-target-ok? (BackendTargetWindows))))
 
+(define (compiler-backend-scavenge-exclude-before-r10) : (Array String)
+  (let
+    [a : (Array String) (make-array String 5)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%r8")
+      (array-set! a 2 "%r9")
+      (array-set! a 3 "%rcx")
+      (array-set! a 4 "%rdx")
+      a)))
+
+(define (compiler-backend-scavenge-exclude-before-r11) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%r8")
+      (array-set! a 2 "%r9")
+      (array-set! a 3 "%rcx")
+      (array-set! a 4 "%rdx")
+      (array-set! a 5 "%r10")
+      a)))
+
+(define (compiler-backend-scavenge-pooled-r10-r11-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 1)]
+    [ends : (Array i64) (make-array i64 1)]
+    (and
+      (string-eq
+        (compiler-backend-scavenge-pick
+          starts
+          ends
+          CompilerRegAssignmentNil
+          0
+          0
+          (compiler-backend-scavenge-exclude-before-r10)
+          5
+          "%rax")
+        "%r10")
+      (string-eq
+        (compiler-backend-scavenge-pick
+          starts
+          ends
+          CompilerRegAssignmentNil
+          0
+          0
+          (compiler-backend-scavenge-exclude-before-r11)
+          6
+          "%rax")
+        "%r11"))))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -12164,6 +12215,7 @@
         (compiler-backend-memory-op-ok?)
         (compiler-backend-address-mode-fusion-ok?)
         (compiler-backend-scratch-staging-direct-home-shape-ok?)
+        (compiler-backend-scavenge-pooled-r10-r11-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

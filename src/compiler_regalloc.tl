@@ -8550,14 +8550,7 @@
 ;; clobber), exactly the regmask-as-interference rule. Such values start their
 ;; register search at the callee-saved offset. This folds the old
 ;; prepass-partition + caller-saved-overflow into ONE allocation pass.
-;; NB: %r10/%r11 are NOT yet in this pool. Pooling them is gated on every hardcoded
-;; %r10/%r11 emit site in the backend being scavenged first. Remaining blockers
-;; (confirmed by an opt-2 self-host fixpoint segfault when they were temp-pooled):
-;; emit-load-from-gep NoI64 branch (dynamic-index base), magic-division scratch
-;; (compiler-backend-binop-*divmod* ~6924-7097), emit-address-base callers,
-;; c-abi return-slot %r11, and the indirect-call env/target %r11. The div overflow
-;; guard and the constant-offset gep-pair are already scavenged.
-;; r10/r11 are caller-saved pool members. They are de-hardcoded in the backend
+;; %r10/%r11 are caller-saved pool members. They are de-hardcoded in the backend
 ;; (active-scavenge across GEP/copy/div/c-abi/jump/indirect-call/phi-temp) and the
 ;; scavenge avoids them (superset exclude + the #23 freeness-based emergency picks
 ;; a non-pool-occupied candidate). The kind-0 clobber model forbids them across

@@ -23789,30 +23789,27 @@
       (array-set! a 6 (if (string-eq r2 "") "%rax" r2))
       a)))
 
-;; Scavenge candidate pool -- MUST stay in sync with
-;; compiler-reg-greedy-integer-pool: caller-saved r8/r9/rcx/rdx + callee-saved
-;; r12-r15/rbx. Non-pool registers (rax/rsi/rdi/r10/r11) are NOT candidates: the
-;; backend uses them untracked, so the liveness query cannot certify them free.
-;; NB: %r10/%r11 are intentionally NOT scavenge candidates while the backend still
-;; has hardcoded %r10/%r11 uses (addressing, magic-division, c-abi, indirect call).
-;; The allocator does NOT home vars in %r10/%r11 (they are NOT in the pool); the
-;; scavenger likewise must not pick them as scratch: a scratch %r10 chosen inside an
-;; instruction whose template also hardcodes %r10 would self-collide -- invisible
-;; to the freeness query (the scratch IS free; the template use is untracked).
-;; Re-add them here only once every hardcoded %r10/%r11 emit site is scavenged.
+;; Scavenge candidate pool. The allocator-owned entries must stay in sync with
+;; compiler-reg-greedy-integer-pool's caller-saved and callee-saved registers.
+;; %r8 is still a legacy backend scratch candidate until its remaining fixed
+;; templates are moved under allocator ownership. Non-candidates such as
+;; %rax/%rsi/%rdi are ABI/result registers or are not tracked by the liveness
+;; query in this pool.
 (define (compiler-backend-scavenge-candidates) : (Array String)
   (let
-    [a : (Array String) (make-array String 9)]
+    [a : (Array String) (make-array String 11)]
     (begin
       (array-set! a 0 "%r8")
       (array-set! a 1 "%r9")
       (array-set! a 2 "%rcx")
       (array-set! a 3 "%rdx")
-      (array-set! a 4 "%r12")
-      (array-set! a 5 "%r13")
-      (array-set! a 6 "%r14")
-      (array-set! a 7 "%r15")
-      (array-set! a 8 "%rbx")
+      (array-set! a 4 "%r10")
+      (array-set! a 5 "%r11")
+      (array-set! a 6 "%r12")
+      (array-set! a 7 "%r13")
+      (array-set! a 8 "%r14")
+      (array-set! a 9 "%r15")
+      (array-set! a 10 "%rbx")
       a)))
 
 (define (compiler-backend-callee-saved-reg? [reg : String]) : bool
@@ -23873,7 +23870,7 @@
 ;; not an operand home AND not a template-hardcoded superset reg, so emergency-
 ;; wrapping it is sound (even a callee-saved or non-operand-occupied reg -- the
 ;; wrap restores it). All-excluded is pathological/unreachable (exclude is
-;; superset(5)+a few operand homes vs 9 candidates) -> fallback last resort.
+  ;; superset(5)+a few operand homes vs candidate count) -> fallback last resort.
 ;; Returns the first non-excluded candidate index, or -1 = "use the fallback".
 (define (compiler-backend-scavenge-emergency-cand-index
   [starts : (Array i64)]
@@ -23981,18 +23978,20 @@
     (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
     (compiler-backend-scavenge-free-at-point? starts ends assignments vars point fallback))
     fallback
-    (compiler-backend-scavenge-pick-iter
-      starts
-      ends
-      assignments
-      vars
-      point
-      exclude
-      exclude-n
-      fallback
-      (compiler-backend-scavenge-candidates)
-      0
-      9)))
+    (let
+      [cands : (Array String) (compiler-backend-scavenge-candidates)]
+      (compiler-backend-scavenge-pick-iter
+        starts
+        ends
+        assignments
+        vars
+        point
+        exclude
+        exclude-n
+        fallback
+        cands
+        0
+        (array-length cands)))))
 
 ;; Freeness self-check (cfg-gated): the picked register MUST be free at `point`.
 ;; If not, the pick fell through to an OCCUPIED fallback (no free register found)

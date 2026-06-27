@@ -6592,13 +6592,13 @@
 
 (define (compiler-backend-group-stack-exclude [operand : String]) : (Array String)
   (let
-    [base : (Array String) (compiler-backend-c-abi-stage-exclude)]
+    [base : (Array String) (compiler-backend-c-abi-stage-exclude-with "%r11")]
     (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-scavenge-exclude-append base 4 operand)
+      (compiler-backend-scavenge-exclude-append base 5 operand)
       base)))
 
 (define (compiler-backend-group-stack-exclude-count [operand : String]) : i64
-  (if (compiler-backend-peephole-register-operand? operand) 5 4))
+  (if (compiler-backend-peephole-register-operand? operand) 6 5))
 
 (define (compiler-backend-outgoing-stack-arg-slot
   [target : CompilerBackendTarget]
@@ -6639,7 +6639,7 @@
                   (compiler-backend-scavenge-reg-here
                     (compiler-backend-group-stack-exclude word1)
                     (compiler-backend-group-stack-exclude-count word1)
-                    "%r11")]
+                    "%r10")]
                 (OkCompilerBackend
                   (string-append
                     (compiler-backend-emit-group-stack-word-copy
@@ -6737,9 +6737,9 @@
       (let
         [scratch : String
           (compiler-backend-scavenge-reg-here
-            (compiler-backend-c-abi-stage-exclude)
-            4
-            "%r11")]
+            (compiler-backend-c-abi-stage-exclude-with "%r11")
+            5
+            "%r10")]
         (match (compiler-backend-group-word-operand
           assignments
           v
@@ -8796,12 +8796,23 @@
         (compiler-backend-scavenge-xmm-reg dst xmm-exclude xmm-exclude-n "%xmm2")]
       [rhs-operand : String
         (compiler-backend-float-direct-rhs-operand assignments rhs fty lhs-reg)]
+      [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [result-reg : String
-        (compiler-backend-scavenge-reg
-          dst
-          (compiler-backend-binop-scavenge-exclude-build)
-          5
-          "%r8")]
+        (if (string-eq dst-home "")
+          (compiler-backend-scavenge-reg
+            dst
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")
+          dst-home)]
+      [store-result : String
+        (if (string-eq dst-home "")
+          (compiler-backend-emit-store-typed-var-with-plan
+            assignments
+            dst
+            result-reg
+            result-ty)
+          "")]
       (if (string-eq rhs-operand "")
         (let
           [rhs-temp-exclude : (Array String)
@@ -8830,11 +8841,7 @@
                         lhs-reg
                         rhs-temp
                         result-reg)
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        result-reg
-                        result-ty)))]
+                      store-result))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
         (match (compiler-backend-emit-load-float-value-with-plan
@@ -8852,11 +8859,7 @@
                   lhs-reg
                   rhs-operand
                   result-reg)
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  result-reg
-                  result-ty)))]
+                store-result))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
     (if (compiler-backend-float-arith-op? op)
       (let
@@ -9477,97 +9480,98 @@
                 operand-ty
                 ty)
               (if (compiler-backend-compare-op? op)
-              (compiler-backend-emit-binop-direct-compare
-                assignments
-                dst
-                dst-home
-                op
-                lhs
-                rhs
-                operand-ty)
-              (if (compiler-backend-binop-shift-op? op)
-                (compiler-backend-emit-binop-direct-rcx-shift
+                (compiler-backend-emit-binop-direct-compare
                   assignments
+                  dst
                   dst-home
                   op
                   lhs
+                  rhs
                   operand-ty)
-                (let
-              [rhs-reg : String
-                (compiler-backend-value-scalar-register assignments rhs)]
-              [lhs-reg : String
-                (compiler-backend-value-scalar-register assignments lhs)]
-              ;; Exclude dst-home + lhs-reg: at this point the dst is not yet live
-              ;; (so the query reads its home "free") and lhs goes into dst-home,
-              ;; so the rhs scratch must avoid both or it collides (e.g. subq
-              ;; %r8,%r8). Uses the emission's own homes (authoritative).
-              [scav-rhs : String
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
-                  7
-                  "%r8")]
-              (if (if (string-eq mnem "addq")
-                (if (string-eq lhs-reg "")
-                  false
-                  (not (string-eq rhs-reg "")))
-                false)
-                ;; bucket a (two-address tie): when both operands already live in
-                ;; registers and the op is add, emit a 3-address LEA so the
-                ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
-                ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
-                ;; never consumes a binop's flags (comparisons emit their own cmp).
-                (OkCompilerBackend
-                  (str-cat
-                    "    leaq ("
-                    lhs-reg
-                    ","
-                    rhs-reg
-                    (string-append "), " (string-append dst-home "\n"))))
-                (if (if (string-eq rhs-reg "")
-                  false
-                  (not (string-eq rhs-reg dst-home)))
-                  (match (compiler-backend-emit-load-value-with-plan
+                (if (compiler-backend-binop-shift-op? op)
+                  (compiler-backend-emit-binop-direct-rcx-shift
                     assignments
+                    dst-home
+                    op
                     lhs
-                    dst-home)
-                    [(OkCompilerBackend lhs-asm)
+                    operand-ty)
+                  (let
+                    [rhs-reg : String
+                      (compiler-backend-value-scalar-register assignments rhs)]
+                    [lhs-reg : String
+                      (compiler-backend-value-scalar-register assignments lhs)]
+                    ;; Exclude dst-home + lhs-reg: at this point the dst is not yet live
+                    ;; (so the query reads its home "free") and lhs goes into dst-home,
+                    ;; so the rhs scratch must avoid both or it collides (e.g. subq
+                    ;; %r8,%r8). Uses the emission's own homes (authoritative).
+                    [scav-rhs : String
+                      (compiler-backend-scavenge-reg
+                        dst
+                        (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
+                        7
+                        "%r8")]
+                    (if (if (string-eq mnem "addq")
+                      (if (string-eq lhs-reg "")
+                        false
+                        (not (string-eq rhs-reg "")))
+                      false)
+                      ;; bucket a (two-address tie): when both operands already live in
+                      ;; registers and the op is add, emit a 3-address LEA so the
+                      ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
+                      ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
+                      ;; never consumes a binop's flags (comparisons emit their own cmp).
                       (OkCompilerBackend
-                        (string-append
-                          lhs-asm
-                          (str-cat
-                            "    "
-                            mnem
-                            " "
-                            rhs-reg
-                            (string-append ", " (string-append dst-home "\n")))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    rhs
-                    scav-rhs)
-                    [(OkCompilerBackend rhs-asm)
-                      (match (compiler-backend-emit-load-value-with-plan
-                        assignments
-                        lhs
-                        dst-home)
-                        [(OkCompilerBackend lhs-asm)
-                          (OkCompilerBackend
-                            (string-append
-                              rhs-asm
+                        (str-cat
+                          "    leaq ("
+                          lhs-reg
+                          ","
+                          rhs-reg
+                          (string-append "), " (string-append dst-home "\n"))))
+                      (if (if (string-eq rhs-reg "")
+                        false
+                        (not (string-eq rhs-reg dst-home)))
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          lhs
+                          dst-home)
+                          [(OkCompilerBackend lhs-asm)
+                            (OkCompilerBackend
                               (string-append
                                 lhs-asm
                                 (str-cat
                                   "    "
                                   mnem
                                   " "
-                                  scav-rhs
-                                  ", "
-                                  dst-home
-                                  "\n"))))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))]))
+                                  rhs-reg
+                                  (string-append ", " (string-append dst-home "\n")))))]
+                          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                        (match (compiler-backend-emit-load-value-with-plan
+                          assignments
+                          rhs
+                          scav-rhs)
+                          [(OkCompilerBackend rhs-asm)
+                            (match (compiler-backend-emit-load-value-with-plan
+                              assignments
+                              lhs
+                              dst-home)
+                              [(OkCompilerBackend lhs-asm)
+                                (OkCompilerBackend
+                                  (string-append
+                                    rhs-asm
+                                    (string-append
+                                      lhs-asm
+                                      (str-cat
+                                        "    "
+                                        mnem
+                                        " "
+                                        scav-rhs
+                                        ", "
+                                        dst-home
+                                        "\n"))))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend message)])]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])))))))])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs
@@ -11970,7 +11974,7 @@
                 copy-gp
                 ""
                 0
-                size)))))]
+                size))))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-from-gep
@@ -12019,7 +12023,7 @@
                     addr
                     load-ty
                     (compiler-backend-one-exclude base-reg)
-                    1)))]
+                    1))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       ;; Dynamic-index (SIB) load. Active-scavenge BOTH the index and the base:
@@ -12107,7 +12111,7 @@
                             load-addr
                             load-ty
                             (compiler-backend-two-exclude scav-base scav-idx)
-                            2)))))]
+                            2))))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
@@ -12627,8 +12631,8 @@
                     assignments
                     dst
                     tmp-reg
-                    to-ty)))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+                    to-ty))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-int-to-float-cast
   [function : String]
@@ -12733,7 +12737,7 @@
                   dst
                   result-reg
                   to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
 
 (define (compiler-backend-emit-float-to-int-cast
   [assignments : CompilerRegAssignmentList]
@@ -12791,7 +12795,7 @@
                     dst
                     dst-reg
                     to-ty))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-cast
   [function : String]
@@ -13042,7 +13046,7 @@
                           dst
                           dst-reg
                           to-ty))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]
       [(and from-int to-float)
         (let
           [dst-home : String (compiler-backend-var-register-home assignments dst)]
@@ -13094,7 +13098,7 @@
                           dst
                           dst-tmp
                           to-ty))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]
       [(and from-int to-int)
         (let
           [dst-home : String (compiler-backend-var-register-home assignments dst)]
@@ -15347,9 +15351,9 @@
       (let
         [scav : String
           (compiler-backend-scavenge-reg-here
-            (compiler-backend-c-abi-stage-exclude)
-            4
-            "%r11")]
+            (compiler-backend-c-abi-stage-exclude-with "%r11")
+            5
+            "%r10")]
         [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
           assignments
@@ -15374,9 +15378,9 @@
           (let
             [scav : String
               (compiler-backend-scavenge-reg-here
-                (compiler-backend-c-abi-stage-exclude)
-                4
-                "%r11")]
+                (compiler-backend-c-abi-stage-exclude-with "%r11")
+                5
+                "%r10")]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -15710,9 +15714,9 @@
       (let
         [scav : String
           (compiler-backend-scavenge-reg-here
-            (compiler-backend-c-abi-stage-exclude)
-            4
-            "%r11")]
+            (compiler-backend-c-abi-stage-exclude-with "%r11")
+            5
+            "%r10")]
         [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
           assignments
@@ -15737,9 +15741,9 @@
           (let
             [scav : String
               (compiler-backend-scavenge-reg-here
-                (compiler-backend-c-abi-stage-exclude)
-                4
-                "%r11")]
+                (compiler-backend-c-abi-stage-exclude-with "%r11")
+                5
+                "%r10")]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -16323,7 +16327,21 @@
                     ", "
                     dst-home
                     "\n"))])]
-          [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
+          [(CompilerRegRegisterPair dst-lo dst-hi)
+            (match (compiler-reg-assignment-lookup assignments src-id)
+              [(CompilerRegSomeLocation src-location)
+                (match src-location
+                  [(CompilerRegRegisterPair src-lo src-hi)
+                    (CompilerBackendSomeAsm
+                      (string-append
+                        (if (string-eq src-lo dst-lo)
+                          ""
+                          (str-cat "    movq " src-lo ", " dst-lo "\n"))
+                        (if (string-eq src-hi dst-hi)
+                          ""
+                          (str-cat "    movq " src-hi ", " dst-hi "\n"))))]
+                  [_ (CompilerBackendNoAsm)])]
+              [(CompilerRegNoLocation) (CompilerBackendNoAsm)])]
           [(CompilerRegRemat _) (CompilerBackendNoAsm)]
           [(CompilerRegSpill dst-offset)
             (match (compiler-reg-assignment-lookup assignments src-id)
@@ -16429,27 +16447,57 @@
         ;; #2386: a register-group phi value carries two words -- copy both halves
         ;; (rax:rdx) through the group ABI, not just word0 via the scalar path.
         (if (compiler-backend-group-type? program-index ty)
-          (match (compiler-backend-emit-group-load
-            assignments
-            value
-            (compiler-backend-group-return-reg program-index ty 0)
-            (compiler-backend-group-return-reg program-index ty 1)
-            vars
-            ty
-            program-index)
-            [(OkCompilerBackend load)
-              (match (compiler-backend-emit-group-store
+          (match value
+            [(IrValueVar src-id)
+              (match (compiler-backend-emit-phi-var-source-direct
                 assignments
                 dst
+                src-id)
+                [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+                [(CompilerBackendNoAsm)
+                  (match (compiler-backend-emit-group-load
+                    assignments
+                    value
+                    (compiler-backend-group-return-reg program-index ty 0)
+                    (compiler-backend-group-return-reg program-index ty 1)
+                    vars
+                    ty
+                    program-index)
+                    [(OkCompilerBackend load)
+                      (match (compiler-backend-emit-group-store
+                        assignments
+                        dst
+                        (compiler-backend-group-return-reg program-index ty 0)
+                        (compiler-backend-group-return-reg program-index ty 1)
+                        vars
+                        ty
+                        program-index)
+                        [(OkCompilerBackend store)
+                          (OkCompilerBackend (string-append load store))]
+                        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+            [_
+              (match (compiler-backend-emit-group-load
+                assignments
+                value
                 (compiler-backend-group-return-reg program-index ty 0)
                 (compiler-backend-group-return-reg program-index ty 1)
                 vars
                 ty
                 program-index)
-                [(OkCompilerBackend store)
-                  (OkCompilerBackend (string-append load store))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                [(OkCompilerBackend load)
+                  (match (compiler-backend-emit-group-store
+                    assignments
+                    dst
+                    (compiler-backend-group-return-reg program-index ty 0)
+                    (compiler-backend-group-return-reg program-index ty 1)
+                    vars
+                    ty
+                    program-index)
+                    [(OkCompilerBackend store)
+                      (OkCompilerBackend (string-append load store))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
           (compiler-backend-emit-phi-source-scalar-to-var
             assignments
             dst
@@ -18448,17 +18496,40 @@
       (str-cat "    movq " (int->string save-offset) "(%rsp), " base-reg "\n")
       (compiler-backend-emit-c-abi-return-slot-stores base-reg slots 0 0))))
 
+(define (compiler-backend-assignments-use-reg?
+  [assignments : CompilerRegAssignmentList]
+  [reg : String]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) false]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment _ location)
+          (or
+            (match location
+              [(CompilerRegRegister home) (string-eq home reg)]
+              [(CompilerRegRegisterPair lo hi)
+                (or (string-eq lo reg) (string-eq hi reg))]
+              [(CompilerRegSpill _) false]
+              [(CompilerRegRemat _) false])
+            (compiler-backend-assignments-use-reg? (box-get rest) reg))])]))
+
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [label : String]
   [ty : AstType]) : ResultCompilerBackend
   (let
+    [r11-occupied : bool (compiler-backend-assignments-use-reg? assignments "%r11")]
+    [exclude : (Array String)
+      (if r11-occupied
+        (compiler-backend-scavenge-exclude-with "%r8")
+        (compiler-backend-c-abi-return-store-base-exclude))]
+    [exclude-n : i64 (if r11-occupied 6 2)]
     [scratch-reg : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-c-abi-return-store-base-exclude)
-        2
+        exclude
+        exclude-n
         "%r11")]
     [scratch-asm : String
       (string-append
@@ -18770,36 +18841,50 @@
   [case-count : i64]
   [default-label : String]
   [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
-  ;; Active-scavenge the jump-table base (was hardcoded %r11). The case index
-  ;; lives in %rax across the jmp (jmp *(base,%rax,8)), so the base must exclude
-  ;; %rax; the standard exclude {rax,rdx,rcx,r10,r11} also reserves the %r11
-  ;; fallback so the base actively picks a free candidate. The base is loaded
-  ;; (leaq) then read once in the jmp -- no other backend scratch is live here.
   (let
-    [scav-tbl : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-binop-scavenge-exclude-build)
-        5
-        "%r11")]
-    (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+    [index-home : String (compiler-backend-value-scalar-register assignments index)]
+    [need-index-scratch : bool
+      (or (not (= base 0)) (string-eq index-home ""))]
+    [index-exclude : (Array String)
+      (if (and need-index-scratch (not (string-eq index-home "")))
+        (compiler-backend-one-exclude index-home)
+        (make-array String 0))]
+    [index-exclude-n : i64
+      (if (and need-index-scratch (not (string-eq index-home ""))) 1 0)]
+    [index-reg : String
+      (if need-index-scratch
+        (compiler-backend-scavenge-reg-here index-exclude index-exclude-n "%r8")
+        index-home)]
+    [table-exclude : (Array String) (compiler-backend-one-exclude index-reg)]
+    [table-reg : String
+      (compiler-backend-scavenge-reg-here table-exclude 1 "%r9")]
+    [index-load : ResultCompilerBackend
+      (if need-index-scratch
+        (compiler-backend-emit-load-value-with-plan assignments index index-reg)
+        (OkCompilerBackend ""))]
+    (match index-load
       [(OkCompilerBackend load-index)
         (OkCompilerBackend
           (str-cat
             load-index
             (if (= base 0)
               ""
-              (str-cat "    subq $" (int->string base) ", %rax\n" ""))
+              (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
             "    cmpq $"
             (int->string (- case-count 1))
-            ", %rax\n    ja "
+            ", "
+            index-reg
+            "\n    ja "
             (compiler-backend-asm-label function default-label)
             "\n    leaq "
             (compiler-backend-switch-table-label function current-label)
             "(%rip), "
-            scav-tbl
+            table-reg
             "\n    jmp *("
-            scav-tbl
-            ",%rax,8)\n"))]
+            table-reg
+            ","
+            index-reg
+            ",8)\n"))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-switch
@@ -19391,7 +19476,7 @@
                   (ErrCompilerBackend
                     (compiler-backend-apply-instr-diagnostic
                       message
-                      instr-diag))])))]
+                      instr-diag))]))))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function
@@ -22097,7 +22182,7 @@
   (compiler-backend-scavenge-reg-here
     (compiler-backend-scavenge-exclude-with-r8 "%r9")
     7
-    "%r11"))
+    "%r12"))
 
 (define (compiler-backend-emit-indirect-c-call
   [target : CompilerBackendTarget]
@@ -22191,7 +22276,7 @@
                               "%rax")
                             ty)
                           ""
-                          ""))))))]
+                          "")))))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))]))
@@ -26928,6 +27013,24 @@
 (define (compiler-backend-direct-emit-instr-limit) : i64
   0)
 
+(define (compiler-backend-clear-function-emit-state!) : unit
+  (begin
+    (compiler-backend-set-scavenge-ctx!
+      (make-array i64 1)
+      (make-array i64 1)
+      CompilerRegAssignmentNil
+      0)
+    (compiler-backend-scavenge-reset-callee!)
+    (compiler-backend-addr-of-forwarding-disable!)
+    (compiler-backend-fuse-need-disable!)
+    (set! compiler-backend-current-phi-targets BackendStringNil)
+    (set! compiler-backend-current-phi-target-count 0)
+    (set! compiler-backend-emit-instr-post-base 0)
+    (set! compiler-backend-emit-current-count 0)
+    (set! compiler-backend-emit-instrs-loop-active false)
+    (set! compiler-backend-emit-instrs-continue-pending false)
+    (set! compiler-backend-identity-tail-forwarder-active false)))
+
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
     [(IrFunction _ _ _ _ blocks)
@@ -26983,35 +27086,40 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
-  (if (compiler-backend-emit-function-direct? func)
-    (compiler-backend-emit-function
-      target
-      mode
-      func
-      all-functions
-      globals
-      global-types
-      externs
-      plan
-      program-index
-      spans
-      span-index
-      emit-entry
-      crt-entry)
-    (compiler-backend-emit-function-scratch
-      target
-      mode
-      func
-      all-functions
-      globals
-      global-types
-      externs
-      plan
-      program-index
-      spans
-      span-index
-      emit-entry
-      crt-entry)))
+  (let
+    [result : ResultCompilerBackend
+      (if (compiler-backend-emit-function-direct? func)
+        (compiler-backend-emit-function
+          target
+          mode
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry)
+        (compiler-backend-emit-function-scratch
+          target
+          mode
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry))]
+    (begin
+      (compiler-backend-clear-function-emit-state!)
+      result)))
 
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
@@ -29746,15 +29854,18 @@ tl_profile_alloc_peak_bytes:
         slow-label
         "\n")]
     [ordinary-body-a : String
-      (backend-cat4
+      (str-cat
         "    movq 40(%r8), %r9
     testq $1, 48(%r9)
     jnz "
         atomic-label
         "
-    movq 16(%r8), %rax
-    movq %rax, "
-        next-reg)]
+    movq 16(%r8), "
+        next-reg
+        "
+    movq "
+        next-reg
+        ", %rax")]
     [ordinary-body-b : String
       (backend-cat4 "\n    addq $" size-text ", " next-reg)]
     [ordinary-body-c : String
@@ -29929,8 +30040,8 @@ tl_alloc:
     movq 40(%r8), %r9
     testq $1, 48(%r9)
     jnz .L_tl_alloc_atomic
-    movq 16(%r8), %rax
-    movq %rax, %rcx
+    movq 16(%r8), %rcx
+    movq %rcx, %rax
     addq %rsi, %rcx
     jc .L_tl_alloc_abort
     cmpq 24(%r8), %rcx
@@ -30886,8 +30997,8 @@ tl_alloc:
     movq 40(%r8), %r9
     testq $1, 48(%r9)
     jnz .L_tl_alloc_win_atomic
-    movq 16(%r8), %rax
-    movq %rax, %r10
+    movq 16(%r8), %r10
+    movq %r10, %rax
     addq %r11, %r10
     jc .L_tl_alloc_enter_abort
     cmpq 24(%r8), %r10

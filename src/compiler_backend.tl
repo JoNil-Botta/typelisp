@@ -10995,14 +10995,13 @@
       (if (string-eq index-reg "")
         "%rax"
         index-reg)]
-    ;; Length-load scratch (was hardcoded %r11). Active-scavenge so a pooled %r11
-    ;; value is not clobbered; exclude the index home (the cmp reads index vs
-    ;; length). Falls back to %r11 only via emergency spill.
+    ;; Length-load scratch: exclude the index home because the cmp reads index
+    ;; vs length.
     [scav-len : String
       (compiler-backend-scavenge-reg-here
         (compiler-backend-scavenge-exclude-with index-reg)
         6
-        "%r11")]
+        "%r9")]
     (if (string-eq index-reg "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments

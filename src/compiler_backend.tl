@@ -8119,13 +8119,18 @@
     (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask)))
 
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
-;; register is supplied by the caller (the tail path keeps it on %r8).
+;; register is scavenged at the return point, so a pooled %r8 live across the fused
+;; return is not clobbered by the constant-divmod sequence.
 (define (compiler-backend-binop-literal-divmod-asm-here
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
-  [ty : AstType]
-  [magic : String]) : CompilerBackendMaybeAsm
+  [ty : AstType]) : CompilerBackendMaybeAsm
   (let
+    [magic : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-binop-scavenge-exclude-for-op op)
+        5
+        "%r8")]
     [dividend : String
       (compiler-backend-scavenge-reg-here
         (compiler-backend-divmod-dividend-exclude magic)
@@ -10127,6 +10132,19 @@
     (ErrCompilerBackend
       (compiler-diagnostic-at-start "" "backend: unsupported float return compare"))))
 
+(define (compiler-backend-scavenge-binop-return-rhs-reg
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]) : String
+  (let
+    [rhs-home : String (compiler-backend-value-register-home assignments rhs)]
+    [exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append
+        (compiler-backend-binop-scavenge-exclude-for-op op)
+        5
+        (if (string-eq rhs-home "") "%rax" rhs-home))]
+    (compiler-backend-scavenge-reg-here exclude 6 "%r8")))
+
 (define (compiler-backend-emit-binop-return
   [source-function : String]
   [blocks : CompilerIrBlockList]
@@ -10171,8 +10189,7 @@
             (match (compiler-backend-binop-literal-divmod-asm-here
               op
               rhs
-              operand-ty
-              "%r8")
+              operand-ty)
               [(CompilerBackendSomeAsm op-asm)
                 (OkCompilerBackend
                   (string-append lhs-asm (string-append op-asm return-tail)))]
@@ -10189,40 +10206,52 @@
                             lhs-asm
                             (string-append op-asm return-tail)))]
                       [(CompilerBackendNoAsm)
-                        (match (compiler-backend-emit-load-value-with-plan
-                          assignments
-                          rhs
-                          "%r8")
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
-                              (string-append
-                                lhs-asm
+                        (let
+                          [rhs-reg : String
+                            (compiler-backend-scavenge-binop-return-rhs-reg
+                              assignments
+                              op
+                              rhs)]
+                          (match (compiler-backend-emit-load-value-with-plan
+                            assignments
+                            rhs
+                            rhs-reg)
+                            [(OkCompilerBackend rhs-asm)
+                              (OkCompilerBackend
                                 (string-append
-                                  rhs-asm
+                                  lhs-asm
                                   (string-append
-                                    (compiler-backend-binop-asm
-                                      op
-                                      operand-ty
-                                      "%r8")
-                                    return-tail))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])])]
+                                    rhs-asm
+                                    (string-append
+                                      (compiler-backend-binop-asm
+                                        op
+                                        operand-ty
+                                        rhs-reg)
+                                      return-tail))))]
+                            [(ErrCompilerBackend message)
+                              (ErrCompilerBackend message)]))])]
                   [(CompilerBackendNoImmediate)
-                    (match (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      rhs
-                      "%r8")
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
-                          (string-append
-                            lhs-asm
+                    (let
+                      [rhs-reg : String
+                        (compiler-backend-scavenge-binop-return-rhs-reg
+                          assignments
+                          op
+                          rhs)]
+                      (match (compiler-backend-emit-load-value-with-plan
+                        assignments
+                        rhs
+                        rhs-reg)
+                        [(OkCompilerBackend rhs-asm)
+                          (OkCompilerBackend
                             (string-append
-                              rhs-asm
+                              lhs-asm
                               (string-append
-                                (compiler-backend-binop-asm op operand-ty "%r8")
-                                return-tail))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])])]
+                                rhs-asm
+                                (string-append
+                                  (compiler-backend-binop-asm op operand-ty rhs-reg)
+                                  return-tail))))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)]))])])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-jump-label [function : String] [label : String]) : String

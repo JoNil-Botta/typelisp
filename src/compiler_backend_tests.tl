@@ -11676,6 +11676,46 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-int-return-binop-r8-live-asm) : ResultCompilerBackend
+  (let
+    [starts : (Array i64) (make-array i64 2)]
+    [ends : (Array i64) (make-array i64 2)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegSpill -16))
+          CompilerRegAssignmentNil))]
+    [_ctx : unit
+      (begin
+        (array-set! starts 0 0)
+        (array-set! starts 1 0)
+        (array-set! ends 0 2)
+        (array-set! ends 1 0)
+        (compiler-backend-set-scavenge-ctx! starts ends assignments 2)
+        (set! compiler-backend-emit-instr-post-base 1)
+        (set! compiler-backend-emit-current-count 1))]
+    (compiler-backend-emit-binop-return
+      "ret_int"
+      IrBlockNil
+      CompilerRegVarTypeNil
+      (CompilerBackendGlobalTypeNil)
+      assignments
+      2
+      (IrBinAdd)
+      (IrValueI64 5)
+      (IrValueVar 1)
+      (AstTyI64))))
+
+(define (compiler-backend-int-return-binop-r8-live-ok?) : bool
+  (match (compiler-backend-int-return-binop-r8-live-asm)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n")
+        (compiler-backend-string-contains? asm "    addq %r9, %rax\n")
+        (not (compiler-backend-string-contains? asm "%r8")))]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -14485,6 +14525,7 @@
         (compiler-backend-fallback-float-binop-home-ok?)
         (compiler-backend-float-return-binop-home-ok?)
         (compiler-backend-float-return-compare-home-ok?)
+        (compiler-backend-int-return-binop-r8-live-ok?)
         (and
           (compiler-backend-bitcast-shape-ok?)
           (compiler-backend-direct-bitcast-home-ok?)

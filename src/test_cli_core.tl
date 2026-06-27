@@ -1783,11 +1783,15 @@
         (compiler-load-stdlib-owned-path-from-roots normalized roots))]
     (compiler-load-stdlib-import? stdlib-path)))
 
-(define (tltest-inline-clear-load-caches!) : unit
+(define (tltest-inline-clear-load-only-caches!) : unit
   (begin
     (compiler-load-program-cache-clear!)
     (compiler-load-runtime-prelude-cache-clear!)
-    (tc-prefix-snapshot-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)))
+
+(define (tltest-inline-clear-load-caches!) : unit
+  (begin
+    (tltest-inline-clear-load-only-caches!)
     (compiler-driver-reset-analysis-state!)))
 
 (define (tltest-inline-reset-load-state!) : unit
@@ -1870,6 +1874,25 @@
             1)]))
     0))
 
+(defenum TltestCfgNameList
+  (TltestCfgNameNil)
+  (TltestCfgNameCons String i64 (Box TltestCfgNameList)))
+
+(define (tltest-cfg-name-list-from-env [cfgs : SymI64Env]) : TltestCfgNameList
+  (match cfgs
+    [(SymI64Nil) (TltestCfgNameNil)]
+    [(SymI64Bind key value rest)
+      (TltestCfgNameCons
+        (intern-str key)
+        value
+        (box (tltest-cfg-name-list-from-env (box-get rest))))]))
+
+(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : SymI64Env
+  (match names
+    [(TltestCfgNameNil) (sym-i64-empty)]
+    [(TltestCfgNameCons name value rest)
+      (sym-i64-bind (tltest-cfg-name-list-to-env (box-get rest)) name value)]))
+
 (define (tltest-inline-typecheck-package-sources-from
   [sources : vector.StringVec]
   [index : i64]
@@ -1883,33 +1906,35 @@
     [count : i64 (vector.string-vec-len sources)]
     [cursor : i64 index]
     [status : i64 0]
+    [cfg-names : TltestCfgNameList (tltest-cfg-name-list-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
           [source : String (vector.string-vec-get sources cursor "")]
+          [has-inline-tests : bool (tltest-source-has-inline-tests? source)]
           (begin
-            (if (tltest-source-has-inline-tests? source)
-              (set!
-                status
-                ;; Match package `test --check`: isolate each inline preflight
-                ;; source so package builds do not retain every loaded/test AST
-                ;; until the end of the package.
-                (with-scratch
-                  (let
-                    [entry-status : i64
-                      (begin
-                        (tltest-inline-reset-load-state!)
-                        (tltest-inline-typecheck-package-source-with-cfg
-                          source
-                          roots
-                          manifest-dir
-                          package-owner
-                          deps
-                          cfgs
-                          cache-scope-prefix))]
+            (if has-inline-tests
+              (begin
+                (tltest-inline-clear-load-caches!)
+                (set!
+                  status
+                  ;; Match package `test --check`: isolate each inline preflight
+                  ;; source so package builds do not retain every loaded/test AST
+                  ;; until the end of the package. The full file reset refreshes
+                  ;; interns, so rebuild cfg ids from the saved string snapshot.
+                  (with-scratch
                     (begin
-                      (tltest-inline-reset-load-state!)
-                      entry-status))))
+                      (tltest-inline-clear-load-only-caches!)
+                      (compiler-driver-reset-file-state!)
+                      (tltest-inline-typecheck-package-source-with-cfg
+                        source
+                        roots
+                        manifest-dir
+                        package-owner
+                        deps
+                        (tltest-cfg-name-list-to-env cfg-names)
+                        cache-scope-prefix))))
+                (tltest-inline-clear-load-caches!))
               (set! status 0))
             (if (= status 0)
               unit
@@ -1919,7 +1944,9 @@
                   source)))
             (set! cursor (+ cursor 1)))))
       (begin
-        (tltest-inline-reset-load-state!)
+        (begin
+          (tltest-inline-clear-load-only-caches!)
+          (compiler-driver-reset-file-state!))
         status))))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg

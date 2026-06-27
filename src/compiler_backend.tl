@@ -5881,7 +5881,7 @@
 ;; path means a lowering/backend representation mismatch -- surface it loudly
 ;; rather than emit silently wrong code.
 ;; #2386: build the two words into the destination group's homes. Non-immediate
-;; words are loaded into caller-saved scratch %rax/%rdx first and only then moved
+;; words are loaded into scavenged scratch registers first and only then moved
 ;; into the group's homes; immediate words are stored directly after those loads.
 ;; That keeps reads from the source homes ahead of any destination overwrite.
 (define (compiler-backend-emit-group-word-move
@@ -5972,6 +5972,14 @@
           (compiler-backend-emit-group-word-move src1 dst1 sse1?)))
       (CompilerBackendNoAsm))))
 
+(define (compiler-backend-pack-word-source-home
+  [assignments : CompilerRegAssignmentList]
+  [word : CompilerIrValue]
+  [sse? : bool]) : String
+  (if sse?
+    (compiler-backend-float-value-register assignments word)
+    (compiler-backend-value-scalar-register assignments word)))
+
 (define (compiler-backend-emit-pack-words
   [assignments : CompilerRegAssignmentList]
   [w0 : CompilerIrValue]
@@ -5992,14 +6000,31 @@
     [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
     [(CompilerBackendNoAsm)
       (let
+        [src1-home : String
+          (compiler-backend-pack-word-source-home assignments w1 sse1?)]
+        [scratch0-exclude : (Array String)
+          (if (string-eq src1-home "")
+            (make-array String 0)
+            (compiler-backend-one-exclude src1-home))]
+        [scratch0-exclude-n : i64
+          (if (string-eq src1-home "") 0 1)]
         [scratch0 : String
           (if sse0?
-            "%xmm0"
-            "%rax")]
+            (compiler-backend-scavenge-xmm-reg
+              -1
+              scratch0-exclude
+              scratch0-exclude-n
+              "%xmm2")
+            (compiler-backend-scavenge-reg-here
+              scratch0-exclude
+              scratch0-exclude-n
+              "%r8"))]
+        [scratch1-exclude : (Array String)
+          (compiler-backend-one-exclude scratch0)]
         [scratch1 : String
           (if sse1?
-            "%xmm1"
-            "%rdx")]
+            (compiler-backend-scavenge-xmm-reg -1 scratch1-exclude 1 "%xmm3")
+            (compiler-backend-scavenge-reg-here scratch1-exclude 1 "%r9"))]
         [store0 : CompilerBackendMaybeAsm
           (compiler-backend-emit-pack-word-immediate-store w0 dst0 sse0?)]
         [store1 : CompilerBackendMaybeAsm

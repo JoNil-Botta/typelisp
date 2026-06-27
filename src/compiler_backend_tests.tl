@@ -2742,6 +2742,73 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-pack-scavenged-word-shape-ok?) : bool
+  (let
+    [gp-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+          CompilerRegAssignmentNil))]
+    [xmm-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%xmm4"))
+          CompilerRegAssignmentNil))]
+    (match (compiler-backend-emit-pack-words
+      gp-assignments
+      (IrValueVar 0)
+      (IrValueVar 1)
+      "-16(%rbp)"
+      "-24(%rbp)"
+      false
+      false
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend gp-asm)
+        (match (compiler-backend-emit-pack-words
+          xmm-assignments
+          (IrValueVar 0)
+          (IrValueVar 1)
+          "-16(%rbp)"
+          "-24(%rbp)"
+          true
+          true
+          (compiler-diagnostic-at-start "" ""))
+          [(OkCompilerBackend xmm-asm)
+            (and
+              (backend-and8
+                (compiler-backend-string-contains?
+                  gp-asm
+                  "    movq %r12, %r8\n")
+                (compiler-backend-string-contains?
+                  gp-asm
+                  "    movq %r13, %r9\n")
+                (compiler-backend-string-contains?
+                  gp-asm
+                  "    movq %r8, -16(%rbp)\n")
+                (compiler-backend-string-contains?
+                  gp-asm
+                  "    movq %r9, -24(%rbp)\n")
+                (compiler-backend-string-contains?
+                  xmm-asm
+                  "    movsd %xmm3, %xmm2\n")
+                (compiler-backend-string-contains?
+                  xmm-asm
+                  "    movsd %xmm4, %xmm3\n")
+                (compiler-backend-string-contains?
+                  xmm-asm
+                  "    movsd %xmm2, -16(%rbp)\n")
+                (compiler-backend-string-contains?
+                  xmm-asm
+                  "    movsd %xmm3, -24(%rbp)\n"))
+              (not (compiler-backend-string-contains? gp-asm "%rax"))
+              (not (compiler-backend-string-contains? gp-asm "%rdx"))
+              (not (compiler-backend-string-contains? xmm-asm "%xmm0"))
+              (not (compiler-backend-string-contains? xmm-asm "%xmm1")))]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
+
 ;; Backend-owned replacement for representative aggregate storage emit-shape
 ;; checks from the legacy backend suite (#1354/#1413).
 (define (compiler-backend-aggregate-return-source) : String
@@ -2856,6 +2923,7 @@
 
 (define (compiler-backend-aggregate-storage-shape-ok?) : bool
   (and
+    (compiler-backend-pack-scavenged-word-shape-ok?)
     (compiler-backend-aggregate-return-shape-ok?)
     (compiler-backend-aggregate-global-init-shape-ok?)))
 

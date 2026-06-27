@@ -9409,6 +9409,35 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-float-to-float-bitcast-asm
+  [ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-bitcast
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    ty
+    ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-spill-float-to-float-bitcast-home-ok?) : bool
+  (match (compiler-backend-spill-float-to-float-bitcast-asm (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-spill-float-to-float-bitcast-asm (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (compiler-backend-string-contains? f64-asm "    movsd %xmm3, %xmm2\n")
+            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains? f32-asm "    movss %xmm3, %xmm2\n")
+            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
@@ -13382,7 +13411,8 @@
           (compiler-backend-bitcast-shape-ok?)
           (compiler-backend-direct-bitcast-home-ok?)
           (compiler-backend-spill-float-to-int-bitcast-home-ok?)
-          (compiler-backend-spill-int-to-float-bitcast-home-ok?)))
+          (compiler-backend-spill-int-to-float-bitcast-home-ok?)
+          (compiler-backend-spill-float-to-float-bitcast-home-ok?)))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)

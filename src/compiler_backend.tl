@@ -12310,21 +12310,31 @@
                   to-ty)))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(and from-float to-float)
-        (match (compiler-backend-emit-load-float-value-with-plan
-          assignments
-          src
-          from-ty
-          "%xmm0")
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (compiler-backend-emit-store-float-var-with-plan
-                  assignments
-                  dst
-                  "%xmm0"
-                  to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        (let
+          [dst-home : String (compiler-backend-var-register-home assignments dst)]
+          [tmp-reg : String
+            (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+              dst-home
+              (compiler-backend-scavenge-xmm-reg
+                dst
+                (make-array String 0)
+                0
+                "%xmm2"))]
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            src
+            from-ty
+            tmp-reg)
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (string-append
+                  load
+                  (compiler-backend-emit-store-float-var-with-plan
+                    assignments
+                    dst
+                    tmp-reg
+                    to-ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
       [else
         (ErrCompilerBackend
           (compiler-diagnostic-at-start "" "backend: unsupported bitcast type"))])))

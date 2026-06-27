@@ -2960,6 +2960,47 @@
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
 
+(define (build-package-finish-built-artifact
+  [artifact-path : String]
+  [tlci-path : String]
+  [tlci-text : String]) : i64
+  (match (build-package-write-tlci tlci-path tlci-text)
+    [(SourceToolCommandErr message)
+      (begin
+        (io.print-error message)
+        1)]
+    [(SourceToolCommandOk)
+      (begin
+        (io.print-string (str_cat.str-cat "Built " artifact-path "\n"))
+        (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
+        0)]))
+
+(define (build-package-write-assembly
+  [path : String]
+  [asm : String]
+  [target : CompilerBackendTarget]) : SourceToolCommandStatus
+  (match (source-tool-write-file
+    path
+    asm
+    "build: failed to write package assembly")
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]
+    [(SourceToolCommandOk)
+      (let
+        [haystack : String asm]
+        [needle : String ".note.GNU-stack"]
+        [note : String (source-tool-noexecstack-note)]
+        (if (and
+          (compiler-backend-target-linux? target)
+          (not (string.string-contains (& haystack) (& needle))))
+          (match (io.try-append-file (& path) (& note))
+            [(io.OkIoUnit) SourceToolCommandOk]
+            [(io.ErrIoUnit error)
+              (SourceToolCommandErr
+                (str_cat.str-cat
+                  "build: failed to write package assembly: "
+                  (io.io-error-message error)))])
+          SourceToolCommandOk))]))
+
 (define (build-package-finish-artifacts
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]
@@ -2971,10 +3012,7 @@
   [tlci-text : String]
   [asm : String]
   [direct-object : ResultSourceToolString]) : i64
-  (match (source-tool-write-file
-    asm-path
-    (source-tool-augment-assembly-for-target asm target)
-    "build: failed to write package assembly")
+  (match (build-package-write-assembly asm-path asm target)
     [(SourceToolCommandErr message)
       (begin
         (io.print-error message)
@@ -3006,17 +3044,10 @@
               (io.print-error message)
               1)]
           [(SourceToolCommandOk)
-            (match (build-package-write-tlci tlci-path tlci-text)
-              [(SourceToolCommandErr message)
-                (begin
-                  (io.print-error message)
-                  1)]
-              [(SourceToolCommandOk)
-                (begin
-                  (io.print-string
-                    (str_cat.str-cat "Built " artifact-path "\n"))
-                  (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
-                  0)])]))]))
+            (build-package-finish-built-artifact
+              artifact-path
+              tlci-path
+              tlci-text)]))]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
@@ -3131,129 +3162,102 @@
             (struct-get manifest deps)
             (compiler-driver-target-cfgs target (compiler-cfg-empty)))]
         (if (= inline-test-status 0)
-          (match (compiler-driver-load-package-file-with-runtime
-            entry-path
-            target
-            stdlib-roots
-            manifest-dir
-            (struct-get manifest deps)
-            emit-entry)
-            [(ErrCompilerLoadWithPaths diag)
-              (begin
-                (io.print-error (compiler-diagnostic-render (box-get diag)))
-                1)]
-            [(OkCompilerLoadWithPaths decls paths _ _)
-              (let
-                [owned-paths : AstDeclPathList
-                  (compiler-load-package-owned-paths-for-decls
-                    name
-                    manifest-dir
-                    stdlib-roots
-                    entry-path
-                    decls
-                    paths)]
-                [metadata-link-inputs : SourceToolLinkInputs
-                  (source-tool-link-inputs-from-decls
-                    decls
-                    (source-tool-link-inputs-empty))]
-                ;; Merge order: manifest all-target/target inputs, source extern
-                ;; metadata, then dependency archives (kept positional after the
-                ;; requested libraries/args).
-                [effective-link-inputs : SourceToolLinkInputs
-                  (source-tool-link-inputs-merge
-                    (source-tool-link-inputs-merge
-                      manifest-link-inputs
-                      metadata-link-inputs)
-                    dep-link-inputs)]
-                [crt-entry : bool
-                  (and
-                    emit-entry
-                    (source-tool-linux-crt-entry? target effective-link-inputs))]
-                (match (compiler-driver-emit-package-loaded
-                  ""
-                  target
-                  true
-                  opt-level
-                  mode
-                  emit-entry
-                  crt-entry
-                  decls
-                  owned-paths)
-                  [(ErrCompilerDriver diag)
-                    (begin
-                      (io.print-error
-                        (compiler-diagnostic-render (box-get diag)))
-                      1)]
-                  [(OkCompilerDriver asm)
-                    (begin
-                      (compiler-driver-release-lower-arenas-after-emit!)
-                      (match (build-package-tlci-text manifest)
-                        [(ErrBuildPackageTlciText message)
-                          (begin
-                            (io.print-error message)
-                            1)]
-                        [(OkBuildPackageTlciText tlci-text)
-                          (if (build-package-async-process-supported?)
-                            (let
-                              [_reset-before-doctests : unit
-                                (compiler-driver-reset-analysis-state!)]
-                              [doctest-status : i64
-                                (build-package-run-doctest-worker
-                                  manifest-path
-                                  target
-                                  opt-level
-                                  profile
-                                  mode
-                                  lock-policy
-                                  (compiler-pkg-deps-list
-                                    (struct-get manifest deps))
-                                  stdlib-roots)]
-                              (if (= doctest-status 0)
-                                (let
-                                  [direct-object : ResultSourceToolString
-                                    (build-package-try-render-linux-direct-object
-                                      kind
-                                      target
-                                      opt-level
-                                      mode
-                                      emit-entry
-                                      crt-entry
-                                      decls
-                                      owned-paths)]
-                                  [_reset-after-direct-object : unit
-                                    (compiler-driver-reset-analysis-state!)]
-                                  (build-package-finish-artifacts
+          (let
+            [pre-emit-doctest-status : i64
+              (build-package-run-doctest-worker-or-inline
+                name
+                entry-path
+                manifest-path
+                target
+                opt-level
+                profile
+                mode
+                lock-policy
+                (struct-get manifest deps)
+                (compiler-pkg-deps-list (struct-get manifest deps))
+                stdlib-roots
+                manifest-dir
+                emit-entry)]
+            [_reset-after-pre-emit-doctests : unit
+              (compiler-driver-reset-file-state!)]
+            (if (= pre-emit-doctest-status 0)
+              (match (compiler-driver-load-package-file-with-runtime
+                entry-path
+                target
+                stdlib-roots
+                manifest-dir
+                (struct-get manifest deps)
+                emit-entry)
+                [(ErrCompilerLoadWithPaths diag)
+                  (begin
+                    (io.print-error (compiler-diagnostic-render (box-get diag)))
+                    1)]
+                [(OkCompilerLoadWithPaths decls paths _ _)
+                  (let
+                    [owned-paths : AstDeclPathList
+                      (compiler-load-package-owned-paths-for-decls
+                        name
+                        manifest-dir
+                        stdlib-roots
+                        entry-path
+                        decls
+                        paths)]
+                    [metadata-link-inputs : SourceToolLinkInputs
+                      (source-tool-link-inputs-from-decls
+                        decls
+                        (source-tool-link-inputs-empty))]
+                    ;; Merge order: manifest all-target/target inputs, source extern
+                    ;; metadata, then dependency archives (kept positional after the
+                    ;; requested libraries/args).
+                    [effective-link-inputs : SourceToolLinkInputs
+                      (source-tool-link-inputs-merge
+                        (source-tool-link-inputs-merge
+                          manifest-link-inputs
+                          metadata-link-inputs)
+                        dep-link-inputs)]
+                    [crt-entry : bool
+                      (and
+                        emit-entry
+                        (source-tool-linux-crt-entry?
+                          target
+                          effective-link-inputs))]
+                    (match (build-package-tlci-text manifest)
+                      [(ErrBuildPackageTlciText message)
+                        (begin
+                          (io.print-error message)
+                          1)]
+                      [(OkBuildPackageTlciText tlci-text)
+                        (match (compiler-driver-emit-package-loaded
+                          ""
+                          target
+                          true
+                          opt-level
+                          mode
+                          emit-entry
+                          crt-entry
+                          decls
+                          owned-paths)
+                          [(ErrCompilerDriver diag)
+                            (begin
+                              (io.print-error
+                                (compiler-diagnostic-render (box-get diag)))
+                              1)]
+                          [(OkCompilerDriver asm)
+                            (begin
+                              (compiler-driver-release-lower-arenas-after-emit!)
+                              (let
+                                [direct-object : ResultSourceToolString
+                                  (build-package-try-render-linux-direct-object
                                     kind
                                     target
-                                    asm-path
-                                    obj-path
-                                    artifact-path
-                                    effective-link-inputs
-                                    tlci-path
-                                    tlci-text
-                                    asm
-                                    direct-object))
-                                doctest-status))
-                            (let
-                              [direct-object : ResultSourceToolString
-                                (build-package-try-render-linux-direct-object
-                                  kind
-                                  target
-                                  opt-level
-                                  mode
-                                  emit-entry
-                                  crt-entry
-                                  decls
-                                  owned-paths)]
-                              [_reset-before-doctests : unit
-                                (compiler-driver-reset-file-state!)]
-                              [doctest-status : i64
-                                (build-doctest-typecheck-package-paths
-                                  (build-package-doctest-paths name paths)
-                                  stdlib-roots
-                                  manifest-dir
-                                  (struct-get manifest deps))]
-                              (if (= doctest-status 0)
+                                    opt-level
+                                    mode
+                                    emit-entry
+                                    crt-entry
+                                    decls
+                                    owned-paths)]
+                                [_reset-before-finish : unit
+                                  (compiler-driver-reset-file-state!)]
                                 (build-package-finish-artifacts
                                   kind
                                   target
@@ -3264,8 +3268,8 @@
                                   tlci-path
                                   tlci-text
                                   asm
-                                  direct-object)
-                                doctest-status)))]))]))])
+                                  direct-object)))])]))])
+              pre-emit-doctest-status))
           inline-test-status)))))
 
 (define (build-package-worker-unified-cli?) : bool
@@ -3481,6 +3485,64 @@
             "build: failed to run package doctest worker: "
             (process.process-error-message error)))
         1)]))
+
+(define (build-package-worker-spawn-supported?) : bool
+  (match (process.process-output
+    (process.process-command
+      (io.arg 0)
+      (source-tool-args-append (process.process-args-empty) "--version")))
+    [(process.OkProcessOutput output)
+      (= (process.process-output-status output) 0)]
+    [(process.ErrProcessOutput _) false]))
+
+(define (build-package-run-doctest-worker-or-inline
+  [owner : String]
+  [entry-path : String]
+  [manifest-path : String]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [deps : CompilerPkgDeps]
+  [resolved-deps : CompilerPkgDepList]
+  [stdlib-roots : vector.StringVec]
+  [manifest-dir : String]
+  [emit-entry : bool]) : i64
+  (match (process.process-output
+    (build-package-doctest-worker-command
+      manifest-path
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      resolved-deps
+      stdlib-roots))
+    [(process.OkProcessOutput output)
+      (begin
+        (source-tool-forward-output output)
+        (process.process-output-status output))]
+    [(process.ErrProcessOutput error)
+      (if (or
+        (process.process-error-spawn-failed? error)
+        (process.process-error-unsupported? error))
+        (begin
+          (compiler-driver-reset-file-state!)
+          (build-package-closure-doctest-status
+            owner
+            entry-path
+            target
+            stdlib-roots
+            manifest-dir
+            deps
+            emit-entry))
+        (begin
+          (io.print-error
+            (str_cat.str-cat
+              "build: failed to run package doctest worker: "
+              (process.process-error-message error)))
+          1))]))
 
 (define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
   (match (build-package-worker-config-from idx count)
@@ -4045,7 +4107,9 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : vector.StringVec]) : i64
-  (if (build-package-async-process-supported?)
+  (if (and
+    (build-package-async-process-supported?)
+    (build-package-worker-spawn-supported?))
     (build-package-emit-graph-nodes-parallel
       nodes
       target

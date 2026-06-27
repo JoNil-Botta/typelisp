@@ -7988,6 +7988,16 @@
     [(IrBinSafeDiv) "div"]
     [_ ""]))
 
+(define (compiler-backend-float-compare-setcc [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinEq) "sete"]
+    [(IrBinNe) "setne"]
+    [(IrBinLt) "setb"]
+    [(IrBinLe) "setbe"]
+    [(IrBinGt) "seta"]
+    [(IrBinGe) "setae"]
+    [_ "sete"]))
+
 (define (compiler-backend-emit-float-binop-direct
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
@@ -8013,6 +8023,38 @@
           dst-home
           "\n"))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-float-compare-direct
+  [assignments : CompilerRegAssignmentList]
+  [dst-home : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fty : AstType]) : ResultCompilerBackend
+  (let
+    [lhs-reg : String (compiler-backend-float-value-register assignments lhs)]
+    [rhs-operand : String
+      (compiler-backend-float-direct-rhs-operand assignments rhs fty dst-home)]
+    (if (or (string-eq lhs-reg "") (string-eq rhs-operand ""))
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start "" "backend: cannot direct float compare"))
+      (OkCompilerBackend
+        (str-cat
+          "    ucomi"
+          (compiler-backend-float-suffix fty)
+          " "
+          rhs-operand
+          ", "
+          lhs-reg
+          "\n    "
+          (compiler-backend-float-compare-setcc op)
+          " "
+          (compiler-backend-reg-part (string-copy dst-home) 1)
+          "\n    movzbq "
+          (compiler-backend-reg-part (string-copy dst-home) 1)
+          ", "
+          dst-home
+          "\n")))))
 
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
@@ -8383,52 +8425,70 @@
           rhs
           fty
           dst-home)]
+      [lhs-float-reg : String
+        (compiler-backend-float-value-register assignments lhs)]
       (if (and
-        (compiler-backend-float-type? ty)
+        (compiler-backend-compare-op? op)
         (and
-          (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+          (not (string-eq dst-home ""))
           (and
-            (compiler-backend-float-arith-op? op)
-            (not (string-eq rhs-operand "")))))
-        (compiler-backend-emit-float-binop-direct
+            (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0))
+            (and
+              (not (string-eq lhs-float-reg ""))
+              (not (string-eq rhs-operand ""))))))
+        (compiler-backend-emit-float-compare-direct
           assignments
           dst-home
           op
           lhs
-          rhs-operand
+          rhs
           fty)
-        (match (compiler-backend-emit-load-float-value-with-plan
-          assignments
-          lhs
-          fty
-          "%xmm0")
-          [(OkCompilerBackend lhs-asm)
-            (match (compiler-backend-emit-load-float-value-with-plan
-              assignments
-              rhs
-              fty
-              "%xmm1")
-              [(OkCompilerBackend rhs-asm)
-                (match (compiler-backend-float-binop-asm op fty)
-                  [(OkCompilerBackend op-asm)
-                    (OkCompilerBackend
-                      (str-cat
-                        lhs-asm
-                        rhs-asm
-                        op-asm
-                        (if (compiler-backend-float-type? ty)
-                          (compiler-backend-emit-store-float-var-with-plan
-                            assignments
-                            dst
-                            "%xmm0"
-                            ty)
-                          (compiler-backend-emit-store-var-with-plan
-                            assignments
-                            dst
-                            "%rax"))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+        (if (and
+          (compiler-backend-float-type? ty)
+          (and
+            (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+            (and
+              (compiler-backend-float-arith-op? op)
+              (not (string-eq rhs-operand "")))))
+          (compiler-backend-emit-float-binop-direct
+            assignments
+            dst-home
+            op
+            lhs
+            rhs-operand
+            fty)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            lhs
+            fty
+            "%xmm0")
+            [(OkCompilerBackend lhs-asm)
+              (match (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                rhs
+                fty
+                "%xmm1")
+                [(OkCompilerBackend rhs-asm)
+                  (match (compiler-backend-float-binop-asm op fty)
+                    [(OkCompilerBackend op-asm)
+                      (OkCompilerBackend
+                        (str-cat
+                          lhs-asm
+                          rhs-asm
+                          op-asm
+                          (if (compiler-backend-float-type? ty)
+                            (compiler-backend-emit-store-float-var-with-plan
+                              assignments
+                              dst
+                              "%xmm0"
+                              ty)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax"))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]

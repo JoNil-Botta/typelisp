@@ -254,6 +254,13 @@
       (panic "lower: macro arity diagnostic smoke mismatch"))
     (unless
       (compiler-lower-error-ok?
+        "(import stdlib.comptime)
+(define (main) : i64
+  (comptime.comptime-error \"runtime forbidden\"))"
+        "lower: comptime-error is compile-time only")
+      (panic "lower: comptime-error runtime diagnostic smoke mismatch"))
+    (unless
+      (compiler-lower-error-ok?
         (compiler-lower-macro-expr-clause-to-expr-error-source)
         "typecheck: macro operand type mismatch: expected Expr, got bracket clause")
       (panic "lower: macro clause-to-expr diagnostic smoke mismatch"))

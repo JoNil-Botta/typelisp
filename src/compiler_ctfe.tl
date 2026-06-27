@@ -3854,8 +3854,6 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
         "expr-type"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "comptime-error")
-        "comptime-error"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-name")
         "module-name"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
@@ -3970,6 +3968,8 @@
         "string-concat"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "int->string")
         "int->string"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "comptime-error")
+        "comptime-error"]
       [else name])))
 
 (define (ctfe-eval-comptime-error-call
@@ -5257,8 +5257,6 @@
             (ctfe-eval-expr-if-call args expr env fuel)]
           [(string.string-eq call-name "expr-type")
             (ctfe-eval-expr-type-call args expr env fuel)]
-          [(string.string-eq call-name "comptime-error")
-            (ctfe-eval-comptime-error-call args expr env fuel)]
           [(string.string-eq call-name "module-name")
             (ctfe-eval-module-name-call args expr env fuel)]
           [(string.string-eq call-name "module-export-macro?")
@@ -5292,6 +5290,8 @@
               expr
               env
               fuel)]
+          [(string.string-eq call-name "comptime-error")
+            (ctfe-eval-comptime-error-call args expr env fuel)]
           [else (ctfe-unsupported-form expr)]))]
     [_ (ctfe-unsupported-form expr)]))
 

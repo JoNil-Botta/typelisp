@@ -7088,12 +7088,6 @@
   0)
 (define lower-comptime-error-stdlib-slash-slash-id : i64
   0)
-(define lower-comptime-module-id : i64
-  0)
-(define lower-stdlib-module-id : i64
-  0)
-(define lower-stdlib-comptime-module-id : i64
-  0)
 
 (define (lower-comptime-error-ids-ensure!) : unit
   (if (= lower-comptime-error-id-generation (intern-generation))
@@ -7118,12 +7112,9 @@
       (set!
         lower-comptime-error-stdlib-slash-slash-id
         (intern "stdlib/comptime/comptime-error"))
-      (set! lower-comptime-module-id (intern "comptime"))
-      (set! lower-stdlib-module-id (intern "stdlib"))
-      (set! lower-stdlib-comptime-module-id (intern "stdlib/comptime"))
       (set! lower-comptime-error-id-generation (intern-generation)))))
 
-(define (lower-comptime-error-call-id? [id : i64]) : bool
+(define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
   (or
     (= id lower-comptime-error-id)
     (= id lower-comptime-error-comptime-dot-id)
@@ -7133,30 +7124,25 @@
     (= id lower-comptime-error-stdlib-slash-dot-id)
     (= id lower-comptime-error-stdlib-slash-slash-id)))
 
-(define (lower-comptime-module-expr? [expr : AstExpr]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExprVar name)
-      (or
-        (= name lower-comptime-module-id)
-        (= name lower-stdlib-comptime-module-id))]
-    [(AstExprStructGet receiver-box field)
-      (if (= field lower-comptime-module-id)
-        (match (ast-expr-unspan (ast-node-get receiver-box))
-          [(AstExprVar receiver-name) (= receiver-name lower-stdlib-module-id)]
-          [_ false])
-        false)]
-    [_ false]))
-
-(define (lower-comptime-error-callee-expr? [callee : AstExpr]) : bool
+(define (lower-comptime-error-call-id? [id : i64]) : bool
   (begin
     (lower-comptime-error-ids-ensure!)
-    (match (ast-expr-unspan callee)
-      [(AstExprVar name) (lower-comptime-error-call-id? name)]
-      [(AstExprStructGet receiver-box field)
-        (and
-          (= field lower-comptime-error-id)
-          (lower-comptime-module-expr? (ast-node-get receiver-box)))]
-      [_ false])))
+    (lower-comptime-error-call-id-with-cache? id)))
+
+(define (lower-comptime-error-source-or-lookup-id?
+  [source-id : i64]
+  [lookup-id : i64]) : bool
+  (begin
+    (lower-comptime-error-ids-ensure!)
+    (or
+      (= source-id lower-comptime-error-id)
+      (= source-id lower-comptime-error-comptime-dot-id)
+      (= source-id lower-comptime-error-comptime-slash-id)
+      (= source-id lower-comptime-error-stdlib-dot-dot-id)
+      (= source-id lower-comptime-error-stdlib-dot-slash-id)
+      (= source-id lower-comptime-error-stdlib-slash-dot-id)
+      (= source-id lower-comptime-error-stdlib-slash-slash-id)
+      (= lookup-id lower-comptime-error-stdlib-slash-slash-id))))
 
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
@@ -17679,13 +17665,7 @@
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (lower-comptime-error-callee-expr? func)
-          (ErrLowerExpr
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: comptime-error is compile-time only")))
-          (lower-call ctx state env type-env func args expr-ty origin)))]
+        (lower-call ctx state env type-env func args expr-ty origin))]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params maybe-ret body-box)
@@ -18526,64 +18506,52 @@
     [(AstExprCall func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (lower-comptime-error-callee-expr? func)
-          (ErrLowerExpr
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: comptime-error is compile-time only")))
-          (match (ast-expr-unspan func)
-            [(AstExprVar name)
-              (match (lower-lookup-type
-                ctx
-                (lower-state-type-cache state)
-                env
-                type-env
-                (intern-str name))
-                [(OkTcType fn-ty)
-                  (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-                    [(AstTyFunc _ ret-ty)
-                      (let
-                        [actual-ty : AstType
-                          (tc-type-without-regions
-                            (tc-resolve-type ctx (ty-node-get ret-ty)))]
-                        [expected-resolved : AstType
-                          (tc-type-without-regions
-                            (tc-resolve-type ctx expected-ty))]
-                        (if (tc-type-eq actual-ty expected-resolved)
-                          (lower-expr-with-type-and-coerce
-                            ctx
-                            state
-                            env
-                            type-env
-                            expr
-                            origin
-                            actual-ty
-                            expected-ty)
-                          (lower-expr-and-coerce
-                            ctx
-                            state
-                            env
-                            type-env
-                            expr
-                            expected-ty)))]
-                    [_
-                      (lower-expr-and-coerce
-                        ctx
-                        state
-                        env
-                        type-env
-                        expr
-                        expected-ty)])]
-                [(ErrTcType _)
-                  (lower-expr-and-coerce
-                    ctx
-                    state
-                    env
-                    type-env
-                    expr
-                    expected-ty)])]
-            [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)])))]
+        (match (ast-expr-unspan func)
+          [(AstExprVar name)
+            (match (lower-lookup-type
+              ctx
+              (lower-state-type-cache state)
+              env
+              type-env
+              (intern-str name))
+              [(OkTcType fn-ty)
+                (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                  [(AstTyFunc _ ret-ty)
+                    (let
+                      [actual-ty : AstType
+                        (tc-type-without-regions
+                          (tc-resolve-type ctx (ty-node-get ret-ty)))]
+                      [expected-resolved : AstType
+                        (tc-type-without-regions
+                          (tc-resolve-type ctx expected-ty))]
+                      (if (tc-type-eq actual-ty expected-resolved)
+                        (lower-expr-with-type-and-coerce
+                          ctx
+                          state
+                          env
+                          type-env
+                          expr
+                          origin
+                          actual-ty
+                          expected-ty)
+                        (lower-expr-and-coerce
+                          ctx
+                          state
+                          env
+                          type-env
+                          expr
+                          expected-ty)))]
+                  [_
+                    (lower-expr-and-coerce
+                      ctx
+                      state
+                      env
+                      type-env
+                      expr
+                      expected-ty)])]
+              [(ErrTcType _)
+                (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
+          [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
 (define (lower-struct-get-named
@@ -22968,6 +22936,14 @@
                             args
                             result-ty
                             origin)]
+                        [(lower-comptime-error-source-or-lookup-id?
+                            source-id
+                            name-id)
+                          (ErrLowerExpr
+                            (box
+                              (lower-diagnostic-at-expr
+                                origin
+                                "lower: comptime-error is compile-time only")))]
                         [else
                           (lower-call-non-builtin
                             ctx
@@ -37232,68 +37208,77 @@
   [origin : AstExpr]) : ResultLowerState
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
-      (cond
-        [(and
-            (lower-tail-call-var-unshadowed? env name)
-            ;; #2357: only suppress TCO when THIS call actually involves inline
-            ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
-            ;; disabled tail-call optimization for every call (mode is always on),
-            ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-            (not
-              (lower-tail-call-inline-aggregate-risk?
+      (let
+        [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
+        (cond
+          [(and unshadowed (lower-comptime-error-call-id? name))
+            (ErrLowerState
+              (box
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: comptime-error is compile-time only")))]
+          [(and
+              unshadowed
+              ;; #2357: only suppress TCO when THIS call actually involves inline
+              ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
+              ;; disabled tail-call optimization for every call (mode is always on),
+              ;; losing TCO entirely (deep self-recursion, smoke shape failure).
+              (not
+                (lower-tail-call-inline-aggregate-risk?
+                  ctx
+                  state
+                  env
+                  type-env
+                  args
+                  ret-ty
+                  sret-var))
+              (lower-tail-call-direct-supported?
                 ctx
                 state
                 env
                 type-env
-                args
-                ret-ty
-                sret-var))
-            (lower-tail-call-direct-supported?
+                name
+                ret-ty))
+            (match (lower-tail-call-args-for-target
               ctx
               state
               env
               type-env
               name
-              ret-ty))
-          (match (lower-tail-call-args-for-target
-            ctx
-            state
-            env
-            type-env
-            name
-            args)
-            [(OkLowerArgs args-state values)
-              (match (lower-tail-call-append-current-sret-arg
-                ctx
-                args-state
-                values
-                ret-ty
-                sret-var)
-                [(OkLowerArgs tail-state tail-values)
-                  (OkLowerState
-                    (lower-state-emit-at-expr
-                      tail-state
-                      (IrInstrTailCall
-                        (lower-resolve-name tail-state (intern-str name))
-                        (compiler-ir-call-args-from-list tail-values)
-                        (lower-one-word-register-storage-type ctx ret-ty))
-                      origin))]
-                [(ErrLowerArgs message) (ErrLowerState message)])]
-            [(ErrLowerArgs message) (ErrLowerState message)])]
-        [(lower-tail-call-var-unshadowed? env name)
-          (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
-        [(lower-tail-call-local-indirect-safe? env type-env name)
-          (lower-tail-call-indirect-expr
-            ctx
-            state
-            env
-            type-env
-            callee
-            args
-            ret-ty
-            sret-var
-            origin)]
-        [else (lower-return-expr ctx state env type-env origin ret-ty sret-var)])]
+              args)
+              [(OkLowerArgs args-state values)
+                (match (lower-tail-call-append-current-sret-arg
+                  ctx
+                  args-state
+                  values
+                  ret-ty
+                  sret-var)
+                  [(OkLowerArgs tail-state tail-values)
+                    (OkLowerState
+                      (lower-state-emit-at-expr
+                        tail-state
+                        (IrInstrTailCall
+                          (lower-resolve-name tail-state (intern-str name))
+                          (compiler-ir-call-args-from-list tail-values)
+                          (lower-one-word-register-storage-type ctx ret-ty))
+                        origin))]
+                  [(ErrLowerArgs message) (ErrLowerState message)])]
+              [(ErrLowerArgs message) (ErrLowerState message)])]
+          [unshadowed
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+          [(lower-tail-call-local-indirect-safe? env type-env name)
+            (lower-tail-call-indirect-expr
+              ctx
+              state
+              env
+              type-env
+              callee
+              args
+              ret-ty
+              sret-var
+              origin)]
+          [else
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]))]
     [_
       (if (lower-tail-call-reference-capturing-lambda? type-env callee)
         (lower-return-expr ctx state env type-env origin ret-ty sret-var)
@@ -38157,22 +38142,16 @@
       [(AstExprCall callee-box args)
         (let
           [callee : AstExpr (ast-node-get callee-box)]
-          (if (lower-comptime-error-callee-expr? callee)
-            (ErrLowerState
-              (box
-                (lower-diagnostic-at-expr
-                  expr
-                  "lower: comptime-error is compile-time only")))
-            (lower-tail-call
-              ctx
-              state
-              env
-              type-env
-              callee
-              args
-              ret-ty
-              sret-var
-              expr)))]
+          (lower-tail-call
+            ctx
+            state
+            env
+            type-env
+            callee
+            args
+            ret-ty
+            sret-var
+            expr))]
       [(AstExprLet let-box)
         (match (box-get let-box)
           [(AstLet bindings body-box)
@@ -49930,12 +49909,7 @@
       76)
     (compiler-lower-error-ok?
       "(define (main) : i64 (size-of (type i64)))"
-      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
-    (compiler-lower-error-ok?
-      "(import stdlib.comptime)
-(define (main) : i64
-  (comptime.comptime-error \"runtime forbidden\"))"
-      "lower: comptime-error is compile-time only")))
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
 
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`

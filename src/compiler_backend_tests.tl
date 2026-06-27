@@ -14290,11 +14290,41 @@
   (match (compiler-backend-emit-source (compiler-backend-box-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq 16(%r8), %rcx\n")
+        (compiler-backend-string-contains? asm "    movq 16(%r8), %rax\n")
+        (compiler-backend-string-contains? asm "    leaq 8(%rax), %rcx\n")
         (not
           (compiler-backend-string-contains?
             asm
-            "    movq 16(%r8), %rax\n    movq %rax, %rcx\n")))]
+            ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n    testq $1, 48(%r9)\n    jnz .L_tl_alloc8_atomic\n    movq 16(%r8), %rcx\n    movq %rcx, %rax\n"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, %rcx\n    addq $8, %rcx\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-fast-alloc-source) : String
+  "(define (main) : i64
+  (let
+    [t : (Tuple bool i64) (tuple true 42)]
+    (tuple-ref t 1)))")
+
+(define (compiler-backend-inline-fast-alloc-result-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-inline-fast-alloc-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    movq 16(%r8), %rax\n    leaq 16(%rax), %r10\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq 16(%r8), %r10\n    addq $16, %r10\n"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, %r10\n    addq $16, %r10\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref (#1414).
@@ -14957,6 +14987,7 @@
       (and
         (compiler-backend-box-ok?)
         (compiler-backend-fast-alloc-next-load-ok?)
+        (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)
     (compiler-backend-export-symbol-tests-ok?)

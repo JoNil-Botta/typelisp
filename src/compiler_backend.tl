@@ -13295,16 +13295,20 @@
         current-label
         dst
         "_profile_done")]
-    [next-reg : String
-      (if (compiler-backend-target-windows? target)
-        "%r10"
-        "%rcx")]
     [scav : String
       (compiler-backend-scavenge-reg
         dst
         (compiler-backend-binop-scavenge-exclude-build)
         5
         "%r8")]
+    [next-reg : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-one-exclude scav)
+        1
+        (if (compiler-backend-target-windows? target)
+          "%r10"
+          "%rcx"))]
     (string-append
       (string-append
         (compiler-backend-current-arena-load target scav)
@@ -13317,14 +13321,20 @@
           slow-label
           "\n    movq 16("
           scav
-          "), "
-          next-reg
+          "), %rax"
           "\n"))
       (string-append
-        (str-cat "    addq $" size-text ", " next-reg "\n")
+        (str-cat
+          "    leaq "
+          size-text
+          "(%rax), "
+          next-reg
+          "\n")
         (string-append
           (str-cat
-            "    jc "
+            "    cmpq %rax, "
+            next-reg
+            "\n    jb "
             slow-label
             "\n    cmpq 24("
             scav
@@ -29905,16 +29915,13 @@ tl_profile_alloc_peak_bytes:
     jnz "
         atomic-label
         "
-    movq 16(%r8), "
-        next-reg
-        "
-    movq "
-        next-reg
-        ", %rax")]
+    movq 16(%r8), %rax")]
     [ordinary-body-b : String
-      (backend-cat4 "\n    addq $" size-text ", " next-reg)]
+      (backend-cat4 "\n    leaq " size-text "(%rax), " next-reg)]
     [ordinary-body-c : String
-      (backend-cat4 "\n    jc " slow-label "\n    cmpq 24(%r8), " next-reg)]
+      (string-append
+        (backend-cat4 "\n    cmpq %rax, " next-reg "\n    jb " slow-label)
+        (string-append "\n    cmpq 24(%r8), " next-reg))]
     [ordinary-body-d : String
       (backend-cat4 "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
@@ -29939,8 +29946,9 @@ tl_profile_alloc_peak_bytes:
 "
         atomic-cas-label)]
     [atomic-body-b : String
-      (backend-cat4 ":\n    movq %rax, " next-reg "\n    addq $" size-text)]
-    [atomic-body-c : String (backend-cat4 ", " next-reg "\n    jc " slow-label)]
+      (backend-cat4 ":\n    leaq " size-text "(%rax), " next-reg)]
+    [atomic-body-c : String
+      (backend-cat4 "\n    cmpq %rax, " next-reg "\n    jb " slow-label)]
     [atomic-body-d : String
       (backend-cat4 "\n    cmpq 24(%r8), " next-reg "\n    ja " slow-label)]
     [atomic-body-e : String

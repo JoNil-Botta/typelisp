@@ -8938,6 +8938,40 @@
           (compiler-backend-string-contains? asm "    movq -16(%rbp), %r10\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-load-load-float-pointer-chase-shape-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 0) (ast-ty-mut-ptr (AstTyU8)))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 2 (IrValueVar 1) (AstTyF64))
+          IrInstrNil))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd (%r10), %xmm3\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrLoad 1 (IrValueVar 0) (ast-ty-mut-ptr (AstTyU8)))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 2 (IrValueVar 1) (AstTyF64))
+          IrInstrNil))
+      CompilerRegAssignmentNil
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd (%r10), %xmm2\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movsd %xmm2, -24(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-store-ptr-pair-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
@@ -9150,6 +9184,7 @@
       (compiler-backend-gep-load-r10-reuse-shape-ok?)
       (compiler-backend-gep-float-load-r10-reuse-shape-ok?)
       (compiler-backend-load-load-pointer-chase-shape-ok?)
+      (compiler-backend-load-load-float-pointer-chase-shape-ok?)
       (compiler-backend-store-ptr-pair-shape-ok?)
       (compiler-backend-store-home-base-shape-ok?))
     (compiler-backend-gep-load-compare-priority-shape-ok?)))

@@ -12124,16 +12124,11 @@
               ptr-asm
               (str-cat "    movq " base-mem ", " base "\n")
               (if (compiler-backend-float-type? second-ty)
-                (str-cat
-                  (compiler-backend-emit-load-float-memory
-                    base-mem
-                    "%xmm0"
-                    second-ty)
-                  (compiler-backend-emit-store-float-var-with-plan
-                    assignments
-                    second-dst
-                    "%xmm0"
-                    second-ty))
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  second-dst
+                  base-mem
+                  second-ty)
                 (let
                   [dst-home : String
                     (compiler-backend-var-register-home assignments second-dst)]

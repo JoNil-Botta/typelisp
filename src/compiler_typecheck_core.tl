@@ -560,22 +560,25 @@
   [summary : CompilerTypecheckSummary]) : bool
   (let
     [prev-arena : i64 (tl_arena_current)]
-    [stored : bool
-      (begin
-        (unsafe
-          (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
-        (let
-          [persistent-key : String (string.string-copy (& key))]
-          [persistent-module : String (string.string-copy (& module))]
-          (begin
-            (unsafe
-              (tl_arena_set prev-arena))
-            (tc-prefix-snapshot-cache-store
-              persistent-key
-              count
-              persistent-module
-              summary))))]
-    stored))
+    (begin
+      (tc-prefix-snapshot-cache-ensure!)
+      (unsafe
+        (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
+      (let
+        [persistent-key : String (string.string-copy (& key))]
+        [persistent-module : String (string.string-copy (& module))]
+        [stored : bool
+          (tc-prefix-snapshot-cache-store
+            persistent-key
+            count
+            persistent-module
+            summary)]
+        [cache-head : i64 (tl_arena_current)]
+        (begin
+          (set! tc-prefix-snapshot-cache-arena cache-head)
+          (unsafe
+            (tl_arena_set prev-arena))
+          stored)))))
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
@@ -5344,16 +5347,22 @@
           module
           tc-hygiene-module-env-cache)
           [(OkTcModuleLocalEnv def-env next-cache)
-            (begin
-              (set! tc-hygiene-module-env-cache next-cache)
-              (unsafe
-                (tl_arena_set prev-arena))
-              (OkTcEnv def-env))]
+            (let
+              [cache-head : i64 (tl_arena_current)]
+              (begin
+                (set! tc-hygiene-module-env-cache-arena cache-head)
+                (set! tc-hygiene-module-env-cache next-cache)
+                (unsafe
+                  (tl_arena_set prev-arena))
+                (OkTcEnv def-env)))]
           [(ErrTcModuleLocalEnv message)
-            (begin
-              (unsafe
-                (tl_arena_set prev-arena))
-              (ErrTcEnv message))])))
+            (let
+              [cache-head : i64 (tl_arena_current)]
+              (begin
+                (set! tc-hygiene-module-env-cache-arena cache-head)
+                (unsafe
+                  (tl_arena_set prev-arena))
+                (ErrTcEnv message)))])))
     (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
 
 (define (tc-lookup-hygiene-context-global-visible-id

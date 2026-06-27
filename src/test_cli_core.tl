@@ -997,6 +997,17 @@
         false
         (hashmap.string-i64-map-contains? names leaf)))))
 
+(define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta inner-box)
+      (match meta
+        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
+        [(AstNoGeneratedDeclMeta)
+          (tltest-generated-comptime-decl? (box-get inner-box))])]
+    [(AstDeclUnsafe inner-box)
+      (tltest-generated-comptime-decl? (box-get inner-box))]
+    [_ false]))
+
 (define (tltest-reach-mark-string-snapshot-runtime
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
@@ -1694,12 +1705,16 @@
             out-decls
             out-paths)]
         [(AstDeclPathCons decl-path path-rest)
-          ;; Prune only declarations owned by the inline-test source. Imported
-          ;; generated helpers may be reached through macro-expanded bodies in
-          ;; ways the lightweight source reachability walk cannot always see.
+          ;; Keep imported generated helpers: macro-expanded bodies can
+          ;; reference them in ways the lightweight source reachability walk
+          ;; cannot always see. Local generated helpers and ordinary imported
+          ;; functions/values still go through reachability pruning so tiny
+          ;; inline harnesses stay small.
           (if (or
-            (not (tltest-owned-test-path? target-path decl-path))
-            (tltest-reachable-runtime-decl? decl names))
+            (tltest-reachable-runtime-decl? decl names)
+            (and
+              (not (tltest-owned-test-path? target-path decl-path))
+              (tltest-generated-comptime-decl? decl)))
             (tltest-prune-runtime-decls-in
               (box-get rest)
               (box-get path-rest)
@@ -2574,6 +2589,7 @@
 (define (tltest-imported-generated-retained-self-test?) : bool
   (let
     [dead-name : String "__tl_imported_generated_dead"]
+    [ordinary-name : String "__tl_imported_ordinary_dead"]
     [dead-decl : AstDecl
       (tltest-generated-wrapper
         dead-name
@@ -2582,20 +2598,30 @@
           AstParamNil
           (AstTyUnit)
           (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+    [ordinary-decl : AstDecl
+      (ast-decl-def-fn
+        ordinary-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
     [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
     [decls : AstDeclList
       (ast-decl-cons
         dead-decl
         (ast-decl-cons
-          (ast-decl-test
-            "keeps-imported-generated"
-            (ast-node-push (AstExprLiteral (AstLitUnit)))
-            span)
-          AstDeclNil))]
+          ordinary-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "keeps-imported-generated"
+              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              span)
+            AstDeclNil)))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
         "generated.tl"
-        (ast-decl-path-cons "driver.tl" AstDeclPathNil))]
+        (ast-decl-path-cons
+          "generated.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness program _ count)
         (match program
@@ -2604,7 +2630,8 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (tltest-decl-list-has-name? harness-decls dead-name)))])])))
+                (tltest-decl-list-has-name? harness-decls dead-name)
+                (not (tltest-decl-list-has-name? harness-decls ordinary-name))))])])))
 
 (test
   test-cli-inline-harness-keeps-imported-generated-wrappers
@@ -4069,31 +4096,37 @@
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
-  (if (>= index (vector.string-vec-len paths))
+  (let
+    [count : i64 (vector.string-vec-len paths)]
+    [cursor : i64 index]
+    [files : i64 file-count]
+    [tests : i64 test-count]
+    [status : i64 0]
     (begin
-      (io.print-string (tltest-batch-summary-line file-count test-count))
-      0)
-    (let
-      [source : String (vector.string-vec-get paths index "")]
-      ;; Match compile --batch: isolate each entry in a destroyable scratch
-      ;; arena. Lexical arena rewind keeps overflow chunks retired until the
-      ;; owning arena is destroyed (#2441), so destroying the entry arena is
-      ;; required for long one-process batches to stay bounded.
-      [entry-result : i64
-        (tltest-run-batch-check-path source roots backend-target)]
-      (if (< entry-result 0)
+      (while (and (= status 0) (< cursor count))
+        (let
+          [source : String (vector.string-vec-get paths cursor "")]
+          ;; Match compile --batch: isolate each entry in a destroyable scratch
+          ;; arena. Lexical arena rewind keeps overflow chunks retired until the
+          ;; owning arena is destroyed (#2441), so destroying the entry arena is
+          ;; required for long one-process batches to stay bounded.
+          [entry-result : i64
+            (tltest-run-batch-check-path source roots backend-target)]
+          (if (< entry-result 0)
+            (begin
+              (io.print-error
+                (string.string-append "test: batch source failed: " source))
+              (io.print-error "\n")
+              (set! status (- 0 entry-result)))
+            (begin
+              (set! files (+ files 1))
+              (set! tests (+ tests entry-result))
+              (set! cursor (+ cursor 1))))))
+      (if (= status 0)
         (begin
-          (io.print-error
-            (string.string-append "test: batch source failed: " source))
-          (io.print-error "\n")
-          (- 0 entry-result))
-        (tltest-run-batch-check-paths-from
-          paths
-          (+ index 1)
-          roots
-          backend-target
-          (+ file-count 1)
-          (+ test-count entry-result))))))
+          (io.print-string (tltest-batch-summary-line files tests))
+          0)
+        status))))
 
 (define (tltest-run-batch-check-paths
   [paths : vector.StringVec]

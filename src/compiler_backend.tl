@@ -8155,6 +8155,7 @@
   [mnem : String]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
+  [ty : AstType]
   [imm : String]) : ResultCompilerBackend
   (let
     [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
@@ -8187,27 +8188,16 @@
           dst-home)
           [(OkCompilerBackend lhs-asm)
             (OkCompilerBackend
-              (str-cat
+              (string-append
                 lhs-asm
-                (if (match op
-                  [(IrBinBitAnd) true]
-                  [_ false])
-                  (if (string-eq imm "$255")
-                    (str-cat
-                      "    movzbq "
-                      (compiler-backend-reg-part (string-copy dst-home) 1)
-                      ", "
-                      dst-home
-                      "\n")
-                    (if (string-eq imm "$65535")
-                      (str-cat
-                        "    movzwq "
-                        (compiler-backend-reg-part (string-copy dst-home) 2)
-                        ", "
-                        dst-home
-                        "\n")
-                      (str-cat "    " mnem " " imm ", " dst-home "\n")))
-                  (str-cat "    " mnem " " imm ", " dst-home "\n"))))]
+                (match (compiler-backend-binop-immediate-direct-reg-asm
+                  mnem
+                  op
+                  ty
+                  imm
+                  dst-home)
+                  [(CompilerBackendSomeAsm asm) asm]
+                  [(CompilerBackendNoAsm) ""])))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-binop
@@ -8262,9 +8252,11 @@
       [mnem : String (compiler-backend-binop-direct-mnemonic op)]
       (if (if (string-eq dst-home "")
         false
-        (if (= (compiler-backend-type-size operand-ty) 8)
-          (not (string-eq mnem ""))
-          false))
+        (or
+          (compiler-backend-compare-op? op)
+          (if (= (compiler-backend-type-size operand-ty) 8)
+            (not (string-eq mnem ""))
+            false)))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; #2386 (roadmap #1): if rhs already lives in a register distinct from
         ;; dst-home, source the op straight from that home -- load lhs into
@@ -8281,9 +8273,19 @@
               mnem
               op
               lhs
+              operand-ty
               imm)]
           [(CompilerBackendNoImmediate)
-            (let
+            (if (compiler-backend-compare-op? op)
+              (compiler-backend-emit-binop-direct-compare
+                assignments
+                dst
+                dst-home
+                op
+                lhs
+                rhs
+                operand-ty)
+              (let
               [rhs-reg : String
                 (compiler-backend-value-scalar-register assignments rhs)]
               [lhs-reg : String
@@ -8358,7 +8360,7 @@
                                   "\n"))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs

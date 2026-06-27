@@ -10047,6 +10047,54 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-compare-asm
+  [rhs : CompilerIrValue]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyI64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 (AstTyBool))
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType 2 (AstTyI64))
+          CompilerRegVarTypeNil)))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r15"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+          CompilerRegAssignmentNil)))
+    1
+    (IrBinLt)
+    (IrValueVar 0)
+    rhs
+    (AstTyBool)))
+
+(define (compiler-backend-direct-compare-asm-ok? [asm : String]) : bool
+  (and
+    (backend-and4
+      (compiler-backend-string-contains? asm "    movq %r15, %r12\n")
+      (compiler-backend-string-contains? asm "    setl %r12b\n")
+      (compiler-backend-string-contains? asm "    movzbq %r12b, %r12\n")
+      (not (compiler-backend-string-contains? asm "%rax")))
+    (not (compiler-backend-string-contains? asm "%r8"))))
+
+(define (compiler-backend-direct-compare-home-ok?) : bool
+  (match (compiler-backend-direct-compare-asm (IrValueI64 42))
+    [(OkCompilerBackend imm-asm)
+      (match (compiler-backend-direct-compare-asm (IrValueVar 2))
+        [(OkCompilerBackend reg-asm)
+          (and
+            (compiler-backend-direct-compare-asm-ok? imm-asm)
+            (compiler-backend-direct-compare-asm-ok? reg-asm)
+            (compiler-backend-string-contains? imm-asm "    cmpq $42, %r12\n")
+            (compiler-backend-string-contains?
+              reg-asm
+              "    cmpq %r13, %r12\n"))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -12232,7 +12280,8 @@
       (and
         (compiler-backend-scalar-wide-ops-ok?)
         (compiler-backend-bit-and-low-mask-immediate-ok?)
-        (compiler-backend-bit-and-low-mask-direct-ok?))
+        (compiler-backend-bit-and-low-mask-direct-ok?)
+        (compiler-backend-direct-compare-home-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

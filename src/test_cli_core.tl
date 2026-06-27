@@ -1783,6 +1783,13 @@
         (compiler-load-stdlib-owned-path-from-roots normalized roots))]
     (compiler-load-stdlib-import? stdlib-path)))
 
+(define (tltest-inline-clear-load-caches!) : unit
+  (begin
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)
+    (compiler-driver-reset-analysis-state!)))
+
 (define (tltest-inline-reset-load-state!) : unit
   (begin
     ;; Inline preflight runs after ordinary check/doctest phases in some CLI
@@ -1790,8 +1797,7 @@
     ;; nodes owned by a previous phase. Reset AST/type pools between package
     ;; sources to keep large packages bounded, but keep interns live because
     ;; callers may have already constructed cfg maps and path strings.
-    (compiler-load-program-cache-clear!)
-    (compiler-load-runtime-prelude-cache-clear!)
+    (tltest-inline-clear-load-caches!)
     (compiler-load-session-reset-pools!)
     (compiler-driver-reset-analysis-state!)))
 
@@ -1836,34 +1842,32 @@
   (if (tltest-source-has-inline-tests? source)
     (let
       [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      (begin
-        (tltest-inline-reset-load-state!)
-        (match (compiler-driver-load-package-file-with-runtime-owned-cfg
-          source
-          roots
-          manifest-dir
-          package-owner
-          deps
-          true
-          test-cfgs)
-          [(OkCompilerLoadWithPaths decls paths _ _)
-            (tltest-inline-typecheck-loaded
-              (compiler-load-package-owned-path
-                package-owner
-                manifest-dir
-                roots
-                source)
-              decls
-              paths
+      (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+        source
+        roots
+        manifest-dir
+        package-owner
+        deps
+        true
+        test-cfgs)
+        [(OkCompilerLoadWithPaths decls paths _ _)
+          (tltest-inline-typecheck-loaded
+            (compiler-load-package-owned-path
+              package-owner
+              manifest-dir
               roots
-              test-cfgs
-              cache-scope-prefix)]
-          [(ErrCompilerLoadWithPaths diag)
-            (begin
-              (io.print-error
-                (compiler-diagnostic-render
-                  (tltest-diagnostic-with-source-fallback source (box-get diag))))
-              1)])))
+              source)
+            decls
+            paths
+            roots
+            test-cfgs
+            cache-scope-prefix)]
+        [(ErrCompilerLoadWithPaths diag)
+          (begin
+            (io.print-error
+              (compiler-diagnostic-render
+                (tltest-diagnostic-with-source-fallback source (box-get diag))))
+            1)]))
     0))
 
 (define (tltest-inline-typecheck-package-sources-from
@@ -1875,29 +1879,47 @@
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]
   [cache-scope-prefix : String]) : i64
-  (if (>= index (vector.string-vec-len sources))
-    0
-    (let
-      [source : String (vector.string-vec-get sources index "")]
-      [status : i64
-        (tltest-inline-typecheck-package-source-with-cfg
-          source
-          roots
-          manifest-dir
-          package-owner
-          deps
-          cfgs
-          cache-scope-prefix)]
-      (if (= status 0)
-        (tltest-inline-typecheck-package-sources-from
-          sources
-          (+ index 1)
-          roots
-          manifest-dir
-          package-owner
-          deps
-          cfgs
-          cache-scope-prefix)
+  (let
+    [count : i64 (vector.string-vec-len sources)]
+    [cursor : i64 index]
+    [status : i64 0]
+    (begin
+      (while (and (= status 0) (< cursor count))
+        (let
+          [source : String (vector.string-vec-get sources cursor "")]
+          (begin
+            (if (tltest-source-has-inline-tests? source)
+              (set!
+                status
+                ;; Match package `test --check`: isolate each inline preflight
+                ;; source so package builds do not retain every loaded/test AST
+                ;; until the end of the package.
+                (with-scratch
+                  (let
+                    [entry-status : i64
+                      (begin
+                        (tltest-inline-reset-load-state!)
+                        (tltest-inline-typecheck-package-source-with-cfg
+                          source
+                          roots
+                          manifest-dir
+                          package-owner
+                          deps
+                          cfgs
+                          cache-scope-prefix))]
+                    (begin
+                      (tltest-inline-reset-load-state!)
+                      entry-status))))
+              (set! status 0))
+            (if (= status 0)
+              unit
+              (io.print-error
+                (string.string-append
+                  "test: package inline preflight failed: "
+                  source)))
+            (set! cursor (+ cursor 1)))))
+      (begin
+        (tltest-inline-reset-load-state!)
         status))))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg

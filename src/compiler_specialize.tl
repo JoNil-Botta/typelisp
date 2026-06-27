@@ -2806,9 +2806,14 @@
   [map-name : String]
   [prefix : String]
   [key-type : String]
+  [key-hash-param-type : String]
+  [key-hash-call-source : String]
   [key-hash-source : String]
   [key-support-source : String]
+  [key-eq-left-param-type : String]
+  [key-eq-right-param-type : String]
   [key-eq-source : String]
+  [key-probe-eq-call-source : String]
   [key-eq-call-source : String]
   [key-init : String]
   [value-type : String]) : String
@@ -2851,6 +2856,14 @@
     [entry : String (string.string-append map-name "Entry")]
     [entry-none : String (string.string-append map-name "EntryNone")]
     [entry-some : String (string.string-append map-name "EntrySome")]
+    [key-hash-call-expr : String
+      (string.string-append
+        "("
+        (string.string-append
+          prefix
+          (string.string-append
+            "-hash-key "
+            (string.string-append key-hash-call-source ")"))))]
     [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
@@ -2870,7 +2883,7 @@
           ""))
       (set! buf (text_buf.text-buf-append buf key-support-source))
       (set! buf (gen-tb3 buf "(define (" prefix "-hash-key [key : "))
-      (set! buf (gen-tb3 buf key-type "]) : i64\n" key-hash-source))
+      (set! buf (gen-tb3 buf key-hash-param-type "]) : i64\n" key-hash-source))
       (if (string.string-eq key-eq-source "")
         unit
         (begin
@@ -2879,9 +2892,9 @@
             buf
             (gen-tb5
               buf
-              key-type
+              key-eq-left-param-type
               "] [right : "
-              key-type
+              key-eq-right-param-type
               "]) : bool\n"
               key-eq-source))))
       (set!
@@ -2963,7 +2976,7 @@
         (gen-tb3
           buf
           "  [key : "
-          key-type
+          key-hash-param-type
           "]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "))
       (set!
         buf
@@ -2997,7 +3010,7 @@
           buf
           occupied
           " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              ("))
-      (set! buf (gen-tb3 buf key-eq-call-source "\n" ""))
+      (set! buf (gen-tb3 buf key-probe-eq-call-source "\n" ""))
       (set!
         buf
         (gen-tb5
@@ -3012,7 +3025,9 @@
       (set!
         buf
         (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
-      (set! buf (gen-tb3 buf "  [key : " key-type "]\n  [hash : i64]) : "))
+      (set!
+        buf
+        (gen-tb3 buf "  [key : " key-hash-param-type "]\n  [hash : i64]) : "))
       (set! buf (gen-tb2 buf probe "\n  (if (<= capacity 0)\n"))
       (set!
         buf
@@ -3192,12 +3207,14 @@
           "-probe slots ("))
       (set!
         buf
-        (gen-tb4
+        (gen-tb6
           buf
           prefix
-          "-capacity map) key ("
-          prefix
-          "-hash-key key))\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " "
+          key-hash-call-expr
+          ")\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3250,9 +3267,9 @@
         buf
         (gen-tb3
           buf
-          "      (let\n        [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "      (let\n        [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
         (gen-tb3
@@ -3352,18 +3369,20 @@
           buf
           ") ("
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb3
@@ -3434,12 +3453,14 @@
           "-probe slots ("))
       (set!
         buf
-        (gen-tb4
+        (gen-tb6
           buf
           prefix
-          "-capacity map) key ("
-          prefix
-          "-hash-key key))\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " "
+          key-hash-call-expr
+          ")\n      [("))
       (set!
         buf
         (gen-tb3
@@ -3486,18 +3507,20 @@
         (gen-tb4
           buf
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3746,18 +3769,20 @@
         (gen-tb4
           buf
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3862,7 +3887,7 @@
       (set! buf (gen-tb2 buf " 0)\n" ""))
       (set!
         buf
-        (gen-tb3 buf "    (let\n      [hash : i64 (" prefix "-hash-key key)]\n"))
+        (gen-tb3 buf "    (let\n      [hash : i64 " key-hash-call-expr "]\n"))
       (set!
         buf
         (gen-tb3
@@ -4129,6 +4154,8 @@
     map-name
     prefix
     "i64"
+    "i64"
+    "key"
     ;; Scramble the key before the Mersenne reduce. The raw i64 keys here are
     ;; structured (sequential intern ids, and positional composite keys like
     ;; `stride*(left+1)+right`), so `hash-normalize key` (~identity for keys
@@ -4143,7 +4170,10 @@
         prefix
         "-hash-normalize (* key 6364136223846793005)))\n"))
     ""
+    "i64"
+    "i64"
     ""
+    "= slot-key key)"
     "= slot-key key)"
     "0"
     value-type))
@@ -4773,6 +4803,12 @@
       (let
         [key-type : String (gen-hashmap-type-info-source key-info)]
         [key-name : String (gen-hashmap-type-info-name key-info)]
+        [key-hash-param-type : String
+          (string.string-append "(& key " (string.string-append key-type ")"))]
+        [key-eq-left-param-type : String
+          (string.string-append "(& left " (string.string-append key-type ")"))]
+        [key-eq-right-param-type : String
+          (string.string-append "(& right " (string.string-append key-type ")"))]
         (match (gen-hashmap-aggregate-hash-expr
           prefix
           key-name
@@ -4797,14 +4833,21 @@
                     map-name
                     prefix
                     key-type
+                    key-hash-param-type
+                    "(& key)"
                     (string.string-append
                       "  "
                       (string.string-append hash-expr ")\n"))
                     (gen-hashmap-source-aggregate-key-support prefix)
+                    key-eq-left-param-type
+                    key-eq-right-param-type
                     (string.string-append
                       "  "
                       (string.string-append eq-expr ")\n"))
-                    (string.string-append prefix "-key-eq? slot-key key)")
+                    (string.string-append prefix "-key-eq? (& slot-key) key)")
+                    (string.string-append
+                      prefix
+                      "-key-eq? (& slot-key) (& key))")
                     (string.string-append
                       "(init : "
                       (string.string-append key-type ")"))

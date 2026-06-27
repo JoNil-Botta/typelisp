@@ -11733,11 +11733,6 @@
         [_ ""])]
     [_ ""]))
 
-(define (compiler-backend-int-to-float-cast-asm [to-ty : AstType]) : String
-  (match to-ty
-    [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
-    [_ "    cvtsi2sdq %rax, %xmm0\n"]))
-
 (define (compiler-backend-int-to-float-cast-reg-asm
   [src-reg : String]
   [to-ty : AstType]
@@ -11875,38 +11870,73 @@
         (not (string-eq src-reg ""))))
       (OkCompilerBackend
         (compiler-backend-int-to-float-cast-reg-asm src-reg to-ty dst-home))
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        from-ty
-        program-index)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (str-cat
-              load
-              (match from-ty
-                [(AstTyU64)
-                  ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
-                  ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
-                  ;; actively picks a different register); the freeness query keeps it
-                  ;; off live homes. Degrades to %r11 only via emergency spill.
-                  (compiler-backend-u64-to-float-cast-asm
-                    function
-                    current-label
-                    dst
-                    to-ty
-                    (compiler-backend-scavenge-reg
-                      dst
-                      (compiler-backend-binop-scavenge-exclude-build)
-                      5
-                      "%r11"))]
-                [_ (compiler-backend-int-to-float-cast-asm to-ty)])
-              (compiler-backend-emit-store-float-var-with-plan
-                assignments
+      (if (not (opt-type-eq from-ty (AstTyU64)))
+        (let
+          [src-tmp : String
+            (if (string-eq src-reg "")
+              (compiler-backend-scavenge-reg
                 dst
-                "%xmm0"
-                to-ty)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                (make-array String 0)
+                0
+                "%r8")
+              src-reg)]
+          [dst-tmp : String
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              (make-array String 0)
+              0
+              "%xmm2")]
+          (match (if (string-eq src-reg "")
+            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              assignments
+              src
+              from-ty
+              src-tmp
+              program-index)
+            (OkCompilerBackend ""))
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (str-cat
+                  load
+                  (compiler-backend-int-to-float-cast-reg-asm
+                    src-tmp
+                    to-ty
+                    dst-tmp)
+                  (compiler-backend-emit-store-float-var-with-plan
+                    assignments
+                    dst
+                    dst-tmp
+                    to-ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          from-ty
+          program-index)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (str-cat
+                load
+                ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
+                ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
+                ;; actively picks a different register); the freeness query keeps it
+                ;; off live homes. Degrades to %r11 only via emergency spill.
+                (compiler-backend-u64-to-float-cast-asm
+                  function
+                  current-label
+                  dst
+                  to-ty
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (compiler-backend-binop-scavenge-exclude-build)
+                    5
+                    "%r11"))
+                (compiler-backend-emit-store-float-var-with-plan
+                  assignments
+                  dst
+                  "%xmm0"
+                  to-ty)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-float-to-int-cast
   [assignments : CompilerRegAssignmentList]

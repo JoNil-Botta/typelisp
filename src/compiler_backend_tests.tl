@@ -8986,10 +8986,10 @@
       "    cvttsd2siq %xmm0, %rax\n")
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
-      "    cvtsd2ss %xmm0, %xmm0\n")
+      "    cvtsd2ss %xmm2, %xmm2\n")
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
-      "    cvtss2sd %xmm0, %xmm0\n")))
+      "    cvtss2sd %xmm2, %xmm2\n")))
 
 (define (compiler-backend-direct-float-precision-cast-asm
   [from-ty : AstType]
@@ -9030,6 +9030,56 @@
             (compiler-backend-string-contains?
               widen-asm
               "    cvtss2sd %xmm3, %xmm3\n")
+            (not (compiler-backend-string-contains? narrow-asm "%xmm0"))
+            (not (compiler-backend-string-contains? widen-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-spill-float-precision-cast-asm
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-cast
+    "test_cast"
+    "entry"
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    from-ty
+    to-ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-spill-float-precision-cast-home-ok?) : bool
+  (match (compiler-backend-spill-float-precision-cast-asm
+    (AstTyF64)
+    (AstTyF32))
+    [(OkCompilerBackend narrow-asm)
+      (match (compiler-backend-spill-float-precision-cast-asm
+        (AstTyF32)
+        (AstTyF64))
+        [(OkCompilerBackend widen-asm)
+          (and
+            (compiler-backend-string-contains?
+              narrow-asm
+              "    movsd %xmm3, %xmm2\n")
+            (compiler-backend-string-contains?
+              narrow-asm
+              "    cvtsd2ss %xmm2, %xmm2\n")
+            (compiler-backend-string-contains?
+              narrow-asm
+              "    movss %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              widen-asm
+              "    movss %xmm3, %xmm2\n")
+            (compiler-backend-string-contains?
+              widen-asm
+              "    cvtss2sd %xmm2, %xmm2\n")
+            (compiler-backend-string-contains?
+              widen-asm
+              "    movsd %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? narrow-asm "%xmm0"))
             (not (compiler-backend-string-contains? widen-asm "%xmm0")))]
         [(ErrCompilerBackend _) false])]
@@ -13141,6 +13191,7 @@
         (and
           (compiler-backend-numeric-cast-shape-ok?)
           (compiler-backend-direct-float-precision-cast-home-ok?)
+          (compiler-backend-spill-float-precision-cast-home-ok?)
           (compiler-backend-direct-int-to-float-cast-home-ok?)
           (compiler-backend-direct-float-to-int-cast-home-ok?)
           (compiler-backend-spill-int-cast-home-ok?))

@@ -2654,6 +2654,53 @@
         (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-c-abi-return-store-two-int-slots) : CompilerIrCAbiReturnSlotList
+  (IrCAbiReturnSlotCons
+    (IrCAbiReturnSlot (AstTyI64) 0)
+    (box
+      (IrCAbiReturnSlotCons
+        (IrCAbiReturnSlot (AstTyI64) 8)
+        (box (IrCAbiReturnSlotNil))))))
+
+(define (compiler-backend-c-abi-return-stores-r11-occupied-ok?) : bool
+  (let
+    [slots : CompilerIrCAbiReturnSlotList
+      (compiler-backend-c-abi-return-store-two-int-slots)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r11"))
+        CompilerRegAssignmentNil)]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (ir-instr-call-cabi-store-result
+          (IrValueVar 0)
+          "cabi_return_shape"
+          (IrCallArgsNil)
+          slots)
+        IrInstrNil)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "cabi_return_store_r11_occupied_shape"
+          IrParamNil
+          (AstTyUnit)
+          1
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 1)
+        (set! compiler-backend-emit-current-count 1))]
+    [asm : String (compiler-backend-emit-c-abi-return-stores 0 slots)]
+    (and
+      (compiler-backend-string-contains? asm "    movq 0(%rsp), %r9\n")
+      (compiler-backend-string-contains? asm "    movq %rax, 0(%r9)\n")
+      (compiler-backend-string-contains? asm "    movq %rdx, 8(%r9)\n")
+      (not (compiler-backend-string-contains? asm "    movq 0(%rsp), %r11\n"))
+      (not (compiler-backend-string-contains? asm "(%r11)")))))
+
 (define (compiler-backend-indirect-c-call-home-shape-ok?) : bool
   (and
     (compiler-backend-indirect-c-call-callee-home-target-ok?
@@ -2671,7 +2718,8 @@
     (compiler-backend-indirect-c-abi-store-result-call-target-ok?
       (BackendTargetLinux))
     (compiler-backend-indirect-c-abi-store-result-call-target-ok?
-      (BackendTargetWindows))))
+      (BackendTargetWindows))
+    (compiler-backend-c-abi-return-stores-r11-occupied-ok?)))
 
 (define (compiler-backend-program-argv-entry-capture-source) : String
   "(extern (fixture-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\"))

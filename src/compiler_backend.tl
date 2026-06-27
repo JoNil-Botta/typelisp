@@ -18352,12 +18352,30 @@
           (str-cat "    movq " base-reg ", " (int->string save-offset) "(%rsp)\n")))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-c-abi-return-store-base-exclude) : (Array String)
+  (let
+    [a : (Array String) (make-array String 3)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      ;; %r8 is still a legacy scratch candidate, not a greedy-pool member.
+      (array-set! a 2 "%r8")
+      a)))
+
+(define (compiler-backend-scavenge-c-abi-return-store-base-reg) : String
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-c-abi-return-store-base-exclude)
+    3
+    "%r11"))
+
 (define (compiler-backend-emit-c-abi-return-stores
   [save-offset : i64]
   [slots : CompilerIrCAbiReturnSlotList]) : String
-  (string-append
-    (str-cat "    movq " (int->string save-offset) "(%rsp), %r11\n")
-    (compiler-backend-emit-c-abi-return-slot-stores "%r11" slots 0 0)))
+  (let
+    [base-reg : String (compiler-backend-scavenge-c-abi-return-store-base-reg)]
+    (string-append
+      (str-cat "    movq " (int->string save-offset) "(%rsp), " base-reg "\n")
+      (compiler-backend-emit-c-abi-return-slot-stores base-reg slots 0 0))))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]

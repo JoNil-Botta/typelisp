@@ -68,8 +68,8 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   identity.
 - `sync_api.tl` keeps the standalone native synchronization runtime coverage:
   blocking send/recv success paths in a single thread, FIFO wraparound, raw
-  handle packing, atomic-arena string transfer, resource close, `MutexI64`
-  guard locking, guarded get/set/add, close rejection while a guard is live,
+  handle packing, atomic-arena string transfer, resource close, generated
+  `mutex_i64.Mutex` guard locking, guarded get/set/add, close rejection while a guard is live,
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
 - `process_api.tl` remains a runnable fixture for command-validation paths that

@@ -982,6 +982,88 @@
     [(string-eq home "%vec13") "%zmm13"]
     [else ""]))
 
+(define (compiler-backend-vector-temp-candidates) : (Array String)
+  (let
+    [a : (Array String) (make-array String 8)]
+    (begin
+      (array-set! a 0 "%vec6")
+      (array-set! a 1 "%vec7")
+      (array-set! a 2 "%vec8")
+      (array-set! a 3 "%vec9")
+      (array-set! a 4 "%vec10")
+      (array-set! a 5 "%vec11")
+      (array-set! a 6 "%vec12")
+      (array-set! a 7 "%vec13")
+      a)))
+
+(define (compiler-backend-vector-temp-zmm-excluded?
+  [reg : String]
+  [exclude0 : String]
+  [exclude1 : String]
+  [exclude2 : String]) : bool
+  (or
+    (string-eq reg exclude0)
+    (or (string-eq reg exclude1) (string-eq reg exclude2))))
+
+(define (compiler-backend-vector-temp-zmm-iter
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude0 : String]
+  [exclude1 : String]
+  [exclude2 : String]
+  [role : String]
+  [candidates : (Array String)]
+  [i : i64]) : ResultBackendReg
+  (if (>= i (array-length candidates))
+    (ErrBackendReg
+      (str-cat "backend: no free AVX-512 vector temp for " role))
+    (let
+      [home : String (array-ref candidates i)]
+      [reg : String (compiler-backend-vector-home-to-zmm home)]
+      (if (and
+        (not
+          (compiler-backend-vector-temp-zmm-excluded?
+            reg
+            exclude0
+            exclude1
+            exclude2))
+        (not (compiler-backend-plan-uses-reg? assignments home)))
+        (OkBackendReg reg)
+        (compiler-backend-vector-temp-zmm-iter
+          starts
+          ends
+          assignments
+          vars
+          point
+          exclude0
+          exclude1
+          exclude2
+          role
+          candidates
+          (+ i 1))))))
+
+(define (compiler-backend-vector-temp-zmm
+  [assignments : CompilerRegAssignmentList]
+  [exclude0 : String]
+  [exclude1 : String]
+  [exclude2 : String]
+  [role : String]) : ResultBackendReg
+  (compiler-backend-vector-temp-zmm-iter
+    compiler-backend-scavenge-ctx-starts
+    compiler-backend-scavenge-ctx-ends
+    assignments
+    0
+    (* 2 (- compiler-backend-emit-instr-post-base compiler-backend-emit-current-count))
+    exclude0
+    exclude1
+    exclude2
+    role
+    (compiler-backend-vector-temp-candidates)
+    0))
+
 (define (compiler-backend-vector-home-unavailable [role : String]) : String
   (str-cat
     "backend: vector register home unavailable for "
@@ -3434,32 +3516,48 @@
                       "select dst"
                       "zmm")
                       [(OkBackendReg dst-reg)
-                        (OkCompilerBackend
-                          (cond
-                            [(and
-                                (string-eq (& dst-reg) (& true-reg))
-                                (not (string-eq (& true-reg) (& false-reg))))
-                              (str-cat
-                                "    "
-                                move
-                                " "
-                                true-reg
-                                ", %zmm15\n"
-                                "    "
-                                move
-                                " "
-                                false-reg
-                                ", "
-                                dst-reg
-                                "\n"
-                                "    "
-                                move
-                                " %zmm15, "
-                                dst-reg
-                                "{"
-                                mask-reg
-                                "}\n")]
-                            [(string-eq (& true-reg) (& false-reg))
+                        (if (and
+                          (string-eq (& dst-reg) (& true-reg))
+                          (not (string-eq (& true-reg) (& false-reg))))
+                          (match (compiler-backend-vector-temp-zmm
+                            assignments
+                            dst-reg
+                            true-reg
+                            false-reg
+                            "select true alias")
+                            [(OkBackendReg temp-reg)
+                              (OkCompilerBackend
+                                (str-cat
+                                  "    "
+                                  move
+                                  " "
+                                  true-reg
+                                  ", "
+                                  temp-reg
+                                  "\n"
+                                  "    "
+                                  move
+                                  " "
+                                  false-reg
+                                  ", "
+                                  dst-reg
+                                  "\n"
+                                  "    "
+                                  move
+                                  " "
+                                  temp-reg
+                                  ", "
+                                  dst-reg
+                                  "{"
+                                  mask-reg
+                                  "}\n"))]
+                            [(ErrBackendReg message)
+                              (ErrCompilerBackend
+                                (compiler-diagnostic-with-message
+                                  instr-diag
+                                  message))])
+                          (OkCompilerBackend
+                            (if (string-eq (& true-reg) (& false-reg))
                               (if (string-eq (& dst-reg) (& false-reg))
                                 ""
                                 (str-cat
@@ -3469,8 +3567,7 @@
                                   false-reg
                                   ", "
                                   dst-reg
-                                  "\n"))]
-                            [else
+                                  "\n"))
                               (str-cat
                                 (if (string-eq (& dst-reg) (& false-reg))
                                   ""
@@ -3490,7 +3587,7 @@
                                 dst-reg
                                 "{"
                                 mask-reg
-                                "}\n")]))]
+                                "}\n"))))]
                       [(ErrBackendReg message)
                         (ErrCompilerBackend
                           (compiler-diagnostic-with-message instr-diag message))])]

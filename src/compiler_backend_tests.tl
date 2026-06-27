@@ -6648,11 +6648,12 @@
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    vmovdqu64 %zmm6, %zmm15\n")
+        (compiler-backend-string-contains? asm "    vmovdqu64 %zmm6, %zmm8\n")
         (compiler-backend-string-contains? asm "    vmovdqu64 %zmm7, %zmm6\n")
         (compiler-backend-string-contains?
           asm
-          "    vmovdqu64 %zmm15, %zmm6{%k1}\n"))]
+          "    vmovdqu64 %zmm8, %zmm6{%k1}\n")
+        (not (compiler-backend-string-contains? asm "%zmm15")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-select-false-alias-ok?) : bool

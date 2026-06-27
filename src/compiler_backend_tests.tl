@@ -3572,6 +3572,48 @@
         [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
         [(ErrCompilerBackend _) false]))))
 
+(define (compiler-backend-mov-scratch-staging-ok?) : bool
+  (let
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    [int-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    [float-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)]
+    (and
+      (match (compiler-backend-emit-mov
+        int-assignments
+        1
+        (IrValueVar 0)
+        (AstTyI64)
+        index
+        2)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
+            (compiler-backend-string-contains? asm "    movq %r8, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? asm "%rax")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-mov
+        float-assignments
+        1
+        (IrValueVar 0)
+        (AstTyF64)
+        index
+        2)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movsd %xmm3, %xmm2\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? asm "%xmm0")))]
+        [(ErrCompilerBackend _) false]))))
+
 (define (compiler-backend-register-group-test-type) : AstType
   (AstTyStruct (intern "BackendGroupTest")))
 
@@ -4438,6 +4480,7 @@
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
+    (compiler-backend-mov-scratch-staging-ok?)
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)

@@ -17608,21 +17608,36 @@
     [(compiler-backend-value-same-home? assignments dst src)
       (OkCompilerBackend "")]
     [(compiler-backend-float-type? ty)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        ty
-        program-index)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
-              (compiler-backend-emit-store-typed-var-with-plan
-                assignments
-                dst
-                "%xmm0"
-                ty)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (let
+        [dst-home : String (compiler-backend-var-register-home assignments dst)]
+        [src-home : String (compiler-backend-float-value-register assignments src)]
+        [exclude : (Array String)
+          (if (string-eq src-home "")
+            (make-array String 0)
+            (compiler-backend-one-exclude src-home))]
+        [exclude-n : i64 (if (string-eq src-home "") 0 1)]
+        [reg : String
+          (if (string-eq dst-home "")
+            (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")
+            dst-home)]
+        (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+          assignments
+          src
+          ty
+          reg
+          program-index)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (if (string-eq dst-home "")
+                (string-append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    reg
+                    ty))
+                load))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [else
       (match (compiler-backend-emit-store-immediate-to-var-home
         assignments
@@ -17654,23 +17669,22 @@
                 assignments
                 src
                 dst-home)
-              (match (match src
-                [(IrValueGlobalAddr name)
-                  (OkCompilerBackend
-                    (str-cat
-                      "    leaq "
-                      (compiler-backend-function-or-global-addr-symbol
-                        program-index
-                        name)
-                      "(%rip), %rax\n"
-                      ""
-                      ""))]
-                [_
-                  (compiler-backend-emit-load-typed-value-with-plan
-                    assignments
-                    src
-                    ty
-                    program-index)])
+              (let
+                [src-home : String
+                  (compiler-backend-value-scalar-register assignments src)]
+                [exclude : (Array String)
+                  (if (string-eq src-home "")
+                    (make-array String 0)
+                    (compiler-backend-one-exclude src-home))]
+                [exclude-n : i64 (if (string-eq src-home "") 0 1)]
+                [reg : String
+                  (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")]
+              (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                assignments
+                src
+                ty
+                reg
+                program-index)
                 [(OkCompilerBackend load)
                   (OkCompilerBackend
                     (string-append
@@ -17678,9 +17692,9 @@
                       (compiler-backend-emit-store-typed-var-with-plan
                         assignments
                         dst
-                        "%rax"
+                        reg
                         ty)))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]))
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])]))
 
 (define (compiler-backend-emit-call-result-store
   [assignments : CompilerRegAssignmentList]

@@ -4700,6 +4700,56 @@
             IrInstrNil)))
       IrBlockNil)))
 
+(define (compiler-backend-phi-f64-cycle-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%xmm2"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm3"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-phi-f64-cycle-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "join"
+      (compiler-ir-instr-cons
+        (IrInstrPhi
+          0
+          (compiler-ir-phi-input-cons (IrValueVar 1) "back" IrPhiInputNil)
+          (AstTyF64))
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            1
+            (compiler-ir-phi-input-cons (IrValueVar 0) "back" IrPhiInputNil)
+            (AstTyF64))
+          IrInstrNil)))
+    IrBlockNil))
+
+(define (compiler-backend-phi-group-f64-cycle-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegisterPair "%xmm2" "%xmm3"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegisterPair "%xmm4" "%xmm5"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-phi-group-f64-cycle-blocks) : CompilerIrBlockList
+  (let
+    [ty : AstType (compiler-backend-register-group-f64-test-type)]
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "join"
+        (compiler-ir-instr-cons
+          (IrInstrPhi
+            0
+            (compiler-ir-phi-input-cons (IrValueVar 1) "back" IrPhiInputNil)
+            ty)
+          (compiler-ir-instr-cons
+            (IrInstrPhi
+              1
+              (compiler-ir-phi-input-cons (IrValueVar 0) "back" IrPhiInputNil)
+              ty)
+            IrInstrNil)))
+      IrBlockNil)))
+
 (define (compiler-backend-branch-phi-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -5145,6 +5195,51 @@
         (compiler-backend-string-contains? cycle "    movq %r10, %r14\n")
         (compiler-backend-string-contains? cycle "    movq %r11, %r15\n"))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-phi-float-cycle-copy-ok?) : bool
+  (and
+    (match (compiler-backend-emit-phi-edge-copies
+      (compiler-backend-phi-f64-cycle-assignments)
+      (compiler-backend-phi-f64-cycle-blocks)
+      "join"
+      "back"
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      2)
+      [(OkCompilerBackend cycle)
+        (and
+          (compiler-backend-string-contains?
+            cycle
+            "    subq $8, %rsp\n    movsd %xmm2, (%rsp)\n")
+          (compiler-backend-string-contains?
+            cycle
+            "    movsd (%rsp), %xmm3\n    addq $8, %rsp\n")
+          (not (compiler-backend-string-contains? cycle "%xmm14"))
+          (not (compiler-backend-string-contains? cycle "%xmm15")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-phi-edge-copies
+      (compiler-backend-phi-group-f64-cycle-assignments)
+      (compiler-backend-phi-group-f64-cycle-blocks)
+      "join"
+      "back"
+      (compiler-backend-register-group-f64-test-index)
+      4)
+      [(OkCompilerBackend cycle)
+        (and
+          (compiler-backend-string-contains?
+            cycle
+            "    subq $8, %rsp\n    movq %xmm2, (%rsp)\n")
+          (compiler-backend-string-contains?
+            cycle
+            "    subq $8, %rsp\n    movq %xmm3, (%rsp)\n")
+          (compiler-backend-string-contains?
+            cycle
+            "    movq (%rsp), %xmm5\n    addq $8, %rsp\n")
+          (compiler-backend-string-contains?
+            cycle
+            "    movq (%rsp), %xmm4\n    addq $8, %rsp\n")
+          (not (compiler-backend-string-contains? cycle "%xmm14"))
+          (not (compiler-backend-string-contains? cycle "%xmm15")))]
+      [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
@@ -13615,6 +13710,7 @@
       (and
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
+        (compiler-backend-phi-float-cycle-copy-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?)
         (compiler-backend-phi-immediate-stack-copy-ok?)
         (compiler-backend-phi-direct-scalar-copy-ok?)

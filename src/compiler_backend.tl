@@ -15693,28 +15693,13 @@
               var
               replacement))])]))
 
-(define (compiler-backend-phi-group-temp-reg
-  [program-index : CompilerBackendProgramIndex]
-  [ty : AstType]
-  [word-index : i64]) : String
-  (if (compiler-backend-group-word-sse? program-index ty word-index)
-    (if (= word-index 0)
-      "%xmm14"
-      "%xmm15")
-    (if (= word-index 0)
-      "%r10"
-      "%r11")))
-
 ;; #phi-temp-pool: the phi parallel-copy cycle break no longer ties up %r10/%r11.
 ;; find-unblocked drains the acyclic "trees" first, so the remaining core is a
 ;; pure PERMUTATION (each home written once and read once): every saved value has
 ;; exactly ONE consumer, and saves nest to depth 1 (after a save there is always
 ;; an unblocked copy until the Temp is consumed). That makes a register-free STACK
-;; swap sound: pushq the cycle-entry dst's home, popq it into the single Temp
-;; consumer. Int scalars/group-words use pushq/popq (freeing %r10/%r11); float
-;; scalars and SSE group words use the reserved %xmm14/%xmm15 (never in the
-;; allocator pool). home-operand is reg or %rbp-relative -- unaffected by the %rsp
-;; delta, and the intervening cycle moves never touch %rsp -> the bracket balances.
+;; swap sound: save the cycle-entry dst on %rsp, restore it into the single Temp
+;; consumer, and keep the bracket balanced across the intervening cycle moves.
 (define (compiler-backend-phi-temp-home-operand
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]) : ResultCompilerBackend
@@ -15738,6 +15723,75 @@
       [(CompilerRegNoLocation)
         (OkCompilerBackend (compiler-backend-slot var-id))])))
 
+(define (compiler-backend-emit-phi-stack-save-reg
+  [operand : String]
+  [mnemonic : String]) : String
+  (str-cat
+    "    subq $8, %rsp\n    "
+    mnemonic
+    " "
+    operand
+    ", (%rsp)\n"))
+
+(define (compiler-backend-emit-phi-stack-restore-reg
+  [operand : String]
+  [mnemonic : String]) : String
+  (str-cat
+    "    "
+    mnemonic
+    " (%rsp), "
+    operand
+    "\n    addq $8, %rsp\n"))
+
+(define (compiler-backend-phi-float-temp-scratch) : String
+  (let
+    [no-exclude : (Array String) (make-array String 0)]
+    (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2")))
+
+(define (compiler-backend-emit-phi-float-temp-save
+  [operand : String]
+  [ty : AstType]) : String
+  (let
+    [mnemonic : String (compiler-backend-float-move ty)]
+    (if (compiler-backend-peephole-register-operand? operand)
+      (compiler-backend-emit-phi-stack-save-reg operand mnemonic)
+      (let
+        [scratch : String (compiler-backend-phi-float-temp-scratch)]
+        (str-cat
+          "    subq $8, %rsp\n    "
+          mnemonic
+          " "
+          operand
+          ", "
+          scratch
+          "\n    "
+          mnemonic
+          " "
+          scratch
+          ", (%rsp)\n")))))
+
+(define (compiler-backend-emit-phi-float-temp-restore
+  [operand : String]
+  [ty : AstType]) : String
+  (let
+    [mnemonic : String (compiler-backend-float-move ty)]
+    (if (compiler-backend-peephole-register-operand? operand)
+      (compiler-backend-emit-phi-stack-restore-reg operand mnemonic)
+      (let
+        [scratch : String (compiler-backend-phi-float-temp-scratch)]
+        (str-cat
+          "    "
+          mnemonic
+          " (%rsp), "
+          scratch
+          "\n    "
+          mnemonic
+          " "
+          scratch
+          ", "
+          operand
+          "\n    addq $8, %rsp\n")))))
+
 (define (compiler-backend-emit-phi-group-word-save
   [assignments : CompilerRegAssignmentList]
   [var : i64]
@@ -15749,7 +15803,9 @@
     [(OkCompilerBackend operand)
       (OkCompilerBackend
         (if (compiler-backend-group-word-sse? program-index ty index)
-          (str-cat "    movsd " operand ", " (if (= index 0) "%xmm14" "%xmm15") "\n")
+          (if (compiler-backend-peephole-register-operand? operand)
+            (compiler-backend-emit-phi-stack-save-reg operand "movq")
+            (str-cat "    pushq " operand "\n"))
           (str-cat "    pushq " operand "\n")))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
@@ -15764,7 +15820,9 @@
     [(OkCompilerBackend operand)
       (OkCompilerBackend
         (if (compiler-backend-group-word-sse? program-index ty index)
-          (str-cat "    movsd " (if (= index 0) "%xmm14" "%xmm15") ", " operand "\n")
+          (if (compiler-backend-peephole-register-operand? operand)
+            (compiler-backend-emit-phi-stack-restore-reg operand "movq")
+            (str-cat "    popq " operand "\n"))
           (str-cat "    popq " operand "\n")))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
@@ -15787,12 +15845,12 @@
       [(OkCompilerBackend operand)
         (OkCompilerBackend
           (if (compiler-backend-float-type? ty)
-            (str-cat "    movsd " operand ", %xmm15\n")
+            (compiler-backend-emit-phi-float-temp-save operand ty)
             (str-cat "    pushq " operand "\n")))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 ;; Restore reverses the word order (word1 then word0) so the int pushq/popq stay
-;; LIFO-balanced; the %xmm14/%xmm15 SSE words are stack-independent so order is moot.
+;; LIFO-balanced; SSE words use the same stack order.
 (define (compiler-backend-emit-phi-temp-restore
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -15812,7 +15870,7 @@
       [(OkCompilerBackend operand)
         (OkCompilerBackend
           (if (compiler-backend-float-type? ty)
-            (str-cat "    movsd %xmm15, " operand "\n")
+            (compiler-backend-emit-phi-float-temp-restore operand ty)
             (str-cat "    popq " operand "\n")))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 

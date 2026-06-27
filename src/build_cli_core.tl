@@ -3169,91 +3169,63 @@
                   (and
                     emit-entry
                     (source-tool-linux-crt-entry? target effective-link-inputs))]
-                (match (compiler-driver-emit-package-loaded
-                  ""
-                  target
-                  true
-                  opt-level
-                  mode
-                  emit-entry
-                  crt-entry
-                  decls
-                  owned-paths)
-                  [(ErrCompilerDriver diag)
-                    (begin
-                      (io.print-error
-                        (compiler-diagnostic-render (box-get diag)))
-                      1)]
-                  [(OkCompilerDriver asm)
-                    (begin
-                      (compiler-driver-release-lower-arenas-after-emit!)
-                      (match (build-package-tlci-text manifest)
-                        [(ErrBuildPackageTlciText message)
-                          (begin
-                            (io.print-error message)
-                            1)]
-                        [(OkBuildPackageTlciText tlci-text)
-                          (if (build-package-async-process-supported?)
-                            (let
-                              [_reset-before-doctests : unit
-                                (compiler-driver-reset-analysis-state!)]
-                              [doctest-status : i64
-                                (build-package-run-doctest-worker
-                                  manifest-path
-                                  target
-                                  opt-level
-                                  profile
-                                  mode
-                                  lock-policy
-                                  (compiler-pkg-deps-list
-                                    (struct-get manifest deps))
-                                  stdlib-roots)]
-                              (if (= doctest-status 0)
-                                (let
-                                  [direct-object : ResultSourceToolString
-                                    (build-package-try-render-linux-direct-object
-                                      kind
-                                      target
-                                      opt-level
-                                      mode
-                                      emit-entry
-                                      crt-entry
-                                      decls
-                                      owned-paths)]
-                                  [_reset-after-direct-object : unit
-                                    (compiler-driver-reset-analysis-state!)]
-                                  (build-package-finish-artifacts
+                ;; The async doctest worker must be spawned before emit builds the
+                ;; large assembly/lower artifacts; otherwise low-headroom Linux
+                ;; hosts can fail the fork even after logical arena resets.
+                [async-doctest-status : i64
+                  (if (build-package-async-process-supported?)
+                    (let
+                      [_reset-before-doctests : unit
+                        (compiler-driver-reset-analysis-state!)]
+                      (build-package-run-doctest-worker
+                        manifest-path
+                        target
+                        opt-level
+                        profile
+                        mode
+                        lock-policy
+                        (compiler-pkg-deps-list (struct-get manifest deps))
+                        stdlib-roots))
+                    0)]
+                (if (= async-doctest-status 0)
+                  (match (compiler-driver-emit-package-loaded
+                    ""
+                    target
+                    true
+                    opt-level
+                    mode
+                    emit-entry
+                    crt-entry
+                    decls
+                    owned-paths)
+                    [(ErrCompilerDriver diag)
+                      (begin
+                        (io.print-error
+                          (compiler-diagnostic-render (box-get diag)))
+                        1)]
+                    [(OkCompilerDriver asm)
+                      (begin
+                        (compiler-driver-release-lower-arenas-after-emit!)
+                        (match (build-package-tlci-text manifest)
+                          [(ErrBuildPackageTlciText message)
+                            (begin
+                              (io.print-error message)
+                              1)]
+                          [(OkBuildPackageTlciText tlci-text)
+                            (if (build-package-async-process-supported?)
+                              (let
+                                [direct-object : ResultSourceToolString
+                                  (build-package-try-render-linux-direct-object
                                     kind
                                     target
-                                    asm-path
-                                    obj-path
-                                    artifact-path
-                                    effective-link-inputs
-                                    tlci-path
-                                    tlci-text
-                                    asm
-                                    direct-object))
-                                doctest-status))
-                            (let
-                              [direct-object : ResultSourceToolString
-                                (build-package-try-render-linux-direct-object
-                                  kind
-                                  target
-                                  opt-level
-                                  mode
-                                  emit-entry
-                                  crt-entry
-                                  decls
-                                  owned-paths)]
-                              [_reset-before-doctests : unit
-                                (compiler-driver-reset-file-state!)]
-                              [doctest-status : i64
-                                (build-doctest-typecheck-package-paths
-                                  (build-package-doctest-paths name paths)
-                                  stdlib-roots
-                                  manifest-dir
-                                  (struct-get manifest deps))]
-                              (if (= doctest-status 0)
+                                    opt-level
+                                    mode
+                                    emit-entry
+                                    crt-entry
+                                    decls
+                                    owned-paths)]
+                                [_reset-after-direct-object : unit
+                                  (compiler-driver-reset-analysis-state!)]
                                 (build-package-finish-artifacts
                                   kind
                                   target
@@ -3264,8 +3236,40 @@
                                   tlci-path
                                   tlci-text
                                   asm
-                                  direct-object)
-                                doctest-status)))]))]))])
+                                  direct-object))
+                              (let
+                                [direct-object : ResultSourceToolString
+                                  (build-package-try-render-linux-direct-object
+                                    kind
+                                    target
+                                    opt-level
+                                    mode
+                                    emit-entry
+                                    crt-entry
+                                    decls
+                                    owned-paths)]
+                                [_reset-before-doctests : unit
+                                  (compiler-driver-reset-file-state!)]
+                                [doctest-status : i64
+                                  (build-doctest-typecheck-package-paths
+                                    (build-package-doctest-paths name paths)
+                                    stdlib-roots
+                                    manifest-dir
+                                    (struct-get manifest deps))]
+                                (if (= doctest-status 0)
+                                  (build-package-finish-artifacts
+                                    kind
+                                    target
+                                    asm-path
+                                    obj-path
+                                    artifact-path
+                                    effective-link-inputs
+                                    tlci-path
+                                    tlci-text
+                                    asm
+                                    direct-object)
+                                  doctest-status)))]))])
+                  async-doctest-status))])
           inline-test-status)))))
 
 (define (build-package-worker-unified-cli?) : bool

@@ -8714,6 +8714,57 @@
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-gep-float-load-scratch-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 3 (IrValueVar 2) (AstTyF64))
+          IrInstrNil))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 3 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd 8(%r10), %xmm3\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 3 (IrValueVar 2) (AstTyF64))
+          IrInstrNil))
+      CompilerRegAssignmentNil
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd 8(%r10), %xmm2\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movsd %xmm2, -32(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 3 (IrValueVar 0) (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 4 (IrValueVar 3) (AstTyF64))
+          IrInstrNil))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 4 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)
+      5)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movsd (%r10,%r8,8), %xmm3\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-addr-of-forwarding-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
@@ -13788,6 +13839,7 @@
       (and
         (compiler-backend-memory-op-ok?)
         (compiler-backend-float-load-scratch-ok?)
+        (compiler-backend-gep-float-load-scratch-ok?)
         (compiler-backend-address-mode-fusion-ok?)
         (compiler-backend-scratch-staging-direct-home-shape-ok?)
         (compiler-backend-scavenge-pooled-r10-r11-ok?)

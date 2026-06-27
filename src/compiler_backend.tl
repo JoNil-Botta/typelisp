@@ -11307,6 +11307,29 @@
                     "%rax")))))))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-emit-load-float-address-to-var
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [addr : String]
+  [ty : AstType]) : String
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [load-reg : String
+      (if (string-eq dst-home "")
+        (let
+          [no-exclude : (Array String) (make-array String 0)]
+          (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+        dst-home)]
+    (string-append
+      (compiler-backend-emit-load-float-memory addr load-reg ty)
+      (if (string-eq dst-home "")
+        (compiler-backend-emit-store-float-var-with-plan
+          assignments
+          dst
+          load-reg
+          ty)
+        ""))))
+
 (define (compiler-backend-r10-address [disp : i64]) : String
   (if (= disp 0)
     "(%r10)"
@@ -11804,16 +11827,11 @@
               (if (compiler-backend-float-type? load-ty)
                 (string-append
                   base-asm
-                  (string-append
-                    (compiler-backend-emit-load-float-memory
-                      addr
-                      "%xmm0"
-                      load-ty)
-                    (compiler-backend-emit-store-float-var-with-plan
-                      assignments
-                      dst
-                      "%xmm0"
-                      load-ty)))
+                  (compiler-backend-emit-load-float-address-to-var
+                    assignments
+                    dst
+                    addr
+                    load-ty))
                 (let
                   [dst-home : String
                     (compiler-backend-var-register-home assignments dst)]
@@ -11908,16 +11926,11 @@
                         offset-asm
                         (string-append
                           addr-asm
-                          (string-append
-                            (compiler-backend-emit-load-float-memory
-                              load-addr
-                              "%xmm0"
-                              load-ty)
-                            (compiler-backend-emit-store-float-var-with-plan
-                              assignments
-                              dst
-                              "%xmm0"
-                              load-ty)))))
+                          (compiler-backend-emit-load-float-address-to-var
+                            assignments
+                            dst
+                            load-addr
+                            load-ty))))
                     (let
                       [dst-home : String
                         (compiler-backend-var-register-home assignments dst)]

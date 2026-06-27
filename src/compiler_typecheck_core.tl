@@ -2302,6 +2302,19 @@
 (define (tc-name-id [name : String]) : i64
   (intern name))
 
+(define (tc-name-id-persistent [name : String]) : i64
+  (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    (begin
+      (intern-persistent-storage-enable!)
+      (let
+        [id : i64 (tc-name-id name)]
+        (begin
+          (if prev-persist
+            unit
+            (intern-persistent-storage-disable!))
+          id)))))
+
 (define (tc-builtin-name-id [name : String]) : i64
   (begin
     (compiler-builtin-refresh!)
@@ -2427,8 +2440,48 @@
 (define (tc-bind-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold (tc-bind-raw-id env name-id ty)))
 
+(define (tc-marker-name-matches?
+  [text : String]
+  [prefix : String]
+  [name : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [name-len : i64 (string.string-length name)]
+    (if (not (= text-len (+ prefix-len name-len)))
+      false
+      (let
+        [ok : bool true]
+        [i : i64 0]
+        (begin
+          (while (and ok (< i prefix-len))
+            (begin
+              (if (= (string.string-ref text i) (string.string-ref prefix i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          (set! i 0)
+          (while (and ok (< i name-len))
+            (begin
+              (if (=
+                (string.string-ref text (+ prefix-len i))
+                (string.string-ref name i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok)))))
+
+(define (tc-unsafe-decl-marker-prefix) : String
+  " __tl_unsafe_decl:")
+
 (define (tc-unsafe-decl-marker-name [name : String]) : String
-  (string.string-append " __tl_unsafe_decl:" name))
+  (string.string-append (tc-unsafe-decl-marker-prefix) name))
+
+(define (tc-unsafe-decl-marker-key-id? [key : i64] [name-id : i64]) : bool
+  (tc-marker-name-matches?
+    (intern-str key)
+    (tc-unsafe-decl-marker-prefix)
+    (intern-str name-id)))
 
 ;; --- marker name-id memos -----------------------------------------------------
 ;; The Superluminal stage2 self-compile profile shows ~25% of CPU re-interning
@@ -2448,7 +2501,7 @@
   (array.make-array i64 262144))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
+  (tc-name-id-persistent (tc-unsafe-decl-marker-name (intern-str name-id))))
 
 (define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -2474,8 +2527,17 @@
       name-id
       ty)))
 
+(define (tc-c-abi-fnptr-marker-prefix) : String
+  " __tl_c_abi_fnptr:")
+
 (define (tc-c-abi-fnptr-marker-name [name : String]) : String
-  (string.string-append " __tl_c_abi_fnptr:" name))
+  (string.string-append (tc-c-abi-fnptr-marker-prefix) name))
+
+(define (tc-c-abi-fnptr-marker-key-id? [key : i64] [name-id : i64]) : bool
+  (tc-marker-name-matches?
+    (intern-str key)
+    (tc-c-abi-fnptr-marker-prefix)
+    (intern-str name-id)))
 
 (define tc-c-abi-fnptr-marker-id-cache : (Array i64)
   (array.make-array i64 262144))
@@ -2483,7 +2545,7 @@
   (array.make-array i64 262144))
 
 (define (tc-c-abi-fnptr-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
+  (tc-name-id-persistent (tc-c-abi-fnptr-marker-name (intern-str name-id))))
 
 (define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -2536,7 +2598,7 @@
       [(TcTypeCache _ _ _ _ _ _ _ rest _)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
       [(TcTypeBind key _ rest)
-        (if (= key (tc-c-abi-fnptr-marker-id name-id))
+        (if (tc-c-abi-fnptr-marker-key-id? key name-id)
           true
           (if (= key name-id)
             false
@@ -2566,7 +2628,7 @@
 
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
-    [(TcTypeBind key _ _) (= key (tc-unsafe-decl-marker-id name-id))]
+    [(TcTypeBind key _ _) (tc-unsafe-decl-marker-key-id? key name-id)]
     [_ false]))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
@@ -44970,6 +45032,8 @@
                                 cur-module)
                                 [(OkTcEnv next-top-env)
                                   (begin
+                                    (tc-hygiene-reset-active-top-env!
+                                      next-top-env)
                                     (set! cur-top-env next-top-env)
                                     (set!
                                       out-rev

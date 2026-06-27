@@ -983,6 +983,20 @@
       with-slash-base
       (tltest-reach-mark-name with-slash-base leaf))))
 
+(define (tltest-reachable-name-marked?
+  [names : hashmap.StringI64Map]
+  [name : String]) : bool
+  (or
+    (hashmap.string-i64-map-contains? names name)
+    (if (tc-name-qualified? name)
+      (hashmap.string-i64-map-contains? names (tc-qualified-name-base name))
+      false)
+    (let
+      [leaf : String (tltest-reach-name-dot-leaf name)]
+      (if (string.string-eq leaf name)
+        false
+        (hashmap.string-i64-map-contains? names leaf)))))
+
 (define (tltest-reach-mark-string-snapshot-runtime
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
@@ -1542,7 +1556,7 @@
     [(AstDeclDef name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (if (hashmap.string-i64-map-contains? names (intern-str name))
+        (if (tltest-reachable-name-marked? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box export)
@@ -1554,7 +1568,7 @@
               body
               (tltest-reach-mark-name names (intern-str name)))]
           [(AstFnNoExport)
-            (if (hashmap.string-i64-map-contains? names (intern-str name))
+            (if (tltest-reachable-name-marked? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
     [(AstDeclDefMacro _ _ _ body-box)
@@ -1630,14 +1644,22 @@
   [names : hashmap.StringI64Map]) : bool
   (match decl
     [(AstDeclDef name _ _)
-      (hashmap.string-i64-map-contains? names (intern-str name))]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        marked)]
     [(AstDeclDefFn name _ _ _ export)
-      (match export
-        [(AstFnExport _) true]
-        [(AstFnNoExport)
-          (hashmap.string-i64-map-contains? names (intern-str name))])]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        (match export
+          [(AstFnExport _) true]
+          [(AstFnNoExport) marked]))]
     [(AstDeclExtern name _ _ _)
-      (hashmap.string-i64-map-contains? names (intern-str name))]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        marked)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -2548,6 +2570,47 @@
   (if (tltest-generated-reachability-self-test?)
     unit
     (panic "test CLI inline harness generated reachability mismatch")))
+
+(define (tltest-imported-generated-retained-self-test?) : bool
+  (let
+    [dead-name : String "__tl_imported_generated_dead"]
+    [dead-decl : AstDecl
+      (tltest-generated-wrapper
+        dead-name
+        (ast-decl-def-fn
+          dead-name
+          AstParamNil
+          (AstTyUnit)
+          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+    [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        dead-decl
+        (ast-decl-cons
+          (ast-decl-test
+            "keeps-imported-generated"
+            (ast-node-push (AstExprLiteral (AstLitUnit)))
+            span)
+          AstDeclNil))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "generated.tl"
+        (ast-decl-path-cons "driver.tl" AstDeclPathNil))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name? harness-decls dead-name)))])])))
+
+(test
+  test-cli-inline-harness-keeps-imported-generated-wrappers
+  (if (tltest-imported-generated-retained-self-test?)
+    unit
+    (panic "test CLI inline harness pruned imported generated wrapper")))
 
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let

@@ -42968,49 +42968,46 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [decl : AstDecl]) : ResultMacroDecl
-  (match (tc-hygiene-definition-env ctx (tc-context-module ctx))
-    [(OkTcEnv definition-env)
-      (let
-        [global-env : TcTypeEnv (tc-hygiene-global-env definition-env)]
-        (match decl
-          [(AstDeclDef name maybe-ty expr-box)
-            (let
-              [expr : AstExpr (ast-node-get expr-box)]
-              (match (macro-expand-expr ctx global-env decls 0 expr)
-                [(OkMacroExpr nexpr)
-                  (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
-                [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-          [(AstDeclDefFn name params ret body-box export)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (macro-expand-expr
-                ctx
-                (tc-bind-return-type
-                  (tc-bind-params ctx global-env params)
-                  (tc-resolve-type ctx ret))
-                decls
-                0
-                body)
-                [(OkMacroExpr nbody)
-                  (OkMacroDecl
-                    (ast-decl-def-fn-export-id name params ret nbody export))]
-                [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-          [(AstDeclTest _ _ _) (OkMacroDecl decl)]
-          [(AstDeclImport (AstImportSpec kind _ _ _ _))
-            (match kind
-              [(AstImportMacro call-id _)
-                (macro-expand-module-call-position ctx decls call-id true)]
-              [(AstImportMacroDecls call-id _)
-                (macro-expand-module-call-position ctx decls call-id false)]
-              [_ (OkMacroDecl decl)])]
-          [(AstDeclUnsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match (macro-expand-decl ctx top-env decls inner)
-                [(OkMacroDecl ninner) (OkMacroDecl (ast-decl-unsafe ninner))]
-                [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
-          [_ (OkMacroDecl decl)]))]
-    [(ErrTcEnv message) (ErrMacroDecl (box (tc-diag-at-start message)))]))
+  (let
+    [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
+    (match decl
+      [(AstDeclDef name maybe-ty expr-box)
+        (let
+          [expr : AstExpr (ast-node-get expr-box)]
+          (match (macro-expand-expr ctx global-env decls 0 expr)
+            [(OkMacroExpr nexpr)
+              (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
+            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+      [(AstDeclDefFn name params ret body-box export)
+        (let
+          [body : AstExpr (ast-node-get body-box)]
+          (match (macro-expand-expr
+            ctx
+            (tc-bind-return-type
+              (tc-bind-params ctx global-env params)
+              (tc-resolve-type ctx ret))
+            decls
+            0
+            body)
+            [(OkMacroExpr nbody)
+              (OkMacroDecl
+                (ast-decl-def-fn-export-id name params ret nbody export))]
+            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+      [(AstDeclTest _ _ _) (OkMacroDecl decl)]
+      [(AstDeclImport (AstImportSpec kind _ _ _ _))
+        (match kind
+          [(AstImportMacro call-id _)
+            (macro-expand-module-call-position ctx decls call-id true)]
+          [(AstImportMacroDecls call-id _)
+            (macro-expand-module-call-position ctx decls call-id false)]
+          [_ (OkMacroDecl decl)])]
+      [(AstDeclUnsafe inner-box)
+        (let
+          [inner : AstDecl (box-get inner-box)]
+          (match (macro-expand-decl ctx top-env decls inner)
+            [(OkMacroDecl ninner) (OkMacroDecl (ast-decl-unsafe ninner))]
+            [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
+      [_ (OkMacroDecl decl)])))
 
 (define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
   (OkMacroDeclExpansion

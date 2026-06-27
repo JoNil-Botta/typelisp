@@ -6301,29 +6301,34 @@
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 0)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
-      "(%rax)")
+      "    movq 0(%rdi), %r8\n"
+      "(%r8)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 4)
       (AstTyI64)
-      "    movq 0(%rdi), %rax\n"
-      "32(%rax)")
+      "    movq 0(%rdi), %r8\n"
+      "32(%r8)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 1)
       (AstTyI32)
-      "    movq 0(%rdi), %rax\n"
-      "(%rax,%r12,4)")
+      "    movq 0(%rdi), %r8\n"
+      "(%r8,%r12,4)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %rcx\n    movq 0(%rdi), %rax\n"
-      "(%rax,%rcx,8)")
+      "    movq 0(%rdi), %r8\n"
+      "(%r8,%rax,8)")
     (compiler-backend-simd-indexed-address-with-base-emits?
       (IrValueVar 6)
       (IrValueVar 2)
       (AstTyI64)
-      "    movq %rax, %r11\n    movq 0(%rcx), %rax\n"
-      "(%rax,%r11,8)")))
+      "    movq 0(%rcx), %r8\n"
+      "(%r8,%rax,8)")
+    (compiler-backend-simd-indexed-address-emits?
+      (IrValueVar 7)
+      (AstTyI64)
+      "    movq 0(%rdi), %r8\n    movq -64(%rbp), %r9\n"
+      "(%r8,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
@@ -6335,7 +6340,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq asm "    movq 0(%rdi), %rax\n    vmovdqu 32(%rax), %ymm6\n")]
+      (string-eq asm "    movq 0(%rdi), %r8\n    vmovdqu 32(%r8), %ymm6\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
@@ -6350,7 +6355,7 @@
     [(OkCompilerBackend asm)
       (string-eq
         asm
-        "    movq 0(%rdi), %rax\n    vmovdqu %ymm7, (%rax,%r12,8)\n")]
+        "    movq 0(%rdi), %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -6366,7 +6371,7 @@
     [(OkCompilerBackend asm)
       (string-eq
         asm
-        "    movq 0(%rdi), %rax\n    vmovdqu64 32(%rax), %zmm6{%k1}{z}\n")]
+        "    movq 0(%rdi), %r8\n    vmovdqu64 32(%r8), %zmm6{%k1}{z}\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool

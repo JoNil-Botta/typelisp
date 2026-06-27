@@ -1185,16 +1185,21 @@
         [(AstTyI32) "vpmaxsd"]
         [_ ""])]))
 
-(define (compiler-backend-simd-rax-offset-address [disp : i64]) : String
+(define (compiler-backend-simd-offset-address
+  [base-reg : String]
+  [disp : i64]) : String
   (if (= disp 0)
-    "(%rax)"
-    (str-cat (int->string disp) "(%rax)")))
+    (str-cat "(" base-reg ")")
+    (str-cat (int->string disp) "(" base-reg ")")))
 
 (define (compiler-backend-simd-index-register-address
+  [base-reg : String]
   [index-reg : String]
   [elem-ty : AstType]) : String
   (str-cat
-    "(%rax,"
+    "("
+    base-reg
+    ","
     index-reg
     ","
     (int->string (compiler-backend-type-size elem-ty))
@@ -1233,104 +1238,86 @@
           [(CompilerRegNoLocation) ""]))]
     [_ ""]))
 
-(define (compiler-backend-simd-index-scratch
-  [assignments : CompilerRegAssignmentList]
-  [base : CompilerIrValue]) : String
-  (if (string-eq (compiler-backend-simd-base-home assignments base) "%rcx")
-    "%r11"
-    "%rcx"))
-
 (define (compiler-backend-emit-simd-base-data-pointer
   [assignments : CompilerRegAssignmentList]
-  [base : CompilerIrValue]) : ResultCompilerBackend
+  [base : CompilerIrValue]
+  [base-reg : String]) : ResultCompilerBackend
   (let
     [home : String (compiler-backend-simd-base-home assignments base)]
     (if (string-eq home "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         base
-        "%rax")
+        base-reg)
         [(OkCompilerBackend base-asm)
-          (OkCompilerBackend
-            (string-append base-asm "    movq 0(%rax), %rax\n"))]
+          (OkCompilerBackend (str-cat base-asm "    movq 0(" base-reg "), " base-reg "\n"))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-      (OkCompilerBackend (str-cat "    movq 0(" home "), %rax\n")))))
+      (OkCompilerBackend (str-cat "    movq 0(" home "), " base-reg "\n")))))
 
 (define (compiler-backend-emit-simd-indexed-address
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [index : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
-  (match (compiler-backend-value-as-i64 index)
-    [(CompilerBackendSomeI64 n)
-      (match (compiler-backend-emit-simd-base-data-pointer assignments base)
-        [(OkCompilerBackend base-asm)
-          (OkCompilerBackendSimdIndexedAddress
-            (CompilerBackendSimdIndexedAddress
-              base-asm
-              (compiler-backend-simd-rax-offset-address
-                (* n (compiler-backend-type-size elem-ty)))))]
-        [(ErrCompilerBackend message)
-          (ErrCompilerBackendSimdIndexedAddress message)])]
-    [(CompilerBackendNoI64)
-      (let
-        [index-home : String
-          (compiler-backend-simd-index-home assignments index)]
-        (if (and
-          (not (string-eq index-home ""))
-          (not (string-eq index-home "%rax")))
-          (match (compiler-backend-emit-simd-base-data-pointer assignments base)
+  (let
+    [addr-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-ops2 assignments base index)]
+    [base-reg : String
+      (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")]
+    (match (compiler-backend-value-as-i64 index)
+      [(CompilerBackendSomeI64 n)
+        (match (compiler-backend-emit-simd-base-data-pointer
+          assignments
+          base
+          base-reg)
+          [(OkCompilerBackend base-asm)
+            (OkCompilerBackendSimdIndexedAddress
+              (CompilerBackendSimdIndexedAddress
+                base-asm
+                (compiler-backend-simd-offset-address
+                  base-reg
+                  (* n (compiler-backend-type-size elem-ty)))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackendSimdIndexedAddress message)])]
+      [(CompilerBackendNoI64)
+        (let
+          [index-home : String
+            (compiler-backend-simd-index-home assignments index)]
+          [index-exclude : (Array String)
+            (compiler-backend-scavenge-exclude-append addr-exclude 7 base-reg)]
+          [index-reg : String
+            (if (string-eq index-home "")
+              (compiler-backend-scavenge-reg-here index-exclude 8 "%r9")
+              index-home)]
+          (match (compiler-backend-emit-simd-base-data-pointer
+            assignments
+            base
+            base-reg)
             [(OkCompilerBackend base-asm)
-              (OkCompilerBackendSimdIndexedAddress
-                (CompilerBackendSimdIndexedAddress
-                  base-asm
-                  (compiler-backend-simd-index-register-address
-                    index-home
-                    elem-ty)))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackendSimdIndexedAddress message)])
-          (if (string-eq index-home "%rax")
-            (let
-              [scratch : String
-                (compiler-backend-simd-index-scratch assignments base)]
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                index
-                scratch)
-                [(OkCompilerBackend index-asm)
-                  (match (compiler-backend-emit-simd-base-data-pointer
-                    assignments
-                    base)
-                    [(OkCompilerBackend base-asm)
-                      (OkCompilerBackendSimdIndexedAddress
-                        (CompilerBackendSimdIndexedAddress
-                          (string-append index-asm base-asm)
-                          (compiler-backend-simd-index-register-address
-                            scratch
-                            elem-ty)))]
-                    [(ErrCompilerBackend message)
-                      (ErrCompilerBackendSimdIndexedAddress message)])]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackendSimdIndexedAddress message)]))
-            (match (compiler-backend-emit-simd-base-data-pointer
-              assignments
-              base)
-              [(OkCompilerBackend base-asm)
+              (if (string-eq index-home "")
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   index
-                  "%rcx")
+                  index-reg)
                   [(OkCompilerBackend index-asm)
                     (OkCompilerBackendSimdIndexedAddress
                       (CompilerBackendSimdIndexedAddress
                         (string-append base-asm index-asm)
                         (compiler-backend-simd-index-register-address
-                          "%rcx"
+                          base-reg
+                          index-reg
                           elem-ty)))]
                   [(ErrCompilerBackend message)
-                    (ErrCompilerBackendSimdIndexedAddress message)])]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackendSimdIndexedAddress message)]))))]))
+                    (ErrCompilerBackendSimdIndexedAddress message)])
+                (OkCompilerBackendSimdIndexedAddress
+                  (CompilerBackendSimdIndexedAddress
+                    base-asm
+                    (compiler-backend-simd-index-register-address
+                      base-reg
+                      index-reg
+                      elem-ty))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackendSimdIndexedAddress message)]))])))
 
 (define (compiler-backend-emit-avx2-vector-load
   [assignments : CompilerRegAssignmentList]

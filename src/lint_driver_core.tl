@@ -609,7 +609,7 @@
     (begin
       (tc-unused-unsafe-tracking-reset! path)
       (match (compiler-check-source-with-roots path source stdlib-roots)
-        [(OkCompilerCheck _)
+        [(ResultCompilerCheck.Ok _)
           (let
             [findings : LintFindings
               (selfhost-lint-filter-derived-origins
@@ -621,7 +621,7 @@
             (begin
               (tc-unused-unsafe-tracking-disable!)
               findings))]
-        [(ErrCompilerCheck _)
+        [(ResultCompilerCheck.Err _)
           (begin
             (tc-unused-unsafe-tracking-disable!)
             (lint-findings-empty))]))

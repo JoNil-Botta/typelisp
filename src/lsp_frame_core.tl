@@ -1084,11 +1084,11 @@
   (let
     [lint-diags : json.JsonList (lsp-lint-diagnostics path text stdlib-roots)]
     (match (compiler-check-source-with-roots path text stdlib-roots)
-      [(OkCompilerCheck _)
+      [(ResultCompilerCheck.Ok _)
         (begin
           (lsp-publish-diagnostics uri lint-diags)
           "")]
-      [(ErrCompilerCheck diag)
+      [(ResultCompilerCheck.Err diag)
         (let
           [diag-uri : String (lsp-diagnostic-uri uri path (box-get diag))]
           (if (string.string-eq diag-uri uri)
@@ -2292,8 +2292,8 @@
         (begin
           (tc-inlay-hints-enable!)
           (match (compiler-check-source-with-roots path text stdlib-roots)
-            [(OkCompilerCheck _) unit]
-            [(ErrCompilerCheck _) unit])
+            [(ResultCompilerCheck.Ok _) unit]
+            [(ResultCompilerCheck.Err _) unit])
           (let
             [hints : json.JsonList (lsp-inlay-build text start-line end-line)]
             (begin
@@ -4053,13 +4053,13 @@
       (match (lsp-documents-lookup docs uri)
         [(FoundLspDocument path text _)
           (match (compiler-check-source-with-roots path text stdlib-roots)
-            [(OkCompilerCheck _)
+            [(ResultCompilerCheck.Ok _)
               (begin
                 (lsp-write-response
                   id
                   (lsp-json-object1 "success" (json.JsonBool true)))
                 (LspContinue docs))]
-            [(ErrCompilerCheck diag)
+            [(ResultCompilerCheck.Err diag)
               (begin
                 (lsp-write-response
                   id
@@ -4089,13 +4089,13 @@
                     path
                     text
                     stdlib-roots)
-                    [(OkCompilerCheck _)
+                    [(ResultCompilerCheck.Ok _)
                       (begin
                         (lsp-write-response
                           id
                           (lsp-json-object1 "success" (json.JsonBool true)))
                         (LspContinue docs))]
-                    [(ErrCompilerCheck diag)
+                    [(ResultCompilerCheck.Err diag)
                       (begin
                         (lsp-write-response
                           id
@@ -4166,8 +4166,8 @@
               (begin
                 (tc-inlay-hints-enable!)
                 (match (compiler-check-source-with-roots path text stdlib-roots)
-                  [(OkCompilerCheck _) unit]
-                  [(ErrCompilerCheck _) unit])
+                  [(ResultCompilerCheck.Ok _) unit]
+                  [(ResultCompilerCheck.Err _) unit])
                 (let
                   [found-idx : i64 (lsp-nearest-inlay-hint-index line1 col1)]
                   (begin

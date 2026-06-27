@@ -6,12 +6,12 @@
 (import "compiler_typecheck.tl")
 
 (defenum ResultCompilerCheck
-  (OkCompilerCheck CompilerTypecheckSummary)
-  (ErrCompilerCheck (Box CompilerDiagnostic)))
+  (Ok CompilerTypecheckSummary)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerCheckWithPaths
-  (OkCompilerCheckWithPaths CompilerTypecheckSummary AstDeclPathList)
-  (ErrCompilerCheckWithPaths (Box CompilerDiagnostic)))
+  (Ok CompilerTypecheckSummary AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (cfg
   compile-profile
@@ -81,11 +81,11 @@
       [(OkCompilerTypecheck summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (OkCompilerCheck summary))]
+          (ResultCompilerCheck.Ok summary))]
       [(ErrCompilerTypecheck diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (ErrCompilerCheck
+          (ResultCompilerCheck.Err
             (box
               (compiler-check-diagnostic-with-fallback-path (box-get diag) path))))])))
 
@@ -123,7 +123,7 @@
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheck diag))]))
+        (ResultCompilerCheck.Err diag))]))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
@@ -140,12 +140,14 @@
           paths
           stdlib-roots
           cache-scope)
-          [(OkCompilerCheck summary) (OkCompilerCheckWithPaths summary paths)]
-          [(ErrCompilerCheck diag) (ErrCompilerCheckWithPaths diag)]))]
+          [(ResultCompilerCheck.Ok summary)
+            (ResultCompilerCheckWithPaths.Ok summary paths)]
+          [(ResultCompilerCheck.Err diag)
+            (ResultCompilerCheckWithPaths.Err diag)]))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheckWithPaths diag))]))
+        (ResultCompilerCheckWithPaths.Err diag))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
@@ -183,7 +185,7 @@
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheck diag))]))
+        (ResultCompilerCheck.Err diag))]))
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (begin
@@ -245,7 +247,7 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-package-source-with-roots
   [path : String]
@@ -289,11 +291,11 @@
           [(ErrAstProgramDiagnostic diag)
             (begin
               (cfg compile-profile (compiler-check-profile-finish "load"))
-              (ErrCompilerCheck diag))])]
+              (ResultCompilerCheck.Err diag))])]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-package-entry-file-with-roots
   [path : String]
@@ -346,7 +348,7 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-source-with-roots
   [path : String]
@@ -378,20 +380,20 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
-    [(OkCompilerCheck _) true]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok _) true]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (compiler-check-source path source)
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-virtual-import-source) : String
@@ -426,20 +428,20 @@
                 "typecheck-prefix-check"
                 (vector.string-vec-new)
                 (compiler-check-language-cfgs)))])]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerCheck diag)])))
+      [(ErrAstProgramDiagnostic diag) (ResultCompilerCheck.Err diag)])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(OkCompilerCheck _) true]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok _) true]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-direct-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
@@ -530,8 +532,9 @@
   (match (compiler-check-source
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
-    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok summary)
+      (> (compiler-typecheck-summary-score summary) 0)]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-inline-layout-name-ok?
   [ctx : TcContext]
@@ -577,8 +580,9 @@
   (match (compiler-check-source
     "src/export_entry.tl"
     (compiler-check-export-source))
-    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok summary)
+      (> (compiler-typecheck-summary-score summary) 0)]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-qualified-export-cache-reset-ok?) : bool
   (and
@@ -595,8 +599,8 @@
   (match (compiler-check-source
     "docs/examples/bad_type.tl"
     "(define (main) : i64 true)")
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
       (if (string.string-eq
         (compiler-diagnostic-path (box-get diag))
         "docs/examples/bad_type.tl")
@@ -707,16 +711,16 @@
     (begin
       (ty-node-pool-reset!)
       (match (compiler-check-source "tests/pool_reset_a.tl" source)
-        [(OkCompilerCheck _)
+        [(ResultCompilerCheck.Ok _)
           (let
             [first-len : i64 (ty-node-pool-len)]
             (match (compiler-check-source "tests/pool_reset_b.tl" source)
-              [(OkCompilerCheck _)
+              [(ResultCompilerCheck.Ok _)
                 (let
                   [second-len : i64 (ty-node-pool-len)]
                   (and (> first-len 0) (= first-len second-len)))]
-              [(ErrCompilerCheck _) false]))]
-        [(ErrCompilerCheck _) false]))))
+              [(ResultCompilerCheck.Err _) false]))]
+        [(ResultCompilerCheck.Err _) false]))))
 
 (define (compiler-check-self-test) : i64
   (begin

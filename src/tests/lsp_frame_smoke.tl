@@ -104,15 +104,15 @@
         "ok.tl"
         ok-src
         (vector.string-vec-new))
-        [(OkCompilerCheck _) true]
-        [(ErrCompilerCheck _) false])]
+        [(ResultCompilerCheck.Ok _) true]
+        [(ResultCompilerCheck.Err _) false])]
     [bad-result : bool
       (match (compiler-check-source-with-roots
         "bad.tl"
         bad-src
         (vector.string-vec-new))
-        [(OkCompilerCheck _) false]
-        [(ErrCompilerCheck _) true])]
+        [(ResultCompilerCheck.Ok _) false]
+        [(ResultCompilerCheck.Err _) true])]
     (and ok-result bad-result)))
 
 (define (lsp-get-type-smoke-ok?) : bool
@@ -128,8 +128,8 @@
           "test.tl"
           src
           (vector.string-vec-new))
-          [(OkCompilerCheck _) unit]
-          [(ErrCompilerCheck _) unit])
+          [(ResultCompilerCheck.Ok _) unit]
+          [(ResultCompilerCheck.Err _) unit])
         (let
           [size : i64 (tc-inlay-hints-size)]
           [i : i64 0]

@@ -1617,7 +1617,7 @@
       (doc-test-example-virtual-path path index)
       code
       stdlib-roots)
-      [(OkCompilerCheck _)
+      [(ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestSomeFailure
             (DocTestRunFailure
@@ -1626,7 +1626,7 @@
               index
               (doc-test-unexpected-pass-message index)))
           (DocTestNoFailure))]
-      [(ErrCompilerCheck diag)
+      [(ResultCompilerCheck.Err diag)
         (if expect-error
           (DocTestNoFailure)
           (DocTestSomeFailure
@@ -1654,7 +1654,7 @@
       stdlib-roots
       manifest-dir
       deps)
-      [(OkCompilerCheck _)
+      [(ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestSomeFailure
             (DocTestRunFailure
@@ -1663,7 +1663,7 @@
               index
               (doc-test-unexpected-pass-message index)))
           (DocTestNoFailure))]
-      [(ErrCompilerCheck diag)
+      [(ResultCompilerCheck.Err diag)
         (if expect-error
           (DocTestNoFailure)
           (DocTestSomeFailure

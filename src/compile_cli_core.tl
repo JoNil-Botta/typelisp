@@ -1041,7 +1041,7 @@
     [(CompileCliBatch config) (compile-cli-run-batch config)]
     [(CompileCliCheck input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
-        [(OkCompilerCheck _)
+        [(ResultCompilerCheck.Ok _)
           (let
             [inline-test-status : i64
               (tltest-inline-typecheck-file-with-cfg
@@ -1059,7 +1059,7 @@
                     0)
                   doctest-status))
               inline-test-status))]
-        [(ErrCompilerCheck diag)
+        [(ResultCompilerCheck.Err diag)
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)])]

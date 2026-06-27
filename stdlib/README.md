@@ -194,6 +194,11 @@ use.
   exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
   consuming `value-or`, and same-payload `map`; duplicate imports for the same
   success/error pair share the generated module/type.
+- `result_family.tl`: lightweight enum-only `(result T E)` macro for generated
+  recoverable-error modules that should expose only `Result`, `Ok`, and `Err`.
+  Import it with `(import "stdlib/result_family.tl")` when a compiler-internal
+  module needs generated result variants without the public helper API from
+  `result.tl`.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

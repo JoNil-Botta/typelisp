@@ -8210,9 +8210,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-try-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (read) : ResultI64 (OkI64 42))
-(define (main) : ResultI64 (OkI64 (try (read))))")
+  "(define (main) : i64 (wrap (try (read))))")
 
 (define (compiler-parse-try-ok?) : bool
   (match (parse-ast-source (compiler-parse-try-source))
@@ -8220,37 +8218,27 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons _ rest0)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
-              [rest0 : AstDeclList (box-get rest0)]
-              (match rest0
-                [(AstDeclCons _ rest1)
-                  (let
-                    [rest1 : AstDeclList (box-get rest1)]
-                    (match rest1
-                      [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest2)
-                        (let
-                          [body : AstExpr (ast-node-get body-box)]
-                          [rest2 : AstDeclList (box-get rest2)]
-                          (match rest2
-                            [(AstDeclNil)
-                              (match (ast-expr-unspan body)
-                                [(AstExprCall _ args)
-                                  (match args
-                                    [(AstExprCons arg rest)
-                                      (let
-                                        [arg : AstExpr (ast-node-get arg)]
-                                        [rest : AstExprList (box-get rest)]
-                                        (match rest
-                                          [(AstExprNil)
-                                            (match (ast-expr-unspan arg)
-                                              [(AstExprTry _) true]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false])]
-                                [_ false])]
-                            [_ false]))]
-                      [_ false]))]
+              [body : AstExpr (ast-node-get body-box)]
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (match (ast-expr-unspan body)
+                    [(AstExprCall _ args)
+                      (match args
+                        [(AstExprCons arg rest-args)
+                          (let
+                            [arg : AstExpr (ast-node-get arg)]
+                            [rest-args : AstExprList (box-get rest-args)]
+                            (match rest-args
+                              [(AstExprNil)
+                                (match (ast-expr-unspan arg)
+                                  [(AstExprTry _) true]
+                                  [_ false])]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false])]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))

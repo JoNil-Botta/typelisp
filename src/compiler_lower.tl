@@ -43202,18 +43202,19 @@
 (define (main) : i64 (score (Wrap (A 2))))")
 
 (define (compiler-lower-result-try-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (read [flag : bool] [n : i64]) : ResultI64
-  (if flag (OkI64 n) (ErrI64 \"read failed\")))
-(define (sum [a : bool] [b : bool]) : ResultI64
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (read [flag : bool] [n : i64]) : result_i64_string.Result
+  (if flag (result_i64_string.Ok n) (result_i64_string.Err \"read failed\")))
+(define (sum [a : bool] [b : bool]) : result_i64_string.Result
   (let ([x : i64 (try (read a 40))]
         [y : i64 0])
     (begin
       (set! y (try (read b 2)))
-      (OkI64 (+ x y)))))
-(define (chain [flag : bool]) : ResultI64
-  (OkI64 (try (sum flag true))))
-(define (main [flag : bool]) : ResultI64
+      (result_i64_string.Ok (+ x y)))))
+(define (chain [flag : bool]) : result_i64_string.Result
+  (result_i64_string.Ok (try (sum flag true))))
+(define (main [flag : bool]) : result_i64_string.Result
   (chain flag))")
 
 (define (compiler-lower-option-try-source) : String
@@ -43247,40 +43248,43 @@
   (make-big flag))")
 
 (define (compiler-lower-resource-with-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (open-a [ok : bool]) : ResultI64
-  (if ok (OkI64 10) (ErrI64 \"open a\")))
-(define (open-b [ok : bool]) : ResultI64
-  (if ok (OkI64 32) (ErrI64 \"open b\")))
-(define (use-a [ok : bool] [h : i64]) : ResultI64
-  (if ok (OkI64 h) (ErrI64 \"use a\")))
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (open-a [ok : bool]) : result_i64_string.Result
+  (if ok (result_i64_string.Ok 10) (result_i64_string.Err \"open a\")))
+(define (open-b [ok : bool]) : result_i64_string.Result
+  (if ok (result_i64_string.Ok 32) (result_i64_string.Err \"open b\")))
+(define (use-a [ok : bool] [h : i64]) : result_i64_string.Result
+  (if ok (result_i64_string.Ok h) (result_i64_string.Err \"use a\")))
 (define (close-a [h : i64]) : unit unit)
 (define (close-b [h : i64]) : unit unit)
-(define (main [a-ok : bool] [b-ok : bool] [use-ok : bool]) : ResultI64
+(define (main [a-ok : bool] [b-ok : bool] [use-ok : bool]) : result_i64_string.Result
   (with ([a (try (open-a a-ok)) close-a]
          [b (try (open-b b-ok)) close-b])
-    (OkI64 (+ (try (use-a use-ok a)) b))))")
+    (result_i64_string.Ok (+ (try (use-a use-ok a)) b))))")
 
 (define (compiler-lower-resource-with-nested-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
 (define (close-a [h : i64]) : unit unit)
 (define (close-b [h : i64]) : unit unit)
-(define (main) : ResultI64
+(define (main) : result_i64_string.Result
   (with ([a 10 close-a])
     (with ([b 32 close-b])
-      (OkI64 (+ a b)))))")
+      (result_i64_string.Ok (+ a b)))))")
 
 (define (compiler-lower-cleanup-struct-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
 (define (close-fd [fd : i64]) : unit unit)
-(define (use-fd [ok : bool] [fd : i64]) : ResultI64
-  (if ok (OkI64 fd) (ErrI64 \"use fd\")))
+(define (use-fd [ok : bool] [fd : i64]) : result_i64_string.Result
+  (if ok (result_i64_string.Ok fd) (result_i64_string.Err \"use fd\")))
 (defstruct FileHandle
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
-(define (main [use-ok : bool]) : ResultI64
+(define (main [use-ok : bool]) : result_i64_string.Result
   (with ([h (FileHandle 10) cleanup-file-handle])
-    (OkI64 (try (use-fd use-ok (struct-get h fd))))))")
+    (result_i64_string.Ok (try (use-fd use-ok (struct-get h fd))))))")
 
 (define (compiler-lower-cleanup-struct-nested-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
@@ -47535,10 +47539,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-function-branch-count functions "sum") 1)
-            (> (lower-test-function-return-count functions "sum") 2)
-            (> (lower-test-function-return-count functions "chain") 1)
-            (> (lower-test-function-load-count functions "sum") 3))])]
+            (> (lower-test-function-branch-count functions ".::sum") 1)
+            (> (lower-test-function-return-count functions ".::sum") 2)
+            (> (lower-test-function-return-count functions ".::chain") 1)
+            (> (lower-test-function-load-count functions ".::sum") 3))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -47585,10 +47589,10 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "close-a") 3)
-            (= (lower-test-functions-call-count functions "close-b") 2)
-            (> (lower-test-function-return-count functions "main") 2)
-            (> (lower-test-function-branch-count functions "main") 2))])]
+            (= (lower-test-functions-call-count functions ".::close-a") 3)
+            (= (lower-test-functions-call-count functions ".::close-b") 2)
+            (> (lower-test-function-return-count functions ".::main") 2)
+            (> (lower-test-function-branch-count functions ".::main") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
@@ -47597,8 +47601,8 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "close-a") 1)
-            (= (lower-test-functions-call-count functions "close-b") 1))])]
+            (= (lower-test-functions-call-count functions ".::close-a") 1)
+            (= (lower-test-functions-call-count functions ".::close-b") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
@@ -47610,16 +47614,16 @@
             (=
               (lower-test-function-direct-call-count
                 functions
-                "cleanup-file-handle"
-                "close-fd")
+                ".::cleanup-file-handle"
+                ".::close-fd")
               1)
             (>
               (lower-test-function-direct-call-count
                 functions
-                "main"
-                "cleanup-file-handle")
+                ".::main"
+                ".::cleanup-file-handle")
               1)
-            (> (lower-test-function-return-count functions "main") 1))])]
+            (> (lower-test-function-return-count functions ".::main") 1))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool

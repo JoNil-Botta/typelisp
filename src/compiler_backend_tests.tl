@@ -2352,46 +2352,58 @@
     (compiler-backend-c-abi-sysv-memory-aggregate-source)
     (BackendTargetLinux))
     [(OkCompilerBackend asm)
-      (backend-and8
-        (compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_mem_score\n")
-        (compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_mem_score_ptr\n")
-        (compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_wide_mem_make\n")
-        (compiler-backend-string-contains?
-          asm
-          ".extern tl_cabi_nested_mem_score\n")
-        (compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_wide_mem_score\n")
-        (compiler-backend-register-indirect-call? asm)
-        (compiler-backend-string-contains?
-          asm
-          "    call tl_cabi_wide_mem_make\n")
+      (let
+        [body : String (compiler-backend-asm-function-body asm "main")]
         (backend-and8
           (compiler-backend-string-contains?
             asm
-            "    call tl_cabi_nested_mem_score\n")
-          (compiler-backend-string-contains? asm "    leaq 0(%rsp), %r10\n")
-          (not (compiler-backend-string-contains? asm "%xmm15"))
-          (not
+            ".extern tl_cabi_wide_mem_score\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern tl_cabi_wide_mem_score_ptr\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern tl_cabi_wide_mem_make\n")
+          (compiler-backend-string-contains?
+            asm
+            ".extern tl_cabi_nested_mem_score\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_cabi_wide_mem_score\n")
+          (compiler-backend-register-indirect-call? asm)
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_cabi_wide_mem_make\n")
+          (backend-and8
             (compiler-backend-string-contains?
               asm
-              "unsupported linux-x86_64 C aggregate ABI"))
-          (not
+              "    call tl_cabi_nested_mem_score\n")
             (compiler-backend-string-contains?
-              asm
-              "two-register aggregate return ABI"))
-          (not
+              body
+              "    movups (%r10), %xmm2\n")
             (compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))
-          true
-          true))]
+              body
+              "    movups %xmm2, 0(%rsp)\n")
+            (compiler-backend-string-contains?
+              body
+              "    movq 16(%r10), %xmm2\n")
+            (compiler-backend-string-contains?
+              body
+              "    movq %xmm2, 16(%rsp)\n")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  body
+                  "    leaq 0(%rsp), %r10\n"))
+              (not (compiler-backend-string-contains? body "16(%r11)")))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "unsupported linux-x86_64 C aggregate ABI"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String

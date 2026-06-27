@@ -11757,6 +11757,71 @@
                       (+ offset chunk)
                       (- remaining chunk))))))))))))
 
+(define (compiler-backend-c-memory-stack-dst-address
+  [base-offset : i64]
+  [copy-offset : i64]) : String
+  (str-cat (int->string (+ base-offset copy-offset)) "(%rsp)" "" ""))
+
+(define (compiler-backend-c-memory-stack-xmm-mnemonic [chunk : i64]) : String
+  (if (>= chunk 8) "movq" "movd"))
+
+(define (compiler-backend-emit-c-memory-stack-copy-chunks
+  [dst-offset : i64]
+  [src-reg : String]
+  [xmm-scratch : String]
+  [copy-offset : i64]
+  [remaining : i64]) : String
+  (if (<= remaining 0)
+    ""
+    (if (>= remaining 16)
+      (string-append
+        (str-cat
+          "    movups "
+          (compiler-backend-copy-address copy-offset src-reg)
+          ", "
+          xmm-scratch
+          "\n")
+        (string-append
+          (str-cat
+            "    movups "
+            xmm-scratch
+            ", "
+            (compiler-backend-c-memory-stack-dst-address dst-offset copy-offset)
+            "\n")
+          (compiler-backend-emit-c-memory-stack-copy-chunks
+            dst-offset
+            src-reg
+            xmm-scratch
+            (+ copy-offset 16)
+            (- remaining 16))))
+      (let
+        [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
+        [mnemonic : String (compiler-backend-c-memory-stack-xmm-mnemonic chunk)]
+        (string-append
+          (str-cat
+            "    "
+            mnemonic
+            " "
+            (compiler-backend-copy-address copy-offset src-reg)
+            ", "
+            xmm-scratch
+            "\n")
+          (string-append
+            (str-cat
+              "    "
+              mnemonic
+              " "
+              xmm-scratch
+              ", "
+              (compiler-backend-c-memory-stack-dst-address dst-offset copy-offset)
+              "\n")
+            (compiler-backend-emit-c-memory-stack-copy-chunks
+              dst-offset
+              src-reg
+              xmm-scratch
+              (+ copy-offset chunk)
+              (- remaining chunk))))))))
+
 (define (compiler-backend-emit-copy-bytes
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
@@ -11940,41 +12005,26 @@
   [stack-idx : i64]
   [size : i64]) : ResultCompilerBackend
   (let
+    [dst-offset : i64 (compiler-backend-outgoing-stack-arg-offset target stack-idx)]
     [src-reg : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-c-abi-stage-exclude)
-        4
-        "%r11")]
-    [dst-reg : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-c-abi-stage-exclude-with src-reg)
+        (compiler-backend-c-abi-stage-exclude-with "%r11")
         5
         "%r10")]
-    [copy-gp : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-c-abi-stage-exclude-with2 src-reg dst-reg)
-        6
-        "%r8")]
+    [no-exclude : (Array String) (make-array String 0)]
+    [copy-xmm : String
+      (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2")]
     (match (compiler-backend-emit-load-value-with-plan assignments value src-reg)
       [(OkCompilerBackend src-asm)
         (OkCompilerBackend
           (string-append
             src-asm
-            (string-append
-              (str-cat
-                "    leaq "
-                (int->string
-                  (compiler-backend-outgoing-stack-arg-offset target stack-idx))
-                "(%rsp), "
-                dst-reg
-                "\n")
-              (compiler-backend-emit-copy-bytes-chunks
-                dst-reg
-                src-reg
-                copy-gp
-                ""
-                0
-                size))))]
+            (compiler-backend-emit-c-memory-stack-copy-chunks
+              dst-offset
+              src-reg
+              copy-xmm
+              0
+              size)))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-from-gep
@@ -18462,9 +18512,9 @@
   (let
     [base-reg : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-c-abi-stage-exclude)
-        4
-        "%r11")]
+        (compiler-backend-c-abi-stage-exclude-with "%r11")
+        5
+        "%r10")]
   (match (compiler-backend-emit-load-value-with-plan assignments base base-reg)
     [(OkCompilerBackend base-asm)
       (OkCompilerBackend

@@ -962,6 +962,14 @@
     [(string-eq home "%vec13") "%xmm13"]
     [else ""]))
 
+(define (compiler-backend-xmm-to-ymm [reg : String]) : String
+  (cond
+    [(string-eq reg "%xmm2") "%ymm2"]
+    [(string-eq reg "%xmm3") "%ymm3"]
+    [(string-eq reg "%xmm4") "%ymm4"]
+    [(string-eq reg "%xmm5") "%ymm5"]
+    [else ""]))
+
 (define (compiler-backend-vector-home-to-zmm [home : String]) : String
   (cond
     [(string-eq home "%vec6") "%zmm6"]
@@ -5329,17 +5337,27 @@
             (str-cat "    movq " imm ", " (compiler-backend-slot var-id) "\n"))])]
     [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)]))
 
-(define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
+(define (compiler-backend-avx2-vector-reduce-move-scalar
+  [elem-ty : AstType]
+  [xmm-reg : String]
+  [gp-reg : String]) : String
   (match elem-ty
-    [(AstTyI32) "    vmovd %xmm0, %eax\n"]
-    [(AstTyU32) "    vmovd %xmm0, %eax\n"]
+    [(AstTyI32)
+      (str-cat
+        "    vmovd "
+        xmm-reg
+        ", "
+        (compiler-backend-reg-part gp-reg 4)
+        "\n")]
+    [(AstTyU32)
+      (str-cat
+        "    vmovd "
+        xmm-reg
+        ", "
+        (compiler-backend-reg-part gp-reg 4)
+        "\n")]
     [(AstTyF64) ""]
-    [_ "    vmovq %xmm0, %rax\n"]))
-
-(define (compiler-backend-vector-reduce-result-reg [elem-ty : AstType]) : String
-  (if (compiler-backend-float-type? elem-ty)
-    "%xmm0"
-    "%rax"))
+    [_ (str-cat "    vmovq " xmm-reg ", " gp-reg "\n")]))
 
 (define (compiler-backend-i64-u64-type? [ty : AstType]) : bool
   (match ty
@@ -5347,92 +5365,172 @@
     [(AstTyU64) true]
     [_ false]))
 
-(define (compiler-backend-emit-vmovq-xmm0-to-var-with-plan
+(define (compiler-backend-emit-vmovq-xmm-to-var-with-plan
   [assignments : CompilerRegAssignmentList]
-  [var-id : i64]) : String
+  [var-id : i64]
+  [xmm-reg : String]) : String
   (match (compiler-reg-assignment-lookup assignments var-id)
     [(CompilerRegSomeLocation location)
       (match location
-        [(CompilerRegRegister home) (str-cat "    vmovq %xmm0, " home "\n")]
+        [(CompilerRegRegister home) (str-cat "    vmovq " xmm-reg ", " home "\n")]
         [(CompilerRegRegisterPair home _)
-          (str-cat "    vmovq %xmm0, " home "\n")]
+          (str-cat "    vmovq " xmm-reg ", " home "\n")]
         [(CompilerRegSpill offset)
           (str-cat
-            "    vmovq %xmm0, "
+            "    vmovq "
+            xmm-reg
+            ", "
             (compiler-backend-frame-offset offset)
             "\n")]
         ;; Rematerialised values are static scalar/address defs, never vector
         ;; reduction destinations.
         [(CompilerRegRemat _) ""])]
     [(CompilerRegNoLocation)
-      (str-cat "    vmovq %xmm0, " (compiler-backend-slot var-id) "\n")]))
+      (str-cat "    vmovq " xmm-reg ", " (compiler-backend-slot var-id) "\n")]))
 
 (define (compiler-backend-vector-reduce-store-scalar
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
-  [elem-ty : AstType]) : String
+  [elem-ty : AstType]
+  [xmm-reg : String]) : String
   (if (compiler-backend-i64-u64-type? elem-ty)
-    (compiler-backend-emit-vmovq-xmm0-to-var-with-plan assignments dst)
-    (string-append
-      (compiler-backend-avx2-vector-reduce-move-scalar elem-ty)
+    (compiler-backend-emit-vmovq-xmm-to-var-with-plan assignments dst xmm-reg)
+    (if (compiler-backend-float-type? elem-ty)
       (compiler-backend-emit-store-typed-var-with-plan
         assignments
         dst
-        (compiler-backend-vector-reduce-result-reg elem-ty)
-        elem-ty))))
+        xmm-reg
+        elem-ty)
+      (let
+        [no-exclude : (Array String) (make-array String 0)]
+        [gp-reg : String
+          (compiler-backend-scavenge-reg dst no-exclude 0 "%r8")]
+        (string-append
+          (compiler-backend-avx2-vector-reduce-move-scalar
+            elem-ty
+            xmm-reg
+            gp-reg)
+          (compiler-backend-emit-store-typed-var-with-plan
+            assignments
+            dst
+            gp-reg
+            elem-ty))))))
 
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [mnemonic : String]
   [ymm : String]
   [xmm : String]
-  [elem-ty : AstType]) : String
+  [elem-ty : AstType]
+  [acc-xmm : String]
+  [scratch-xmm : String]) : String
   (match elem-ty
     [(AstTyF64)
       (string-append
         (str-cat
           "    vextractf128 $1, "
           ymm
-          ", %xmm0\n    "
+          ", "
+          acc-xmm
+          "\n    "
           mnemonic
-          " %xmm0, "
+          " "
+          acc-xmm
+          ", "
           xmm
-          ", %xmm0\n")
-        "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
+          ", "
+          acc-xmm
+          "\n")
+        (str-cat
+          "    vunpckhpd "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddsd "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
     [(AstTyI64)
       (string-append
         (str-cat
           "    vextracti128 $1, "
           ymm
-          ", %xmm0\n    "
+          ", "
+          acc-xmm
+          "\n    "
           mnemonic
-          " %xmm0, "
+          " "
+          acc-xmm
+          ", "
           xmm
-          ", %xmm0\n")
+          ", "
+          acc-xmm
+          "\n")
         (str-cat
-          "    vpsrldq $8, %xmm0, %xmm1\n    "
+          "    vpsrldq $8, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
           mnemonic
-          " %xmm1, %xmm0, %xmm0\n"
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
           ""))]
     [(AstTyI32)
       (string-append
         (str-cat
           "    vextracti128 $1, "
           ymm
-          ", %xmm0\n    "
+          ", "
+          acc-xmm
+          "\n    "
           mnemonic
-          " %xmm0, "
+          " "
+          acc-xmm
+          ", "
           xmm
-          ", %xmm0\n")
+          ", "
+          acc-xmm
+          "\n")
         (string-append
           (str-cat
-            "    vpsrldq $8, %xmm0, %xmm1\n    "
+            "    vpsrldq $8, "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
             mnemonic
-            " %xmm1, %xmm0, %xmm0\n"
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
             "")
           (str-cat
-            "    vpsrldq $4, %xmm0, %xmm1\n    "
+            "    vpsrldq $4, "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
             mnemonic
-            " %xmm1, %xmm0, %xmm0\n"
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
             "")))]
     [_ ""]))
 
@@ -5463,6 +5561,19 @@
                 (let
                   [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
                   [xmm : String (compiler-backend-vector-home-to-xmm src-home)]
+                  [no-exclude : (Array String) (make-array String 0)]
+                  [acc-xmm : String
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      no-exclude
+                      0
+                      "%xmm2")]
+                  [scratch-xmm : String
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-one-exclude acc-xmm)
+                      1
+                      "%xmm3")]
                   (if (or (= (string-length ymm) 0) (= (string-length xmm) 0))
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message
@@ -5475,11 +5586,14 @@
                           mnemonic
                           ymm
                           xmm
-                          elem-ty)
+                          elem-ty
+                          acc-xmm
+                          scratch-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst
-                          elem-ty)))))]
+                          elem-ty
+                          acc-xmm)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]
@@ -5494,7 +5608,10 @@
   [mnemonic : String]
   [zmm : String]
   [ymm : String]
-  [elem-ty : AstType]) : String
+  [elem-ty : AstType]
+  [acc-xmm : String]
+  [acc-ymm : String]
+  [scratch-xmm : String]) : String
   (match elem-ty
     [(AstTyF64)
       (string-append
@@ -5502,37 +5619,92 @@
           (str-cat
             "    vextractf64x4 $1, "
             zmm
-            ", %ymm0\n    "
+            ", "
+            acc-ymm
+            "\n    "
             mnemonic
-            " %ymm0, "
+            " "
+            acc-ymm
+            ", "
             ymm
-            ", %ymm0\n")
+            ", "
+            acc-ymm
+            "\n")
           (str-cat
-            "    vextractf128 $1, %ymm0, %xmm1\n    "
+            "    vextractf128 $1, "
+            acc-ymm
+            ", "
+            scratch-xmm
+            "\n    "
             mnemonic
-            " %xmm1, %xmm0, %xmm0\n"
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
             ""))
-        "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
+        (str-cat
+          "    vunpckhpd "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddsd "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
     [(AstTyI64)
       (string-append
         (string-append
           (str-cat
             "    vextracti64x4 $1, "
             zmm
-            ", %ymm0\n    "
+            ", "
+            acc-ymm
+            "\n    "
             mnemonic
-            " %ymm0, "
+            " "
+            acc-ymm
+            ", "
             ymm
-            ", %ymm0\n")
+            ", "
+            acc-ymm
+            "\n")
           (str-cat
-            "    vextracti128 $1, %ymm0, %xmm1\n    "
+            "    vextracti128 $1, "
+            acc-ymm
+            ", "
+            scratch-xmm
+            "\n    "
             mnemonic
-            " %xmm1, %xmm0, %xmm0\n"
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
             ""))
         (str-cat
-          "    vpsrldq $8, %xmm0, %xmm1\n    "
+          "    vpsrldq $8, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
           mnemonic
-          " %xmm1, %xmm0, %xmm0\n"
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
           ""))]
     [(AstTyI32)
       (string-append
@@ -5541,25 +5713,61 @@
             (str-cat
               "    vextracti64x4 $1, "
               zmm
-              ", %ymm0\n    "
+              ", "
+              acc-ymm
+              "\n    "
               mnemonic
-              " %ymm0, "
+              " "
+              acc-ymm
+              ", "
               ymm
-              ", %ymm0\n")
+              ", "
+              acc-ymm
+              "\n")
             (str-cat
-              "    vextracti128 $1, %ymm0, %xmm1\n    "
+              "    vextracti128 $1, "
+              acc-ymm
+              ", "
+              scratch-xmm
+              "\n    "
               mnemonic
-              " %xmm1, %xmm0, %xmm0\n"
+              " "
+              scratch-xmm
+              ", "
+              acc-xmm
+              ", "
+              acc-xmm
+              "\n"
               ""))
           (str-cat
-            "    vpsrldq $8, %xmm0, %xmm1\n    "
+            "    vpsrldq $8, "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
             mnemonic
-            " %xmm1, %xmm0, %xmm0\n"
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
             ""))
         (str-cat
-          "    vpsrldq $4, %xmm0, %xmm1\n    "
+          "    vpsrldq $4, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
           mnemonic
-          " %xmm1, %xmm0, %xmm0\n"
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
           ""))]
     [_ ""]))
 
@@ -5590,7 +5798,23 @@
                 (let
                   [zmm : String (compiler-backend-vector-home-to-zmm src-home)]
                   [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
-                  (if (or (= (string-length zmm) 0) (= (string-length ymm) 0))
+                  [no-exclude : (Array String) (make-array String 0)]
+                  [acc-xmm : String
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      no-exclude
+                      0
+                      "%xmm2")]
+                  [scratch-xmm : String
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-one-exclude acc-xmm)
+                      1
+                      "%xmm3")]
+                  [acc-ymm : String (compiler-backend-xmm-to-ymm acc-xmm)]
+                  (if (or
+                    (or (= (string-length zmm) 0) (= (string-length ymm) 0))
+                    (= (string-length acc-ymm) 0))
                     (ErrCompilerBackend
                       (compiler-diagnostic-with-message
                         instr-diag
@@ -5602,11 +5826,15 @@
                           mnemonic
                           zmm
                           ymm
-                          elem-ty)
+                          elem-ty
+                          acc-xmm
+                          acc-ymm
+                          scratch-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst
-                          elem-ty)))))]
+                          elem-ty
+                          acc-xmm)))))]
               [(ErrBackendReg message)
                 (ErrCompilerBackend
                   (compiler-diagnostic-with-message instr-diag message))])]

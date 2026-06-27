@@ -6840,31 +6840,31 @@
       "    vpaddq "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, ")
+      "    vmovq %xmm2, ")
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpminsd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsd "
       "    vextracti128 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
       "    vaddpd "
       "    vextractf128 $1, "
       "    vaddsd "
-      "    movsd %xmm0, ")))
+      "    movsd %xmm2, ")))
 
 (define (compiler-backend-avx512-reduce-asm-contains?
   [src : String]
@@ -6905,13 +6905,13 @@
       "    vpminsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, ")
+      "    vmovq %xmm2, ")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, ")))
+      "    vmovq %xmm2, ")))
 
 (define (compiler-backend-avx512-vector-reduce-ok?) : bool
   (and
@@ -6920,31 +6920,31 @@
       "    vpaddq "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovq %xmm0, ")
+      "    vmovq %xmm2, ")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
       "    vpaddd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpminsd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
       "    vpmaxsd "
       "    vextracti64x4 $1, "
       "    vpsrldq $8, "
-      "    vmovd %xmm0, %eax\n")
+      "    vmovd %xmm2, %r8d\n")
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
       "    vaddpd "
       "    vextractf64x4 $1, "
       "    vaddsd "
-      "    movsd %xmm0, ")
+      "    movsd %xmm2, ")
     (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))
 
 (define (compiler-backend-vector-reduce-direct-assignments
@@ -6968,8 +6968,10 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    vextracti128 $1, %ymm6, %xmm0\n")
-        (compiler-backend-string-contains? asm "    vmovq %xmm0, -40(%rbp)\n")
+          "    vextracti128 $1, %ymm6, %xmm2\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, -40(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler-backend-string-contains? asm "%xmm1"))
         (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -40(%rbp)\n")))]
@@ -6989,8 +6991,10 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    vextracti128 $1, %ymm6, %xmm0\n")
-        (compiler-backend-string-contains? asm "    vmovq %xmm0, %r12\n")
+          "    vextracti128 $1, %ymm6, %xmm2\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, %r12\n")
+        (not (compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler-backend-string-contains? asm "%xmm1"))
         (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
         (not (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))]
     [(ErrCompilerBackend _) false]))
@@ -7008,8 +7012,11 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    vextracti64x4 $1, %zmm6, %ymm0\n")
-        (compiler-backend-string-contains? asm "    vmovq %xmm0, -40(%rbp)\n")
+          "    vextracti64x4 $1, %zmm6, %ymm2\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, -40(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler-backend-string-contains? asm "%xmm1"))
+        (not (compiler-backend-string-contains? asm "%ymm0"))
         (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -40(%rbp)\n")))]
@@ -7029,8 +7036,11 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    vextracti64x4 $1, %zmm6, %ymm0\n")
-        (compiler-backend-string-contains? asm "    vmovq %xmm0, %r12\n")
+          "    vextracti64x4 $1, %zmm6, %ymm2\n")
+        (compiler-backend-string-contains? asm "    vmovq %xmm2, %r12\n")
+        (not (compiler-backend-string-contains? asm "%xmm0"))
+        (not (compiler-backend-string-contains? asm "%xmm1"))
+        (not (compiler-backend-string-contains? asm "%ymm0"))
         (not (compiler-backend-string-contains? asm "    vmovq %xmm0, %rax\n"))
         (not (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))]
     [(ErrCompilerBackend _) false]))

@@ -4597,6 +4597,48 @@
     (IrInstrStore "g" (IrValueI64 7) (AstTyI64))
     "    movq $7, _tl_g(%rip)\n"))
 
+(define (compiler-backend-word-scratch-staging-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrWord 1 (IrValueVar 2) 0 (AstTyI64))
+        IrInstrNil)
+      CompilerRegAssignmentNil
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
+          (compiler-backend-string-contains? asm "    movq %r8, -16(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "%rax")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrWord 1 (IrValueVar 2) 0 (AstTyF64))
+        IrInstrNil)
+      CompilerRegAssignmentNil
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd -24(%rbp), %xmm2\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movsd %xmm2, -16(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrWord 1 (IrValueVar 2) 0 (AstTyF64))
+        IrInstrNil)
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd -24(%rbp), %xmm3\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-scratch-staging-direct-shapes-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -4627,7 +4669,8 @@
         (AstTyI64))
         [(OkCompilerBackend asm)
           (string-eq asm "    movq %r12, %r13\n    negq %r13\n")]
-        [(ErrCompilerBackend _) false]))))
+        [(ErrCompilerBackend _) false])
+      (compiler-backend-word-scratch-staging-ok?))))
 
 (define (compiler-backend-call-return-program) : CompilerIrProgram
   (IrProgram

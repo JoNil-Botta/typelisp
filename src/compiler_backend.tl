@@ -6394,10 +6394,6 @@
     [(IrValueVar src-var)
       (let
         [is-float : bool (compiler-backend-float-type? ty)]
-        [scratch : String
-          (if is-float
-            "%xmm0"
-            "%rax")]
         (match (compiler-backend-group-word-operand
           assignments
           src-var
@@ -6418,28 +6414,42 @@
                   ;; straight into its home (movq operand, dst-home), skipping the
                   ;; %rax stage + store -- this is the struct-word/param move flood
                   ;; (e.g. (struct-get pair left) of a spilled register-group arg).
-                  ;; An 8-byte word fills the whole register, so the typed store is
-                  ;; a bare movq and the direct move is identical. Spilled / narrow
-                  ;; (< 8) / float dsts keep the staged + typed-store path.
+                  ;; An 8-byte scalar word fills the whole register; float words can
+                  ;; also load directly to an XMM home. Spilled / narrow scalar dsts
+                  ;; use a scavenged temp before the normal typed store.
                   (if (if (string-eq dst-home "")
                     false
                     (if is-float
-                      false
+                      true
                       (= (compiler-backend-type-size ty) 8)))
                     (compiler-backend-emit-group-word-move
                       operand
                       dst-home
                       is-float)
-                    (string-append
-                      (compiler-backend-emit-group-word-move
-                        operand
-                        scratch
-                        is-float)
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        scratch
-                        ty))))))]
+                    (let
+                      [no-exclude : (Array String) (make-array String 0)]
+                      [scratch : String
+                        (if is-float
+                          (compiler-backend-scavenge-xmm-reg
+                            dst
+                            no-exclude
+                            0
+                            "%xmm2")
+                          (compiler-backend-scavenge-reg
+                            dst
+                            no-exclude
+                            0
+                            "%r8"))]
+                      (string-append
+                        (compiler-backend-emit-group-word-move
+                          operand
+                          scratch
+                          is-float)
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          scratch
+                          ty)))))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-diagnostic-with-message

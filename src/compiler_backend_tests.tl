@@ -13657,6 +13657,69 @@
           (not (compiler-backend-string-contains? asm "%xmm15")))]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-group-stack-param-no-return-stage-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-register-group-test-index)]
+    [params : CompilerIrParamList
+      (compiler-ir-param-cons (IrParam "pair" ty 0) IrParamNil)]
+    [reg-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegisterPair "%r12" "%r13"))
+        CompilerRegAssignmentNil)]
+    (and
+      (match (compiler-backend-emit-param-spills
+        (BackendTargetLinux)
+        reg-assignments
+        params
+        6
+        0
+        6
+        0
+        index
+        1)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq 16(%rbp), %r12\n")
+            (compiler-backend-string-contains? asm "    movq 24(%rbp), %r13\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 16(%rbp), %rax\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 24(%rbp), %rdx\n")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-param-spills
+        (BackendTargetLinux)
+        CompilerRegAssignmentNil
+        params
+        6
+        0
+        6
+        0
+        index
+        1)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq 16(%rbp), %r8\n    movq %r8, -8(%rbp)\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq 24(%rbp), %r8\n    movq %r8, -16(%rbp)\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 16(%rbp), %rax\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq 24(%rbp), %rdx\n")))]
+        [(ErrCompilerBackend _) false]))))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
     (compiler-backend-stack-int-args-ok?)
@@ -13665,6 +13728,7 @@
     (compiler-backend-stack-windows-args-ok?)
     (compiler-backend-stack-f32-arg-bits-ok?)
     (compiler-backend-group-stack-f64-arg-bits-ok?)
+    (compiler-backend-group-stack-param-no-return-stage-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
 (define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String

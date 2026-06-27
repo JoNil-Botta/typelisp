@@ -6123,6 +6123,25 @@
       dst
       "\n")))
 
+(define (compiler-backend-emit-group-word-copy
+  [src : String]
+  [dst : String]
+  [sse? : bool]) : ResultCompilerBackend
+  (if (or
+    (compiler-backend-peephole-register-operand? src)
+    (compiler-backend-peephole-register-operand? dst))
+    (OkCompilerBackend (compiler-backend-emit-group-word-move src dst sse?))
+    (let
+      [no-exclude : (Array String) (make-array String 0)]
+      [scratch : String
+        (if sse?
+          (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2")
+          (compiler-backend-scavenge-reg-here no-exclude 0 "%r8"))]
+      (OkCompilerBackend
+        (string-append
+          (compiler-backend-emit-group-word-move src scratch sse?)
+          (compiler-backend-emit-group-word-move scratch dst sse?))))))
+
 (define (compiler-backend-emit-load-pack-word
   [assignments : CompilerRegAssignmentList]
   [word : CompilerIrValue]
@@ -6672,37 +6691,39 @@
   [vars : i64]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-group-store
-    assignments
-    var
-    (compiler-backend-group-return-reg program-index ty 0)
-    (compiler-backend-group-return-reg program-index ty 1)
-    vars
-    ty
-    program-index)
-    [(OkCompilerBackend store)
-      (OkCompilerBackend
-        (string-append
-          (compiler-backend-emit-group-word-move
-            (str-cat
-              (int->string
-                (compiler-backend-incoming-stack-arg-offset target stack-idx))
-              "(%rbp)"
-              "")
-            (compiler-backend-group-return-reg program-index ty 0)
-            (compiler-backend-group-word-sse? program-index ty 0))
-          (string-append
-            (compiler-backend-emit-group-word-move
+  (match (compiler-backend-group-word-operand assignments var 0 vars)
+    [(OkCompilerBackend dst0)
+      (match (compiler-backend-group-word-operand assignments var 1 vars)
+        [(OkCompilerBackend dst1)
+          (let
+            [src0 : String
+              (str-cat
+                (int->string
+                  (compiler-backend-incoming-stack-arg-offset target stack-idx))
+                "(%rbp)"
+                "")]
+            [src1 : String
               (str-cat
                 (int->string
                   (compiler-backend-incoming-stack-arg-offset
                     target
                     (+ stack-idx 1)))
                 "(%rbp)"
-                "")
-              (compiler-backend-group-return-reg program-index ty 1)
-              (compiler-backend-group-word-sse? program-index ty 1))
-            store)))]
+                "")]
+            (match (compiler-backend-emit-group-word-copy
+              src0
+              dst0
+              (compiler-backend-group-word-sse? program-index ty 0))
+              [(OkCompilerBackend word0)
+                (match (compiler-backend-emit-group-word-copy
+                  src1
+                  dst1
+                  (compiler-backend-group-word-sse? program-index ty 1))
+                  [(OkCompilerBackend word1)
+                    (OkCompilerBackend (string-append word0 word1))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-group-word-arg-reg
@@ -6846,36 +6867,22 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [sse? : bool (compiler-backend-group-word-sse? program-index ty word-index)]
-    [scratch : String
-      (compiler-backend-group-return-reg program-index ty word-index)]
     (if (compiler-backend-stack-call-arg-for-banks?
       target
       sse?
       int-idx
       float-idx
       position)
-      (match (compiler-backend-emit-group-word-store
-        assignments
-        var
-        word-index
-        scratch
-        vars
-        ty
-        program-index)
-        [(OkCompilerBackend store)
-          (OkCompilerBackend
-            (string-append
-              (compiler-backend-emit-group-word-move
-                (str-cat
-                  (int->string
-                    (compiler-backend-incoming-stack-arg-offset
-                      target
-                      stack-idx))
-                  "(%rbp)"
-                  "")
-                scratch
-                sse?)
-              store))]
+      (match (compiler-backend-group-word-operand assignments var word-index vars)
+        [(OkCompilerBackend dst)
+          (compiler-backend-emit-group-word-copy
+            (str-cat
+              (int->string
+                (compiler-backend-incoming-stack-arg-offset target stack-idx))
+              "(%rbp)"
+              "")
+            dst
+            sse?)]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])
       (match (compiler-backend-group-word-arg-reg
         target

@@ -46,8 +46,9 @@
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty))
-    [(OkCompilerDriverPic output) (compiler-driver-pic-smoke-output-ok? output)]
-    [(ErrCompilerDriverPic _) false]))
+    [(ResultCompilerDriverPic.Ok output)
+      (compiler-driver-pic-smoke-output-ok? output)]
+    [(ResultCompilerDriverPic.Err _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
   [target : CompilerBackendTarget]) : bool
@@ -89,8 +90,8 @@
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty))
-    [(OkCompilerDriverPic _) false]
-    [(ErrCompilerDriverPic diag)
+    [(ResultCompilerDriverPic.Ok _) false]
+    [(ResultCompilerDriverPic.Err diag)
       (compiler-driver-pic-smoke-contains?
         (compiler-diagnostic-render (box-get diag))
         "backend: --pic supports only internal references")]))

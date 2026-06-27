@@ -12,27 +12,24 @@
 (import stdlib.text_buf)
 
 (defenum ResultCompilerDriver
-  (OkCompilerDriver String)
-  (ErrCompilerDriver (Box CompilerDiagnostic)))
+  (Ok String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerDriverBuffer
-  (OkCompilerDriverBuffer text_buf.TextBuf)
-  (ErrCompilerDriverBuffer (Box CompilerDiagnostic)))
+  (Ok text_buf.TextBuf)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerDriverPic
-  (OkCompilerDriverPic CompilerBackendPicOutput)
-  (ErrCompilerDriverPic (Box CompilerDiagnostic)))
+  (Ok CompilerBackendPicOutput)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerDriverObject
-  (OkCompilerDriverObject CompilerObjectImage)
-  (ErrCompilerDriverObject (Box CompilerDiagnostic)))
+  (Ok CompilerObjectImage)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerDriverLowered
-  (OkCompilerDriverLowered
-    CompilerIrProgram
-    CompilerSourceSpans
-    AstNodePoolContext)
-  (ErrCompilerDriverLowered (Box CompilerDiagnostic)))
+  (Ok CompilerIrProgram CompilerSourceSpans AstNodePoolContext)
+  (Err (Box CompilerDiagnostic)))
 
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
@@ -232,13 +229,19 @@
 (define (compiler-driver-lowered-from-active-pools
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerDriverLowered
-  (OkCompilerDriverLowered program spans (ast-node-pool-context-capture-active)))
+  (ResultCompilerDriverLowered.Ok
+    program
+    spans
+    (ast-node-pool-context-capture-active)))
 
 (define (compiler-driver-lowered-from-pools
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
-  (OkCompilerDriverLowered program spans (ast-node-pool-context-snapshot pools)))
+  (ResultCompilerDriverLowered.Ok
+    program
+    spans
+    (ast-node-pool-context-snapshot pools)))
 
 (define (compiler-driver-install-lowered-pools! [pools : AstNodePoolContext]) : unit
   (ast-node-pool-context-install! pools))
@@ -605,7 +608,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerDriver
+    (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -617,7 +620,7 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
-              (ErrCompilerDriver
+              (ResultCompilerDriver.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
@@ -643,13 +646,13 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (OkCompilerDriver asm))]
+                      (ResultCompilerDriver.Ok asm))]
                   [(ErrCompilerBackend diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (ErrCompilerDriver
+                      (ResultCompilerDriver.Err
                         (box
                           (compiler-diagnostic-with-path
                             (box-get diag)
@@ -665,7 +668,7 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerDriverBuffer
+    (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -677,7 +680,7 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
-              (ErrCompilerDriverBuffer
+              (ResultCompilerDriverBuffer.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
@@ -704,13 +707,13 @@
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "backend"))
-                        (OkCompilerDriverBuffer peepholed)))]
+                        (ResultCompilerDriverBuffer.Ok peepholed)))]
                   [(ErrCompilerBackendBuffer diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (ErrCompilerDriverBuffer
+                      (ResultCompilerDriverBuffer.Err
                         (box
                           (compiler-diagnostic-with-path
                             (box-get diag)
@@ -727,7 +730,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerDriverObject
+    (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -739,7 +742,7 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
-              (ErrCompilerDriverObject
+              (ResultCompilerDriverObject.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
@@ -765,13 +768,13 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (OkCompilerDriverObject image))]
+                      (ResultCompilerDriverObject.Ok image))]
                   [(ErrCompilerBackendObject diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (ErrCompilerDriverObject
+                      (ResultCompilerDriverObject.Err
                         (box
                           (compiler-diagnostic-with-path
                             (box-get diag)
@@ -788,7 +791,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerDriverPic
+    (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -800,7 +803,7 @@
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ty-node-pool-exhausted?)
-              (ErrCompilerDriverPic
+              (ResultCompilerDriverPic.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
               (begin
@@ -826,13 +829,13 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (OkCompilerDriverPic output))]
+                      (ResultCompilerDriverPic.Ok output))]
                   [(ErrCompilerBackendPic diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
-                      (ErrCompilerDriverPic
+                      (ResultCompilerDriverPic.Err
                         (box
                           (compiler-diagnostic-with-path
                             (box-get diag)
@@ -848,7 +851,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
-    [(OkCompilerDriverLowered program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools)
       (begin
         (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
@@ -861,7 +864,7 @@
           opt-level
           emit-entry
           crt-entry))]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
   [input-path : String]
@@ -872,7 +875,7 @@
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
-    [(OkCompilerDriverLowered program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools)
       (begin
         (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
@@ -884,7 +887,8 @@
           mode
           opt-level
           emit-entry))]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverBuffer diag)]))
+    [(ResultCompilerDriverLowered.Err diag)
+      (ResultCompilerDriverBuffer.Err diag)]))
 
 (define (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
   [input-path : String]
@@ -896,7 +900,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
-    [(OkCompilerDriverLowered program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools)
       (begin
         (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
@@ -909,7 +913,8 @@
           opt-level
           emit-entry
           crt-entry))]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverObject diag)]))
+    [(ResultCompilerDriverLowered.Err diag)
+      (ResultCompilerDriverObject.Err diag)]))
 
 (define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
   [input-path : String]
@@ -921,7 +926,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
-    [(OkCompilerDriverLowered program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools)
       (begin
         (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
@@ -934,7 +939,7 @@
           opt-level
           emit-entry
           crt-entry))]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriverPic diag)]))
+    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
 
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
@@ -1323,7 +1328,7 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
               (if (ty-node-pool-exhausted?)
-                (ErrCompilerDriverLowered
+                (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
@@ -1333,11 +1338,11 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (ErrCompilerDriverLowered diag))]))]
+              (ResultCompilerDriverLowered.Err diag))]))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-        (ErrCompilerDriverLowered diag))]))
+        (ResultCompilerDriverLowered.Err diag))]))
 
 (define (compiler-driver-load-and-lower-pic-image
   [input-path : String]
@@ -1366,7 +1371,7 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
               (if (ty-node-pool-exhausted?)
-                (ErrCompilerDriverLowered
+                (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
                       input-path)))
@@ -1376,11 +1381,11 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (ErrCompilerDriverLowered diag))]))]
+              (ResultCompilerDriverLowered.Err diag))]))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-        (ErrCompilerDriverLowered diag))]))
+        (ResultCompilerDriverLowered.Err diag))]))
 
 (define (compiler-driver-load-and-lower-escaping-with-state
   [state : CompilerDriverState]
@@ -1418,7 +1423,7 @@
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
                 (if (ty-node-pool-exhausted?)
-                  (ErrCompilerDriverLowered
+                  (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
                         input-path)))
@@ -1430,11 +1435,11 @@
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (ErrCompilerDriverLowered diag))]))]
+                (ResultCompilerDriverLowered.Err diag))]))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (ErrCompilerDriverLowered diag))])))
+          (ResultCompilerDriverLowered.Err diag))])))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state
   [state : CompilerDriverState]
@@ -1472,7 +1477,7 @@
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
                 (if (ty-node-pool-exhausted?)
-                  (ErrCompilerDriverLowered
+                  (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
                         input-path)))
@@ -1484,11 +1489,11 @@
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (ErrCompilerDriverLowered diag))]))]
+                (ResultCompilerDriverLowered.Err diag))]))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (ErrCompilerDriverLowered diag))])))
+          (ResultCompilerDriverLowered.Err diag))])))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -1815,7 +1820,7 @@
     (compiler-driver-lower-mode-for-target target mode))
     [(OkCompilerLower program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
-    [(ErrCompilerLower diag) (ErrCompilerDriverLowered diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerDriverLowered.Err diag)]))
 
 (define (compiler-driver-emit-package-loaded-object-image
   [input-path : String]
@@ -1878,8 +1883,8 @@
             opt-level
             emit-entry
             crt-entry)]
-        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+        [(ErrCompilerLower diag) (ResultCompilerDriver.Err diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
@@ -2080,16 +2085,16 @@
   [spans : CompilerSourceSpans]
   [opt-level : i64]) : ResultCompilerDriver
   (if (ty-node-pool-exhausted?)
-    (ErrCompilerDriver
+    (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (match (optimize-program-with-spans-and-level program spans opt-level)
       [(CompilerOptimizedProgram optimized _)
         (begin
           (compiler-driver-release-lowered-ir! opt-level)
           (if (ty-node-pool-exhausted?)
-            (ErrCompilerDriver
+            (ResultCompilerDriver.Err
               (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-            (OkCompilerDriver
+            (ResultCompilerDriver.Ok
               (compiler-driver-ir-summary-render
                 (compiler-ir-program-summary optimized)))))])))
 
@@ -2097,14 +2102,14 @@
   [lowered : ResultCompilerDriverLowered]
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
-    [(OkCompilerDriverLowered program spans pools)
+    [(ResultCompilerDriverLowered.Ok program spans pools)
       (begin
         (compiler-driver-install-lowered-pools! pools)
         (compiler-driver-emit-ir-summary-lowered-with-level
           program
           spans
           opt-level))]
-    [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)]))
+    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]
@@ -2224,7 +2229,7 @@
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
   (match result
-    [(OkCompilerDriver asm)
+    [(ResultCompilerDriver.Ok asm)
       (begin
         (cfg compile-profile (compiler-driver-profile-start-phase))
         (io.write-file output-path asm)
@@ -2235,7 +2240,7 @@
             "Wrote "
             (string.string-append output-path "\n")))
         0)]
-    [(ErrCompilerDriver diag)
+    [(ResultCompilerDriver.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-error (compiler-diagnostic-render (box-get diag)))
@@ -2245,7 +2250,7 @@
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (match result
-    [(OkCompilerDriverBuffer buf)
+    [(ResultCompilerDriverBuffer.Ok buf)
       (let
         [status : i64
           (begin
@@ -2262,7 +2267,7 @@
                   (string.string-append output-path "\n")))
               0)
             status)))]
-    [(ErrCompilerDriverBuffer diag)
+    [(ResultCompilerDriverBuffer.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-error (compiler-diagnostic-render (box-get diag)))
@@ -2275,7 +2280,7 @@
   [result : ResultCompilerDriverPic]
   [output-path : String]) : i64
   (match result
-    [(OkCompilerDriverPic output)
+    [(ResultCompilerDriverPic.Ok output)
       (let
         [fixups-path : String (compiler-driver-pic-fixups-path output-path)]
         (begin
@@ -2293,7 +2298,7 @@
               "Wrote "
               (string.string-append fixups-path "\n")))
           0))]
-    [(ErrCompilerDriverPic diag)
+    [(ResultCompilerDriverPic.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-error (compiler-diagnostic-render (box-get diag)))

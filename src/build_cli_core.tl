@@ -2647,9 +2647,9 @@
       crt-entry
       decls
       paths)
-      [(OkCompilerDriverObject image)
+      [(ResultCompilerDriverObject.Ok image)
         (build-package-render-linux-direct-object kind image)]
-      [(ErrCompilerDriverObject diag)
+      [(ResultCompilerDriverObject.Err diag)
         (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])
     (ResultSourceToolString.Err "linux direct object disabled")))
 
@@ -3080,11 +3080,11 @@
     crt-entry
     decls
     owned-paths)
-    [(ErrCompilerDriver diag)
+    [(ResultCompilerDriver.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]
-    [(OkCompilerDriver asm)
+    [(ResultCompilerDriver.Ok asm)
       (begin
         (compiler-driver-release-lower-arenas-after-emit!)
         (compiler-driver-reset-file-state!)
@@ -3119,9 +3119,9 @@
     crt-entry
     decls
     owned-paths)
-    [(ErrCompilerDriver diag)
+    [(ResultCompilerDriver.Err diag)
       (SourceToolCommandErr (compiler-diagnostic-render (box-get diag)))]
-    [(OkCompilerDriver asm)
+    [(ResultCompilerDriver.Ok asm)
       (begin
         (compiler-driver-release-lower-arenas-after-emit!)
         (build-package-write-assembly asm-path asm target))]))

@@ -79,8 +79,8 @@
       roots
       (BackendModeScalar)
       (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
-      [(OkCompilerDriverLowered _ _ _) true]
-      [(ErrCompilerDriverLowered _) false])))
+      [(ResultCompilerDriverLowered.Ok _ _ _) true]
+      [(ResultCompilerDriverLowered.Err _) false])))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
   "(defmacro (vector-user) : Module
@@ -126,8 +126,8 @@
         0
         (BackendModeScalar)
         (compiler-cfg-empty))
-        [(OkCompilerDriver _) true]
-        [(ErrCompilerDriver diag)
+        [(ResultCompilerDriver.Ok _) true]
+        [(ResultCompilerDriver.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
@@ -147,13 +147,13 @@
         0
         (BackendModeScalar)
         (compiler-cfg-empty))
-        [(OkCompilerDriverBuffer buf)
+        [(ResultCompilerDriverBuffer.Ok buf)
           (let
             [asm : String (text_buf.text-buf-render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
             (string.string-contains (& asm) (& needle)))]
-        [(ErrCompilerDriverBuffer diag)
+        [(ResultCompilerDriverBuffer.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool

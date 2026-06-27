@@ -10608,6 +10608,25 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-unop-home-ok?) : bool
+  (match (compiler-backend-emit-unop
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrUnNeg)
+    (IrValueVar 0)
+    (AstTyI64))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
+        (compiler-backend-string-contains? asm "    negq %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -16(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%rax")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -12859,7 +12878,8 @@
         (compiler-backend-direct-immediate-shift-home-ok?)
         (compiler-backend-direct-rcx-shift-home-ok?)
         (compiler-backend-spill-immediate-binop-home-ok?)
-        (compiler-backend-spill-source-binop-home-ok?))
+        (compiler-backend-spill-source-binop-home-ok?)
+        (compiler-backend-spill-unop-home-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

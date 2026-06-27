@@ -10052,21 +10052,28 @@
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       (if (string-eq dst-home "")
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          src
-          "%rax")
-          [(OkCompilerBackend src-asm)
-            (OkCompilerBackend
-              (string-append
-                src-asm
+        (let
+          [result-reg : String
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-binop-scavenge-exclude-build)
+              5
+              "%r8")]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            src
+            result-reg)
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
                 (string-append
-                  (compiler-backend-unop-asm op)
-                  (compiler-backend-emit-store-var-with-plan
-                    assignments
-                    dst
-                    "%rax"))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                  src-asm
+                  (string-append
+                    (compiler-backend-unop-reg-asm op result-reg)
+                    (compiler-backend-emit-store-var-with-plan
+                      assignments
+                      dst
+                      result-reg))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           src

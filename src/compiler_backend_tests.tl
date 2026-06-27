@@ -8727,6 +8727,74 @@
       (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
       "    jb .L_tl_test_bounds_ok\n")))
 
+(define (compiler-backend-scalar-load-scratch-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrLoad 4 (IrValueVar 1) (AstTyU64))
+        IrInstrNil)
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 4 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)
+      5)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq (%r10), %r12\n")
+          (not (compiler-backend-string-contains? asm "%rax")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrLoad 4 (IrValueVar 1) (AstTyU64))
+        IrInstrNil)
+      CompilerRegAssignmentNil
+      5)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r8, -40(%rbp)\n")
+          (not (compiler-backend-string-contains? asm "%rax")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 3 (IrValueVar 2) (AstTyU64))
+          IrInstrNil))
+      CompilerRegAssignmentNil
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq 8(%r10), %r8\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r8, -32(%rbp)\n")
+          (not
+            (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 3 (IrValueVar 0) (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrLoad 4 (IrValueVar 3) (AstTyU64))
+          IrInstrNil))
+      CompilerRegAssignmentNil
+      5)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movq (%r10,%r8,8), %r9\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r9, -40(%rbp)\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq (%r10,%r8,8), %rax\n")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-float-load-scratch-ok?) : bool
   (and
     (match (compiler-backend-emit-test-instrs
@@ -8902,8 +8970,12 @@
     [(OkCompilerBackend asm)
       (and
         (= (compiler-backend-string-count asm "    movq -8(%rbp), %r10\n") 1)
-        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
-        (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+        (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -32(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq 8(%r10), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -48(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "    movq (%r10), %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n"))
         (not
           (compiler-backend-string-contains? asm "    movq -40(%rbp), %r10\n")))]
     [(ErrCompilerBackend _) false]))
@@ -8974,7 +9046,9 @@
       (and
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
         (compiler-backend-string-contains? asm "    movq (%r10), %r10\n")
-        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+        (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -24(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "    movq (%r10), %rax\n"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -16(%rbp)\n"))
         (not
@@ -13940,6 +14014,7 @@
       (compiler-backend-string-ok?)
       (and
         (compiler-backend-memory-op-ok?)
+        (compiler-backend-scalar-load-scratch-ok?)
         (compiler-backend-float-load-scratch-ok?)
         (compiler-backend-gep-float-load-scratch-ok?)
         (compiler-backend-address-mode-fusion-ok?)

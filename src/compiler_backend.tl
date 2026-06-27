@@ -11338,28 +11338,15 @@
                     load-reg
                     ty)
                   ""))))
-          (let
-            [dst-home : String
-              (compiler-backend-var-register-home assignments dst)]
-            ;; vreg-model: when the loaded value already has a register home, load
-            ;; the memory straight into it instead of staging through %rax and
-            ;; copying (bucket f, ~16% of the move flood). A scalar load (size <=
-            ;; 8) never has a register-pair home, so a single dst-home register is
-            ;; the whole value. Spilled dsts keep the %rax + store path.
-            (if (if (string-eq dst-home "")
-              false
-              (<= (compiler-backend-type-size ty) 8))
-              (string-append
-                ptr-asm
-                (compiler-backend-emit-load-memory-to-reg base-mem ty dst-home))
-              (string-append
-                ptr-asm
-                (string-append
-                  (compiler-backend-emit-load-memory base-mem ty)
-                  (compiler-backend-emit-store-var-with-plan
-                    assignments
-                    dst
-                    "%rax")))))))]
+          (string-append
+            ptr-asm
+            (compiler-backend-emit-load-scalar-address-to-var
+              assignments
+              dst
+              base-mem
+              ty
+              (compiler-backend-one-exclude base)
+              1))))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-float-address-to-var
@@ -11384,6 +11371,29 @@
           load-reg
           ty)
         ""))))
+
+(define (compiler-backend-emit-load-scalar-address-to-var
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [addr : String]
+  [ty : AstType]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    (if (if (string-eq dst-home "")
+      false
+      (<= (compiler-backend-type-size ty) 8))
+      (compiler-backend-emit-load-memory-to-reg addr ty dst-home)
+      (let
+        [load-reg : String
+          (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")]
+        (string-append
+          (compiler-backend-emit-load-memory-to-reg addr ty load-reg)
+          (compiler-backend-emit-store-var-with-plan
+            assignments
+            dst
+            load-reg))))))
 
 (define (compiler-backend-r10-address [disp : i64]) : String
   (if (= disp 0)
@@ -11413,6 +11423,18 @@
   (let
     [a : (Array String) (make-array String 1)]
     (begin (array-set! a 0 r) a)))
+
+;; Exclude two already-chosen registers without excluding unrelated pool
+;; registers. Used for address operands that must survive a load temp.
+(define (compiler-backend-two-exclude
+  [r1 : String]
+  [r2 : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 2)]
+    (begin
+      (array-set! a 0 r1)
+      (array-set! a 1 r2)
+      a)))
 
 ;; Superset + all callee-saved + one extra: the scavenge may only pick a
 ;; caller-saved pool register (r9 today) or fall back, never an on-demand
@@ -11887,30 +11909,15 @@
                     dst
                     addr
                     load-ty))
-                (let
-                  [dst-home : String
-                    (compiler-backend-var-register-home assignments dst)]
-                  ;; vreg-model: a register-homed fused field/array load goes
-                  ;; straight into its home (`mov disp(%r10),home`) instead of
-                  ;; staging through %rax and copying -- this fused-load path is a
-                  ;; large bucket-f source (~32% of moves in dispatch-loop code).
-                  (if (if (string-eq dst-home "")
-                    false
-                    (<= (compiler-backend-type-size load-ty) 8))
-                    (string-append
-                      base-asm
-                      (compiler-backend-emit-load-memory-to-reg
-                        addr
-                        load-ty
-                        dst-home))
-                    (string-append
-                      base-asm
-                      (string-append
-                        (compiler-backend-emit-load-memory addr load-ty)
-                        (compiler-backend-emit-store-var-with-plan
-                          assignments
-                          dst
-                          "%rax")))))))]
+                (string-append
+                  base-asm
+                  (compiler-backend-emit-load-scalar-address-to-var
+                    assignments
+                    dst
+                    addr
+                    load-ty
+                    (compiler-backend-one-exclude base-reg)
+                    1)))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       ;; Dynamic-index (SIB) load. Active-scavenge BOTH the index and the base:
@@ -11986,36 +11993,19 @@
                             dst
                             load-addr
                             load-ty))))
-                    (let
-                      [dst-home : String
-                        (compiler-backend-var-register-home assignments dst)]
-                      (if (if (string-eq dst-home "")
-                        false
-                        (<= (compiler-backend-type-size load-ty) 8))
+                    (string-append
+                      base-asm
+                      (string-append
+                        offset-asm
                         (string-append
-                          base-asm
-                          (string-append
-                            offset-asm
-                            (string-append
-                              addr-asm
-                              (compiler-backend-emit-load-memory-to-reg
-                                load-addr
-                                load-ty
-                                dst-home))))
-                        (string-append
-                          base-asm
-                          (string-append
-                            offset-asm
-                            (string-append
-                              addr-asm
-                              (string-append
-                                (compiler-backend-emit-load-memory
-                                  load-addr
-                                  load-ty)
-                                (compiler-backend-emit-store-var-with-plan
-                                  assignments
-                                  dst
-                                  "%rax")))))))))]
+                          addr-asm
+                          (compiler-backend-emit-load-scalar-address-to-var
+                            assignments
+                            dst
+                            load-addr
+                            load-ty
+                            (compiler-backend-two-exclude scav-base scav-idx)
+                            2)))))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
@@ -12039,19 +12029,13 @@
               dst
               addr
               load-ty)
-            (let
-              [dst-home : String
-                (compiler-backend-var-register-home assignments dst)]
-              (if (if (string-eq dst-home "")
-                false
-                (<= (compiler-backend-type-size load-ty) 8))
-                (compiler-backend-emit-load-memory-to-reg addr load-ty dst-home)
-                (string-append
-                  (compiler-backend-emit-load-memory addr load-ty)
-                  (compiler-backend-emit-store-var-with-plan
-                    assignments
-                    dst
-                    "%rax")))))))]
+            (compiler-backend-emit-load-scalar-address-to-var
+              assignments
+              dst
+              addr
+              load-ty
+              (compiler-backend-one-exclude base-reg)
+              1))))]
     [(CompilerBackendNoI64)
       (ErrCompilerBackend
         (compiler-diagnostic-at-start
@@ -12129,22 +12113,13 @@
                   second-dst
                   base-mem
                   second-ty)
-                (let
-                  [dst-home : String
-                    (compiler-backend-var-register-home assignments second-dst)]
-                  (if (if (string-eq dst-home "")
-                    false
-                    (<= (compiler-backend-type-size second-ty) 8))
-                    (compiler-backend-emit-load-memory-to-reg
-                      base-mem
-                      second-ty
-                      dst-home)
-                    (str-cat
-                      (compiler-backend-emit-load-memory base-mem second-ty)
-                      (compiler-backend-emit-store-var-with-plan
-                        assignments
-                        second-dst
-                        "%rax")))))))]
+                (compiler-backend-emit-load-scalar-address-to-var
+                  assignments
+                  second-dst
+                  base-mem
+                  second-ty
+                  (compiler-backend-one-exclude base)
+                  1))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
 

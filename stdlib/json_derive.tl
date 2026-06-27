@@ -15,6 +15,7 @@
 (import stdlib.json)
 (import stdlib.string)
 
+;: Emit the JSON value expression for one struct field.
 (defmacro (json-derive-field-to-json
   [T : type]
   [index-expr : Expr]
@@ -56,6 +57,7 @@
       (comptime.comptime-error
         "json-derive: field index must be an integer literal")]))
 
+;: Emit the object member list expression for struct fields.
 (defmacro (json-derive-members [T : type] [index-expr : Expr] [value : Expr]) : Expr
   (match index-expr
     [(ExprInt index)
@@ -76,6 +78,7 @@
       (comptime.comptime-error
         "json-derive: member index must be an integer literal")]))
 
+;: Emit integer field parsing with generated range checks.
 (defmacro (json-derive-parse-int-field
   [T : type]
   [index-expr : Expr]
@@ -140,6 +143,7 @@
       (comptime.comptime-error
         "json-derive: int parse index must be an integer literal")]))
 
+;: Emit decode logic for one struct field.
 (defmacro (json-derive-parse-field
   [T : type]
   [index-expr : Expr]
@@ -392,6 +396,7 @@
       (comptime.comptime-error
         "json-derive: parse index must be an integer literal")]))
 
+;: Emit recursive decode logic for all struct fields.
 (defmacro (json-derive-parse-fields
   [T : type]
   [index-expr : Expr]
@@ -421,6 +426,7 @@
       (comptime.comptime-error
         "json-derive: parse-fields index must be an integer literal")]))
 
+;: Emit derive imports needed for nested struct fields.
 (defmacro (json-derive-nested-imports [T : type] [index-expr : Expr]) : Decls
   (match index-expr
     [(ExprInt index)

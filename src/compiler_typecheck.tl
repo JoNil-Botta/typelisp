@@ -932,13 +932,14 @@
     0))")
 
 (define (compiler-typecheck-foreach-try-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 i64))
-(define (main [out : (Array i64)] [flag : bool] [n : i64]) : ResultI64
+  "(import \"stdlib/result.tl\")
+(import (result i64 i64) as result_i64_i64)
+(define (main [out : (Array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
   (begin
     (foreach
       ([i : i64 0 n])
-      (array-set! out i (try (if flag (OkI64 1) (ErrI64 i)))))
-    (OkI64 0)))")
+      (array-set! out i (try (if flag (result_i64_i64.ok 1) (result_i64_i64.err i)))))
+    (result_i64_i64.ok 0)))")
 
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
@@ -2942,17 +2943,18 @@
     (compiler-typecheck-ok? (compiler-typecheck-region-match-source))))
 
 (define (compiler-typecheck-result-try-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (read [flag : bool]) : ResultI64
-  (if flag (OkI64 41) (ErrI64 \"read failed\")))
-(define (step [flag : bool]) : ResultI64
-  (OkI64 (try (read flag))))
-(define (main [a : bool] [b : bool]) : ResultI64
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (read [flag : bool]) : result_i64_string.Result
+  (if flag (result_i64_string.ok 41) (result_i64_string.err \"read failed\")))
+(define (step [flag : bool]) : result_i64_string.Result
+  (result_i64_string.ok (try (read flag))))
+(define (main [a : bool] [b : bool]) : result_i64_string.Result
   (let ([x : i64 (try (step a))]
         [y : i64 0])
     (begin
       (set! y (try (read b)))
-      (OkI64 (+ x y)))))")
+      (result_i64_string.ok (+ x y)))))")
 
 (define (compiler-typecheck-option-try-source) : String
   "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
@@ -2964,29 +2966,33 @@
     (SomeBool (> x 0))))")
 
 (define (compiler-typecheck-result-try-non-result-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (main) : ResultI64
-  (OkI64 (try 1)))")
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (main) : result_i64_string.Result
+  (result_i64_string.ok (try 1)))")
 
 (define (compiler-typecheck-result-try-non-result-return-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (read) : ResultI64 (OkI64 1))
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (read) : result_i64_string.Result (result_i64_string.ok 1))
 (define (main) : i64
   (try (read)))")
 
 (define (compiler-typecheck-result-try-incompatible-error-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
 (defenum OtherResult (OkOther i64) (ErrOther i64))
 (define (read) : OtherResult (ErrOther 7))
-(define (main) : ResultI64
-  (OkI64 (try (read))))")
+(define (main) : result_i64_string.Result
+  (result_i64_string.ok (try (read))))")
 
 (define (compiler-typecheck-option-try-carrier-mismatch-source) : String
   "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
-(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
 (define (read) : MaybeI64 (SomeI64 1))
-(define (main) : ResultI64
-  (OkI64 (try (read))))")
+(define (main) : result_i64_string.Result
+  (result_i64_string.ok (try (read))))")
 
 (define (compiler-typecheck-option-try-payloadless-some-source) : String
   "(defenum MaybeI64 (SomeI64) (NoneI64))
@@ -3002,9 +3008,10 @@
 
 (define (compiler-typecheck-result-try-panic-source) : String
   (compiler-typecheck-with-io-source
-    "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (main [flag : bool]) : ResultI64
-  (if flag (io.panic \"stop\") (OkI64 1)))"))
+    "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (main [flag : bool]) : result_i64_string.Result
+  (if flag (io.panic \"stop\") (result_i64_string.ok 1)))"))
 
 (define (compiler-typecheck-resource-with-source) : String
   "(define (close [h : i64]) : unit unit)
@@ -3437,7 +3444,7 @@
         (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
     (tc-type-move-only? (AstTyStruct (intern "Box")))
     (tc-type-move-only? (ast-ty-box (AstTyI64)))
-    (tc-type-move-only? (AstTyEnum (intern "ResultI64")))
+    (tc-type-move-only? (AstTyEnum (intern "MoveOnlyEnum")))
     (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
     (tc-type-move-only?
       (ast-ty-tuple
@@ -3667,12 +3674,12 @@
     (status-varargs copied-echoed (Done) (Failed))))")
 
 (define (compiler-typecheck-extern-abi-enum-param-source) : String
-  "(defenum ResultI64 (OkI64 i64))
-(extern (bad [arg0 : ResultI64]) : i64 (:abi c) (:symbol \"bad_enum_param\"))")
+  "(defenum AbiPayload (AbiPayloadI64 i64))
+(extern (bad [arg0 : AbiPayload]) : i64 (:abi c) (:symbol \"bad_enum_param\"))")
 
 (define (compiler-typecheck-extern-abi-enum-return-source) : String
-  "(defenum ResultI64 (OkI64 i64))
-(extern (bad [arg0 : i64]) : ResultI64 (:abi c) (:symbol \"bad_enum_return\"))")
+  "(defenum AbiPayload (AbiPayloadI64 i64))
+(extern (bad [arg0 : i64]) : AbiPayload (:abi c) (:symbol \"bad_enum_return\"))")
 
 (define (compiler-typecheck-extern-abi-enum-args-param-source) : String
   "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
@@ -3698,8 +3705,8 @@
   (cast (sumf 1 true) : i64))")
 
 (define (compiler-typecheck-extern-head-varargs-tail-enum-source) : String
-  "(defenum ResultI64 (OkI64 i64))
-(extern (bad [count : i64] [value : ...ResultI64]) : i64 (:symbol \"bad\"))")
+  "(defenum VarargPayload (VarargPayloadI64 i64))
+(extern (bad [count : i64] [value : ...VarargPayload]) : i64 (:symbol \"bad\"))")
 
 (define (compiler-typecheck-extern-raw-fnptr-to-tl-param-source) : String
   "(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
@@ -5301,8 +5308,10 @@
 (define (main [m : MaybeI64]) : i64 (match m [(SomeI64 v) v]))")
 
 (define (compiler-typecheck-match-bad-result-exhaustive-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (main [r : ResultI64]) : i64 (match r [(OkI64 v) v]))")
+  "(import \"stdlib/result.tl\")
+(import (result i64 String) as result_i64_string)
+(define (main [r : result_i64_string.Result]) : i64
+  (match r [(result_i64_string.Ok v) v]))")
 
 (define (compiler-typecheck-match-ok-recursive-list-source) : String
   "(defenum List (Cons i64 (Box List)) (Nil))
@@ -5571,7 +5580,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-result-exhaustive-source)
-            "typecheck: match missing arm for variant ErrI64")))
+            "typecheck: match missing arm for variant Err")))
       (set!
         ok
         (and

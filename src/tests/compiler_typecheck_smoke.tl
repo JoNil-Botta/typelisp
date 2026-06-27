@@ -1199,6 +1199,24 @@
 (define (main) : i64
   (user.score (user.make 42)))")
 
+(define (compiler-typecheck-smoke-module-macro-param-type-stdlib-vector-source) : String
+  "(import \"stdlib/vector.tl\")
+(defstruct Pair
+  (value i64))
+(defmacro (vector-user [T : type]) : Module
+  `(begin
+    (module generated.param_type_vector_user)
+    (import (vector T) as vec)
+    (define (score [value : ,T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (vec.len (& items)))))))
+(import (vector-user Pair) as user)
+(define (main) : i64
+  (user.score (Pair 42)))")
+
 (define (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source) : String
   "(import stdlib.json)
 (import stdlib.vector)
@@ -1351,6 +1369,8 @@
       (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-smoke-module-macro-param-type-stdlib-vector-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source))
     (compiler-typecheck-ok?

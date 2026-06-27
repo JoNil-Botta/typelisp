@@ -4620,6 +4620,10 @@
       (set! out (tc-bind out "array-element-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "array-length" (tc-fn1 expr (AstTyI64))))
       (set! out (tc-bind out "array-dynamic?" (tc-fn1 expr (AstTyBool))))
+      (set! out (tc-bind out "tuple-element-count" (tc-fn1 expr (AstTyI64))))
+      (set!
+        out
+        (tc-bind out "tuple-element-type" (tc-fn2 expr (AstTyI64) expr)))
       (set! out (tc-bind out "function-param-count" (tc-fn1 expr (AstTyI64))))
       (set!
         out
@@ -30098,6 +30102,18 @@
     (tc-string-list-add TcStringNil (intern-str name))
     body))
 
+(define (tc-macro-param-list-needs-call-context? [params : AstMacroParamList]) : bool
+  (match params
+    [(AstMacroParamNil) false]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam _ ty _)
+          (if (or
+            (tc-macro-type-param-kind? ty)
+            (tc-macro-module-param-kind? ty))
+            true
+            (tc-macro-param-list-needs-call-context? (box-get rest)))])]))
+
 (define (tc-check-comptime-decl-purity
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -30128,21 +30144,24 @@
               (AstTyExpr)
               "typecheck: macro body must return Expr")
               [(OkTcUnit)
-                (begin
-                  (tc-context-capture-active-pools! ctx)
-                  (match (compiler-ctfe-eval
-                    body
-                    (tc-ctfe-env-extend-macro-params
-                      ctx
-                      (tc-ctfe-env ctx)
-                      params)
-                    (ctfe-fuel-limit))
-                    [(OkCtfe value _)
-                      (begin
-                        (ast-node-pool-context-install! (tc-context-pools ctx))
-                        (tc-check-defmacro-produced-type ctx ret value))]
-                    [(ErrCtfe diag)
-                      (ErrTcUnit (compiler-diagnostic-message (box-get diag)))]))]
+                (if (tc-macro-param-list-needs-call-context? params)
+                  OkTcUnit
+                  (begin
+                    (tc-context-capture-active-pools! ctx)
+                    (match (compiler-ctfe-eval
+                      body
+                      (tc-ctfe-env-extend-macro-params
+                        ctx
+                        (tc-ctfe-env ctx)
+                        params)
+                      (ctfe-fuel-limit))
+                      [(OkCtfe value _)
+                        (begin
+                          (ast-node-pool-context-install!
+                            (tc-context-pools ctx))
+                          (tc-check-defmacro-produced-type ctx ret value))]
+                      [(ErrCtfe diag)
+                        (ErrTcUnit (compiler-diagnostic-message (box-get diag)))])))]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
@@ -35760,6 +35779,10 @@
   (OkMacroValue CompilerCtfeValue)
   (ErrMacroValue (Box CompilerDiagnostic)))
 
+(defenum ResultMacroValueEnv
+  (OkMacroValueEnv CompilerCtfeValue CtfeEnv)
+  (ErrMacroValueEnv (Box CompilerDiagnostic)))
+
 (defenum ResultMacroTypeArg
   (OkMacroTypeArg AstType)
   (ErrMacroTypeArg (Box CompilerDiagnostic)))
@@ -39948,9 +39971,9 @@
                           call-expr)]
                       [(ErrMacroEnv diag) (ErrMacroEnv diag)]))]))]))]))
 
-;; Run a macro transformer via CTFE. Callers decide how to interpret the
-;; returned syntax value for expression, module, or declaration positions.
-(define (macro-eval-transformer-expanded
+;; Run a macro transformer via CTFE. Module/declaration macro expansion also
+;; needs the bound CTFE environment while normalizing generated import operands.
+(define (macro-eval-transformer-expanded-with-env
   [ctx : TcContext]
   [decls : AstDeclList]
   [fallback-module : String]
@@ -39959,7 +39982,7 @@
   [params : AstMacroParamList]
   [body : AstExpr]
   [expanded-args : AstExprList]
-  [call-expr : AstExpr]) : ResultMacroValue
+  [call-expr : AstExpr]) : ResultMacroValueEnv
   (begin
     (tc-context-capture-active-pools! ctx)
     (match (macro-bind-params
@@ -39985,14 +40008,39 @@
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (OkMacroValue value))]
+                (OkMacroValueEnv value env))]
             [(ErrCtfe diag)
               (begin
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (ErrMacroValue diag))]))]
-      [(ErrMacroEnv diag) (ErrMacroValue diag)])))
+                (ErrMacroValueEnv diag))]))]
+      [(ErrMacroEnv diag) (ErrMacroValueEnv diag)])))
+
+;; Run a macro transformer via CTFE. Callers decide how to interpret the
+;; returned syntax value for expression, module, or declaration positions.
+(define (macro-eval-transformer-expanded
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [fallback-module : String]
+  [type-env : TcTypeEnv]
+  [macro-name : String]
+  [params : AstMacroParamList]
+  [body : AstExpr]
+  [expanded-args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroValue
+  (match (macro-eval-transformer-expanded-with-env
+    ctx
+    decls
+    fallback-module
+    type-env
+    macro-name
+    params
+    body
+    expanded-args
+    call-expr)
+    [(OkMacroValueEnv value _) (OkMacroValue value)]
+    [(ErrMacroValueEnv diag) (ErrMacroValue diag)]))
 
 (define (macro-eval-transformer
   [ctx : TcContext]
@@ -40021,6 +40069,238 @@
         expanded-args
         call-expr)]
     [(ErrMacroExprList diag) (ErrMacroValue diag)]))
+
+(define (macro-generated-type-param-expr-list
+  [env : CtfeEnv]
+  [exprs : AstExprList]) : AstExprList
+  (match exprs
+    [(AstExprNil) AstExprNil]
+    [(AstExprCons head rest)
+      (let
+        [head-expr : AstExpr (ast-node-get head)]
+        [rest-exprs : AstExprList (box-get rest)]
+        (ast-expr-cons
+          (macro-generated-type-param-expr env head-expr)
+          (macro-generated-type-param-expr-list env rest-exprs)))]))
+
+(define (macro-generated-type-param-expr [env : CtfeEnv] [expr : AstExpr]) : i64
+  (match expr
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (ast-expr-spanned (macro-generated-type-param-expr env inner) span))]
+    [(AstExprVar name)
+      (let
+        [lookup-name : String (macro-output-syntax-name (intern-str name))]
+        (match (ctfe-env-lookup env lookup-name)
+          [(CtfeSomeValue value)
+            (match value
+              [(CtfeType ty) (ast-node-push (AstExprTypeLiteral ty))]
+              [_ (ast-node-push expr)])]
+          [(CtfeNoValue) (ast-node-push expr)]))]
+    [(AstExprCall func-box args)
+      (ast-expr-call func-box (macro-generated-type-param-expr-list env args))]
+    [_ (ast-node-push expr)]))
+
+(define (macro-generated-call-func-for-lookup [expr : AstExpr]) : AstExpr
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name)
+      (AstExprVar (intern (macro-output-syntax-name (intern-str name))))]
+    [_ expr]))
+
+(define (macro-generated-import-type-arg
+  [ty : AstType]
+  [arg : i64]
+  [env : CtfeEnv]) : i64
+  (if (tc-macro-type-param-kind? ty)
+    (macro-generated-type-param-expr env (ast-node-get arg))
+    arg))
+
+(define (macro-generated-import-type-args-for-param
+  [param : AstMacroParam]
+  [head : i64]
+  [rest-args : AstExprList]
+  [rest-params : AstMacroParamList]
+  [args : AstExprList]
+  [env : CtfeEnv]) : AstExprList
+  (match param
+    [(AstMacroParam _ ty variadic)
+      (if variadic
+        (if (tc-macro-type-param-kind? ty)
+          (macro-generated-type-param-expr-list env args)
+          args)
+        (ast-expr-cons
+          (macro-generated-import-type-arg ty head env)
+          (macro-generated-import-type-args rest-params rest-args env)))]))
+
+(define (macro-generated-import-type-args
+  [params : AstMacroParamList]
+  [args : AstExprList]
+  [env : CtfeEnv]) : AstExprList
+  (match params
+    [(AstMacroParamNil) args]
+    [(AstMacroParamCons param rest-params-box)
+      (match args
+        [(AstExprNil) AstExprNil]
+        [(AstExprCons head rest-args-box)
+          (macro-generated-import-type-args-for-param
+            param
+            head
+            (box-get rest-args-box)
+            (box-get rest-params-box)
+            args
+            env)])]))
+
+(define (macro-rewrite-generated-import-call-id
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [definition-module : String]
+  [env : CtfeEnv]
+  [call-id : i64]) : i64
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          [lookup-func : AstExpr (macro-generated-call-func-for-lookup func)]
+          (match (macro-call-decl-with-context
+            ctx
+            lookup-func
+            orig-decls
+            module
+            (AstSomeModuleName definition-module)
+            call-expr)
+            [(OkMacroCallDeclModule maybe-decl _)
+              (match maybe-decl
+                [(MacroSomeDecl _ _ params _ _)
+                  (ast-expr-call
+                    func-box
+                    (macro-generated-import-type-args params args env))]
+                [(MacroNoDecl) call-id])]
+            [(ErrMacroCallDeclModule _) call-id]))]
+      [_ call-id])))
+
+(define (macro-rewrite-generated-import-kind
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [definition-module : String]
+  [env : CtfeEnv]
+  [kind : AstImportKind]) : AstImportKind
+  (match kind
+    [(AstImportMacro call-id context)
+      (AstImportMacro
+        (macro-rewrite-generated-import-call-id
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          call-id)
+        context)]
+    [(AstImportMacroDecls call-id context)
+      (AstImportMacroDecls
+        (macro-rewrite-generated-import-call-id
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          call-id)
+        context)]
+    [_ kind]))
+
+(define (macro-rewrite-generated-import-decl
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [definition-module : String]
+  [env : CtfeEnv]
+  [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDeclImport (AstImportSpec kind path expected alias span))
+      (AstDeclImport
+        (AstImportSpec
+          (macro-rewrite-generated-import-kind
+            ctx
+            orig-decls
+            module
+            definition-module
+            env
+            kind)
+          path
+          expected
+          alias
+          span))]
+    [(AstDeclUnsafe inner-box)
+      (ast-decl-unsafe
+        (macro-rewrite-generated-import-decl
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          (box-get inner-box)))]
+    [(AstDeclComptimeDecl meta inner-box)
+      (ast-decl-comptime-decl-with-meta
+        meta
+        (macro-rewrite-generated-import-decl
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          (box-get inner-box)))]
+    [_ decl]))
+
+(define (macro-rewrite-generated-import-decls-with-env
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [definition-module : String]
+  [env : CtfeEnv]
+  [decls : AstDeclList]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (ast-decl-cons
+        (macro-rewrite-generated-import-decl
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          decl)
+        (macro-rewrite-generated-import-decls-with-env
+          ctx
+          orig-decls
+          module
+          definition-module
+          env
+          (box-get rest)))]))
+
+(define (macro-rewrite-generated-import-decls
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [definition-module : String]
+  [env : CtfeEnv]
+  [decls : AstDeclList]) : AstDeclList
+  (let
+    [rewrite-env : CtfeEnv
+      (ctfe-env-extend
+        (ctfe-env-rebase-pools env (tc-context-pools ctx))
+        (ctfe-hygiene-enabled-name)
+        (CtfeBool true))]
+    (macro-rewrite-generated-import-decls-with-env
+      ctx
+      orig-decls
+      module
+      definition-module
+      rewrite-env
+      decls)))
 
 ;; Fast path for the hot stdlib.vector_family declaration macro. The macro body
 ;; is a deterministic quasiquote that emits a fixed growable-vector declaration
@@ -41773,7 +42053,7 @@
                                           decl-path)))]
                                   [(ErrMacroParsedDecls diag)
                                     (ErrMacroDeclExpansion diag)])
-                                (match (macro-eval-transformer-expanded
+                                (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   orig-decls
                                   call-module
@@ -41783,7 +42063,7 @@
                                   body
                                   expanded-args
                                   call-expr)
-                                  [(OkMacroValue value)
+                                  [(OkMacroValueEnv value macro-env)
                                     (let
                                       [parse-dispatch : SymI64Env
                                         (macro-parse-dispatch-for-macro
@@ -41795,6 +42075,17 @@
                                         parse-dispatch)
                                         [(OkMacroParsedDecls generated)
                                           (let
+                                            [generated : AstDeclList
+                                              (if (tc-macro-param-list-needs-call-context?
+                                                params)
+                                                (macro-rewrite-generated-import-decls
+                                                  call-ctx
+                                                  orig-decls
+                                                  module
+                                                  definition-module
+                                                  macro-env
+                                                  generated)
+                                                generated)]
                                             [contextual-generated : AstDeclList
                                               (macro-generated-context-decls
                                                 generated
@@ -41812,7 +42103,7 @@
                                                 decl-path)))]
                                         [(ErrMacroParsedDecls diag)
                                           (ErrMacroDeclExpansion diag)]))]
-                                  [(ErrMacroValue diag)
+                                  [(ErrMacroValueEnv diag)
                                     (ErrMacroDeclExpansion diag)]))]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
                         [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
@@ -41886,7 +42177,7 @@
                             (tc-ctfe-env call-ctx)
                             call-expr)
                             [(OkGenKey identity _)
-                              (match (macro-eval-transformer-expanded
+                              (match (macro-eval-transformer-expanded-with-env
                                 call-ctx
                                 orig-decls
                                 call-module
@@ -41896,7 +42187,7 @@
                                 body
                                 expanded-args
                                 call-expr)
-                                [(OkMacroValue value)
+                                [(OkMacroValueEnv value macro-env)
                                   (let
                                     [parse-dispatch : SymI64Env
                                       (macro-parse-dispatch-for-macro
@@ -41916,12 +42207,21 @@
                                           macro-name
                                           identity
                                           (macro-generated-context-decls
-                                            generated
+                                            (if (tc-macro-param-list-needs-call-context?
+                                              params)
+                                              (macro-rewrite-generated-import-decls
+                                                call-ctx
+                                                orig-decls
+                                                module
+                                                definition-module
+                                                macro-env
+                                                generated)
+                                              generated)
                                             definition-module)
                                           call-expr)]
                                       [(ErrMacroParsedDecls diag)
                                         (ErrMacroDeclExpansion diag)]))]
-                                [(ErrMacroValue diag)
+                                [(ErrMacroValueEnv diag)
                                   (ErrMacroDeclExpansion diag)])]
                             [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
                         [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])

@@ -954,6 +954,11 @@ categories:
   import. The generated module participates in ordinary
   dot-qualified lookup, typechecking, lowering, tests, docs,
   and diagnostics after expansion.
+  When generated module or declaration output itself contains a module-macro
+  import, operands whose callee parameter is `: type` may name a captured outer
+  `: type` macro operand by its generated template name. Expansion substitutes
+  the captured concrete type before resolving that nested import; this does not
+  introduce source-level type parameters.
 - `: Decls` means the macro body produces a declaration list. A call at module
   scope, for example `(point-vec i64)`, is replaced by those declarations at
   that exact location. One returned declaration is inserted directly; multiple
@@ -4508,6 +4513,8 @@ V1 primitive names and signatures are fixed as follows:
 | `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
 | `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
+| `(tuple-element-count type-expr)` | `i64` | Requires tuple type. |
+| `(tuple-element-type type-expr index-expr)` | `type` | Zero-based tuple element type. |
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
@@ -4533,9 +4540,9 @@ diagnostic should name the primitive and the expected kind, for example
 
 V1 reflection may classify reserved/partial shapes with `type-kind` and
 `type-key`, but detailed pointer/reference/region reflection is deferred to the
-raw-pointer and reference owning issues. Tuple element introspection is also
-deferred; tuple types can be keyed and classified but are not a generator target
-for v1.
+raw-pointer and reference owning issues. Tuple types can be keyed, classified,
+and inspected by arity and zero-based element type; tuple reflection exposes no
+runtime tuple descriptor.
 
 Nominal identity is two-part:
 

@@ -2811,6 +2811,8 @@
     [(string.string-eq name "array-element-type") true]
     [(string.string-eq name "array-length") true]
     [(string.string-eq name "array-dynamic?") true]
+    [(string.string-eq name "tuple-element-count") true]
+    [(string.string-eq name "tuple-element-type") true]
     [(string.string-eq name "function-param-count") true]
     [(string.string-eq name "function-param-type") true]
     [else (string.string-eq name "function-return-type")]))
@@ -2958,6 +2960,21 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-dynamic? requires array type")))])]
+                    [(string.string-eq name "tuple-element-count")
+                      (match (ctfe-reflect-resolve-type-with-pools
+                        (ctfe-env-pools env)
+                        infos
+                        ty)
+                        [(AstTyTuple elems)
+                          (OkCtfe
+                            (CtfeI64 (ctfe-type-list-count (box-get elems)))
+                            arg-fuel)]
+                        [_
+                          (ErrCtfe
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "tuple-element-count requires tuple type")))])]
                     [(string.string-eq name "function-param-count")
                       (match ty
                         [(AstTyFunc params _)
@@ -3407,6 +3424,86 @@
             expr
             "function-param-type expects exactly one type argument and one index")))]))
 
+(define (ctfe-tuple-element-type-arity-error [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "tuple-element-type expects exactly one type argument and one index"))))
+
+(define (ctfe-tuple-element-type-kind-error [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr expr "tuple-element-type requires tuple type"))))
+
+(define (ctfe-eval-tuple-element-type-from-type
+  [ty : AstType]
+  [index : i64]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (ctfe-reflect-resolve-type-with-pools
+    (ctfe-env-pools env)
+    (ctfe-env-reflections env)
+    ty)
+    [(AstTyTuple elems)
+      (match (ctfe-type-list-ref-with-pools
+        (box-get elems)
+        (ctfe-env-pools env)
+        (ctfe-env-reflections env)
+        index)
+        [(OkCtfeTypeLookup element-ty) (OkCtfe (CtfeType element-ty) fuel)]
+        [(ErrCtfeTypeLookup message)
+          (ErrCtfe
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                (string.string-append "tuple-element-type " message))))])]
+    [_ (ctfe-tuple-element-type-kind-error expr)]))
+
+(define (ctfe-eval-tuple-element-type-reflection
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons type-arg tail)
+      (let
+        [type-arg : AstExpr (ctfe-ast-get env type-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons index-arg rest)
+            (let
+              [index-arg : AstExpr (ctfe-ast-get env index-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-type-arg
+                    type-arg
+                    expr
+                    env
+                    fuel
+                    "tuple-element-type")
+                    [(ErrCtfeTypeArg d) (ErrCtfe d)]
+                    [(OkCtfeTypeArg ty type-fuel)
+                      (match (ctfe-eval-i64-arg
+                        index-arg
+                        expr
+                        env
+                        type-fuel
+                        "tuple-element-type")
+                        [(ErrCtfeI64Arg d) (ErrCtfe d)]
+                        [(OkCtfeI64Arg index index-fuel)
+                          (ctfe-eval-tuple-element-type-from-type
+                            ty
+                            index
+                            expr
+                            env
+                            index-fuel)])])]
+                [_ (ctfe-tuple-element-type-arity-error expr)]))]
+          [_ (ctfe-tuple-element-type-arity-error expr)]))]
+    [_ (ctfe-tuple-element-type-arity-error expr)]))
+
 (define (ctfe-eval-reflection-query
   [name : String]
   [args : AstExprList]
@@ -3424,6 +3521,7 @@
         (string.string-eq name "array-element-type")
         (string.string-eq name "array-length")
         (string.string-eq name "array-dynamic?")
+        (string.string-eq name "tuple-element-count")
         (string.string-eq name "function-param-count")
         (string.string-eq name "function-return-type"))
       (ctfe-eval-one-type-reflection name args expr env fuel)]
@@ -3437,6 +3535,8 @@
       (ctfe-eval-enum-variant-reflection name args expr env fuel)]
     [(string.string-eq name "enum-variant-payload-type")
       (ctfe-eval-enum-payload-type-reflection args expr env fuel)]
+    [(string.string-eq name "tuple-element-type")
+      (ctfe-eval-tuple-element-type-reflection args expr env fuel)]
     [(string.string-eq name "function-param-type")
       (ctfe-eval-function-param-type-reflection args expr env fuel)]
     [else (ctfe-unsupported-form expr)]))
@@ -5083,8 +5183,8 @@
             (ctfe-eval-size-align-query lookup-name args expr env fuel)]
           [(string.string-eq lookup-name "offset-of")
             (ctfe-eval-offset-query args expr env fuel)]
-          [(ctfe-reflection-query-name? lookup-name)
-            (ctfe-eval-reflection-query lookup-name args expr env fuel)]
+          [(ctfe-reflection-query-name? call-name)
+            (ctfe-eval-reflection-query call-name args expr env fuel)]
           [(and
               string-helper-candidate
               (ctfe-string-eq-helper-name? lookup-name))
@@ -9989,6 +10089,11 @@
       (ast-node-push (AstExprTypeLiteral (ast-ty-array (AstTyI64) 4)))]
     [dyn-array-ty : i64
       (ast-node-push (AstExprTypeLiteral (ast-ty-dyn-array (AstTyBool))))]
+    [tuple-ty : i64
+      (ast-node-push
+        (AstExprTypeLiteral
+          (ast-ty-tuple
+            (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil)))))]
     [str-ref-ty : i64
       (ast-node-push (AstExprTypeLiteral (ast-ty-ref "r" (AstTyStr))))]
     [fn-ty : i64
@@ -10099,6 +10204,21 @@
         (compiler-ctfe-call1 "array-dynamic?" dyn-array-ty)
         env
         true)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "tuple-element-count" tuple-ty)
+        env
+        2)
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call2
+          "tuple-element-type"
+          tuple-ty
+          (ast-node-push (AstExprLiteral (ast-lit-int 1))))
+        env
+        (AstTyBool))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?

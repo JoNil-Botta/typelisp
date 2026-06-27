@@ -6807,10 +6807,42 @@
                  (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
                     (+ (comptime (array-length (type (Array i64 4))))
                        (+ (comptime (if (__tl_string_eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
-                          (comptime (function-param-count (type (-> i64 bool String)))))))))))))")
+                          (+ (comptime (function-param-count (type (-> i64 bool String))))
+                             (+ (comptime (tuple-element-count (type (Tuple i64 bool String))))
+                                (comptime (if (= (tuple-element-type (type (Tuple i64 bool)) 1) (type bool)) 1 0)))))))))))))")
+
+(define (compiler-typecheck-reflection-tuple-generator-source) : String
+  "(defmacro (tuple-decls [T : type]) : Decls
+  (let
+    [score : i64
+      (if (= (tuple-element-count T) 3)
+        (if (__tl_string_eq (type-kind (tuple-element-type T 2)) \"string\")
+          40
+          0)
+        0)]
+    `(define (tuple-decl-score) : i64 ,(expr-int score))))
+(defmacro (tuple-module [T : type]) : Module
+  (let
+    [score : i64
+      (if (= (tuple-element-count T) 2)
+        (if (__tl_string_eq
+          (type-kind (tuple-element-type T 1))
+          \"bool\")
+          2
+          0)
+        0)]
+    `(begin
+      (module generated.tuple_reflection)
+      (define (tuple-score) : i64 ,(expr-int score)))))
+(tuple-decls (Tuple i64 bool String))
+(import (tuple-module (Tuple i64 bool)) as reflected)
+(define (main) : i64 (+ (tuple-decl-score) (reflected.tuple-score)))")
 
 (define (compiler-typecheck-reflection-runtime-source) : String
   "(define (main) : String (type-kind (type i64)))")
+
+(define (compiler-typecheck-reflection-tuple-runtime-source) : String
+  "(define (main) : i64 (tuple-element-count (type (Tuple i64 bool))))")
 
 (define (compiler-typecheck-reflection-string-result-source) : String
   "(define (main) : String (comptime (type-kind (type i64))))")
@@ -6818,18 +6850,39 @@
 (define (compiler-typecheck-reflection-kind-mismatch-source) : String
   "(define (main) : i64 (comptime (struct-field-count (type i64))))")
 
+(define (compiler-typecheck-reflection-tuple-kind-mismatch-source) : String
+  "(define (main) : i64 (comptime (tuple-element-count (type i64))))")
+
+(define (compiler-typecheck-reflection-tuple-index-source) : String
+  "(define (main) : i64
+  (comptime
+    (if (= (tuple-element-type (type (Tuple i64)) 1) (type i64))
+      1
+      0)))")
+
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reflection-tuple-generator-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-runtime-source)
       "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-tuple-runtime-source)
+      "typecheck: tuple-element-count is compile-time only; wrap it in (comptime ...)")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-string-result-source)
       "String value is compile-time only")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-kind-mismatch-source)
-      "struct-field-count requires struct type")))
+      "struct-field-count requires struct type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-tuple-kind-mismatch-source)
+      "tuple-element-count requires tuple type")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-tuple-index-source)
+      "tuple-element-type index out of range")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool

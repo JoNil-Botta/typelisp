@@ -12225,6 +12225,31 @@
         (TcImportAliasSummaryMissing))]
     [(hashmap.I64I64MapMissing) (TcImportAliasSummaryMissing)]))
 
+(define (tc-import-alias-surface-summary-backed-in?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (or
+        (string.string-eq (struct-get summary module-id) target-module)
+        (tc-import-alias-surface-summary-backed-in?
+          (box-get rest)
+          target-module))]))
+
+(define (tc-import-alias-surface-summary-backed? [target-module : String]) : bool
+  (tc-import-alias-surface-summary-backed-in?
+    (compiler-load-surface-summaries)
+    target-module))
+
+(define (tc-import-alias-summary-backed?
+  [index : TcImportAliasSummaryIndex]
+  [target-module : String]) : bool
+  (match (tc-import-alias-summary-index-lookup index target-module)
+    [(TcImportAliasSummaryFound _) true]
+    [(TcImportAliasSummaryMissing)
+      (tc-import-alias-surface-summary-backed? target-module)]))
+
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12656,11 +12681,9 @@
                               cur-module-id
                               alias-key
                               target-module
-                              (match (tc-import-alias-summary-index-lookup
+                              (tc-import-alias-summary-backed?
                                 summary-index
-                                target-module)
-                                [(TcImportAliasSummaryFound _) true]
-                                [(TcImportAliasSummaryMissing) false]))
+                                target-module))
                             (set! cur rest))))))]
                 [_ (set! cur rest)]))]))
       (if (string.string-eq message "")
@@ -38988,15 +39011,19 @@
 ;; builds). macro-expand-program and the REPL typecheck entry reset it at the
 ;; same per-program boundary that resets the CTFE-env and clone-able caches;
 ;; the intern generation gate additionally covers intern-reset! boundaries.
-(define (macro-alias-cache-reset!) : unit
+(define (macro-alias-derived-cache-reset!) : unit
   (begin
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
     (macro-surface-call-decl-cache-reset!)
-    (tc-lazy-import-stubs-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
+
+(define (macro-alias-cache-reset!) : unit
+  (begin
+    (macro-alias-derived-cache-reset!)
+    (tc-lazy-import-stubs-reset!)))
 
 (define (macro-unqualified-import-cache-ensure!) : unit
   (if (if macro-unqualified-import-cache-ready
@@ -45394,7 +45421,7 @@
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
-            (macro-alias-cache-reset!)
+            (macro-alias-derived-cache-reset!)
             (ctfe-module-macro-export-reset!)
             (set! macro-expand-expr-type-macro-names expr-type-macro-names)
             ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if

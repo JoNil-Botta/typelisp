@@ -21,6 +21,7 @@
 ;; Out of scope: broad aggregate/String/array IR optimization.
 (cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
+(import stdlib.array)
 (import "compiler_ir_types.tl")
 (import "compiler_float.tl")
 (import stdlib.arena)
@@ -1285,10 +1286,10 @@
   [set : hashmap.I64I64Map]
   [values : (Array CompilerIrValue)]
   [index : i64]) : hashmap.I64I64Map
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     set
     (opt-collect-call-args-array-uses
-      (opt-collect-value-uses set (array-ref values index))
+      (opt-collect-value-uses set (array.array-ref values index))
       values
       (+ index 1))))
 
@@ -1435,7 +1436,7 @@
   (if (>= index count)
     set
     (opt-collect-instr-seq-uses-from
-      (opt-collect-instr-uses set (array-ref slots index))
+      (opt-collect-instr-uses set (array.array-ref slots index))
       slots
       (+ index 1)
       count)))
@@ -1491,7 +1492,7 @@
   [dst : i64]) : bool
   (if (<= index 0)
     false
-    (opt-instr-alloc-dst? (array-ref slots (- index 1)) (- dst 1))))
+    (opt-instr-alloc-dst? (array.array-ref slots (- index 1)) (- dst 1))))
 
 (define (opt-array-next-adjacent-alloc?
   [slots : (Array CompilerIrInstr)]
@@ -1500,7 +1501,7 @@
   [dst : i64]) : bool
   (if (>= (+ index 1) count)
     false
-    (opt-instr-alloc-dst? (array-ref slots (+ index 1)) (+ dst 1))))
+    (opt-instr-alloc-dst? (array.array-ref slots (+ index 1)) (+ dst 1))))
 
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
@@ -1590,7 +1591,7 @@
   (if (>= index count)
     (IrInstrNil)
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [rest : CompilerIrInstrList
         (opt-dce-instr-seq-from set slots (+ index 1) count)]
       (if (opt-instr-dead? set instr)
@@ -1634,15 +1635,15 @@
       (opt-dce-block-list set (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
-  (if (>= index (array-length items))
+  (if (>= index (array.array-length items))
     unit
     (begin
-      (array-set! items index value)
+      (array.array-set! items index value)
       (opt-used-array-fill items (+ index 1) value))))
 
 (define (opt-used-array-new [count : i64]) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 count)]
+    [items : (Array i64) (array.make-array i64 count)]
     (begin
       (opt-used-array-fill items 0 0)
       items)))
@@ -1655,31 +1656,31 @@
 (define (opt-used-array-add [items : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array-length items))
+    (if (>= var (array.array-length items))
       unit
       (begin
-        (array-set! items var (+ (array-ref items var) 1))
+        (array.array-set! items var (+ (array.array-ref items var) 1))
         unit))))
 
 (define (opt-used-array-dec [items : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array-length items))
+    (if (>= var (array.array-length items))
       unit
       (let
-        [current : i64 (array-ref items var)]
+        [current : i64 (array.array-ref items var)]
         (if (> current 0)
           (begin
-            (array-set! items var (- current 1))
+            (array.array-set! items var (- current 1))
             unit)
           unit)))))
 
 (define (opt-used-array-contains [items : (Array i64)] [var : i64]) : bool
   (if (< var 0)
     false
-    (if (>= var (array-length items))
+    (if (>= var (array.array-length items))
       false
-      (> (array-ref items var) 0))))
+      (> (array.array-ref items var) 0))))
 
 (define (opt-collect-value-uses-array
   [items : (Array i64)]
@@ -1702,10 +1703,10 @@
   [items : (Array i64)]
   [values : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     unit
     (begin
-      (opt-collect-value-uses-array items (array-ref values index))
+      (opt-collect-value-uses-array items (array.array-ref values index))
       (opt-collect-call-args-array-uses-array items values (+ index 1)))))
 
 (define (opt-collect-call-args-uses-array
@@ -1962,7 +1963,7 @@
     (begin
       (while (< index count)
         (begin
-          (opt-collect-instr-uses-array items (array-ref slots index))
+          (opt-collect-instr-uses-array items (array.array-ref slots index))
           (set! index (+ index 1))))
       unit)))
 
@@ -2054,7 +2055,7 @@
       (while (>= index 0)
         (begin
           (let
-            [instr : CompilerIrInstr (array-ref slots index)]
+            [instr : CompilerIrInstr (array.array-ref slots index)]
             (if (opt-instr-dead-array? items slots count index instr)
               ;; Deleting this instruction drops the uses it made, so a value it
               ;; was the last reader of becomes dead for an earlier sweep step.
@@ -2119,7 +2120,7 @@
     [_ (OptNoAggregateAlloc)]))
 
 (define (opt-aggregate-pointer-list-with-capacity [capacity : i64]) : OptAggregatePointerList
-  (OptAggregatePointerList (make-array OptAggregatePointer capacity) 0))
+  (OptAggregatePointerList (array.make-array OptAggregatePointer capacity) 0))
 
 (define (opt-aggregate-list-next-capacity [capacity : i64]) : i64
   (if (< capacity opt-aggregate-list-initial-capacity)
@@ -2131,14 +2132,14 @@
     [old-slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
     [len : i64 (struct-get ptrs len)]
     [new-slots : (Array OptAggregatePointer)
-      (make-array
+      (array.make-array
         OptAggregatePointer
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+        (opt-aggregate-list-next-capacity (array.array-length old-slots)))]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array.array-set! new-slots i (array.array-ref old-slots i))
           (set! i (+ i 1))))
       (OptAggregatePointerList new-slots len))))
 
@@ -2148,30 +2149,30 @@
   (let
     [slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
     [len : i64 (struct-get ptrs len)]
-    (if (>= len (array-length slots))
+    (if (>= len (array.array-length slots))
       (opt-aggregate-pointer-list-push
         (opt-aggregate-pointer-list-grow ptrs)
         ptr)
       (begin
-        (array-set! slots len ptr)
+        (array.array-set! slots len ptr)
         (OptAggregatePointerList slots (+ len 1))))))
 
 (define (opt-aggregate-access-list-with-capacity [capacity : i64]) : OptAggregateAccessList
-  (OptAggregateAccessList (make-array OptAggregateAccess capacity) 0))
+  (OptAggregateAccessList (array.make-array OptAggregateAccess capacity) 0))
 
 (define (opt-aggregate-access-list-grow [accesses : OptAggregateAccessList]) : OptAggregateAccessList
   (let
     [old-slots : (Array OptAggregateAccess) (struct-get accesses slots)]
     [len : i64 (struct-get accesses len)]
     [new-slots : (Array OptAggregateAccess)
-      (make-array
+      (array.make-array
         OptAggregateAccess
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+        (opt-aggregate-list-next-capacity (array.array-length old-slots)))]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array.array-set! new-slots i (array.array-ref old-slots i))
           (set! i (+ i 1))))
       (OptAggregateAccessList new-slots len))))
 
@@ -2181,17 +2182,17 @@
   (let
     [slots : (Array OptAggregateAccess) (struct-get accesses slots)]
     [len : i64 (struct-get accesses len)]
-    (if (>= len (array-length slots))
+    (if (>= len (array.array-length slots))
       (opt-aggregate-access-list-push
         (opt-aggregate-access-list-grow accesses)
         access)
       (begin
-        (array-set! slots len access)
+        (array.array-set! slots len access)
         (OptAggregateAccessList slots (+ len 1))))))
 
 (define (opt-aggregate-candidate-list-with-capacity [capacity : i64]) : OptAggregateAllocCandidateList
   (OptAggregateAllocCandidateList
-    (make-array OptAggregateAllocCandidate capacity)
+    (array.make-array OptAggregateAllocCandidate capacity)
     0))
 
 (define (opt-aggregate-candidate-list-grow
@@ -2201,14 +2202,14 @@
       (struct-get candidates slots)]
     [len : i64 (struct-get candidates len)]
     [new-slots : (Array OptAggregateAllocCandidate)
-      (make-array
+      (array.make-array
         OptAggregateAllocCandidate
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+        (opt-aggregate-list-next-capacity (array.array-length old-slots)))]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array.array-set! new-slots i (array.array-ref old-slots i))
           (set! i (+ i 1))))
       (OptAggregateAllocCandidateList new-slots len))))
 
@@ -2218,16 +2219,18 @@
   (let
     [slots : (Array OptAggregateAllocCandidate) (struct-get candidates slots)]
     [len : i64 (struct-get candidates len)]
-    (if (>= len (array-length slots))
+    (if (>= len (array.array-length slots))
       (opt-aggregate-candidate-list-push
         (opt-aggregate-candidate-list-grow candidates)
         candidate)
       (begin
-        (array-set! slots len candidate)
+        (array.array-set! slots len candidate)
         (OptAggregateAllocCandidateList slots (+ len 1))))))
 
 (define (opt-aggregate-promote-slot-list-with-capacity [capacity : i64]) : OptAggregatePromoteSlotList
-  (OptAggregatePromoteSlotList (make-array OptAggregatePromoteSlot capacity) 0))
+  (OptAggregatePromoteSlotList
+    (array.make-array OptAggregatePromoteSlot capacity)
+    0))
 
 (define (opt-aggregate-promote-slot-list-grow
   [slots-list : OptAggregatePromoteSlotList]) : OptAggregatePromoteSlotList
@@ -2235,14 +2238,14 @@
     [old-slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
     [len : i64 (struct-get slots-list len)]
     [new-slots : (Array OptAggregatePromoteSlot)
-      (make-array
+      (array.make-array
         OptAggregatePromoteSlot
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
+        (opt-aggregate-list-next-capacity (array.array-length old-slots)))]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array.array-set! new-slots i (array.array-ref old-slots i))
           (set! i (+ i 1))))
       (OptAggregatePromoteSlotList new-slots len))))
 
@@ -2252,12 +2255,12 @@
   (let
     [slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
     [len : i64 (struct-get slots-list len)]
-    (if (>= len (array-length slots))
+    (if (>= len (array.array-length slots))
       (opt-aggregate-promote-slot-list-push
         (opt-aggregate-promote-slot-list-grow slots-list)
         slot)
       (begin
-        (array-set! slots len slot)
+        (array.array-set! slots len slot)
         (OptAggregatePromoteSlotList slots (+ len 1))))))
 
 (define (opt-aggregate-pointer-list-lookup-from
@@ -2266,7 +2269,7 @@
   [index : i64]) : OptMaybeI64
   (if (< index 0)
     (OptNoI64)
-    (match (array-ref (struct-get ptrs slots) index)
+    (match (array.array-ref (struct-get ptrs slots) index)
       [(OptAggregatePointer ptr-var offset)
         (if (= ptr-var var)
           (OptSomeI64 offset)
@@ -2312,10 +2315,13 @@
   [ptrs : OptAggregatePointerList]
   [values : (Array CompilerIrValue)]
   [index : i64]) : bool
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     false
     (or
-      (opt-aggregate-value-has-pointer? base ptrs (array-ref values index))
+      (opt-aggregate-value-has-pointer?
+        base
+        ptrs
+        (array.array-ref values index))
       (opt-aggregate-call-args-array-has-pointer? base ptrs values (+ index 1)))))
 
 (define (opt-aggregate-call-args-has-pointer?
@@ -2773,22 +2779,22 @@
     [right-count : i64 (struct-get right len)]
     [total : i64 (+ left-count right-count)]
     [slots : (Array OptAggregateAllocCandidate)
-      (make-array OptAggregateAllocCandidate total)]
+      (array.make-array OptAggregateAllocCandidate total)]
     [i : i64 0]
     (begin
       (while (< i left-count)
         (begin
-          (array-set! slots i (array-ref (struct-get left slots) i))
+          (array.array-set! slots i (array.array-ref (struct-get left slots) i))
           (set! i (+ i 1))))
       (let
         [j : i64 0]
         (begin
           (while (< j right-count)
             (begin
-              (array-set!
+              (array.array-set!
                 slots
                 (+ left-count j)
-                (array-ref (struct-get right slots) j))
+                (array.array-ref (struct-get right slots) j))
               (set! j (+ j 1))))
           (OptAggregateAllocCandidateList slots total))))))
 
@@ -2825,7 +2831,7 @@
   (if (>= index (struct-get accesses len))
     0
     (+
-      (match (array-ref (struct-get accesses slots) index)
+      (match (array.array-ref (struct-get accesses slots) index)
         [(OptAggregateLoad _ _ _) 1]
         [_ 0])
       (opt-aggregate-access-list-load-count-from accesses (+ index 1)))))
@@ -2840,7 +2846,7 @@
   (if (>= index (struct-get accesses len))
     0
     (+
-      (match (array-ref (struct-get accesses slots) index)
+      (match (array.array-ref (struct-get accesses slots) index)
         [(OptAggregateStore _ _) 1]
         [_ 0])
       (opt-aggregate-access-list-store-count-from accesses (+ index 1)))))
@@ -2885,7 +2891,7 @@
     (begin
       (while (< index candidate-count)
         (begin
-          (match (array-ref candidate-slots index)
+          (match (array.array-ref candidate-slots index)
             [(OptAggregateAllocCandidate base ty size _ _)
               (if (opt-aggregate-stack-promote-type? ty)
                 (let
@@ -2908,7 +2914,7 @@
   [index : i64]) : OptMaybeI64
   (if (>= index (struct-get slot-list len))
     (OptNoI64)
-    (match (array-ref (struct-get slot-list slots) index)
+    (match (array.array-ref (struct-get slot-list slots) index)
       [(OptAggregatePromoteSlot found storage)
         (if (= found base)
           (OptSomeI64 storage)
@@ -3029,7 +3035,7 @@
   (if (>= index (struct-get candidates len))
     (OptNoAggregateLocation)
     (match (opt-aggregate-candidate-location
-      (array-ref (struct-get candidates slots) index)
+      (array.array-ref (struct-get candidates slots) index)
       value)
       [(OptSomeAggregateLocation base offset)
         (OptSomeAggregateLocation base offset)]
@@ -3835,10 +3841,10 @@
   [a : (Array CompilerIrValue)]
   [b : (Array CompilerIrValue)]
   [index : i64]) : bool
-  (if (>= index (array-length a))
+  (if (>= index (array.array-length a))
     true
     (and
-      (opt-value-eq (array-ref a index) (array-ref b index))
+      (opt-value-eq (array.array-ref a index) (array.array-ref b index))
       (opt-call-args-array-eq a b (+ index 1)))))
 
 (define (opt-call-args-eq [a : CompilerIrCallArgs] [b : CompilerIrCallArgs]) : bool
@@ -3859,7 +3865,7 @@
       (match b
         [(IrCallArgsArray bv)
           (and
-            (= (array-length av) (array-length bv))
+            (= (array.array-length av) (array.array-length bv))
             (opt-call-args-array-eq av bv 0))]
         [_ false])]))
 
@@ -4873,10 +4879,13 @@
   [src : (Array CompilerIrValue)]
   [dst : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length src))
+  (if (>= index (array.array-length src))
     unit
     (begin
-      (array-set! dst index (opt-copy-resolve env (array-ref src index)))
+      (array.array-set!
+        dst
+        index
+        (opt-copy-resolve env (array.array-ref src index)))
       (opt-copy-subst-call-args-array env src dst (+ index 1)))))
 
 (define (opt-copy-subst-call-args
@@ -4890,7 +4899,7 @@
     [(IrCallArgsArray values)
       (let
         [out : (Array CompilerIrValue)
-          (make-array CompilerIrValue (array-length values))]
+          (array.make-array CompilerIrValue (array.array-length values))]
         (begin
           (opt-copy-subst-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
@@ -6009,7 +6018,7 @@
       (match block
         [(IrBlock label _)
           (begin
-            (array-set! labels index label)
+            (array.array-set! labels index label)
             (opt-cfg-index-fill-labels!
               (box-get rest)
               (hashmap.string-i64-map-put ids label index)
@@ -6057,7 +6066,7 @@
     [(OptI64Nil) index]
     [(OptI64Cons head rest)
       (begin
-        (array-set! edges index head)
+        (array.array-set! edges index head)
         (opt-i64-list-fill-edges! (box-get rest) edges (+ index 1)))]))
 
 (define (opt-cfg-row-list-total
@@ -6071,7 +6080,7 @@
       rows
       count
       (+ index 1)
-      (+ total (opt-i64-list-count (array-ref rows index))))))
+      (+ total (opt-i64-list-count (array.array-ref rows index))))))
 
 (define (opt-cfg-i64-list-array-fill-empty!
   [rows : (Array OptI64List)]
@@ -6081,7 +6090,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! rows i (OptI64Nil))
+          (array.array-set! rows i (OptI64Nil))
           (set! i (+ i 1))))
       unit)))
 
@@ -6108,10 +6117,10 @@
       (begin
         (match (hashmap.string-i64-map-get ids s)
           [(hashmap.StringI64MapFound idx)
-            (array-set!
+            (array.array-set!
               pred-rows
               idx
-              (opt-i64-list-add (array-ref pred-rows idx) source-id))]
+              (opt-i64-list-add (array.array-ref pred-rows idx) source-id))]
           [(hashmap.StringI64MapMissing) unit])
         (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
 
@@ -6132,7 +6141,7 @@
                 block
                 (opt-cfg-entry-label (box-get rest)))]
             (begin
-              (array-set!
+              (array.array-set!
                 succ-rows
                 index
                 (opt-cfg-index-label-set-to-ids succs ids))
@@ -6159,22 +6168,22 @@
   [row : i64]
   [edge-index : i64]) : unit
   (if (>= row count)
-    (array-set! offsets count edge-index)
+    (array.array-set! offsets count edge-index)
     (let
       [next-edge : i64
         (opt-i64-list-fill-edges!
-          (opt-i64-list-reverse (array-ref rows row))
+          (opt-i64-list-reverse (array.array-ref rows row))
           edges
           edge-index)]
       (begin
-        (array-set! offsets row edge-index)
+        (array.array-set! offsets row edge-index)
         (opt-cfg-csr-fill-rows! rows count offsets edges (+ row 1) next-edge)))))
 
 (define (opt-cfg-csr-build [rows : (Array OptI64List)] [count : i64]) : OptCfgCsr
   (let
     [edge-count : i64 (opt-cfg-row-list-total rows count 0 0)]
-    [offsets : (Array i64) (make-array i64 (+ count 1))]
-    [edges : (Array i64) (make-array i64 edge-count)]
+    [offsets : (Array i64) (array.make-array i64 (+ count 1))]
+    [edges : (Array i64) (array.make-array i64 edge-count)]
     (begin
       (opt-cfg-csr-fill-rows! rows count offsets edges 0 0)
       (OptCfgCsr offsets edges))))
@@ -6188,7 +6197,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! values i value)
+          (array.array-set! values i value)
           (set! i (+ i 1))))
       unit)))
 
@@ -6198,7 +6207,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! values i value)
+          (array.array-set! values i value)
           (set! i (+ i 1))))
       unit)))
 
@@ -6221,7 +6230,7 @@
         succs
         reachable
         postorder
-        (array-ref (struct-get succs edges) edge)
+        (array.array-ref (struct-get succs edges) edge)
         post-count))))
 
 (define (opt-cfg-index-dfs-postorder!
@@ -6230,14 +6239,14 @@
   [postorder : (Array i64)]
   [id : i64]
   [post-count : i64]) : i64
-  (if (array-ref reachable id)
+  (if (array.array-ref reachable id)
     post-count
     (let
-      [edge : i64 (array-ref (struct-get succs offsets) id)]
-      [end : i64 (array-ref (struct-get succs offsets) (+ id 1))]
+      [edge : i64 (array.array-ref (struct-get succs offsets) id)]
+      [end : i64 (array.array-ref (struct-get succs offsets) (+ id 1))]
       [next-count : i64
         (begin
-          (array-set! reachable id true)
+          (array.array-set! reachable id true)
           (opt-cfg-index-dfs-edges!
             succs
             reachable
@@ -6246,7 +6255,7 @@
             end
             post-count))]
       (begin
-        (array-set! postorder next-count id)
+        (array.array-set! postorder next-count id)
         (+ next-count 1)))))
 
 (define (opt-cfg-index-fill-rpo!
@@ -6257,7 +6266,10 @@
   (if (>= index reach-count)
     unit
     (begin
-      (array-set! rpo index (array-ref postorder (- (- reach-count 1) index)))
+      (array.array-set!
+        rpo
+        index
+        (array.array-ref postorder (- (- reach-count 1) index)))
       (opt-cfg-index-fill-rpo! postorder rpo reach-count (+ index 1)))))
 
 (define (opt-cfg-index-fill-rpo-num!
@@ -6268,25 +6280,25 @@
   (if (>= slot reach-count)
     unit
     (begin
-      (array-set! rpo-num (array-ref rpo slot) slot)
+      (array.array-set! rpo-num (array.array-ref rpo slot) slot)
       (opt-cfg-index-fill-rpo-num! rpo rpo-num reach-count (+ slot 1)))))
 
 (define (opt-cfg-index-build [blocks : CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (compiler-ir-block-list-count blocks)]
-    [labels : (Array String) (make-array String count)]
+    [labels : (Array String) (array.make-array String count)]
     [ids : hashmap.StringI64Map
       (opt-cfg-index-fill-labels!
         blocks
         (hashmap.string-i64-map-with-capacity (opt-pred-map-capacity count))
         labels
         0)]
-    [succ-rows : (Array OptI64List) (make-array OptI64List count)]
-    [pred-rows : (Array OptI64List) (make-array OptI64List count)]
-    [reachable : (Array bool) (make-array bool count)]
-    [postorder : (Array i64) (make-array i64 count)]
-    [rpo : (Array i64) (make-array i64 count)]
-    [rpo-num : (Array i64) (make-array i64 count)]
+    [succ-rows : (Array OptI64List) (array.make-array OptI64List count)]
+    [pred-rows : (Array OptI64List) (array.make-array OptI64List count)]
+    [reachable : (Array bool) (array.make-array bool count)]
+    [postorder : (Array i64) (array.make-array i64 count)]
+    [rpo : (Array i64) (array.make-array i64 count)]
+    [rpo-num : (Array i64) (array.make-array i64 count)]
     [reach-count : i64 0]
     (begin
       (opt-cfg-i64-list-array-fill-empty! succ-rows count)
@@ -6318,11 +6330,11 @@
             rpo-num))))))
 
 (define (opt-cfg-index-block-count [index : OptCfgIndex]) : i64
-  (array-length (struct-get index labels)))
+  (array.array-length (struct-get index labels)))
 
 (define (opt-cfg-index-label [index : OptCfgIndex] [id : i64]) : String
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
-    (array-ref (struct-get index labels) id)
+    (array.array-ref (struct-get index labels) id)
     ""))
 
 (define (opt-cfg-index-id [index : OptCfgIndex] [label : String]) : OptMaybeI64
@@ -6345,7 +6357,9 @@
       end
       (opt-label-add
         labels
-        (opt-cfg-index-label index (array-ref (struct-get csr edges) edge))))))
+        (opt-cfg-index-label
+          index
+          (array.array-ref (struct-get csr edges) edge))))))
 
 (define (opt-cfg-index-row-labels
   [index : OptCfgIndex]
@@ -6355,8 +6369,8 @@
     (opt-cfg-index-row-labels-from
       index
       csr
-      (array-ref (struct-get csr offsets) id)
-      (array-ref (struct-get csr offsets) (+ id 1))
+      (array.array-ref (struct-get csr offsets) id)
+      (array.array-ref (struct-get csr offsets) (+ id 1))
       (OptLabelNil))
     (OptLabelNil)))
 
@@ -6374,7 +6388,7 @@
 
 (define (opt-cfg-index-reachable? [index : OptCfgIndex] [label : String]) : bool
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id) (array-ref (struct-get index reachable) id)]
+    [(OptSomeI64 id) (array.array-ref (struct-get index reachable) id)]
     [(OptNoI64) false]))
 
 (define (opt-cfg-index-reachable-labels-from
@@ -6386,7 +6400,7 @@
     (opt-cfg-index-reachable-labels-from
       index
       (+ id 1)
-      (if (array-ref (struct-get index reachable) id)
+      (if (array.array-ref (struct-get index reachable) id)
         (opt-label-add labels (opt-cfg-index-label index id))
         labels))))
 
@@ -6395,12 +6409,12 @@
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot (struct-get index reach-count)))
-    (array-ref (struct-get index rpo) slot)
+    (array.array-ref (struct-get index rpo) slot)
     (- 0 1)))
 
 (define (opt-cfg-index-rpo-num [index : OptCfgIndex] [id : i64]) : i64
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
-    (array-ref (struct-get index rpo-num) id)
+    (array.array-ref (struct-get index rpo-num) id)
     (- 0 1)))
 
 (define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : String
@@ -6504,10 +6518,11 @@
 (define (opt-bits-set! [row : (Array i64)] [base : i64] [bit : i64]) : unit
   (let
     [w : i64 (+ base (/ bit 63))]
-    (array-set! row w (bit-or (array-ref row w) (shl 1 (% bit 63))))))
+    (array.array-set! row w (bit-or (array.array-ref row w) (shl 1 (% bit 63))))))
 
 (define (opt-bits-test [row : (Array i64)] [base : i64] [bit : i64]) : bool
-  (not (= (bit-and (array-ref row (+ base (/ bit 63))) (shl 1 (% bit 63))) 0)))
+  (not
+    (= (bit-and (array.array-ref row (+ base (/ bit 63))) (shl 1 (% bit 63))) 0)))
 
 (define (opt-bits-clear! [row : (Array i64)] [base : i64] [words : i64]) : unit
   (let
@@ -6515,7 +6530,7 @@
     (begin
       (while (< w words)
         (begin
-          (array-set! row (+ base w) 0)
+          (array.array-set! row (+ base w) 0)
           (set! w (+ w 1))))
       unit)))
 
@@ -6527,7 +6542,7 @@
     (begin
       (while (< w words)
         (begin
-          (array-set!
+          (array.array-set!
             row
             (+ base w)
             (if (= w last)
@@ -6547,12 +6562,12 @@
     (begin
       (while (< w words)
         (begin
-          (array-set!
+          (array.array-set!
             dst
             (+ dst-base w)
             (bit-and
-              (array-ref dst (+ dst-base w))
-              (array-ref src (+ src-base w))))
+              (array.array-ref dst (+ dst-base w))
+              (array.array-ref src (+ src-base w))))
           (set! w (+ w 1))))
       unit)))
 
@@ -6567,7 +6582,10 @@
     (begin
       (while (< w words)
         (begin
-          (array-set! dst (+ dst-base w) (array-ref src (+ src-base w)))
+          (array.array-set!
+            dst
+            (+ dst-base w)
+            (array.array-ref src (+ src-base w)))
           (set! w (+ w 1))))
       unit)))
 
@@ -6583,7 +6601,9 @@
     (begin
       (while (and same (< w words))
         (begin
-          (if (= (array-ref a (+ a-base w)) (array-ref b (+ b-base w)))
+          (if (=
+            (array.array-ref a (+ a-base w))
+            (array.array-ref b (+ b-base w)))
             unit
             (set! same false))
           (set! w (+ w 1))))
@@ -6610,7 +6630,7 @@
     (begin
       (while (< id count)
         (begin
-          (if (array-ref (struct-get index reachable) id)
+          (if (array.array-ref (struct-get index reachable) id)
             (opt-bits-set! row base id)
             unit)
           (set! id (+ id 1))))
@@ -6626,7 +6646,7 @@
     [base : i64 (opt-dom-row-base words id)]
     (begin
       (opt-bits-clear! rows base words)
-      (if (array-ref (struct-get index reachable) id)
+      (if (array.array-ref (struct-get index reachable) id)
         (if (= id entry-id)
           (opt-bits-set! rows base id)
           (opt-dom-fill-reachable-universe! index rows base))
@@ -6655,17 +6675,17 @@
   [id : i64]) : unit
   (let
     [preds : OptCfgCsr (struct-get index preds)]
-    [edge : i64 (array-ref (struct-get preds offsets) id)]
-    [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+    [edge : i64 (array.array-ref (struct-get preds offsets) id)]
+    [end : i64 (array.array-ref (struct-get preds offsets) (+ id 1))]
     [saw : bool false]
     (begin
       (opt-bits-clear! scratch 0 words)
       (opt-dom-fill-reachable-universe! index scratch 0)
       (while (< edge end)
         (let
-          [pred : i64 (array-ref (struct-get preds edges) edge)]
+          [pred : i64 (array.array-ref (struct-get preds edges) edge)]
           (begin
-            (if (array-ref (struct-get index reachable) pred)
+            (if (array.array-ref (struct-get index reachable) pred)
               (begin
                 (opt-bits-and-into!
                   scratch
@@ -6688,7 +6708,9 @@
   [words : i64]
   [entry-id : i64]
   [id : i64]) : bool
-  (if (or (= id entry-id) (not (array-ref (struct-get index reachable) id)))
+  (if (or
+    (= id entry-id)
+    (not (array.array-ref (struct-get index reachable) id)))
     false
     (let
       [base : i64 (opt-dom-row-base words id)]
@@ -6743,9 +6765,9 @@
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [words : i64 (opt-bits-words count)]
-    [rows : (Array i64) (make-array i64 (* count words))]
-    [scratch : (Array i64) (make-array i64 words)]
-    [empty : (Array i64) (make-array i64 0)]
+    [rows : (Array i64) (array.make-array i64 (* count words))]
+    [scratch : (Array i64) (array.make-array i64 words)]
+    [empty : (Array i64) (array.make-array i64 0)]
     [entry-id : i64 (- 0 1)]
     (begin
       (match (opt-cfg-index-id index entry-label)
@@ -6771,11 +6793,11 @@
           (while (>
             (opt-cfg-index-rpo-num index a)
             (opt-cfg-index-rpo-num index b))
-            (set! a (array-ref idom a)))
+            (set! a (array.array-ref idom a)))
           (while (>
             (opt-cfg-index-rpo-num index b)
             (opt-cfg-index-rpo-num index a))
-            (set! b (array-ref idom b)))))
+            (set! b (array.array-ref idom b)))))
       a)))
 
 (define (opt-dom-idom-from-preds
@@ -6784,17 +6806,17 @@
   [id : i64]) : i64
   (let
     [preds : OptCfgCsr (struct-get index preds)]
-    [edge : i64 (array-ref (struct-get preds offsets) id)]
-    [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+    [edge : i64 (array.array-ref (struct-get preds offsets) id)]
+    [end : i64 (array.array-ref (struct-get preds offsets) (+ id 1))]
     [candidate : i64 (- 0 1)]
     (begin
       (while (< edge end)
         (let
-          [pred : i64 (array-ref (struct-get preds edges) edge)]
+          [pred : i64 (array.array-ref (struct-get preds edges) edge)]
           (begin
             (if (and
-              (array-ref (struct-get index reachable) pred)
-              (>= (array-ref idom pred) 0))
+              (array.array-ref (struct-get index reachable) pred)
+              (>= (array.array-ref idom pred) 0))
               (if (< candidate 0)
                 (set! candidate pred)
                 (set!
@@ -6820,9 +6842,9 @@
             (if (and
               (!= id entry-id)
               (>= new-idom 0)
-              (!= (array-ref idom id) new-idom))
+              (!= (array.array-ref idom id) new-idom))
               (begin
-                (array-set! idom id new-idom)
+                (array.array-set! idom id new-idom)
                 (set! changed true))
               unit)
             (set! slot (+ slot 1)))))
@@ -6849,16 +6871,16 @@
     (begin
       (while (< id count)
         (let
-          [parent : i64 (array-ref idom id)]
+          [parent : i64 (array.array-ref idom id)]
           (begin
             (if (and
-              (array-ref (struct-get index reachable) id)
+              (array.array-ref (struct-get index reachable) id)
               (>= parent 0)
               (!= parent id))
-              (array-set!
+              (array.array-set!
                 rows
                 parent
-                (opt-i64-list-add (array-ref rows parent) id))
+                (opt-i64-list-add (array.array-ref rows parent) id))
               unit)
             (set! id (+ id 1)))))
       unit)))
@@ -6871,10 +6893,10 @@
   [time : i64]) : i64
   (let
     [next : i64 (+ time 1)]
-    [edge : i64 (array-ref (struct-get children offsets) id)]
-    [end : i64 (array-ref (struct-get children offsets) (+ id 1))]
+    [edge : i64 (array.array-ref (struct-get children offsets) id)]
+    [end : i64 (array.array-ref (struct-get children offsets) (+ id 1))]
     (begin
-      (array-set! tin id time)
+      (array.array-set! tin id time)
       (while (< edge end)
         (begin
           (set!
@@ -6883,10 +6905,10 @@
               children
               tin
               tout
-              (array-ref (struct-get children edges) edge)
+              (array.array-ref (struct-get children edges) edge)
               next))
           (set! edge (+ edge 1))))
-      (array-set! tout id next)
+      (array.array-set! tout id next)
       next)))
 
 (define (opt-dom-build-euler!
@@ -6897,7 +6919,7 @@
   [entry-id : i64]) : unit
   (let
     [count : i64 (opt-cfg-index-block-count index)]
-    [child-rows : (Array OptI64List) (make-array OptI64List count)]
+    [child-rows : (Array OptI64List) (array.make-array OptI64List count)]
     (begin
       (opt-cfg-fill-i64! tin count (- 0 1))
       (opt-cfg-fill-i64! tout count (- 0 1))
@@ -6915,10 +6937,10 @@
 (define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : String]) : OptDomInfo
   (let
     [count : i64 (opt-cfg-index-block-count index)]
-    [idom : (Array i64) (make-array i64 count)]
-    [tin : (Array i64) (make-array i64 count)]
-    [tout : (Array i64) (make-array i64 count)]
-    [empty : (Array i64) (make-array i64 0)]
+    [idom : (Array i64) (array.make-array i64 count)]
+    [tin : (Array i64) (array.make-array i64 count)]
+    [tout : (Array i64) (array.make-array i64 count)]
+    [empty : (Array i64) (array.make-array i64 0)]
     [entry-id : i64 (- 0 1)]
     (begin
       (opt-cfg-fill-i64! idom count (- 0 1))
@@ -6927,9 +6949,9 @@
         [(OptNoI64) unit])
       (if (and
         (>= entry-id 0)
-        (array-ref (struct-get index reachable) entry-id))
+        (array.array-ref (struct-get index reachable) entry-id))
         (begin
-          (array-set! idom entry-id entry-id)
+          (array.array-set! idom entry-id entry-id)
           (opt-dom-idom-fixpoint! index idom entry-id (+ count 1))
           (opt-dom-build-euler! index idom tin tout entry-id))
         (begin
@@ -6950,13 +6972,13 @@
       (>= label-id 0)
       (< label-id count))
       (if (and
-        (array-ref (struct-get index reachable) dominator-id)
-        (array-ref (struct-get index reachable) label-id))
+        (array.array-ref (struct-get index reachable) dominator-id)
+        (array.array-ref (struct-get index reachable) label-id))
         (let
-          [dom-tin : i64 (array-ref (struct-get info tin) dominator-id)]
-          [dom-tout : i64 (array-ref (struct-get info tout) dominator-id)]
-          [label-tin : i64 (array-ref (struct-get info tin) label-id)]
-          [label-tout : i64 (array-ref (struct-get info tout) label-id)]
+          [dom-tin : i64 (array.array-ref (struct-get info tin) dominator-id)]
+          [dom-tout : i64 (array.array-ref (struct-get info tout) dominator-id)]
+          [label-tin : i64 (array.array-ref (struct-get info tin) label-id)]
+          [label-tout : i64 (array.array-ref (struct-get info tout) label-id)]
           (and
             (>= dom-tin 0)
             (>= label-tin 0)
@@ -6978,8 +7000,8 @@
       (>= label-id 0)
       (< label-id count))
       (if (and
-        (array-ref (struct-get index reachable) dominator-id)
-        (array-ref (struct-get index reachable) label-id))
+        (array.array-ref (struct-get index reachable) dominator-id)
+        (array.array-ref (struct-get index reachable) label-id))
         (opt-bits-test
           (struct-get info rows)
           (opt-dom-row-base (struct-get info words) label-id)
@@ -7019,7 +7041,7 @@
     [count : i64 (opt-cfg-index-block-count index)]
     (if (>= id count)
       true
-      (if (array-ref (struct-get index reachable) id)
+      (if (array.array-ref (struct-get index reachable) id)
         (let
           [label : String (opt-cfg-index-label index id)]
           [legacy-labels : OptLabelSet (opt-dom-table-lookup legacy label)]
@@ -7164,9 +7186,9 @@
     false
     (let
       [pred-id : i64
-        (array-ref (struct-get (struct-get index preds) edges) edge)]
+        (array.array-ref (struct-get (struct-get index preds) edges) edge)]
       (if (and
-        (array-ref (struct-get index reachable) pred-id)
+        (array.array-ref (struct-get index reachable) pred-id)
         (opt-dom-info-dominates-id? doms label-id pred-id))
         true
         (opt-cfg-frontier-has-reachable-pred-id?
@@ -7184,13 +7206,13 @@
   (let
     [preds : OptCfgCsr (struct-get index preds)]
     (and
-      (array-ref (struct-get index reachable) block-id)
+      (array.array-ref (struct-get index reachable) block-id)
       (opt-cfg-frontier-has-reachable-pred-id?
         index
         doms
         label-id
-        (array-ref (struct-get preds offsets) block-id)
-        (array-ref (struct-get preds offsets) (+ block-id 1)))
+        (array.array-ref (struct-get preds offsets) block-id)
+        (array.array-ref (struct-get preds offsets) (+ block-id 1)))
       (not
         (and
           (!= label-id block-id)
@@ -7516,27 +7538,27 @@
       (begin
         (match def
           [(OptVarDef var _ _)
-            (if (and (>= var 0) (< var (array-length items)))
-              (array-set! items var (OptSomeVarDef def))
+            (if (and (>= var 0) (< var (array.array-length items)))
+              (array.array-set! items var (OptSomeVarDef def))
               unit)])
         (opt-var-defs-index-fill! items (box-get rest)))]))
 
 (define (opt-var-defs-index [defs : OptVarDefList]) : (Array OptMaybeVarDef)
   (let
     [count : i64 (+ (opt-var-defs-max-id defs (- 0 1)) 1)]
-    [items : (Array OptMaybeVarDef) (make-array OptMaybeVarDef count)]
+    [items : (Array OptMaybeVarDef) (array.make-array OptMaybeVarDef count)]
     [i : i64 0]
     (begin
       (while (< i count)
         (begin
-          (array-set! items i (OptNoVarDef))
+          (array.array-set! items i (OptNoVarDef))
           (set! i (+ i 1))))
       (opt-var-defs-index-fill! items defs)
       items)))
 
 (define (opt-var-def-lookup [defs : (Array OptMaybeVarDef)] [var : i64]) : OptMaybeVarDef
-  (if (and (>= var 0) (< var (array-length defs)))
-    (array-ref defs var)
+  (if (and (>= var 0) (< var (array.array-length defs)))
+    (array.array-ref defs var)
     (OptNoVarDef)))
 
 (define (opt-verify-var-use
@@ -7614,12 +7636,12 @@
   [use-block : String]
   [use-pos : i64]
   [index : i64]) : ResultCompilerOptimizeVerify
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     (OkCompilerOptimizeVerify)
     (match (opt-verify-value-use
       defs
       doms
-      (array-ref values index)
+      (array.array-ref values index)
       use-block
       use-pos)
       [(OkCompilerOptimizeVerify)
@@ -8325,14 +8347,15 @@
 
 (define (opt-ssa-label-members-new [index : OptCfgIndex]) : (Array bool)
   (let
-    [members : (Array bool) (make-array bool (opt-cfg-index-block-count index))]
+    [members : (Array bool)
+      (array.make-array bool (opt-cfg-index-block-count index))]
     (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
+      (opt-cfg-fill-bool! members (array.array-length members) false)
       members)))
 
 (define (opt-ssa-label-member? [members : (Array bool)] [id : i64]) : bool
-  (if (and (>= id 0) (< id (array-length members)))
-    (array-ref members id)
+  (if (and (>= id 0) (< id (array.array-length members)))
+    (array.array-ref members id)
     false))
 
 (define (opt-ssa-label-add-with-members
@@ -8345,7 +8368,7 @@
       (if (opt-ssa-label-member? members id)
         labels
         (begin
-          (array-set! members id true)
+          (array.array-set! members id true)
           (OptLabelCons label (box labels))))]
     [(OptNoI64) (opt-label-add labels label)]))
 
@@ -8359,8 +8382,8 @@
       (begin
         (match (opt-cfg-index-id index label)
           [(OptSomeI64 id)
-            (if (and (>= id 0) (< id (array-length members)))
-              (array-set! members id true)
+            (if (and (>= id 0) (< id (array.array-length members)))
+              (array.array-set! members id true)
               unit)]
           [(OptNoI64) unit])
         (opt-ssa-label-mark-members! index members (box-get rest)))]))
@@ -8518,7 +8541,7 @@
           (if (opt-ssa-label-member? site-members id)
             state
             (begin
-              (array-set! site-members id true)
+              (array.array-set! site-members id true)
               (OptSsaPhiInsertState
                 (OptSsaPhiSitesCons
                   (OptSsaPhiSite var label ty next-var)
@@ -8527,7 +8550,7 @@
                 (if (opt-ssa-label-member? work-members id)
                   worklist
                   (begin
-                    (array-set! work-members id true)
+                    (array.array-set! work-members id true)
                     (OptLabelCons label (box worklist))))
                 work-members
                 site-members)))]
@@ -8590,8 +8613,14 @@
         [index : OptCfgIndex (struct-get context index)]
         [worklist : OptLabelSet (opt-ssa-var-blocks-lookup defs var)]
         (begin
-          (opt-cfg-fill-bool! work-members (array-length work-members) false)
-          (opt-cfg-fill-bool! site-members (array-length site-members) false)
+          (opt-cfg-fill-bool!
+            work-members
+            (array.array-length work-members)
+            false)
+          (opt-cfg-fill-bool!
+            site-members
+            (array.array-length site-members)
+            false)
           (opt-ssa-label-mark-members! index work-members worklist)
           (opt-ssa-insert-phis-worklist
             context
@@ -8728,10 +8757,13 @@
   [src : (Array CompilerIrValue)]
   [dst : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length src))
+  (if (>= index (array.array-length src))
     unit
     (begin
-      (array-set! dst index (opt-ssa-rewrite-value env (array-ref src index)))
+      (array.array-set!
+        dst
+        index
+        (opt-ssa-rewrite-value env (array.array-ref src index)))
       (opt-ssa-rewrite-call-args-array env src dst (+ index 1)))))
 
 (define (opt-ssa-rewrite-call-args
@@ -8747,7 +8779,7 @@
     [(IrCallArgsArray values)
       (let
         [out : (Array CompilerIrValue)
-          (make-array CompilerIrValue (array-length values))]
+          (array.make-array CompilerIrValue (array.array-length values))]
         (begin
           (opt-ssa-rewrite-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
@@ -9202,7 +9234,7 @@
   [state : OptSsaRenameState]) : OptSsaRenameState
   (let
     [index : OptCfgIndex (struct-get context index)]
-    [label : String (array-ref (struct-get index labels) id)]
+    [label : String (array.array-ref (struct-get index labels) id)]
     (match (opt-cfg-find-block blocks label)
       [(OptNoBlock) state]
       [(OptSomeBlock block)
@@ -9253,8 +9285,8 @@
         [next-state : OptSsaRenameState
           (if (and
             (not (= child-id parent-id))
-            (array-ref (struct-get index reachable) child-id)
-            (= (array-ref idom child-id) parent-id))
+            (array.array-ref (struct-get index reachable) child-id)
+            (= (array.array-ref idom child-id) parent-id))
             (opt-ssa-rename-id context blocks facts sites child-id env state)
             state)]
         (opt-ssa-rename-children
@@ -9508,7 +9540,9 @@
         (let
           [preds : OptCfgCsr (struct-get index preds)]
           [offsets : (Array i64) (struct-get preds offsets)]
-          (> (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 0))]
+          (>
+            (- (array.array-ref offsets (+ id 1)) (array.array-ref offsets id))
+            0))]
       [(OptNoI64) false])))
 
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -9834,7 +9868,7 @@
   (if (< index 0)
     tail
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [rest-facts : OptGlobalCopyFacts tail]
       [next-tail : OptGlobalCopyFacts
         (match instr
@@ -9902,10 +9936,10 @@
 (define (opt-global-copy-buckets-fill-empty!
   [buckets : (Array OptGlobalCopyFacts)]
   [index : i64]) : unit
-  (if (>= index (array-length buckets))
+  (if (>= index (array.array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGlobalCopyNil))
+      (array.array-set! buckets index (OptGlobalCopyNil))
       (opt-global-copy-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-copy-table-insert!
@@ -9915,11 +9949,11 @@
     [(OptGlobalCopyFact dst _ _ _)
       (let
         [buckets : (Array OptGlobalCopyFacts) (struct-get table buckets)]
-        (if (and (>= dst 0) (< dst (array-length buckets)))
-          (array-set!
+        (if (and (>= dst 0) (< dst (array.array-length buckets)))
+          (array.array-set!
             buckets
             dst
-            (OptGlobalCopyCons fact (box (array-ref buckets dst))))
+            (OptGlobalCopyCons fact (box (array.array-ref buckets dst))))
           unit))]))
 
 (define (opt-global-copy-table-insert-reversed!
@@ -9940,7 +9974,7 @@
         1
         (+ max-dst 1))]
     [buckets : (Array OptGlobalCopyFacts)
-      (make-array OptGlobalCopyFacts capacity)]
+      (array.make-array OptGlobalCopyFacts capacity)]
     [table : OptGlobalCopyFactTable (OptGlobalCopyFactTable buckets)]
     (begin
       (opt-global-copy-buckets-fill-empty! buckets 0)
@@ -9982,9 +10016,9 @@
   [use-pos : i64]) : CompilerIrMaybeValue
   (let
     [buckets : (Array OptGlobalCopyFacts) (struct-get table buckets)]
-    (if (and (>= var 0) (< var (array-length buckets)))
+    (if (and (>= var 0) (< var (array.array-length buckets)))
       (opt-global-copy-lookup-list
-        (array-ref buckets var)
+        (array.array-ref buckets var)
         var
         doms
         use-block-id
@@ -10061,10 +10095,10 @@
   [src : (Array CompilerIrValue)]
   [dst : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length src))
+  (if (>= index (array.array-length src))
     unit
     (begin
-      (array-set!
+      (array.array-set!
         dst
         index
         (opt-global-copy-resolve
@@ -10072,7 +10106,7 @@
           doms
           use-block-id
           use-pos
-          (array-ref src index)))
+          (array.array-ref src index)))
       (opt-global-copy-subst-call-args-array
         facts
         doms
@@ -10100,7 +10134,7 @@
     [(IrCallArgsArray values)
       (let
         [out : (Array CompilerIrValue)
-          (make-array CompilerIrValue (array-length values))]
+          (array.make-array CompilerIrValue (array.array-length values))]
         (begin
           (opt-global-copy-subst-call-args-array
             facts
@@ -10346,7 +10380,7 @@
                 doms
                 block-id
                 (+ index 1)
-                (array-ref slots index))
+                (array.array-ref slots index))
               out))
           (set! index (- index 1))))
       out)))
@@ -10401,7 +10435,7 @@
   (if (< index 0)
     tail
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [rest-facts : OptGlobalExprFacts tail]
       [next-tail : OptGlobalExprFacts
         (match (opt-global-key-for-instr instr)
@@ -10472,16 +10506,16 @@
 (define (opt-global-expr-buckets-fill-empty!
   [buckets : (Array OptGlobalExprFacts)]
   [index : i64]) : unit
-  (if (>= index (array-length buckets))
+  (if (>= index (array.array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGlobalExprNil))
+      (array.array-set! buckets index (OptGlobalExprNil))
       (opt-global-expr-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-expr-bucket-index
   [buckets : (Array OptGlobalExprFacts)]
   [key : OptGlobalExprKey]) : i64
-  (bit-and (opt-global-expr-key-hash key) (- (array-length buckets) 1)))
+  (bit-and (opt-global-expr-key-hash key) (- (array.array-length buckets) 1)))
 
 (define (opt-global-expr-table-insert!
   [table : OptGlobalExprFactTable]
@@ -10491,10 +10525,10 @@
       (let
         [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
         [bucket : i64 (opt-global-expr-bucket-index buckets key)]
-        (array-set!
+        (array.array-set!
           buckets
           bucket
-          (OptGlobalExprCons fact (box (array-ref buckets bucket)))))]))
+          (OptGlobalExprCons fact (box (array.array-ref buckets bucket)))))]))
 
 (define (opt-global-expr-table-insert-reversed!
   [table : OptGlobalExprFactTable]
@@ -10511,7 +10545,7 @@
     [capacity : i64
       (opt-global-fact-bucket-capacity (opt-global-expr-facts-count facts))]
     [buckets : (Array OptGlobalExprFacts)
-      (make-array OptGlobalExprFacts capacity)]
+      (array.make-array OptGlobalExprFacts capacity)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     (begin
       (opt-global-expr-buckets-fill-empty! buckets 0)
@@ -10558,7 +10592,7 @@
   (let
     [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
     (opt-global-expr-lookup-list
-      (array-ref buckets (opt-global-expr-bucket-index buckets key))
+      (array.array-ref buckets (opt-global-expr-bucket-index buckets key))
       key
       dst
       doms
@@ -10622,7 +10656,7 @@
                 doms
                 block-id
                 (+ index 1)
-                (array-ref slots index))
+                (array.array-ref slots index))
               out))
           (set! index (- index 1))))
       out)))
@@ -10747,7 +10781,7 @@
           (set!
             out
             (compiler-ir-instr-cons
-              (opt-cfg-fold-branch (array-ref slots index))
+              (opt-cfg-fold-branch (array.array-ref slots index))
               out))
           (set! index (- index 1))))
       out)))
@@ -10799,7 +10833,9 @@
     (begin
       (while (< index count)
         (begin
-          (set! out (opt-cfg-instr-successors out (array-ref slots index)))
+          (set!
+            out
+            (opt-cfg-instr-successors out (array.array-ref slots index)))
           (set! index (+ index 1))))
       out)))
 
@@ -10824,7 +10860,7 @@
       true
       (not
         (opt-cfg-terminator-instr?
-          (array-ref (struct-get instrs slots) (- count 1)))))))
+          (array.array-ref (struct-get instrs slots) (- count 1)))))))
 
 (define (opt-cfg-block-successors-with-next
   [block : CompilerIrBlock]
@@ -10902,8 +10938,8 @@
       (begin
         (match (opt-cfg-index-id index label)
           [(OptSomeI64 id)
-            (if (and (>= id 0) (< id (array-length members)))
-              (array-set! members id true)
+            (if (and (>= id 0) (< id (array.array-length members)))
+              (array.array-set! members id true)
               unit)]
           [(OptNoI64) unit])
         (opt-loop-body-fill-members! index members (box-get rest)))]))
@@ -10911,8 +10947,8 @@
 (define (opt-loop-body-member-array-contains-id?
   [members : (Array bool)]
   [id : i64]) : bool
-  (if (and (>= id 0) (< id (array-length members)))
-    (array-ref members id)
+  (if (and (>= id 0) (< id (array.array-length members)))
+    (array.array-ref members id)
     false))
 
 (define (opt-loop-body-blocks-from
@@ -10944,9 +10980,10 @@
   [index : OptCfgIndex]
   [labels : OptLabelSet]) : OptLoopBody
   (let
-    [members : (Array bool) (make-array bool (opt-cfg-index-block-count index))]
+    [members : (Array bool)
+      (array.make-array bool (opt-cfg-index-block-count index))]
     (begin
-      (opt-cfg-fill-bool! members (array-length members) false)
+      (opt-cfg-fill-bool! members (array.array-length members) false)
       (opt-loop-body-fill-members! index members labels)
       (OptLoopBody
         labels
@@ -11062,10 +11099,10 @@
       (match (opt-cfg-index-id index pred)
         [(OptSomeI64 pred-id)
           (if (and
-            (array-ref (struct-get index reachable) pred-id)
-            (not (array-ref marks pred-id)))
+            (array.array-ref (struct-get index reachable) pred-id)
+            (not (array.array-ref marks pred-id)))
             (begin
-              (array-set! marks pred-id true)
+              (array.array-set! marks pred-id true)
               (OptNaturalLoopCollectState
                 (opt-label-add body pred)
                 (opt-label-add worklist pred)))
@@ -11116,7 +11153,7 @@
   [marks : (Array bool)]
   [label : String]) : unit
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id) (array-set! marks id true)]
+    [(OptSomeI64 id) (array.array-set! marks id true)]
     [(OptNoI64) unit]))
 
 (define (opt-natural-loop-safe-preheader-block?
@@ -11203,8 +11240,10 @@
   [latch : String]) : OptNaturalLoop
   (let
     [index : OptCfgIndex (struct-get pred-map index)]
-    [marks : (Array bool) (make-array bool (opt-cfg-index-block-count index))]
-    [_clear-marks : unit (opt-cfg-fill-bool! marks (array-length marks) false)]
+    [marks : (Array bool)
+      (array.make-array bool (opt-cfg-index-block-count index))]
+    [_clear-marks : unit
+      (opt-cfg-fill-bool! marks (array.array-length marks) false)]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
     [body-labels : OptLabelSet
@@ -14402,7 +14441,7 @@
           (set!
             out
             (compiler-ir-instr-cons
-              (opt-cfg-clean-instr index (array-ref slots pos))
+              (opt-cfg-clean-instr index (array.array-ref slots pos))
               out))
           (set! pos (- pos 1))))
       out)))
@@ -14484,7 +14523,7 @@
   (if (>= i n)
     unit
     (begin
-      (array-set! slots i (OptSccpUnknown))
+      (array.array-set! slots i (OptSccpUnknown))
       (opt-sccp-env-fill-unknown! slots n (+ i 1)))))
 
 (define (opt-sccp-env-make [cap : i64]) : OptSccpEnv
@@ -14493,7 +14532,7 @@
       (if (< cap 1)
         1
         cap)]
-    [slots : (Array OptSccpValue) (make-array OptSccpValue n)]
+    [slots : (Array OptSccpValue) (array.make-array OptSccpValue n)]
     (begin
       (opt-sccp-env-fill-unknown! slots n 0)
       (OptSccpEnv n slots))))
@@ -14627,7 +14666,7 @@
       (if (if (>= var 0)
         (< var cap)
         false)
-        (array-ref slots var)
+        (array.array-ref slots var)
         (OptSccpUnknown))]))
 
 ;; Mutates the shared lattice array in place and returns the same env. The
@@ -14640,7 +14679,7 @@
         (if (if (>= var 0)
           (< var cap)
           false)
-          (array-set! slots var value)
+          (array.array-set! slots var value)
           unit)
         env)]))
 
@@ -14666,11 +14705,11 @@
     [(OptSccpState cfg-index executable env changed)
       (match (opt-cfg-index-id cfg-index label)
         [(OptSomeI64 id)
-          (if (and (>= id 0) (< id (array-length executable)))
-            (if (array-ref executable id)
+          (if (and (>= id 0) (< id (array.array-length executable)))
+            (if (array.array-ref executable id)
               state
               (begin
-                (array-set! executable id true)
+                (array.array-set! executable id true)
                 (OptSccpState cfg-index executable env true)))
             state)]
         [(OptNoI64) state])]))
@@ -14751,8 +14790,8 @@
         [(OptSomeI64 pred-id)
           (if (and
             (>= pred-id 0)
-            (< pred-id (array-length executable))
-            (array-ref executable pred-id))
+            (< pred-id (array.array-length executable))
+            (array.array-ref executable pred-id))
             (opt-sccp-value state value ty)
             (OptSccpUnknown))]
         [(OptNoI64) (OptSccpUnknown)])]))
@@ -14940,8 +14979,8 @@
         [(IrBlock _ instrs)
           (if (and
             (>= block-id 0)
-            (< block-id (array-length executable))
-            (array-ref executable block-id))
+            (< block-id (array.array-length executable))
+            (array.array-ref executable block-id))
             (opt-sccp-process-instr-seq state instrs)
             state)])]))
 
@@ -14983,7 +15022,7 @@
       (opt-sccp-max-var-params params (opt-sccp-max-var-blocks blocks (- 0 1)))]
     [executable-count : i64
       (opt-cfg-index-block-count (struct-get context index))]
-    [executable-flags : (Array bool) (make-array bool executable-count)]
+    [executable-flags : (Array bool) (array.make-array bool executable-count)]
     [_clear-executable : unit
       (opt-cfg-fill-bool! executable-flags executable-count false)]
     [_entry : unit
@@ -14992,7 +15031,7 @@
         (struct-get context entry-label))
         [(OptSomeI64 entry-id)
           (if (and (>= entry-id 0) (< entry-id executable-count))
-            (array-set! executable-flags entry-id true)
+            (array.array-set! executable-flags entry-id true)
             unit)]
         [(OptNoI64) unit])]
     (OptSccpState
@@ -15102,10 +15141,13 @@
   [src : (Array CompilerIrValue)]
   [dst : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length src))
+  (if (>= index (array.array-length src))
     unit
     (begin
-      (array-set! dst index (opt-sccp-rewrite-value env (array-ref src index)))
+      (array.array-set!
+        dst
+        index
+        (opt-sccp-rewrite-value env (array.array-ref src index)))
       (opt-sccp-rewrite-call-args-array env src dst (+ index 1)))))
 
 (define (opt-sccp-rewrite-call-args
@@ -15121,7 +15163,7 @@
     [(IrCallArgsArray values)
       (let
         [out : (Array CompilerIrValue)
-          (make-array CompilerIrValue (array-length values))]
+          (array.make-array CompilerIrValue (array.array-length values))]
         (begin
           (opt-sccp-rewrite-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
@@ -15483,9 +15525,9 @@
 (define (opt-switch-use-count [uses : (Array i64)] [var : i64]) : i64
   (if (< var 0)
     0
-    (if (>= var (array-length uses))
+    (if (>= var (array.array-length uses))
       0
-      (array-ref uses var))))
+      (array.array-ref uses var))))
 
 (define (opt-switch-index-tag-from-values
   [lhs : CompilerIrValue]
@@ -16192,16 +16234,16 @@
 (define (opt-gvn-buckets-fill-empty!
   [buckets : (Array OptGvnBucket)]
   [index : i64]) : unit
-  (if (>= index (array-length buckets))
+  (if (>= index (array.array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGvnBucketNil))
+      (array.array-set! buckets index (OptGvnBucketNil))
       (opt-gvn-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
   (let
     [buckets : (Array OptGvnBucket)
-      (make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))]
+      (array.make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))]
     (begin
       (opt-gvn-buckets-fill-empty! buckets 0)
       (OptGvnMap buckets))))
@@ -16209,7 +16251,7 @@
 (define (opt-gvn-bucket-index
   [buckets : (Array OptGvnBucket)]
   [key : OptExprKey]) : i64
-  (bit-and (opt-expr-key-hash key) (- (array-length buckets) 1)))
+  (bit-and (opt-expr-key-hash key) (- (array.array-length buckets) 1)))
 
 (define (opt-gvn-table-push!
   [table : OptGvnMap]
@@ -16220,7 +16262,7 @@
       (let
         [buckets : (Array OptGvnBucket) (struct-get table buckets)]
         [bucket : i64 (opt-gvn-bucket-index buckets key)]
-        [old-head : OptGvnBucket (array-ref buckets bucket)]
+        [old-head : OptGvnBucket (array.array-ref buckets bucket)]
         ;; #2357: under #1867 inline-by-value aggregates `array-ref` of a
         ;; memory-backed aggregate returns the element ADDRESS (in-place), not a
         ;; value snapshot the way main's old heap-handle GVN assumed. So the
@@ -16231,7 +16273,10 @@
         [result : OptGvnScopeChanges
           (OptGvnScopeCons (OptGvnScopeChange bucket old-head) (box changes))]
         (begin
-          (array-set! buckets bucket (OptGvnBucketCons entry (box old-head)))
+          (array.array-set!
+            buckets
+            bucket
+            (OptGvnBucketCons entry (box old-head)))
           result))]))
 
 (define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
@@ -16250,7 +16295,7 @@
           (let
             [buckets : (Array OptGvnBucket) (struct-get table buckets)]
             (begin
-              (array-set! buckets bucket old-head)
+              (array.array-set! buckets bucket old-head)
               (opt-gvn-table-restore! table (box-get rest))))])]))
 
 ;; Record a `BinOp`/`UnOp`/CPU probe whose result and operands are all
@@ -16332,7 +16377,7 @@
   (let
     [buckets : (Array OptGvnBucket) (struct-get table buckets)]
     (opt-gvn-lookup-bucket
-      (array-ref buckets (opt-gvn-bucket-index buckets key))
+      (array.array-ref buckets (opt-gvn-bucket-index buckets key))
       key)))
 
 (define (opt-gvn-rewrite-instr
@@ -16422,7 +16467,7 @@
   (let
     [index : OptCfgIndex (struct-get doms index)]
     [count : i64 (opt-cfg-index-block-count index)]
-    [child-rows : (Array OptI64List) (make-array OptI64List count)]
+    [child-rows : (Array OptI64List) (array.make-array OptI64List count)]
     (begin
       (opt-cfg-i64-list-array-fill-empty! child-rows count)
       (opt-dom-child-rows-fill! index (struct-get doms idom) child-rows)
@@ -16431,10 +16476,10 @@
 (define (opt-gvn-block-results-fill-empty!
   [out : (Array OptGvnBlockResult)]
   [index : i64]) : unit
-  (if (>= index (array-length out))
+  (if (>= index (array.array-length out))
     unit
     (begin
-      (array-set! out index (OptGvnNoBlock))
+      (array.array-set! out index (OptGvnNoBlock))
       (opt-gvn-block-results-fill-empty! out (+ index 1)))))
 
 (define (opt-gvn-materialize-blocks
@@ -16449,8 +16494,8 @@
           (let
             [block-id : i64 (opt-gvn-block-id doms label)]
             [material : CompilerIrBlock
-              (if (and (>= block-id 0) (< block-id (array-length out)))
-                (match (array-ref out block-id)
+              (if (and (>= block-id 0) (< block-id (array.array-length out)))
+                (match (array.array-ref out block-id)
                   [(OptGvnSomeBlock rewritten) rewritten]
                   [(OptGvnNoBlock) block])
                 block)]
@@ -16473,7 +16518,7 @@
     [count : i64 (opt-cfg-index-block-count index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : String (array-ref (struct-get index labels) id)]
+        [label : String (array.array-ref (struct-get index labels) id)]
         (match (opt-cfg-find-block blocks label)
           [(OptNoBlock) unit]
           [(OptSomeBlock block)
@@ -16483,7 +16528,7 @@
                   [rewritten : CompilerIrBlock
                     (opt-gvn-rewrite-block table sources block)]
                   (begin
-                    (array-set! out id (OptGvnSomeBlock rewritten))
+                    (array.array-set! out id (OptGvnSomeBlock rewritten))
                     (let
                       [changes : OptGvnScopeChanges
                         (opt-gvn-record-scope-instr-seq-from
@@ -16516,8 +16561,8 @@
   (let
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
-    [edge : i64 (array-ref offsets parent-id)]
-    [end : i64 (array-ref offsets (+ parent-id 1))]
+    [edge : i64 (array.array-ref offsets parent-id)]
+    [end : i64 (array.array-ref offsets (+ parent-id 1))]
     (begin
       (while (< edge end)
         (begin
@@ -16528,7 +16573,7 @@
             sources
             blocks
             out
-            (array-ref edges edge))
+            (array.array-ref edges edge))
           (set! edge (+ edge 1))))
       unit)))
 
@@ -16542,14 +16587,14 @@
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [children : OptCfgCsr (opt-gvn-dom-children doms)]
-    [out : (Array OptGvnBlockResult) (make-array OptGvnBlockResult count)]
+    [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
       (match (opt-cfg-index-id index (struct-get context entry-label))
         [(OptSomeI64 entry-id)
           (if (and
             (>= entry-id 0)
-            (array-ref (struct-get index reachable) entry-id))
+            (array.array-ref (struct-get index reachable) entry-id))
             (opt-gvn-rewrite-id
               context
               children
@@ -17086,15 +17131,15 @@
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
     (let
       [preds : OptCfgCsr (struct-get index preds)]
-      [edge : i64 (array-ref (struct-get preds offsets) id)]
-      [end : i64 (array-ref (struct-get preds offsets) (+ id 1))]
+      [edge : i64 (array.array-ref (struct-get preds offsets) id)]
+      [end : i64 (array.array-ref (struct-get preds offsets) (+ id 1))]
       [count : i64 0]
       (begin
         (while (< edge end)
           (let
-            [pred : i64 (array-ref (struct-get preds edges) edge)]
+            [pred : i64 (array.array-ref (struct-get preds edges) edge)]
             (begin
-              (if (array-ref (struct-get index reachable) pred)
+              (if (array.array-ref (struct-get index reachable) pred)
                 (set! count (+ count 1))
                 unit)
               (set! edge (+ edge 1)))))
@@ -17109,9 +17154,9 @@
   (match (opt-cfg-index-id index label)
     [(OptSomeI64 id)
       (if (and
-        (array-ref (struct-get index reachable) id)
+        (array.array-ref (struct-get index reachable) id)
         (= (opt-divrem-reachable-pred-count index id) 1))
-        (array-set! facts-by-id id facts)
+        (array.array-set! facts-by-id id facts)
         unit)]
     [(OptNoI64) unit]))
 
@@ -17162,19 +17207,19 @@
 (define (opt-divrem-results-fill-empty!
   [out : (Array OptDivRemBlockResult)]
   [index : i64]) : unit
-  (if (>= index (array-length out))
+  (if (>= index (array.array-length out))
     unit
     (begin
-      (array-set! out index (OptDivRemNoBlock))
+      (array.array-set! out index (OptDivRemNoBlock))
       (opt-divrem-results-fill-empty! out (+ index 1)))))
 
 (define (opt-divrem-facts-fill-empty!
   [facts : (Array OptDivRemFacts)]
   [index : i64]) : unit
-  (if (>= index (array-length facts))
+  (if (>= index (array.array-length facts))
     unit
     (begin
-      (array-set! facts index (OptDivRemFactsNil))
+      (array.array-set! facts index (OptDivRemFactsNil))
       (opt-divrem-facts-fill-empty! facts (+ index 1)))))
 
 (define (opt-divrem-process-rpo!
@@ -17191,7 +17236,7 @@
       (let
         [id : i64 (opt-cfg-index-rpo-id index slot)]
         [label : String (opt-cfg-index-label index id)]
-        [facts : OptDivRemFacts (array-ref facts-by-id id)]
+        [facts : OptDivRemFacts (array.array-ref facts-by-id id)]
         (begin
           (match (opt-cfg-find-block blocks label)
             [(OptSomeBlock block)
@@ -17201,7 +17246,7 @@
                 (match rewrite
                   [(OptDivRemBlockRewrite rewritten final-facts)
                     (begin
-                      (array-set! out id (OptDivRemSomeBlock rewritten))
+                      (array.array-set! out id (OptDivRemSomeBlock rewritten))
                       (opt-divrem-propagate-block!
                         index
                         facts-by-id
@@ -17230,8 +17275,8 @@
             [material : CompilerIrBlock
               (match (opt-cfg-index-id (struct-get context index) label)
                 [(OptSomeI64 id)
-                  (if (and (>= id 0) (< id (array-length out)))
-                    (match (array-ref out id)
+                  (if (and (>= id 0) (< id (array.array-length out)))
+                    (match (array.array-ref out id)
                       [(OptDivRemSomeBlock rewritten) rewritten]
                       [(OptDivRemNoBlock) block])
                     block)]
@@ -17256,8 +17301,9 @@
     [types : OptSsaVarTypes
       (match ssa-facts
         [(OptSsaFacts _ _ fact-types) fact-types])]
-    [facts : (Array OptDivRemFacts) (make-array OptDivRemFacts count)]
-    [out : (Array OptDivRemBlockResult) (make-array OptDivRemBlockResult count)]
+    [facts : (Array OptDivRemFacts) (array.make-array OptDivRemFacts count)]
+    [out : (Array OptDivRemBlockResult)
+      (array.make-array OptDivRemBlockResult count)]
     (begin
       (opt-divrem-facts-fill-empty! facts 0)
       (opt-divrem-results-fill-empty! out 0)
@@ -18262,7 +18308,10 @@
       (+ index 1)
       count
       index-var
-      (opt-loop-bce-index-init-step current (array-ref slots index) index-var))))
+      (opt-loop-bce-index-init-step
+        current
+        (array.array-ref slots index)
+        index-var))))
 
 (define (opt-loop-bce-block-last-def-zero?
   [block : CompilerIrBlock]
@@ -18358,7 +18407,7 @@
   (if (>= index count)
     current
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [next : OptLoopBceIndexDef
         (opt-loop-bce-index-increment-step current plus-one instr index-var)]
       [next-plus : OptI64List
@@ -19266,7 +19315,7 @@
   (if (>= index count)
     false
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [dst : i64 (opt-gvn-instr-dst instr)]
       [removed : OptI64List
         (if (= dst (- 0 1))
@@ -19331,7 +19380,7 @@
   (if (>= index count)
     false
     (let
-      [instr : CompilerIrInstr (array-ref slots index)]
+      [instr : CompilerIrInstr (array.array-ref slots index)]
       [dst : i64 (opt-gvn-instr-dst instr)]
       [removed : OptI64List
         (if (= dst (- 0 1))
@@ -19394,7 +19443,7 @@
   [count : i64]) : bool
   (if (>= index count)
     false
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrGep _ _ _ ty)
         (if (opt-type-eq ty (AstTyChar))
           true
@@ -19424,7 +19473,7 @@
   [count : i64]) : bool
   (if (>= index count)
     false
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrCall _ name args _)
         (if (and
           (= (compiler-ir-call-args-count args) 0)
@@ -19464,7 +19513,7 @@
   [count : i64]) : bool
   (if (>= index count)
     false
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrBinOp _ op _ _ ty)
         (if (and
           (opt-type-eq ty (AstTyBool))
@@ -19521,10 +19570,10 @@
 (define (opt-loop-bce-block-results-fill-empty!
   [out : (Array OptLoopBceBlockResult)]
   [index : i64]) : unit
-  (if (>= index (array-length out))
+  (if (>= index (array.array-length out))
     unit
     (begin
-      (array-set! out index (OptLoopBceNoBlock))
+      (array.array-set! out index (OptLoopBceNoBlock))
       (opt-loop-bce-block-results-fill-empty! out (+ index 1)))))
 
 (define (opt-loop-bce-materialize-blocks
@@ -19539,8 +19588,8 @@
           (let
             [block-id : i64 (opt-global-block-id doms label)]
             [material : CompilerIrBlock
-              (if (and (>= block-id 0) (< block-id (array-length out)))
-                (match (array-ref out block-id)
+              (if (and (>= block-id 0) (< block-id (array.array-length out)))
+                (match (array.array-ref out block-id)
                   [(OptLoopBceSomeBlock rewritten) rewritten]
                   [(OptLoopBceNoBlock) block])
                 block)]
@@ -19569,7 +19618,7 @@
     [count : i64 (opt-cfg-index-block-count cfg-index)]
     (if (and (>= id 0) (< id count))
       (let
-        [label : String (array-ref (struct-get cfg-index labels) id)]
+        [label : String (array.array-ref (struct-get cfg-index labels) id)]
         (match (opt-cfg-find-block blocks label)
           [(OptNoBlock) unit]
           [(OptSomeBlock block)
@@ -19585,7 +19634,7 @@
               block)
               [(OptLoopBceBlockRewrite next-state rewritten)
                 (begin
-                  (array-set! out id (OptLoopBceSomeBlock rewritten))
+                  (array.array-set! out id (OptLoopBceSomeBlock rewritten))
                   (opt-loop-bce-rewrite-children
                     summaries
                     sources
@@ -19616,14 +19665,14 @@
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
     [labels : (Array String) (struct-get cfg-index labels)]
-    [parent-label : String (array-ref labels parent-id)]
-    [edge : i64 (array-ref offsets parent-id)]
-    [end : i64 (array-ref offsets (+ parent-id 1))]
+    [parent-label : String (array.array-ref labels parent-id)]
+    [edge : i64 (array.array-ref offsets parent-id)]
+    [end : i64 (array.array-ref offsets (+ parent-id 1))]
     (begin
       (while (< edge end)
         (let
-          [child-id : i64 (array-ref edges edge)]
-          [child-label : String (array-ref labels child-id)]
+          [child-id : i64 (array.array-ref edges edge)]
+          [child-label : String (array.array-ref labels child-id)]
           [child-state : OptLoopBceState
             (opt-loop-bce-state-propagate-guard state parent-label child-label)]
           (begin
@@ -19659,7 +19708,7 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context blocks context)]
       [out : (Array OptLoopBceBlockResult)
-        (make-array OptLoopBceBlockResult count)]
+        (array.make-array OptLoopBceBlockResult count)]
       [sources : hashmap.I64I64Map
         (opt-gvn-sources-blocks
           blocks
@@ -19674,7 +19723,7 @@
           [(OptSomeI64 entry-id)
             (if (and
               (>= entry-id 0)
-              (array-ref (struct-get cfg-index reachable) entry-id))
+              (array.array-ref (struct-get cfg-index reachable) entry-id))
               (opt-loop-bce-rewrite-id
                 summaries
                 sources
@@ -19817,10 +19866,10 @@
 (define (opt-tailrec-array-values-to-list
   [values : (Array CompilerIrValue)]
   [index : i64]) : CompilerIrValueList
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     IrValueNil
     (compiler-ir-value-cons
-      (array-ref values index)
+      (array.array-ref values index)
       (opt-tailrec-array-values-to-list values (+ index 1)))))
 
 (define (opt-tailrec-args-to-list [args : CompilerIrCallArgs]) : CompilerIrValueList
@@ -20863,7 +20912,7 @@
       (match func
         [(IrFunction name _ _ _ _)
           (begin
-            (array-set! values index func)
+            (array.array-set! values index func)
             (opt-function-index-fill
               (box-get rest)
               (hashmap.string-i64-map-put ids name index)
@@ -20879,7 +20928,8 @@
 (define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
   (let
     [count : i64 (opt-function-list-count functions)]
-    [values : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    [values : (Array CompilerIrFunction)
+      (array.make-array CompilerIrFunction count)]
     [ids : hashmap.StringI64Map
       (opt-function-index-fill
         functions
@@ -20893,7 +20943,7 @@
   (hashmap.string-i64-map-contains? (struct-get index ids) name))
 
 (define (opt-function-index-count [index : OptFunctionIndex]) : i64
-  (array-length (struct-get index values)))
+  (array.array-length (struct-get index values)))
 
 (define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : OptMaybeI64
   (if (opt-function-index-defines? index name)
@@ -20906,7 +20956,7 @@
 ;; reachability worklist). Slots only ever come from a successful `ids` lookup, so
 ;; they are always in range.
 (define (opt-function-index-at-slot [index : OptFunctionIndex] [slot : i64]) : CompilerIrFunction
-  (array-ref (struct-get index values) slot))
+  (array.array-ref (struct-get index values) slot))
 
 (define (opt-slot-list-contains? [slots : OptSlotList] [slot : i64]) : bool
   (match slots
@@ -20959,7 +21009,7 @@
     callees
     (opt-callgraph-instr-seq-from
       index
-      (opt-callgraph-instr index callees (array-ref slots instr-index))
+      (opt-callgraph-instr index callees (array.array-ref slots instr-index))
       slots
       (+ instr-index 1)
       count)))
@@ -21004,7 +21054,7 @@
   (if (>= slot count)
     unit
     (begin
-      (array-set! edges slot OptSlotNil)
+      (array.array-set! edges slot OptSlotNil)
       (opt-callgraph-init-edges edges (+ slot 1) count))))
 
 (define (opt-callgraph-build-slots
@@ -21016,16 +21066,16 @@
   (if (>= slot count)
     unit
     (begin
-      (array-set!
+      (array.array-set!
         edges
         slot
-        (opt-callgraph-callees index (array-ref values slot)))
+        (opt-callgraph-callees index (array.array-ref values slot)))
       (opt-callgraph-build-slots index edges values (+ slot 1) count))))
 
 (define (opt-callgraph-build [index : OptFunctionIndex]) : OptCallGraph
   (let
     [count : i64 (opt-function-index-count index)]
-    [edges : (Array OptSlotList) (make-array OptSlotList count)]
+    [edges : (Array OptSlotList) (array.make-array OptSlotList count)]
     [values : (Array CompilerIrFunction) (struct-get index values)]
     (begin
       (opt-callgraph-init-edges edges 0 count)
@@ -21076,11 +21126,11 @@
   [census : OptInlineCensus]
   [values : (Array CompilerIrValue)]
   [arg-index : i64]) : OptInlineCensus
-  (if (>= arg-index (array-length values))
+  (if (>= arg-index (array.array-length values))
     census
     (opt-inline-census-args-array
       index
-      (opt-inline-census-value index census (array-ref values arg-index))
+      (opt-inline-census-value index census (array.array-ref values arg-index))
       values
       (+ arg-index 1))))
 
@@ -21408,7 +21458,7 @@
 (define (opt-callgraph-callee-count [graph : OptCallGraph] [from-slot : i64]) : i64
   (if (or (< from-slot 0) (>= from-slot (struct-get graph count)))
     -1
-    (opt-slot-list-count (array-ref (struct-get graph edges) from-slot))))
+    (opt-slot-list-count (array.array-ref (struct-get graph edges) from-slot))))
 
 (define (opt-callgraph-has-edge?
   [graph : OptCallGraph]
@@ -21421,7 +21471,7 @@
     (>= to-slot (struct-get graph count)))
     false
     (opt-slot-list-contains?
-      (array-ref (struct-get graph edges) from-slot)
+      (array.array-ref (struct-get graph edges) from-slot)
       to-slot)))
 
 (define (opt-scc-set-low-min!
@@ -21429,9 +21479,9 @@
   [slot : i64]
   [candidate : i64]) : unit
   (let
-    [old : i64 (array-ref lowlink slot)]
+    [old : i64 (array.array-ref lowlink slot)]
     (if (< candidate old)
-      (array-set! lowlink slot candidate)
+      (array.array-set! lowlink slot candidate)
       unit)))
 
 (define (opt-scc-next-child-from
@@ -21452,7 +21502,7 @@
   (if (or (< slot 0) (>= slot (struct-get graph count)))
     (- 0 1)
     (opt-scc-next-child-from
-      (array-ref (struct-get graph edges) slot)
+      (array.array-ref (struct-get graph edges) slot)
       after
       (- 0 1))))
 
@@ -21465,10 +21515,10 @@
   [node-stack-len : i64]
   [next-index : i64]) : OptSccDiscoverState
   (begin
-    (array-set! indices slot next-index)
-    (array-set! lowlink slot next-index)
-    (array-set! on-stack slot true)
-    (array-set! node-stack node-stack-len slot)
+    (array.array-set! indices slot next-index)
+    (array.array-set! lowlink slot next-index)
+    (array.array-set! on-stack slot true)
+    (array.array-set! node-stack node-stack-len slot)
     (OptSccDiscoverState (+ next-index 1) (+ node-stack-len 1))))
 
 (define (opt-scc-frame-push!
@@ -21477,8 +21527,8 @@
   [frame-len : i64]
   [slot : i64]) : i64
   (begin
-    (array-set! frame-slots frame-len slot)
-    (array-set! frame-nexts frame-len (- 0 1))
+    (array.array-set! frame-slots frame-len slot)
+    (array.array-set! frame-nexts frame-len (- 0 1))
     (+ frame-len 1)))
 
 (define (opt-scc-pop-component!
@@ -21496,11 +21546,11 @@
       (while (not done)
         (let
           [next-len : i64 (- len 1)]
-          [slot : i64 (array-ref node-stack next-len)]
+          [slot : i64 (array.array-ref node-stack next-len)]
           (begin
             (set! len next-len)
-            (array-set! on-stack slot false)
-            (array-set! scc-of slot scc-id)
+            (array.array-set! on-stack slot false)
+            (array.array-set! scc-of slot scc-id)
             (set! members (+ members 1))
             (if (= slot root)
               (set! done true)
@@ -21509,26 +21559,26 @@
 
 (define (opt-scc-copy-order [source : (Array i64)] [count : i64]) : (Array i64)
   (let
-    [out : (Array i64) (make-array i64 count)]
+    [out : (Array i64) (array.make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array-set! out index (array-ref source index))
+          (array.array-set! out index (array.array-ref source index))
           (set! index (+ index 1))))
       out)))
 
 (define (opt-scc-compute [graph : OptCallGraph]) : OptSccResult
   (let
     [count : i64 (struct-get graph count)]
-    [indices : (Array i64) (make-array i64 count)]
-    [lowlink : (Array i64) (make-array i64 count)]
-    [on-stack : (Array bool) (make-array bool count)]
-    [scc-of : (Array i64) (make-array i64 count)]
-    [node-stack : (Array i64) (make-array i64 count)]
-    [frame-slots : (Array i64) (make-array i64 count)]
-    [frame-nexts : (Array i64) (make-array i64 count)]
-    [order-scratch : (Array i64) (make-array i64 count)]
+    [indices : (Array i64) (array.make-array i64 count)]
+    [lowlink : (Array i64) (array.make-array i64 count)]
+    [on-stack : (Array bool) (array.make-array bool count)]
+    [scc-of : (Array i64) (array.make-array i64 count)]
+    [node-stack : (Array i64) (array.make-array i64 count)]
+    [frame-slots : (Array i64) (array.make-array i64 count)]
+    [frame-nexts : (Array i64) (array.make-array i64 count)]
+    [order-scratch : (Array i64) (array.make-array i64 count)]
     [root : i64 0]
     [next-index : i64 0]
     [node-stack-len : i64 0]
@@ -21542,7 +21592,7 @@
       (opt-cfg-fill-i64! order-scratch count (- 0 1))
       (while (< root count)
         (begin
-          (if (= (array-ref indices root) (- 0 1))
+          (if (= (array.array-ref indices root) (- 0 1))
             (begin
               (match (opt-scc-discover!
                 root
@@ -21562,16 +21612,16 @@
               (while (> frame-len 0)
                 (let
                   [frame-index : i64 (- frame-len 1)]
-                  [slot : i64 (array-ref frame-slots frame-index)]
+                  [slot : i64 (array.array-ref frame-slots frame-index)]
                   [child : i64
                     (opt-scc-next-child
                       graph
                       slot
-                      (array-ref frame-nexts frame-index))]
+                      (array.array-ref frame-nexts frame-index))]
                   (if (>= child 0)
                     (begin
-                      (array-set! frame-nexts frame-index child)
-                      (if (= (array-ref indices child) (- 0 1))
+                      (array.array-set! frame-nexts frame-index child)
+                      (if (= (array.array-ref indices child) (- 0 1))
                         (begin
                           (match (opt-scc-discover!
                             child
@@ -21592,14 +21642,16 @@
                               frame-nexts
                               frame-len
                               child)))
-                        (if (array-ref on-stack child)
+                        (if (array.array-ref on-stack child)
                           (opt-scc-set-low-min!
                             lowlink
                             slot
-                            (array-ref indices child))
+                            (array.array-ref indices child))
                           unit)))
                     (begin
-                      (if (= (array-ref lowlink slot) (array-ref indices slot))
+                      (if (=
+                        (array.array-ref lowlink slot)
+                        (array.array-ref indices slot))
                         (match (opt-scc-pop-component!
                           node-stack
                           node-stack-len
@@ -21610,17 +21662,21 @@
                           [(OptSccPopState stack-len _)
                             (begin
                               (set! node-stack-len stack-len)
-                              (array-set! order-scratch scc-count scc-count)
+                              (array.array-set!
+                                order-scratch
+                                scc-count
+                                scc-count)
                               (set! scc-count (+ scc-count 1)))])
                         unit)
                       (set! frame-len (- frame-len 1))
                       (if (> frame-len 0)
                         (let
-                          [parent : i64 (array-ref frame-slots (- frame-len 1))]
+                          [parent : i64
+                            (array.array-ref frame-slots (- frame-len 1))]
                           (opt-scc-set-low-min!
                             lowlink
                             parent
-                            (array-ref lowlink slot)))
+                            (array.array-ref lowlink slot)))
                         unit))))))
             unit)
           (set! root (+ root 1))))
@@ -22205,7 +22261,7 @@
     [(IrCallArgsNil) (= np 0)]
     [(IrCallArgsOne _) (= np 1)]
     [(IrCallArgsTwo _ _) (= np 2)]
-    [(IrCallArgsArray arr) (= np (array-length arr))]))
+    [(IrCallArgsArray arr) (= np (array.array-length arr))]))
 
 (define (opt-inline-value-constant? [value : CompilerIrValue]) : bool
   (match value
@@ -22216,12 +22272,12 @@
   [values : (Array CompilerIrValue)]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     count
     (opt-inline-args-array-const-count
       values
       (+ index 1)
-      (if (opt-inline-value-constant? (array-ref values index))
+      (if (opt-inline-value-constant? (array.array-ref values index))
         (+ count 1)
         count))))
 
@@ -22438,10 +22494,10 @@
   [out : (Array CompilerIrValue)]
   [base : i64]
   [index : i64]) : unit
-  (if (>= index (array-length out))
+  (if (>= index (array.array-length out))
     unit
     (begin
-      (array-set! out index (opt-inline-stage-arg-var base index))
+      (array.array-set! out index (opt-inline-stage-arg-var base index))
       (opt-inline-staged-args-array-fill! out base (+ index 1)))))
 
 (define (opt-inline-staged-args [np : i64] [base : i64]) : CompilerIrCallArgs
@@ -22454,7 +22510,7 @@
         (opt-inline-stage-arg-var base 1))]
     [else
       (let
-        [out : (Array CompilerIrValue) (make-array CompilerIrValue np)]
+        [out : (Array CompilerIrValue) (array.make-array CompilerIrValue np)]
         (begin
           (opt-inline-staged-args-array-fill! out base 0)
           (IrCallArgsArray out)))]))
@@ -22484,7 +22540,7 @@
       (if (= id 0)
         (compiler-ir-clone-value a)
         (compiler-ir-clone-value b))]
-    [(IrCallArgsArray arr) (compiler-ir-clone-value (array-ref arr id))]))
+    [(IrCallArgsArray arr) (compiler-ir-clone-value (array.array-ref arr id))]))
 
 (define (opt-inline-remap-value
   [v : CompilerIrValue]
@@ -22521,16 +22577,16 @@
         (opt-inline-remap-value y sa np base))]
     [(IrCallArgsArray arr)
       (let
-        [n : i64 (array-length arr)]
-        [out : (Array CompilerIrValue) (make-array CompilerIrValue n)]
+        [n : i64 (array.array-length arr)]
+        [out : (Array CompilerIrValue) (array.make-array CompilerIrValue n)]
         [i : i64 0]
         (begin
           (while (< i n)
             (begin
-              (array-set!
+              (array.array-set!
                 out
                 i
-                (opt-inline-remap-value (array-ref arr i) sa np base))
+                (opt-inline-remap-value (array.array-ref arr i) sa np base))
               (set! i (+ i 1))))
           (IrCallArgsArray out)))]))
 
@@ -23022,11 +23078,13 @@
     [(OptSomeI64 callee-slot)
       (if (and
         (>= caller-scc 0)
-        (= (array-ref (struct-get scc-result scc-of) callee-slot) caller-scc))
+        (=
+          (array.array-ref (struct-get scc-result scc-of) callee-slot)
+          caller-scc))
         (OptNoFunction)
         (let
           [callee : CompilerIrFunction
-            (array-ref (struct-get index values) callee-slot)]
+            (array.array-ref (struct-get index values) callee-slot)]
           (if (opt-inline-callee-ok? callee caller-name)
             (OptSomeFunction callee)
             (OptNoFunction))))]
@@ -23042,11 +23100,13 @@
     [(OptSomeI64 callee-slot)
       (if (and
         (>= caller-scc 0)
-        (= (array-ref (struct-get scc-result scc-of) callee-slot) caller-scc))
+        (=
+          (array.array-ref (struct-get scc-result scc-of) callee-slot)
+          caller-scc))
         (OptNoFunction)
         (let
           [callee : CompilerIrFunction
-            (array-ref (struct-get index values) callee-slot)]
+            (array.array-ref (struct-get index values) callee-slot)]
           (if (opt-inline-multiblock-callee-ok? callee caller-name)
             (OptSomeFunction callee)
             (OptNoFunction))))]
@@ -24538,7 +24598,7 @@
   (if (>= slot count)
     IrFunctionNil
     (compiler-ir-function-cons
-      (array-ref (struct-get index values) slot)
+      (array.array-ref (struct-get index values) slot)
       (opt-function-index-to-list-from index (+ slot 1) count))))
 
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : CompilerIrFunctionList
@@ -24551,12 +24611,12 @@
   (let
     [order : (Array i64) (struct-get scc-result order)]
     [scc-of : (Array i64) (struct-get scc-result scc-of)]
-    [slot-count : i64 (array-length scc-of)]
-    [scc-count : i64 (array-length order)]
-    [counts : (Array i64) (make-array i64 scc-count)]
-    [starts : (Array i64) (make-array i64 scc-count)]
-    [next : (Array i64) (make-array i64 scc-count)]
-    [slots : (Array i64) (make-array i64 slot-count)]
+    [slot-count : i64 (array.array-length scc-of)]
+    [scc-count : i64 (array.array-length order)]
+    [counts : (Array i64) (array.make-array i64 scc-count)]
+    [starts : (Array i64) (array.make-array i64 scc-count)]
+    [next : (Array i64) (array.make-array i64 scc-count)]
+    [slots : (Array i64) (array.make-array i64 slot-count)]
     [slot : i64 0]
     [order-index : i64 0]
     [offset : i64 0]
@@ -24564,26 +24624,29 @@
       (opt-cfg-fill-i64! counts scc-count 0)
       (while (< slot slot-count)
         (let
-          [scc-id : i64 (array-ref scc-of slot)]
+          [scc-id : i64 (array.array-ref scc-of slot)]
           (begin
-            (array-set! counts scc-id (+ (array-ref counts scc-id) 1))
+            (array.array-set!
+              counts
+              scc-id
+              (+ (array.array-ref counts scc-id) 1))
             (set! slot (+ slot 1)))))
       (while (< order-index scc-count)
         (let
-          [scc-id : i64 (array-ref order order-index)]
+          [scc-id : i64 (array.array-ref order order-index)]
           (begin
-            (array-set! starts scc-id offset)
-            (array-set! next scc-id offset)
-            (set! offset (+ offset (array-ref counts scc-id)))
+            (array.array-set! starts scc-id offset)
+            (array.array-set! next scc-id offset)
+            (set! offset (+ offset (array.array-ref counts scc-id)))
             (set! order-index (+ order-index 1)))))
       (set! slot 0)
       (while (< slot slot-count)
         (let
-          [scc-id : i64 (array-ref scc-of slot)]
-          [slot-index : i64 (array-ref next scc-id)]
+          [scc-id : i64 (array.array-ref scc-of slot)]
+          [slot-index : i64 (array.array-ref next scc-id)]
           (begin
-            (array-set! slots slot-index slot)
-            (array-set! next scc-id (+ slot-index 1))
+            (array.array-set! slots slot-index slot)
+            (array.array-set! next scc-id (+ slot-index 1))
             (set! slot (+ slot 1)))))
       slots)))
 
@@ -24596,17 +24659,17 @@
     [values : (Array CompilerIrFunction) (struct-get index values)]
     [slot-order : (Array i64) (opt-inline-slot-order scc-result)]
     [index-pos : i64 0]
-    [slot-count : i64 (array-length slot-order)]
+    [slot-count : i64 (array.array-length slot-order)]
     (while (< index-pos slot-count)
       (begin
         (let
-          [slot : i64 (array-ref slot-order index-pos)]
-          [caller-scc : i64 (array-ref scc-of slot)]
-          (array-set!
+          [slot : i64 (array.array-ref slot-order index-pos)]
+          [caller-scc : i64 (array.array-ref scc-of slot)]
+          (array.array-set!
             values
             slot
             (opt-inline-function
-              (array-ref values slot)
+              (array.array-ref values slot)
               index
               census
               scc-result
@@ -24623,16 +24686,16 @@
     [values : (Array CompilerIrFunction) (struct-get index values)]
     [slot-order : (Array i64) (opt-inline-slot-order scc-result)]
     [index-pos : i64 0]
-    [slot-count : i64 (array-length slot-order)]
+    [slot-count : i64 (array.array-length slot-order)]
     [current-spans : CompilerSourceSpans spans]
     (begin
       (while (< index-pos slot-count)
         (begin
           (let
-            [slot : i64 (array-ref slot-order index-pos)]
-            [caller-scc : i64 (array-ref scc-of slot)]
+            [slot : i64 (array.array-ref slot-order index-pos)]
+            [caller-scc : i64 (array.array-ref scc-of slot)]
             (match (opt-inline-function-with-spans
-              (array-ref values slot)
+              (array.array-ref values slot)
               index
               census
               scc-result
@@ -24642,11 +24705,12 @@
               [(OptInlineSpanProgram one next-spans)
                 (begin
                   (match one
-                    [(IrFunctionCons head _) (array-set! values slot head)]
+                    [(IrFunctionCons head _)
+                      (array.array-set! values slot head)]
                     [(IrFunctionNil) unit]
                     [(IrFunctionArray seq)
                       (if (> (compiler-ir-function-seq-count seq) 0)
-                        (array-set!
+                        (array.array-set!
                           values
                           slot
                           (compiler-ir-function-seq-ref seq 0))
@@ -24770,7 +24834,7 @@
   [count : i64]) : OptReachState
   (if (>= slot count)
     state
-    (match (array-ref (struct-get index values) slot)
+    (match (array.array-ref (struct-get index values) slot)
       [(IrFunction name _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
@@ -24862,11 +24926,11 @@
   [state : OptReachState]
   [values : (Array CompilerIrValue)]
   [arg-index : i64]) : OptReachState
-  (if (>= arg-index (array-length values))
+  (if (>= arg-index (array.array-length values))
     state
     (opt-reach-call-args-array
       index
-      (opt-reach-value index state (array-ref values arg-index))
+      (opt-reach-value index state (array.array-ref values arg-index))
       values
       (+ arg-index 1))))
 
@@ -25045,7 +25109,7 @@
     state
     (opt-reach-instr-seq-from
       index
-      (opt-reach-instr index state (array-ref slots instr-index))
+      (opt-reach-instr index state (array.array-ref slots instr-index))
       slots
       (+ instr-index 1)
       count)))
@@ -25618,10 +25682,10 @@
   [disq : hashmap.StringI64Map]
   [values : (Array CompilerIrValue)]
   [index : i64]) : hashmap.StringI64Map
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     disq
     (opt-const-globals-disq-args-array
-      (opt-const-globals-disq-value disq (array-ref values index))
+      (opt-const-globals-disq-value disq (array.array-ref values index))
       values
       (+ index 1))))
 
@@ -26466,7 +26530,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (opt-arith-instr-count (array-ref slots index))))))
+      (+ acc (opt-arith-instr-count (array.array-ref slots index))))))
 
 (define (opt-count-arith-instr-seq [instrs : CompilerIrInstrSeq]) : i64
   (opt-count-arith-instr-seq-from
@@ -26510,7 +26574,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (opt-cpuid-instr-count (array-ref slots index))))))
+      (+ acc (opt-cpuid-instr-count (array.array-ref slots index))))))
 
 (define (opt-count-cpuid-instr-seq [instrs : CompilerIrInstrSeq]) : i64
   (opt-count-cpuid-instr-seq-from
@@ -26530,7 +26594,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (opt-xgetbv-instr-count (array-ref slots index))))))
+      (+ acc (opt-xgetbv-instr-count (array.array-ref slots index))))))
 
 (define (opt-count-xgetbv-instr-seq [instrs : CompilerIrInstrSeq]) : i64
   (opt-count-xgetbv-instr-seq-from
@@ -26659,7 +26723,7 @@
       needle
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrMov _ (IrValueI64 n) _)
             (if (= n needle)
               1
@@ -26738,7 +26802,7 @@
   [fallback : i64]) : i64
   (if (>= index count)
     fallback
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrMov d (IrValueI64 n) _)
         (if (= d dst)
           n
@@ -27376,7 +27440,7 @@
     [candidates : OptAggregateAllocCandidateList
       (opt-aggregate-allocation-candidates (opt-spans-program instrs))]
     (if (= (opt-aggregate-candidate-list-count candidates) 1)
-      (match (array-ref (struct-get candidates slots) 0)
+      (match (array.array-ref (struct-get candidates slots) 0)
         [(OptAggregateAllocCandidate base ty size ptrs accesses)
           (and
             (= base 1)
@@ -27386,8 +27450,8 @@
             (= (opt-aggregate-access-list-count accesses) 3)
             (= (opt-aggregate-access-list-store-count accesses) 2)
             (= (opt-aggregate-access-list-load-count accesses) 1)
-            (< (array-length (struct-get ptrs slots)) instr-count)
-            (< (array-length (struct-get accesses slots)) instr-count))])
+            (< (array.array-length (struct-get ptrs slots)) instr-count)
+            (< (array.array-length (struct-get accesses slots)) instr-count))])
       false)))
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64
@@ -27657,7 +27721,7 @@
       dst
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrLoad d _ _)
             (if (= d dst)
               1
@@ -27772,7 +27836,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrCast _ _ _ _) 1]
           [_ 0])))))
 
@@ -29554,7 +29618,7 @@
   [dst : i64]) : i64
   (if (>= index count)
     (- 0 1)
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrBinOp d _ l _ _)
         (if (= d dst)
           (match l
@@ -29805,7 +29869,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrBoundsCheck _ _ _) 1]
           [_ 0])))))
 
@@ -30951,18 +31015,18 @@
       [else true])))
 
 (define (opt-scc-result-component [result : OptSccResult] [slot : i64]) : i64
-  (array-ref (struct-get result scc-of) slot))
+  (array.array-ref (struct-get result scc-of) slot))
 
 (define (opt-scc-component-size [result : OptSccResult] [scc-id : i64]) : i64
   (let
     [scc-of : (Array i64) (struct-get result scc-of)]
-    [count : i64 (array-length scc-of)]
+    [count : i64 (array.array-length scc-of)]
     [slot : i64 0]
     [size : i64 0]
     (begin
       (while (< slot count)
         (begin
-          (if (= (array-ref scc-of slot) scc-id)
+          (if (= (array.array-ref scc-of slot) scc-id)
             (set! size (+ size 1))
             unit)
           (set! slot (+ slot 1))))
@@ -30971,13 +31035,13 @@
 (define (opt-scc-order-position [result : OptSccResult] [scc-id : i64]) : i64
   (let
     [order : (Array i64) (struct-get result order)]
-    [count : i64 (array-length order)]
+    [count : i64 (array.array-length order)]
     [index : i64 0]
     [position : i64 (- 0 1)]
     (begin
       (while (and (< index count) (< position 0))
         (begin
-          (if (= (array-ref order index) scc-id)
+          (if (= (array.array-ref order index) scc-id)
             (set! position index)
             unit)
           (set! index (+ index 1))))
@@ -31055,12 +31119,12 @@
         result
         (opt-callgraph-test-slot index "address_taken"))]
     (cond
-      [(not (= (array-length order) 5)) false]
-      [(not (= (array-ref order 0) b-scc)) false]
-      [(not (= (array-ref order 1) c-scc)) false]
-      [(not (= (array-ref order 2) a-scc)) false]
-      [(not (= (array-ref order 3) main-scc)) false]
-      [(not (= (array-ref order 4) address-scc)) false]
+      [(not (= (array.array-length order) 5)) false]
+      [(not (= (array.array-ref order 0) b-scc)) false]
+      [(not (= (array.array-ref order 1) c-scc)) false]
+      [(not (= (array.array-ref order 2) a-scc)) false]
+      [(not (= (array.array-ref order 3) main-scc)) false]
+      [(not (= (array.array-ref order 4) address-scc)) false]
       [(not (opt-scc-before? result b-scc c-scc)) false]
       [(not (opt-scc-before? result c-scc a-scc)) false]
       [(not (opt-scc-before? result a-scc main-scc)) false]
@@ -31677,7 +31741,7 @@
       name
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrCall _ call-name _ _)
             (if (string.string-eq call-name name)
               1
@@ -32848,7 +32912,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrBranch _ _ _) 1]
           [_ 0])))))
 
@@ -32901,7 +32965,7 @@
       target
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrJump label)
             (if (string.string-eq label target)
               1
@@ -32955,7 +33019,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrTailCall _ _ _) 1]
           [_ 0])))))
 
@@ -33056,7 +33120,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrPhi _ _ _) 1]
           [_ 0])))))
 
@@ -33107,7 +33171,7 @@
       dst
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrMov mov-dst _ _)
             (if (= mov-dst dst)
               1
@@ -33186,7 +33250,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrBinOp _ op _ _ _)
             (match op
               [(IrBinMul) 1]
@@ -33269,7 +33333,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrGep _ _ _ _) 1]
           [_ 0])))))
 
@@ -33329,7 +33393,7 @@
       count
       (+
         acc
-        (match (array-ref slots index)
+        (match (array.array-ref slots index)
           [(IrInstrLoad _ _ _) 1]
           [_ 0])))))
 
@@ -33425,7 +33489,7 @@
   [fallback : i64]) : i64
   (if (>= index count)
     fallback
-    (match (array-ref slots index)
+    (match (array.array-ref slots index)
       [(IrInstrMov mov-dst (IrValueVar src) _)
         (if (= mov-dst dst)
           src
@@ -33769,7 +33833,8 @@
       (OptGlobalBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
     [other-key : OptGlobalExprKey
       (OptGlobalBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
-    [buckets : (Array OptGlobalExprFacts) (make-array OptGlobalExprFacts 1)]
+    [buckets : (Array OptGlobalExprFacts)
+      (array.make-array OptGlobalExprFacts 1)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     [doms : OptDomInfo
       (opt-cfg-dominators
@@ -33777,7 +33842,7 @@
           (compiler-ir-block "entry" (IrInstrNil))
           (IrBlockNil)))]
     (begin
-      (array-set!
+      (array.array-set!
         buckets
         0
         (OptGlobalExprCons
@@ -33800,10 +33865,10 @@
       (OptBinKey (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
     [other-key : OptExprKey
       (OptBinKey (IrBinSub) (IrValueVar 1) (IrValueVar 2) (AstTyI64))]
-    [buckets : (Array OptGvnBucket) (make-array OptGvnBucket 1)]
+    [buckets : (Array OptGvnBucket) (array.make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
-      (array-set! buckets 0 (OptGvnBucketNil))
+      (array.array-set! buckets 0 (OptGvnBucketNil))
       (opt-gvn-table-insert! table (OptGvnEntry key 7 0))
       (and
         (= (opt-gvn-lookup table key) 7)
@@ -37323,10 +37388,10 @@
   [facts : OptAliasFacts]
   [values : (Array CompilerIrValue)]
   [index : i64]) : bool
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     false
     (or
-      (opt-scratch-value-derived? roots facts (array-ref values index))
+      (opt-scratch-value-derived? roots facts (array.array-ref values index))
       (opt-scratch-call-args-array-derived? roots facts values (+ index 1)))))
 
 (define (opt-scratch-call-args-derived?
@@ -38852,7 +38917,7 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! states i (OptNoLoadCseState))
+          (array.array-set! states i (OptNoLoadCseState))
           (set! i (+ i 1))))
       unit)))
 
@@ -38867,8 +38932,9 @@
   (if (>= edge end)
     acc
     (let
-      [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]
-      (if (not (array-ref (struct-get index reachable) pred))
+      [pred : i64
+        (array.array-ref (struct-get (struct-get index preds) edges) edge)]
+      (if (not (array.array-ref (struct-get index reachable) pred))
         (opt-load-gvn-entry-from-preds
           index
           exit-states
@@ -38877,9 +38943,9 @@
           end
           has-state
           acc)
-        (if (not (array-ref processed pred))
+        (if (not (array.array-ref processed pred))
           (opt-load-cse-empty-state)
-          (match (array-ref exit-states pred)
+          (match (array.array-ref exit-states pred)
             [(OptSomeLoadCseState pred-state)
               (opt-load-gvn-entry-from-preds
                 index
@@ -38910,8 +38976,8 @@
             index
             exit-states
             processed
-            (array-ref (struct-get preds offsets) id)
-            (array-ref (struct-get preds offsets) (+ id 1))
+            (array.array-ref (struct-get preds offsets) id)
+            (array.array-ref (struct-get preds offsets) (+ id 1))
             false
             (opt-load-cse-empty-state)))]
       [(OptNoI64) (opt-load-cse-empty-state)])))
@@ -39020,12 +39086,15 @@
             (match (opt-load-gvn-rewrite-block entry-state sources block)
               [(OptLoadGvnBlockRewrite exit-state instrs)
                 (begin
-                  (array-set!
+                  (array.array-set!
                     out
                     id
                     (OptGvnSomeBlock (compiler-ir-block block-label instrs)))
-                  (array-set! exit-states id (OptSomeLoadCseState exit-state))
-                  (array-set! processed id true))])])])))
+                  (array.array-set!
+                    exit-states
+                    id
+                    (OptSomeLoadCseState exit-state))
+                  (array.array-set! processed id true))])])])))
 
 (define (opt-load-gvn-process-rpo
   [context : OptCfgContext]
@@ -39068,9 +39137,9 @@
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [exit-states : (Array OptMaybeLoadCseState)
-      (make-array OptMaybeLoadCseState count)]
-    [processed : (Array bool) (make-array bool count)]
-    [out : (Array OptGvnBlockResult) (make-array OptGvnBlockResult count)]
+      (array.make-array OptMaybeLoadCseState count)]
+    [processed : (Array bool) (array.make-array bool count)]
+    [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-load-state-array-fill-empty! exit-states count)
       (opt-cfg-fill-bool! processed count false)

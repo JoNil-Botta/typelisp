@@ -10,6 +10,7 @@
 (import "compiler_object.tl")
 (import "compiler_intern.tl")
 (import "sym_i64_env.tl")
+(import stdlib.array)
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.string)
@@ -386,9 +387,9 @@
 ;; Per-emission cache for interned user-symbol mangling. The generation guard
 ;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
 (define compiler-backend-user-symbol-cache-values : (Array String)
-  (make-array String 262144))
+  (array.make-array String 262144))
 (define compiler-backend-user-symbol-cache-epochs : (Array i64)
-  (make-array i64 262144))
+  (array.make-array i64 262144))
 (define compiler-backend-user-symbol-cache-epoch : i64
   1)
 (define compiler-backend-user-symbol-cache-count-value : i64
@@ -415,7 +416,7 @@
 (define compiler-backend-addr-of-forwarding-enabled : bool
   false)
 (define compiler-backend-addr-of-forwarding-src : (Array i64)
-  (make-array i64 0))
+  (array.make-array i64 0))
 
 ;; Compare->branch fusion state. A comparison result may be fused to `cmp`/`jcc`
 ;; (never materialized as a boolean) when EVERY use of it is a branch fed by its
@@ -431,9 +432,9 @@
 (define compiler-backend-fuse-need-ready : bool
   false)
 (define compiler-backend-fuse-use-counts : (Array i64)
-  (make-array i64 0))
+  (array.make-array i64 0))
 (define compiler-backend-fuse-free-counts : (Array i64)
-  (make-array i64 0))
+  (array.make-array i64 0))
 
 (defenum CompilerBackendEmitInstrsMode
   (CompilerBackendEmitInstrsModeNormal)
@@ -686,7 +687,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (Array u8) (make-array u8 total)]
+        [out : (Array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]
@@ -707,7 +708,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (Array u8) (make-array u8 total)]
+        [out : (Array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]
@@ -735,7 +736,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (Array u8) (make-array u8 total)]
+        [out : (Array u8) (array.make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data out))]
@@ -790,10 +791,10 @@
 (define (compiler-backend-source-span-index-fill
   [values : (Array CompilerMaybeSourceSpan)]
   [index : i64]) : unit
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     unit
     (begin
-      (array-set! values index (CompilerNoSourceSpan))
+      (array.array-set! values index (CompilerNoSourceSpan))
       (compiler-backend-source-span-index-fill values (+ index 1)))))
 
 (define (compiler-backend-source-span-index-add
@@ -815,7 +816,7 @@
             (match (hashmap.string-i64-map-insert map name index)
               [(hashmap.StringI64MapInsertOk next-map)
                 (begin
-                  (array-set! values index (CompilerSomeSourceSpan span))
+                  (array.array-set! values index (CompilerSomeSourceSpan span))
                   (compiler-backend-source-span-index-add
                     (box-get rest)
                     next-map
@@ -829,7 +830,7 @@
       (let
         [count : i64 (compiler-source-spans-count spans)]
         [values : (Array CompilerMaybeSourceSpan)
-          (make-array CompilerMaybeSourceSpan count)]
+          (array.make-array CompilerMaybeSourceSpan count)]
         (begin
           (compiler-backend-source-span-index-fill values 0)
           (CompilerBackendSourceSpanIndex
@@ -845,8 +846,10 @@
   [name : String]) : CompilerMaybeSourceSpan
   (match (hashmap.string-i64-map-get (struct-get index entries) name)
     [(hashmap.StringI64MapFound slot)
-      (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
-        (array-ref (struct-get index values) slot)
+      (if (and
+        (>= slot 0)
+        (< slot (array.array-length (struct-get index values))))
+        (array.array-ref (struct-get index values) slot)
         (CompilerNoSourceSpan))]
     [(hashmap.StringI64MapMissing) (CompilerNoSourceSpan)]))
 
@@ -3757,8 +3760,8 @@
   (if compiler-backend-addr-of-forwarding-enabled
     (if (and
       (>= var-id 0)
-      (< var-id (array-length compiler-backend-addr-of-forwarding-src)))
-      (array-ref compiler-backend-addr-of-forwarding-src var-id)
+      (< var-id (array.array-length compiler-backend-addr-of-forwarding-src)))
+      (array.array-ref compiler-backend-addr-of-forwarding-src var-id)
       (- 0 1))
     (- 0 1)))
 
@@ -4251,20 +4254,20 @@
     (compiler-backend-user-symbol-cache-ensure-current!)
     (if (and
       (>= name-id 0)
-      (< name-id (array-length compiler-backend-user-symbol-cache-values)))
+      (< name-id (array.array-length compiler-backend-user-symbol-cache-values)))
       (if (=
-        (array-ref compiler-backend-user-symbol-cache-epochs name-id)
+        (array.array-ref compiler-backend-user-symbol-cache-epochs name-id)
         compiler-backend-user-symbol-cache-epoch)
-        (array-ref compiler-backend-user-symbol-cache-values name-id)
+        (array.array-ref compiler-backend-user-symbol-cache-values name-id)
         (let
           [symbol : String
             (compiler-backend-user-symbol-uncached (intern-str name-id))]
           (begin
-            (array-set!
+            (array.array-set!
               compiler-backend-user-symbol-cache-values
               name-id
               symbol)
-            (array-set!
+            (array.array-set!
               compiler-backend-user-symbol-cache-epochs
               name-id
               compiler-backend-user-symbol-cache-epoch)
@@ -6502,7 +6505,7 @@
     [(CompilerBackendGlobalTypeCache ids values)
       (match (hashmap.string-i64-map-get ids name)
         [(hashmap.StringI64MapFound index)
-          (CompilerRegSomeType (array-ref values index))]
+          (CompilerRegSomeType (array.array-ref values index))]
         [(hashmap.StringI64MapMissing) (CompilerRegNoType)])]))
 
 (define (compiler-backend-global-type-list-boxed-ok?) : bool
@@ -6544,7 +6547,7 @@
       (match global
         [(IrGlobal name ty _)
           (begin
-            (array-set! values index ty)
+            (array.array-set! values index ty)
             (compiler-backend-global-types-fill
               (box-get rest)
               (hashmap.string-i64-map-put ids name index)
@@ -6554,7 +6557,7 @@
 (define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
   (let
     [count : i64 (compiler-backend-global-type-count globals)]
-    [values : (Array AstType) (make-array AstType count)]
+    [values : (Array AstType) (array.make-array AstType count)]
     (CompilerBackendGlobalTypeCache
       (compiler-backend-global-types-fill
         globals
@@ -10553,7 +10556,7 @@
     [(IrCallArgsNil) 0]
     [(IrCallArgsOne _) 1]
     [(IrCallArgsTwo _ _) 2]
-    [(IrCallArgsArray values) (array-length values)]))
+    [(IrCallArgsArray values) (array.array-length values)]))
 
 (define (compiler-backend-call-arg-at [args : CompilerIrCallArgs] [index : i64]) : CompilerIrValue
   (match args
@@ -10568,7 +10571,7 @@
         (if (= index 1)
           b
           (IrValueUnit)))]
-    [(IrCallArgsArray values) (array-ref values index)]))
+    [(IrCallArgsArray values) (array.array-ref values index)]))
 
 (define (compiler-backend-fast-alloc-size [args : CompilerIrCallArgs]) : i64
   (match args
@@ -10846,8 +10849,8 @@
       (match func
         [(IrFunction name params ret-ty _ _)
           (begin
-            (array-set! names index name)
-            (array-set!
+            (array.array-set! names index name)
+            (array.array-set!
               signatures
               index
               (CompilerBackendSomeSignature
@@ -10885,8 +10888,8 @@
       (match item
         [(IrExtern extern-name ty _ _ _ _)
           (begin
-            (array-set! names index extern-name)
-            (array-set!
+            (array.array-set! names index extern-name)
+            (array.array-set!
               signatures
               index
               (compiler-backend-program-index-extern-signature ty))
@@ -10913,8 +10916,8 @@
       (match item
         [(IrExtern _ _ _ link-symbol _ provided)
           (begin
-            (array-set! link-symbols index link-symbol)
-            (array-set! provideds index provided)
+            (array.array-set! link-symbols index link-symbol)
+            (array.array-set! provideds index provided)
             (compiler-backend-program-index-extern-references-into
               (box-get rest)
               (compiler-backend-program-index-bind-name
@@ -11021,8 +11024,8 @@
 (define (compiler-backend-empty-reg-var-types) : CompilerRegVarTypes
   (CompilerRegVarTypes
     CompilerRegVarTypeNil
-    (make-array i64 0)
-    (make-array AstType 0)))
+    (array.make-array i64 0)
+    (array.make-array AstType 0)))
 
 (define (compiler-backend-collect-group-counts-instr-seq
   [map : hashmap.StringI64Map]
@@ -11180,14 +11183,15 @@
   (let
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-list-count externs)]
-    [function-names : (Array String) (make-array String function-count)]
+    [function-names : (Array String) (array.make-array String function-count)]
     [function-signatures : (Array CompilerBackendMaybeSignature)
-      (make-array CompilerBackendMaybeSignature function-count)]
-    [extern-names : (Array String) (make-array String extern-count)]
+      (array.make-array CompilerBackendMaybeSignature function-count)]
+    [extern-names : (Array String) (array.make-array String extern-count)]
     [extern-signatures : (Array CompilerBackendMaybeSignature)
-      (make-array CompilerBackendMaybeSignature extern-count)]
-    [extern-link-symbols : (Array String) (make-array String extern-count)]
-    [extern-provided : (Array bool) (make-array bool extern-count)]
+      (array.make-array CompilerBackendMaybeSignature extern-count)]
+    [extern-link-symbols : (Array String)
+      (array.make-array String extern-count)]
+    [extern-provided : (Array bool) (array.make-array bool extern-count)]
     [function-ids : hashmap.I64I64Map
       (compiler-backend-program-index-functions-into
         functions
@@ -11319,7 +11323,7 @@
   [name-id : i64]) : CompilerBackendMaybeSignature
   (match (hashmap.i64-i64-map-get (struct-get index functions) name-id)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index function-signatures) slot)]
+      (array.array-ref (struct-get index function-signatures) slot)]
     [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-index-function-signature
@@ -11327,7 +11331,7 @@
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-slot index name)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index function-signatures) slot)]
+      (array.array-ref (struct-get index function-signatures) slot)]
     [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-index-extern-signature-id
@@ -11335,7 +11339,7 @@
   [name-id : i64]) : CompilerBackendMaybeSignature
   (match (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-signature-values) slot)]
+      (array.array-ref (struct-get index extern-signature-values) slot)]
     [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-index-extern-signature
@@ -11343,7 +11347,7 @@
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-extern-signature-slot index name)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-signature-values) slot)]
+      (array.array-ref (struct-get index extern-signature-values) slot)]
     [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-index-signature-id
@@ -11393,7 +11397,7 @@
   [name-id : i64]) : String
   (match (hashmap.i64-i64-map-get (struct-get index extern-references) name-id)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-link-symbols) slot)]
+      (array.array-ref (struct-get index extern-link-symbols) slot)]
     [(hashmap.I64I64MapMissing) (intern-str name-id)]))
 
 (define (compiler-backend-index-extern-link-symbol
@@ -11401,7 +11405,7 @@
   [name : String]) : String
   (match (compiler-backend-index-extern-reference-slot index name)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-link-symbols) slot)]
+      (array.array-ref (struct-get index extern-link-symbols) slot)]
     [(hashmap.I64I64MapMissing) name]))
 
 (define (compiler-backend-index-extern-provided-id?
@@ -11409,7 +11413,7 @@
   [name-id : i64]) : bool
   (match (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-provided) slot)]
+      (array.array-ref (struct-get index extern-provided) slot)]
     [(hashmap.I64I64MapMissing) false]))
 
 (define (compiler-backend-index-extern-provided?
@@ -11417,7 +11421,7 @@
   [name : String]) : bool
   (match (compiler-backend-index-extern-signature-slot index name)
     [(hashmap.I64I64MapFound slot)
-      (array-ref (struct-get index extern-provided) slot)]
+      (array.array-ref (struct-get index extern-provided) slot)]
     [(hashmap.I64I64MapMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
@@ -12600,7 +12604,7 @@
       (while (and (< index count) (not found))
         (begin
           (if (compiler-backend-instr-needs-outgoing-space?
-            (array-ref slots index))
+            (array.array-ref slots index))
             (set! found true)
             unit)
           (set! index (+ index 1))))
@@ -12672,7 +12676,7 @@
             (compiler-reg-max
               out
               (compiler-backend-instr-outgoing-stack-space
-                (array-ref slots index)
+                (array.array-ref slots index)
                 program-index)))
           (set! index (+ index 1))))
       out)))
@@ -14411,7 +14415,8 @@
             out
             (+
               out
-              (compiler-backend-instr-return-count (array-ref slots index))))
+              (compiler-backend-instr-return-count
+                (array.array-ref slots index))))
           (set! index (+ index 1))))
       out)))
 
@@ -16808,10 +16813,10 @@
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array-length counts))
+    (if (>= var (array.array-length counts))
       unit
       (begin
-        (array-set! counts var (+ (array-ref counts var) 1))
+        (array.array-set! counts var (+ (array.array-ref counts var) 1))
         unit))))
 
 (define (compiler-backend-count-value-use
@@ -16835,10 +16840,10 @@
   [counts : (Array i64)]
   [values : (Array CompilerIrValue)]
   [index : i64]) : unit
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     unit
     (begin
-      (compiler-backend-count-value-use counts (array-ref values index))
+      (compiler-backend-count-value-use counts (array.array-ref values index))
       (compiler-backend-count-call-args-array-uses counts values (+ index 1)))))
 
 (define (compiler-backend-count-call-args-uses
@@ -17027,7 +17032,9 @@
     (begin
       (while (< index count)
         (begin
-          (compiler-backend-count-instr-uses counts (array-ref slots index))
+          (compiler-backend-count-instr-uses
+            counts
+            (array.array-ref slots index))
           (set! index (+ index 1))))
       unit)))
 
@@ -17051,7 +17058,7 @@
   [vars : i64]
   [blocks : CompilerIrBlockList]) : (Array i64)
   (let
-    [counts : (Array i64) (make-array i64 vars)]
+    [counts : (Array i64) (array.make-array i64 vars)]
     (begin
       (compiler-backend-count-block-uses counts blocks)
       counts)))
@@ -17059,9 +17066,9 @@
 (define (compiler-backend-var-single-use? [counts : (Array i64)] [var : i64]) : bool
   (if (< var 0)
     false
-    (if (>= var (array-length counts))
+    (if (>= var (array.array-length counts))
       false
-      (= (array-ref counts var) 1))))
+      (= (array.array-ref counts var) 1))))
 
 ;; True when every use of `var` is a branch fed by its own adjacent compare, so
 ;; the boolean is never needed as a materialized value and a compare->branch on
@@ -17072,12 +17079,12 @@
   (cond
     [(not compiler-backend-fuse-need-ready) false]
     [(< var 0) false]
-    [(>= var (array-length compiler-backend-fuse-free-counts)) false]
-    [(>= var (array-length compiler-backend-fuse-use-counts)) false]
+    [(>= var (array.array-length compiler-backend-fuse-free-counts)) false]
+    [(>= var (array.array-length compiler-backend-fuse-use-counts)) false]
     [else
       (=
-        (array-ref compiler-backend-fuse-use-counts var)
-        (array-ref compiler-backend-fuse-free-counts var))]))
+        (array.array-ref compiler-backend-fuse-use-counts var)
+        (array.array-ref compiler-backend-fuse-free-counts var))]))
 
 ;; The branch condition var at slot `j` when that branch is fed by the
 ;; immediately preceding compare (a "free branch" that reads flags, not a
@@ -17087,11 +17094,11 @@
   [j : i64]) : i64
   (if (<= j 0)
     (- 0 1)
-    (match (array-ref slots j)
+    (match (array.array-ref slots j)
       [(IrInstrBranch cond _ _)
         (match cond
           [(IrValueVar v)
-            (match (array-ref slots (- j 1))
+            (match (array.array-ref slots (- j 1))
               [(IrInstrBinOp dst op _ _ _)
                 (if (and (compiler-backend-compare-op? op) (= dst v))
                   v
@@ -17111,8 +17118,8 @@
       (begin
         (let
           [v : i64 (compiler-backend-fuse-free-branch-var slots j)]
-          (if (and (>= v 0) (< v (array-length free)))
-            (array-set! free v (+ (array-ref free v) 1))
+          (if (and (>= v 0) (< v (array.array-length free)))
+            (array.array-set! free v (+ (array.array-ref free v) 1))
             unit))
         (set! j (+ j 1))))))
 
@@ -17136,7 +17143,7 @@
   [use-counts : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (let
-    [free : (Array i64) (make-array i64 vars)]
+    [free : (Array i64) (array.make-array i64 vars)]
     (begin
       (compiler-backend-fuse-free-blocks free blocks)
       (set! compiler-backend-fuse-use-counts use-counts)
@@ -17146,16 +17153,16 @@
 (define (compiler-backend-fuse-need-disable!) : unit
   (begin
     (set! compiler-backend-fuse-need-ready false)
-    (set! compiler-backend-fuse-use-counts (make-array i64 0))
-    (set! compiler-backend-fuse-free-counts (make-array i64 0))))
+    (set! compiler-backend-fuse-use-counts (array.make-array i64 0))
+    (set! compiler-backend-fuse-free-counts (array.make-array i64 0))))
 
 (define (compiler-backend-addr-of-forwarding-fill!
   [items : (Array i64)]
   [index : i64]) : unit
-  (if (>= index (array-length items))
+  (if (>= index (array.array-length items))
     unit
     (begin
-      (array-set! items index (- 0 1))
+      (array.array-set! items index (- 0 1))
       (compiler-backend-addr-of-forwarding-fill! items (+ index 1)))))
 
 (define (compiler-backend-addr-of-forwarding-record!
@@ -17166,9 +17173,9 @@
     [(IrInstrAddrOf dst src)
       (if (and
         (>= dst 0)
-        (< dst (array-length items))
+        (< dst (array.array-length items))
         (compiler-backend-var-single-use? use-counts dst))
-        (array-set! items dst src)
+        (array.array-set! items dst src)
         unit)]
     [_ unit]))
 
@@ -17186,7 +17193,7 @@
           (compiler-backend-addr-of-forwarding-record!
             items
             use-counts
-            (array-ref slots index))
+            (array.array-ref slots index))
           (set! index (+ index 1))))
       unit)))
 
@@ -17219,7 +17226,7 @@
   [blocks : CompilerIrBlockList]
   [use-counts : (Array i64)]) : unit
   (let
-    [items : (Array i64) (make-array i64 vars)]
+    [items : (Array i64) (array.make-array i64 vars)]
     (begin
       (compiler-backend-addr-of-forwarding-fill! items 0)
       (compiler-backend-addr-of-forwarding-record-blocks!
@@ -17232,7 +17239,7 @@
 (define (compiler-backend-addr-of-forwarding-disable!) : unit
   (begin
     (set! compiler-backend-addr-of-forwarding-enabled false)
-    (set! compiler-backend-addr-of-forwarding-src (make-array i64 0))))
+    (set! compiler-backend-addr-of-forwarding-src (array.make-array i64 0))))
 
 (define (compiler-backend-branch-uses-var? [cond : CompilerIrValue] [var : i64]) : bool
   (match cond
@@ -23736,12 +23743,12 @@
   [collections : CompilerBackendProgramCollections]
   [values : (Array CompilerIrValue)]
   [index : i64]) : CompilerBackendProgramCollections
-  (if (>= index (array-length values))
+  (if (>= index (array.array-length values))
     collections
     (compiler-backend-collect-call-args-array-collections
       (compiler-backend-collect-value-collections
         collections
-        (array-ref values index))
+        (array.array-ref values index))
       values
       (+ index 1))))
 
@@ -23956,7 +23963,7 @@
             out
             (compiler-backend-collect-instr-collections
               out
-              (array-ref slots index)))
+              (array.array-ref slots index)))
           (set! index (+ index 1))))
       out)))
 
@@ -24657,14 +24664,14 @@
     (begin
       (while (< i count)
         (let
-          [instr : CompilerIrInstr (array-ref slots i)]
+          [instr : CompilerIrInstr (array.array-ref slots i)]
           [advance : i64 1]
           (begin
             (if (and
               (< (+ i 1) count)
               (compiler-backend-runtime-index-safe-literal-divmod-fusion?
                 instr
-                (array-ref slots (+ i 1))))
+                (array.array-ref slots (+ i 1))))
               (set! advance 2)
               (set! out (compiler-backend-runtime-index-instr out instr)))
             (set! i (+ i advance)))))

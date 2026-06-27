@@ -9064,6 +9064,27 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-int-cast-home-ok?) : bool
+  (match (compiler-backend-emit-cast
+    "test_cast"
+    "entry"
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    (AstTyI32)
+    (AstTyI64)
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movslq %r12d, %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -16(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%rax")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-bitcast-shape-ok?) : bool
   (and
     (backend-and4
@@ -12754,7 +12775,8 @@
           (compiler-backend-numeric-cast-shape-ok?)
           (compiler-backend-direct-float-precision-cast-home-ok?)
           (compiler-backend-direct-int-to-float-cast-home-ok?)
-          (compiler-backend-direct-float-to-int-cast-home-ok?))
+          (compiler-backend-direct-float-to-int-cast-home-ok?)
+          (compiler-backend-spill-int-cast-home-ok?))
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)

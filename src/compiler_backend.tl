@@ -6394,6 +6394,52 @@
     ty
     (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
 
+(define (compiler-backend-emit-load-typed-value-to-reg-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [reg : String]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (if (compiler-backend-float-type? ty)
+    (match value
+      [(IrValueGlobal name)
+        (OkCompilerBackend
+          (str-cat
+            "    "
+            (compiler-backend-float-move ty)
+            " "
+            (compiler-backend-global-symbol-index program-index name)
+            "(%rip), "
+            reg
+            "\n"))]
+      [_ (compiler-backend-emit-load-float-value-with-plan assignments value ty reg)])
+    (match value
+      [(IrValueVar id)
+        (OkCompilerBackend
+          (compiler-backend-emit-load-typed-var-to-reg-with-plan
+            assignments
+            id
+            ty
+            reg))]
+      [(IrValueGlobal name)
+        (OkCompilerBackend
+          (compiler-backend-emit-load-memory-to-reg
+            (str-cat
+              (compiler-backend-global-symbol-index program-index name)
+              "(%rip)"
+              "")
+            ty
+            reg))]
+      [(IrValueGlobalAddr name)
+        (OkCompilerBackend
+          (str-cat
+            "    leaq "
+            (compiler-backend-function-or-global-addr-symbol program-index name)
+            "(%rip), "
+            reg
+            "\n"))]
+      [_ (compiler-backend-emit-load-value-with-plan assignments value reg)])))
+
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
   [name : String]) : String
@@ -11570,22 +11616,13 @@
                       from-ty
                       dst-home))]
                 [_
-                  (match (compiler-backend-emit-load-typed-value-with-plan
+                  (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
                     assignments
                     src
                     from-ty
+                    dst-home
                     program-index)
-                    [(OkCompilerBackend load)
-                      (OkCompilerBackend
-                        (string-append
-                          load
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (if to-is-float
-                              "%xmm0"
-                              "%rax")
-                            to-ty)))]
+                    [(OkCompilerBackend load) (OkCompilerBackend load)]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
               (if (if (string-eq dst-home "")
                 false
@@ -11601,23 +11638,31 @@
                   assignments
                   src
                   dst-home)
-                (match (compiler-backend-emit-load-typed-value-with-plan
-                  assignments
-                  src
-                  from-ty
-                  program-index)
-                  [(OkCompilerBackend load)
-                    (OkCompilerBackend
-                      (string-append
-                        load
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          (if to-is-float
-                            "%xmm0"
-                            "%rax")
-                          to-ty)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))))
+                (let
+                  [cast-reg : String
+                    (if (string-eq dst-home "")
+                      (compiler-backend-scavenge-reg
+                        dst
+                        (compiler-backend-binop-scavenge-exclude-build)
+                        5
+                        "%r8")
+                      dst-home)]
+                  (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                    assignments
+                    src
+                    from-ty
+                    cast-reg
+                    program-index)
+                    [(OkCompilerBackend load)
+                      (OkCompilerBackend
+                        (string-append
+                          load
+                          (compiler-backend-emit-store-typed-var-with-plan
+                            assignments
+                            dst
+                            cast-reg
+                            to-ty)))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))))
 
 (define (compiler-backend-bitcast-width [ty : AstType]) : i64
   (match ty

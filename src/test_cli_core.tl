@@ -1652,6 +1652,7 @@
 (define (tltest-prune-runtime-decls-in
   [decls : AstDeclList]
   [paths : AstDeclPathList]
+  [target-path : String]
   [names : hashmap.StringI64Map]
   [out-decls : AstDeclList]
   [out-paths : AstDeclPathList]) : InlineRuntimeDecls
@@ -1666,31 +1667,41 @@
           (tltest-prune-runtime-decls-in
             (box-get rest)
             AstDeclPathNil
+            target-path
             names
             out-decls
             out-paths)]
         [(AstDeclPathCons decl-path path-rest)
-          (if (tltest-reachable-runtime-decl? decl names)
+          ;; Prune only declarations owned by the inline-test source. Imported
+          ;; generated helpers may be reached through macro-expanded bodies in
+          ;; ways the lightweight source reachability walk cannot always see.
+          (if (or
+            (not (tltest-owned-test-path? target-path decl-path))
+            (tltest-reachable-runtime-decl? decl names))
             (tltest-prune-runtime-decls-in
               (box-get rest)
               (box-get path-rest)
+              target-path
               names
               (ast-decl-cons decl out-decls)
               (ast-decl-path-cons decl-path out-paths))
             (tltest-prune-runtime-decls-in
               (box-get rest)
               (box-get path-rest)
+              target-path
               names
               out-decls
               out-paths))])]))
 
 (define (tltest-prune-runtime-decls
+  [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [tests : (Array InlineTest)]) : InlineRuntimeDecls
   (tltest-prune-runtime-decls-in
     decls
     paths
+    (compiler-load-normalize-path source)
     (tltest-reachable-names decls tests)
     AstDeclNil
     AstDeclPathNil))
@@ -1701,7 +1712,11 @@
   [paths : AstDeclPathList]) : InlineHarness
   (match (tltest-collect source decls paths)
     [(InlineCollect runtime-decls runtime-paths tests)
-      (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+      (match (tltest-prune-runtime-decls
+        source
+        runtime-decls
+        runtime-paths
+        tests)
         [(InlineRuntimeDecls pruned-decls pruned-paths)
           (let
             [count : i64 (array-length tests)]
@@ -1752,7 +1767,11 @@
         [count : i64 (array-length tests)]
         (if (= count 0)
           0
-          (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+          (match (tltest-prune-runtime-decls
+            source
+            runtime-decls
+            runtime-paths
+            tests)
             [(InlineRuntimeDecls pruned-decls pruned-paths)
               (match (typecheck-compiler-program-with-paths-cache
                 (tltest-inline-typecheck-program pruned-decls tests)

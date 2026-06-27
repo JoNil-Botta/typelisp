@@ -138,6 +138,10 @@
   (TcStringNil)
   (TcStringCons String (Box TcStringList)))
 
+(defenum TcLazyImportStubList
+  (TcLazyImportStubNil)
+  (TcLazyImportStubCons i64 i64 String bool (Box TcLazyImportStubList)))
+
 (defenum TcThreadTransferClass
   (TcThreadTransferable)
   (TcThreadShareable)
@@ -7050,6 +7054,84 @@
           (+ name-id 1))
         (array.array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
 
+(define tc-lazy-import-stubs : TcLazyImportStubList
+  (TcLazyImportStubNil))
+(define tc-lazy-import-stub-record-count : i64
+  0)
+(define tc-lazy-import-summary-backed-count : i64
+  0)
+
+(define (tc-lazy-import-stubs-reset!) : unit
+  (begin
+    (set! tc-lazy-import-stubs (TcLazyImportStubNil))
+    (set! tc-lazy-import-stub-record-count 0)
+    (set! tc-lazy-import-summary-backed-count 0)
+    (tc-source-dotted-alias-key-cache-reset!)))
+
+(define (tc-lazy-import-stub-count) : i64
+  tc-lazy-import-stub-record-count)
+
+(define (tc-lazy-import-summary-backed-stub-count) : i64
+  tc-lazy-import-summary-backed-count)
+
+(define (tc-lazy-import-stub-record!
+  [importer-module-id : i64]
+  [alias : String]
+  [target-module : String]
+  [summary-backed : bool]) : unit
+  (begin
+    (set!
+      tc-lazy-import-stubs
+      (TcLazyImportStubCons
+        importer-module-id
+        (intern alias)
+        target-module
+        summary-backed
+        (box tc-lazy-import-stubs)))
+    (set!
+      tc-lazy-import-stub-record-count
+      (+ tc-lazy-import-stub-record-count 1))
+    (if summary-backed
+      (set!
+        tc-lazy-import-summary-backed-count
+        (+ tc-lazy-import-summary-backed-count 1))
+      unit)
+    (tc-source-dotted-alias-key-cache-reset!)))
+
+(define (tc-lazy-import-stub-target-in
+  [stubs : TcLazyImportStubList]
+  [importer-module-id : i64]
+  [alias-id : i64]) : TcMaybeString
+  (match stubs
+    [(TcLazyImportStubNil) (TcNoString)]
+    [(TcLazyImportStubCons
+        stub-module-id
+        stub-alias-id
+        target-module
+        _
+        rest-box)
+      (if (and (= stub-module-id importer-module-id) (= stub-alias-id alias-id))
+        (TcSomeString target-module)
+        (tc-lazy-import-stub-target-in
+          (box-get rest-box)
+          importer-module-id
+          alias-id))]))
+
+(define (tc-lazy-import-stub-target [importer-module-id : i64] [alias : String]) : TcMaybeString
+  (tc-lazy-import-stub-target-in
+    tc-lazy-import-stubs
+    importer-module-id
+    (intern alias)))
+
+(define (tc-source-dotted-alias-target
+  [decls : AstDeclList]
+  [current-module-id : i64]
+  [alias : String]) : TcMaybeString
+  (match (tc-lazy-import-stub-target current-module-id alias)
+    [(TcSomeString target-module) (TcSomeString target-module)]
+    [(TcNoString)
+      (macro-import-alias-target-cached decls current-module-id alias)]))
+
 (define (tc-call-builtin-lookup-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -7097,7 +7179,7 @@
             [base : String (string.substring name base-start (- n base-start))]
             (match (tc-context-program ctx)
               [(AstProgram decls-box)
-                (match (macro-import-alias-target-cached
+                (match (tc-source-dotted-alias-target
                   (box-get decls-box)
                   current-module-id
                   alias)
@@ -12546,23 +12628,35 @@
                         (set!
                           seen-aliases
                           (hashmap.i64-i64-map-put seen-aliases seen-key 1))
-                        (match (tc-bind-import-alias-module-with-index
-                          ctx
-                          summary-index
-                          all-decls
-                          cur-env
-                          target-module
-                          alias-key
-                          importer-module
-                          (string.string-eq alias ""))
-                          [(OkTcEnv next-env)
-                            (begin
-                              (set! cur-env next-env)
-                              (set! cur rest))]
-                          [(ErrTcEnv step-message)
-                            (begin
-                              (set! message step-message)
-                              (set! ok false))]))))]
+                        (if (string.string-eq alias "")
+                          (match (tc-bind-import-alias-module-with-index
+                            ctx
+                            summary-index
+                            all-decls
+                            cur-env
+                            target-module
+                            alias-key
+                            importer-module
+                            true)
+                            [(OkTcEnv next-env)
+                              (begin
+                                (set! cur-env next-env)
+                                (set! cur rest))]
+                            [(ErrTcEnv step-message)
+                              (begin
+                                (set! message step-message)
+                                (set! ok false))])
+                          (begin
+                            (tc-lazy-import-stub-record!
+                              cur-module-id
+                              alias-key
+                              target-module
+                              (match (tc-import-alias-summary-index-lookup
+                                summary-index
+                                target-module)
+                                [(TcImportAliasSummaryFound _) true]
+                                [(TcImportAliasSummaryMissing) false]))
+                            (set! cur rest))))))]
                 [_ (set! cur rest)]))]))
       (if (string.string-eq message "")
         (OkTcEnv cur-env)
@@ -12572,6 +12666,7 @@
   (begin
     (tc-nominal-owner-cache-reset!)
     (tc-unqualified-import-ambiguity-reset!)
+    (tc-lazy-import-stubs-reset!)
     (match program
       [(AstProgram decls-box)
         (let
@@ -12740,18 +12835,18 @@
           (AstSomeModuleName target-module)
           (AstSomeImportAlias alias)
           _))
-      (match (tc-context-program ctx)
-        [(AstProgram decls-box)
-          (tc-bind-import-alias-module
-            ctx
-            (box-get decls-box)
-            env
-            target-module
-            (if (string.string-eq alias "")
+      (if (string.string-eq alias "")
+        (match (tc-context-program ctx)
+          [(AstProgram decls-box)
+            (tc-bind-import-alias-module
+              ctx
+              (box-get decls-box)
+              env
+              target-module
               ""
-              (compiler-symbols-import-alias-key module alias))
-            module
-            (string.string-eq alias ""))])]
+              module
+              true)])
+        (OkTcEnv env))]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -16809,7 +16904,8 @@
   (clone-field-type-able?
     (tc-context-pools ctx)
     (tc-type-without-regions (tc-resolve-type ctx ty))
-    (tc-clone-able-set ctx)))
+    (tc-clone-able-set ctx)
+    (tc-context-module ctx)))
 
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
@@ -35959,6 +36055,7 @@
 
 (define (macro-identity-key-params
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [params : AstMacroParamList]
   [args : AstExprList]
@@ -36017,6 +36114,7 @@
                     (match (if (tc-macro-type-param-kind? ty)
                       (match (macro-type-arg-with-fallback
                         ctx
+                        decls
                         fallback-module
                         head-expr)
                         [(OkMacroTypeArg resolved-ty)
@@ -36048,6 +36146,7 @@
                       [(OkGenKey head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
+                          decls
                           fallback-module
                           rest-params
                           rest-args
@@ -36063,6 +36162,7 @@
 
 (define (macro-module-identity
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [macro-name : String]
   [definition-module : String]
@@ -36072,6 +36172,7 @@
   [call-expr : AstExpr]) : ResultGenKey
   (match (macro-identity-key-params
     ctx
+    decls
     fallback-module
     params
     args
@@ -38284,6 +38385,7 @@
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
+    (tc-lazy-import-stubs-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
@@ -39244,7 +39346,109 @@
     (tc-type-render expected)
     ", got bracket clause"))
 
-(define (macro-type-arg [ctx : TcContext] [arg : AstExpr]) : ResultMacroTypeArg
+(define (macro-type-arg-module-qualify-name [ctx : TcContext] [name : i64]) : String
+  (let
+    [name-str : String (intern-str name)]
+    [module : String (tc-context-module ctx)]
+    (if (and
+      (> (string.string-length module) 0)
+      (not (tc-name-qualified? name-str))
+      (not (tc-source-slash-qualified? name-str)))
+      (str_cat.str-cat (tc-name-slashes-to-dots module) "." name-str)
+      name-str)))
+
+(define (macro-type-arg-module-qualify-list
+  [ctx : TcContext]
+  [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head rest)
+      (ast-type-cons
+        (macro-type-arg-module-qualify ctx (ty-node-get head))
+        (macro-type-arg-module-qualify-list ctx (box-get rest)))]))
+
+(define (macro-type-arg-module-qualify [ctx : TcContext] [ty : AstType]) : AstType
+  (match ty
+    [(AstTyFunc args ret)
+      (ast-ty-func
+        (macro-type-arg-module-qualify-list ctx (box-get args))
+        (macro-type-arg-module-qualify ctx (ty-node-get ret)))]
+    [(AstTyTuple elems)
+      (ast-ty-tuple (macro-type-arg-module-qualify-list ctx (box-get elems)))]
+    [(AstTyArray elem len)
+      (ast-ty-array (macro-type-arg-module-qualify ctx (ty-node-get elem)) len)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyBox elem)
+      (ast-ty-box (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyPtr elem)
+      (ast-ty-ptr (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (macro-type-arg-module-qualify ctx (ty-node-get elem)))]
+    [(AstTyRef region inner)
+      (ast-ty-ref
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyMutRef region inner)
+      (ast-ty-mut-ref
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyRegion region inner)
+      (ast-ty-region
+        region
+        (macro-type-arg-module-qualify ctx (ty-node-get inner)))]
+    [(AstTyVar name)
+      (AstTyVar (intern (macro-type-arg-module-qualify-name ctx name)))]
+    [(AstTyVarArgs name lifetimes)
+      (ast-ty-var-args
+        (intern (macro-type-arg-module-qualify-name ctx name))
+        (box-get lifetimes))]
+    [_ ty]))
+
+(define (macro-type-arg-reflections-from-decls [decls : AstDeclList]) : CtfeReflectInfoList
+  (begin
+    (ctfe-build-seen-reset!)
+    (ctfe-reflections-from-decls
+      decls
+      ""
+      (ctfe-reflect-info-list-with-capacity (ctfe-metadata-decl-capacity decls)))))
+
+(define (macro-type-arg-reflect-resolve
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [ty : AstType]) : AstType
+  (let
+    [infos : CtfeReflectInfoList (macro-type-arg-reflections-from-decls decls)]
+    [reflected : AstType
+      (ctfe-reflect-resolve-type-with-pools (tc-context-pools ctx) infos ty)]
+    (if (tc-type-needs-resolution? reflected)
+      (let
+        [qualified-reflected : AstType
+          (ctfe-reflect-resolve-type-with-pools
+            (tc-context-pools ctx)
+            infos
+            (macro-type-arg-module-qualify ctx reflected))]
+        (if (tc-type-needs-resolution? qualified-reflected)
+          reflected
+          qualified-reflected))
+      reflected)))
+
+(define (macro-type-arg-resolve
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [ty : AstType]) : AstType
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    (if (tc-type-needs-resolution? resolved)
+      (let
+        [reflected : AstType
+          (macro-type-arg-reflect-resolve ctx decls resolved)]
+        (if (tc-type-needs-resolution? reflected)
+          (macro-type-arg-module-qualify ctx reflected)
+          reflected))
+      resolved)))
+
+(define (macro-type-arg [ctx : TcContext] [decls : AstDeclList] [arg : AstExpr]) : ResultMacroTypeArg
   (match (ctfe-expr-to-type
     arg
     arg
@@ -39252,21 +39456,25 @@
     (ctfe-fuel-limit))
     [(OkCtfeQuoteType ty _)
       (match (tc-source-type-policy-ok ctx ty)
-        [(OkTcUnit) (OkMacroTypeArg (tc-resolve-type ctx ty))]
+        [(OkTcUnit) (OkMacroTypeArg (macro-type-arg-resolve ctx decls ty))]
         [(ErrTcUnit message)
           (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
     [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [arg : AstExpr]) : ResultMacroTypeArg
-  (match (macro-type-arg ctx arg)
+  (match (macro-type-arg ctx decls arg)
     [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
     [(ErrMacroTypeArg primary-diag)
       (if (string.string-eq fallback-module (tc-context-module ctx))
         (ErrMacroTypeArg primary-diag)
-        (match (macro-type-arg (tc-context-with-module ctx fallback-module) arg)
+        (match (macro-type-arg
+          (tc-context-with-module ctx fallback-module)
+          decls
+          arg)
           [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
           [(ErrMacroTypeArg _) (ErrMacroTypeArg primary-diag)]))]))
 
@@ -39501,7 +39709,11 @@
   [expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
   (if (tc-macro-type-param-kind? expected)
-    (match (macro-type-arg ctx arg)
+    (match (macro-type-arg
+      ctx
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box) (box-get decls-box)])
+      arg)
       [(OkMacroTypeArg _) OkMacroCheck]
       [(ErrMacroTypeArg diag) (ErrMacroCheck diag)])
     (let
@@ -39608,6 +39820,7 @@
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [name : i64]
@@ -39618,7 +39831,7 @@
   [env : CtfeEnv]) : ResultMacroEnv
   (cond
     [(tc-macro-type-param-kind? ty)
-      (match (macro-type-arg-with-fallback ctx fallback-module arg-expr)
+      (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
         [(OkMacroTypeArg resolved-ty)
           (OkMacroEnv
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
@@ -39675,6 +39888,7 @@
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
 (define (macro-bind-params
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [params : AstMacroParamList]
@@ -39712,6 +39926,7 @@
                     [rest-args : AstExprList (box-get rest-args)]
                     (match (macro-bind-fixed-param
                       ctx
+                      decls
                       fallback-module
                       type-env
                       pname
@@ -39723,6 +39938,7 @@
                       [(OkMacroEnv next-env)
                         (macro-bind-params
                           ctx
+                          decls
                           fallback-module
                           type-env
                           rest-params
@@ -39736,6 +39952,7 @@
 ;; returned syntax value for expression, module, or declaration positions.
 (define (macro-eval-transformer-expanded
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
   [macro-name : String]
@@ -39747,6 +39964,7 @@
     (tc-context-capture-active-pools! ctx)
     (match (macro-bind-params
       ctx
+      decls
       fallback-module
       type-env
       params
@@ -39794,6 +40012,7 @@
     [(OkMacroExprList expanded-args)
       (macro-eval-transformer-expanded
         ctx
+        decls
         (tc-context-module ctx)
         type-env
         macro-name
@@ -40214,6 +40433,7 @@
 
 (define (macro-vector-family-fast-decls
   [ctx : TcContext]
+  [decls : AstDeclList]
   [fallback-module : String]
   [args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroParsedDecls
@@ -40233,6 +40453,7 @@
                     [(AstExprNil)
                       (match (macro-type-arg-with-fallback
                         ctx
+                        decls
                         fallback-module
                         type-expr)
                         [(OkMacroTypeArg elem-ty)
@@ -40394,6 +40615,7 @@
               (tc-context-capture-active-pools! ctx)
               (match (macro-bind-params
                 ctx
+                decls
                 (tc-context-module ctx)
                 type-env
                 params
@@ -41261,13 +41483,7 @@
               (OkMacroDecl
                 (ast-decl-def-fn-export-id name params ret nbody export))]
             [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclTest name expr-box span)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (match (macro-expand-expr ctx global-env decls 0 expr)
-            [(OkMacroExpr nexpr)
-              (OkMacroDecl (ast-decl-test-id name nexpr span))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+      [(AstDeclTest _ _ _) (OkMacroDecl decl)]
       [(AstDeclImport (AstImportSpec kind _ _ _ _))
         (match kind
           [(AstImportMacro call-id _)
@@ -41521,6 +41737,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            orig-decls
                             call-module
                             macro-name
                             definition-module
@@ -41534,6 +41751,7 @@
                                 definition-module)
                                 (match (macro-vector-family-fast-decls
                                   call-ctx
+                                  orig-decls
                                   call-module
                                   expanded-args
                                   call-expr)
@@ -41557,6 +41775,7 @@
                                     (ErrMacroDeclExpansion diag)])
                                 (match (macro-eval-transformer-expanded
                                   call-ctx
+                                  orig-decls
                                   call-module
                                   global-env
                                   macro-name
@@ -41658,6 +41877,7 @@
                         [(OkMacroExprList expanded-args)
                           (match (macro-module-identity
                             call-ctx
+                            orig-decls
                             call-module
                             macro-name
                             definition-module
@@ -41668,6 +41888,7 @@
                             [(OkGenKey identity _)
                               (match (macro-eval-transformer-expanded
                                 call-ctx
+                                orig-decls
                                 call-module
                                 global-env
                                 macro-name
@@ -42195,7 +42416,7 @@
     [(AstDeclDef _ _ expr-box) (macro-node-uses-macro? ctx decls expr-box)]
     [(AstDeclDefFn _ _ _ body-box _)
       (macro-node-uses-macro? ctx decls body-box)]
-    [(AstDeclTest _ expr-box _) (macro-node-uses-macro? ctx decls expr-box)]
+    [(AstDeclTest _ _ _) false]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
         [(AstImportMacro _ _) true]
@@ -42539,8 +42760,7 @@
       (not (macro-expr-might-fire? (ast-node-get expr-box)))]
     [(AstDeclDefFn _ _ _ body-box _)
       (not (macro-expr-might-fire? (ast-node-get body-box)))]
-    [(AstDeclTest _ expr-box _)
-      (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+    [(AstDeclTest _ _ _) true]
     [_ false]))
 
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
@@ -42920,10 +43140,7 @@
         [body : AstExpr (ast-node-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
     [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclTest _ body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclTest _ _ _) false]
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
       (match kind
         [(AstImportMacro _ _) true]
@@ -43044,6 +43261,11 @@
             (cfg compile-profile (compiler-tc-macro-profile-reset))
             ;; Same per-compile reset for the clone-able type set cache.
             (tc-clone-able-cache-reset!)
+            ;; Type-name misses are keyed only by lookup text. Each macro
+            ;; fixed-point pass rebuilds symbols from a different expanded
+            ;; program, so a miss from an earlier pass must not hide generated
+            ;; module-local types introduced by that pass.
+            (tc-nominal-owner-cache-reset!)
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
@@ -43055,7 +43277,10 @@
             ;; point for every CTFE reflection/layout query.
             (set!
               ctfe-needs-metadata
-              (or (ctfe-program-has-type-literal? decls) has-expr-type-macros))
+              (or
+                has-defmacro
+                (ctfe-program-has-type-literal? decls)
+                has-expr-type-macros))
             (if (or has-defmacro (macro-program-needs-expansion? decls))
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))
@@ -43638,17 +43863,37 @@
     cleanup-name
     " type mismatch"))
 
+(define (tc-cleanup-source-slash-alias-helper-name
+  [ctx : TcContext]
+  [cleanup-str : String]
+  [cleanup-name : i64]) : i64
+  (let
+    [qualifier : String (tc-qualified-name-module cleanup-str)]
+    [base : String (tc-qualified-name-base cleanup-str)]
+    (match (tc-context-program ctx)
+      [(AstProgram decls-box)
+        (match (macro-import-alias-target-cached
+          (box-get decls-box)
+          (intern (tc-context-module ctx))
+          qualifier)
+          [(TcSomeString target-module)
+            (intern (compiler-symbol-module-key target-module base))]
+          [(TcNoString) cleanup-name])])))
+
 (define (tc-cleanup-field-helper-name
+  [ctx : TcContext]
   [owner-name : String]
   [cleanup-name : i64]) : i64
   (let
     [cleanup-str : String (intern-str cleanup-name)]
-    (if (tc-name-qualified? cleanup-str)
-      cleanup-name
+    (if (tc-source-slash-qualified-id? cleanup-str cleanup-name)
+      (tc-cleanup-source-slash-alias-helper-name ctx cleanup-str cleanup-name)
       (intern
-        (compiler-symbol-module-key
-          (tc-qualified-name-module owner-name)
-          cleanup-str)))))
+        (if (tc-name-qualified? cleanup-str)
+          cleanup-str
+          (compiler-symbol-module-key
+            (tc-qualified-name-module owner-name)
+            cleanup-str))))))
 
 (define (tc-check-struct-field-cleanup-fn
   [ctx : TcContext]
@@ -43658,7 +43903,8 @@
   [cleanup-name : i64]
   [field-ty : AstType]) : ResultTcUnit
   (let
-    [lookup-name : i64 (tc-cleanup-field-helper-name struct-name cleanup-name)]
+    [lookup-name : i64
+      (tc-cleanup-field-helper-name ctx struct-name cleanup-name)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(OkTcType cleanup-ty)
         (tc-expect
@@ -43843,7 +44089,8 @@
   [cleanup-name : i64]
   [payload-ty : AstType]) : ResultTcUnit
   (let
-    [lookup-name : i64 (tc-cleanup-field-helper-name enum-name cleanup-name)]
+    [lookup-name : i64
+      (tc-cleanup-field-helper-name ctx enum-name cleanup-name)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(OkTcType cleanup-ty)
         (tc-expect
@@ -44956,6 +45203,7 @@
     (tc-nominal-owner-cache-reset!)
     (tc-unqualified-import-ambiguity-reset!)
     (macro-alias-cache-reset!)
+    (compiler-load-surface-summaries-reset!)
     (ctfe-build-seen-reset!)
     (set! tc-hygiene-active-top-env-ready false)
     (set! tc-hygiene-active-top-env (tc-empty-type-env))

@@ -2710,13 +2710,16 @@
   (lower-spmd-inline-empty-helper-stack))
 (define lower-spmd-inline-next-temp : i64
   0)
+(define lower-no-main-entry-prune-active : bool
+  false)
 
 (define (lower-reset-file-state!) : unit
   (begin
     (set! lower-entry-main-module-active false)
     (set! lower-entry-main-module "")
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
-    (set! lower-spmd-inline-next-temp 0)))
+    (set! lower-spmd-inline-next-temp 0)
+    (set! lower-no-main-entry-prune-active false)))
 
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
@@ -3468,7 +3471,8 @@
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [types : AstTypeList]) : CloneNameList
+  [types : AstTypeList]
+  [module : String]) : CloneNameList
   (match types
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
@@ -3479,15 +3483,22 @@
           ctx
           decls
           able
-          (lower-clone-root-add-type ctx decls able roots head)
-          rest))]))
+          (lower-clone-root-add-type
+            (tc-context-with-module ctx module)
+            decls
+            able
+            roots
+            head)
+          rest
+          module))]))
 
 (define (lower-clone-root-add-field-list
   [ctx : TcContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [fields : AstFieldDefList]) : CloneNameList
+  [fields : AstFieldDefList]
+  [module : String]) : CloneNameList
   (match fields
     [(AstFieldDefNil) roots]
     [(AstFieldDefCons field rest)
@@ -3499,15 +3510,22 @@
               ctx
               decls
               able
-              (lower-clone-root-add-type ctx decls able roots ty)
-              rest)]))]))
+              (lower-clone-root-add-type
+                (tc-context-with-module ctx module)
+                decls
+                able
+                roots
+                ty)
+              rest
+              module)]))]))
 
 (define (lower-clone-root-add-variant-list
   [ctx : TcContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
   [roots : CloneNameList]
-  [variants : AstVariantDefList]) : CloneNameList
+  [variants : AstVariantDefList]
+  [module : String]) : CloneNameList
   (match variants
     [(AstVariantDefNil) roots]
     [(AstVariantDefCons variant rest)
@@ -3519,8 +3537,81 @@
               ctx
               decls
               able
-              (lower-clone-root-add-type-list ctx decls able roots fields)
-              rest)]))]))
+              (lower-clone-root-add-type-list
+                ctx
+                decls
+                able
+                roots
+                fields
+                module)
+              rest
+              module)]))]))
+
+(define (lower-clone-root-add-named-deps-in-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [name : String]
+  [module : String]) : CloneNameList
+  (match decls
+    [(AstDeclNil) roots]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-clone-root-add-named-deps-in-module
+              ctx
+              rest
+              able
+              roots
+              name
+              (intern-str next-module))]
+          [(AstDeclDefEnum decl-name _ variants)
+            (if (string.string-eq
+              (clone-type-name-canonical module (intern-str decl-name))
+              name)
+              (lower-clone-root-add-variant-list
+                ctx
+                decls
+                able
+                roots
+                variants
+                module)
+              (lower-clone-root-add-named-deps-in-module
+                ctx
+                rest
+                able
+                roots
+                name
+                module))]
+          [(AstDeclDefStruct decl-name _ _ fields)
+            (if (string.string-eq
+              (clone-type-name-canonical module (intern-str decl-name))
+              name)
+              (lower-clone-root-add-field-list
+                ctx
+                decls
+                able
+                roots
+                fields
+                module)
+              (lower-clone-root-add-named-deps-in-module
+                ctx
+                rest
+                able
+                roots
+                name
+                module))]
+          [_
+            (lower-clone-root-add-named-deps-in-module
+              ctx
+              rest
+              able
+              roots
+              name
+              module)]))]))
 
 (define (lower-clone-root-add-named-deps
   [ctx : TcContext]
@@ -3528,21 +3619,7 @@
   [able : CloneNameSet]
   [roots : CloneNameList]
   [name : String]) : CloneNameList
-  (match decls
-    [(AstDeclNil) roots]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDefEnum decl-name _ variants)
-            (if (string.string-eq (intern-str decl-name) name)
-              (lower-clone-root-add-variant-list ctx decls able roots variants)
-              (lower-clone-root-add-named-deps ctx rest able roots name))]
-          [(AstDeclDefStruct decl-name _ _ fields)
-            (if (string.string-eq (intern-str decl-name) name)
-              (lower-clone-root-add-field-list ctx decls able roots fields)
-              (lower-clone-root-add-named-deps ctx rest able roots name))]
-          [_ (lower-clone-root-add-named-deps ctx rest able roots name)]))]))
+  (lower-clone-root-add-named-deps-in-module ctx decls able roots name ""))
 
 (define (lower-clone-root-add-named
   [ctx : TcContext]
@@ -3551,7 +3628,7 @@
   [roots : CloneNameList]
   [name : String]) : CloneNameList
   (let
-    [helper-name : String (tc-qualified-name-base name)]
+    [helper-name : String name]
     (if (clone-name-set-contains? able helper-name)
       (if (clone-name-list-contains? roots helper-name)
         roots
@@ -3573,7 +3650,13 @@
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
       [(AstTyTuple elems)
-        (lower-clone-root-add-type-list ctx decls able roots (box-get elems))]
+        (lower-clone-root-add-type-list
+          ctx
+          decls
+          able
+          roots
+          (box-get elems)
+          (tc-context-module ctx))]
       [(AstTyArray elem _)
         (lower-clone-root-add-type
           ctx
@@ -6982,6 +7065,12 @@
 
 (define (lower-comptime-only-module? [module : String]) : bool
   (string.string-eq module "stdlib.comptime"))
+
+(define (lower-no-main-entry-prune-active?) : bool
+  lower-no-main-entry-prune-active)
+
+(define (lower-no-main-entry-prune-set! [active : bool]) : unit
+  (set! lower-no-main-entry-prune-active active))
 
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
@@ -40406,12 +40495,252 @@
       [_ true])
     false))
 
+(define (lower-source-node-has-import-call? [id : i64]) : bool
+  (lower-source-expr-has-import-call? (ast-node-get id)))
+
+(define (lower-source-expr-list-has-import-call? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (or
+        (lower-source-node-has-import-call? head)
+        (lower-source-expr-list-has-import-call? (box-get rest)))]))
+
+(define (lower-source-let-bindings-have-import-call?
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (or
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (lower-source-node-has-import-call? init-box)])
+        (lower-source-let-bindings-have-import-call? (box-get rest)))]))
+
+(define (lower-source-match-arms-have-import-call? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (or
+        (match arm
+          [(AstMatchArm _ body-box)
+            (lower-source-node-has-import-call? body-box)])
+        (lower-source-match-arms-have-import-call? (box-get rest)))]))
+
+(define (lower-source-resource-bindings-have-import-call?
+  [bindings : AstResourceBindingList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (or
+        (match binding
+          [(AstResourceBinding _ acquire-box cleanup-box)
+            (or
+              (lower-source-node-has-import-call? acquire-box)
+              (lower-source-node-has-import-call? cleanup-box))])
+        (lower-source-resource-bindings-have-import-call? (box-get rest)))]))
+
+(define (lower-source-call-head-import? [func-box : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get func-box))
+    [(AstExprVar name) (= name (intern "import"))]
+    [_ false]))
+
+(define (lower-source-expr-has-import-call? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprCall func-box args)
+      (or
+        (lower-source-call-head-import? func-box)
+        (lower-source-node-has-import-call? func-box)
+        (lower-source-expr-list-has-import-call? args))]
+    [(AstExprBracketClause items)
+      (lower-source-expr-list-has-import-call? items)]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-source-node-has-import-call? left-box)
+        (lower-source-node-has-import-call? right-box))]
+    [(AstExprUnary _ inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-source-node-has-import-call? cond-box)
+        (lower-source-node-has-import-call? then-box)
+        (lower-source-node-has-import-call? else-box))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (or
+            (lower-source-let-bindings-have-import-call? bindings)
+            (lower-source-node-has-import-call? body-box))])]
+    [(AstExprLambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda _ _ body-box) (lower-source-node-has-import-call? body-box)])]
+    [(AstExprTuple exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprTupleRef tuple-box index-box)
+      (or
+        (lower-source-node-has-import-call? tuple-box)
+        (lower-source-node-has-import-call? index-box))]
+    [(AstExprArray exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprMakeArray _ len-box) (lower-source-node-has-import-call? len-box)]
+    [(AstExprArrayRef array-box index-box)
+      (or
+        (lower-source-node-has-import-call? array-box)
+        (lower-source-node-has-import-call? index-box))]
+    [(AstExprArraySet array-box index-box value-box)
+      (or
+        (lower-source-node-has-import-call? array-box)
+        (lower-source-node-has-import-call? index-box)
+        (lower-source-node-has-import-call? value-box))]
+    [(AstExprArrayPush array-box value-box)
+      (or
+        (lower-source-node-has-import-call? array-box)
+        (lower-source-node-has-import-call? value-box))]
+    [(AstExprStringRef string-box index-box)
+      (or
+        (lower-source-node-has-import-call? string-box)
+        (lower-source-node-has-import-call? index-box))]
+    [(AstExprWhile cond-box body-box)
+      (or
+        (lower-source-node-has-import-call? cond-box)
+        (lower-source-node-has-import-call? body-box))]
+    [(AstExprBegin exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprUnsafe exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprSet _ rhs-box) (lower-source-node-has-import-call? rhs-box)]
+    [(AstExprAnn inner-box _) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprCast inner-box _) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprBorrow _ _ inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprMatch match-box)
+      (match (box-get match-box)
+        [(AstMatch scrutinee-box arms)
+          (or
+            (lower-source-node-has-import-call? scrutinee-box)
+            (lower-source-match-arms-have-import-call? arms))])]
+    [(AstExprForeach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach _ _ start-box end-box body-box)
+          (or
+            (lower-source-node-has-import-call? start-box)
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? body-box))])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+          (or
+            (lower-source-node-has-import-call? start-box)
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? init-box)
+            (lower-source-node-has-import-call? value-box))])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ _ start-box end-box init-box _ value-box body-box _)
+          (or
+            (lower-source-node-has-import-call? start-box)
+            (lower-source-node-has-import-call? end-box)
+            (lower-source-node-has-import-call? init-box)
+            (lower-source-node-has-import-call? value-box)
+            (lower-source-node-has-import-call? body-box))])]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (or
+        (lower-source-node-has-import-call? value-box)
+        (lower-source-node-has-import-call? lane-box))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (or
+        (lower-source-node-has-import-call? value-box)
+        (lower-source-node-has-import-call? lane-box))]
+    [(AstExprStructGet target-box _)
+      (lower-source-node-has-import-call? target-box)]
+    [(AstExprStructSet target-box _ value-box)
+      (or
+        (lower-source-node-has-import-call? target-box)
+        (lower-source-node-has-import-call? value-box))]
+    [(AstExprWithRegion _ exprs)
+      (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprWithEscape escape-box exprs)
+      (or
+        (lower-source-node-has-import-call? escape-box)
+        (lower-source-expr-list-has-import-call? exprs))]
+    [(AstExprWithScratch exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [(AstExprInArena arena-box exprs)
+      (or
+        (lower-source-node-has-import-call? arena-box)
+        (lower-source-expr-list-has-import-call? exprs))]
+    [(AstExprWithResource resource-box)
+      (match (box-get resource-box)
+        [(AstWithResource bindings body)
+          (or
+            (lower-source-resource-bindings-have-import-call? bindings)
+            (lower-source-expr-list-has-import-call? body))])]
+    [(AstExprBox inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprBoxGet inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprBoxTake inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprBoxSet inner-box value-box)
+      (or
+        (lower-source-node-has-import-call? inner-box)
+        (lower-source-node-has-import-call? value-box))]
+    [(AstExprComptime inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprQuote inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprQuasiquote inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprUnquote inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprUnquoteSplicing inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprTry inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprReturn inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprPtrNullCheck inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprPtrRead inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprPtrWrite pointer-box value-box)
+      (or
+        (lower-source-node-has-import-call? pointer-box)
+        (lower-source-node-has-import-call? value-box))]
+    [(AstExprPtrOffset pointer-box offset-box)
+      (or
+        (lower-source-node-has-import-call? pointer-box)
+        (lower-source-node-has-import-call? offset-box))]
+    [(AstExprPtrCast inner-box _)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprPtrToInt inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprIntToPtr inner-box _)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprStringData inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprStringFromBytes data-box len-box)
+      (or
+        (lower-source-node-has-import-call? data-box)
+        (lower-source-node-has-import-call? len-box))]
+    [(AstExprArrayData inner-box)
+      (lower-source-node-has-import-call? inner-box)]
+    [(AstExprCpuIdEax left-box right-box)
+      (or
+        (lower-source-node-has-import-call? left-box)
+        (lower-source-node-has-import-call? right-box))]
+    [(AstExprCpuIdEbx left-box right-box)
+      (or
+        (lower-source-node-has-import-call? left-box)
+        (lower-source-node-has-import-call? right-box))]
+    [(AstExprCpuIdEcx left-box right-box)
+      (or
+        (lower-source-node-has-import-call? left-box)
+        (lower-source-node-has-import-call? right-box))]
+    [(AstExprCpuIdEdx left-box right-box)
+      (or
+        (lower-source-node-has-import-call? left-box)
+        (lower-source-node-has-import-call? right-box))]
+    [(AstExprXgetbv inner-box) (lower-source-node-has-import-call? inner-box)]
+    [(AstExprSyscall exprs) (lower-source-expr-list-has-import-call? exprs)]
+    [_ false]))
+
 (define (lower-source-decl-needs-loader?
   [decl : AstDecl]
   [all-decls : AstDeclList]) : bool
   (match decl
     [(AstDeclImport (AstImportSpec kind path _ _ _))
       (lower-source-stdlib-import-needs-loader? all-decls kind path)]
+    [(AstDeclDefMacro _ _ ret body-box)
+      (and
+        (tc-macro-result-decl-emitting? ret)
+        (lower-source-node-has-import-call? body-box))]
     [(AstDeclUnsafe inner-box)
       (lower-source-decl-needs-loader? (box-get inner-box) all-decls)]
     [(AstDeclComptimeDecl _ template-box)

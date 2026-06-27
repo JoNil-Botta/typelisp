@@ -214,6 +214,8 @@
   2048)
 (define compiler-load-runtime-prelude-cache-capacity : i64
   16)
+(define compiler-load-dotted-path-cache-capacity : i64
+  256)
 
 ;; Loader cache data is owned by an explicit session state. The no-arg
 ;; compatibility helpers below operate on the active state pointer only.
@@ -231,7 +233,11 @@
   (program-cache-miss-count (Array i64))
   (program-cache-store-count (Array i64))
   (runtime-prelude-cache (Array CompilerLoadPreludeCacheSlot))
-  (runtime-prelude-cache-ready (Array bool)))
+  (runtime-prelude-cache-ready (Array bool))
+  (dotted-path-cache-ready (Array bool))
+  (dotted-path-cache-keys (Array i64))
+  (dotted-path-cache-values (Array String))
+  (dotted-path-cache-generation (Array i64)))
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (let
@@ -278,7 +284,11 @@
     (compiler-load-session-state-i64-cell 0)
     (compiler-load-session-state-i64-cell 0)
     (array.make-array CompilerLoadPreludeCacheSlot 16)
-    (compiler-load-session-state-bool-cell false)))
+    (compiler-load-session-state-bool-cell false)
+    (array.make-array bool compiler-load-dotted-path-cache-capacity)
+    (array.make-array i64 compiler-load-dotted-path-cache-capacity)
+    (array.make-array String compiler-load-dotted-path-cache-capacity)
+    (compiler-load-session-state-i64-cell 0)))
 
 (define compiler-load-active-session-state : CompilerLoadSessionState
   (compiler-load-session-state-new))
@@ -1217,7 +1227,80 @@
             primary))]
       (OkPkgResolve resolved))))
 
-(define (compiler-load-dotted-module-path [module-name : String]) : String
+(define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
+  (if (>= index compiler-load-dotted-path-cache-capacity)
+    unit
+    (begin
+      (array.array-set!
+        (struct-get compiler-load-active-session-state dotted-path-cache-ready)
+        index
+        false)
+      (compiler-load-dotted-path-cache-clear-ready! (+ index 1)))))
+
+(define (compiler-load-dotted-path-cache-reset!) : unit
+  (begin
+    (compiler-load-dotted-path-cache-clear-ready! 0)
+    (array.array-set!
+      (struct-get
+        compiler-load-active-session-state
+        dotted-path-cache-generation)
+      0
+      (intern-generation))))
+
+(define (compiler-load-dotted-path-cache-ensure!) : unit
+  (if (=
+    (array.array-ref
+      (struct-get
+        compiler-load-active-session-state
+        dotted-path-cache-generation)
+      0)
+    (intern-generation))
+    unit
+    (compiler-load-dotted-path-cache-reset!)))
+
+(define (compiler-load-dotted-path-cache-bucket [module-id : i64]) : i64
+  (bit-and module-id (- compiler-load-dotted-path-cache-capacity 1)))
+
+(define (compiler-load-dotted-path-cache-lookup [module-id : i64]) : CompilerLoadMaybeString
+  (let
+    [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
+    (if (if (array.array-ref
+      (struct-get compiler-load-active-session-state dotted-path-cache-ready)
+      bucket)
+      (=
+        (array.array-ref
+          (struct-get compiler-load-active-session-state dotted-path-cache-keys)
+          bucket)
+        module-id)
+      false)
+      (CompilerLoadSomeString
+        (array.array-ref
+          (struct-get
+            compiler-load-active-session-state
+            dotted-path-cache-values)
+          bucket))
+      (CompilerLoadNoString))))
+
+(define (compiler-load-dotted-path-cache-store!
+  [module-id : i64]
+  [path : String]) : unit
+  (let
+    [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
+    (begin
+      (array.array-set!
+        (struct-get compiler-load-active-session-state dotted-path-cache-ready)
+        bucket
+        true)
+      (array.array-set!
+        (struct-get compiler-load-active-session-state dotted-path-cache-keys)
+        bucket
+        module-id)
+      (array.array-set!
+        (struct-get compiler-load-active-session-state dotted-path-cache-values)
+        bucket
+        path))))
+
+(define (compiler-load-dotted-module-path-uncached [module-name : String]) : String
   (let
     [n : i64 (string.string-length module-name)]
     [i : i64 0]
@@ -1232,6 +1315,28 @@
               (string.string-concat3 out (string.substring module-name i 1) "")))
           (set! i (+ i 1))))
       (string.string-concat3 out ".tl" ""))))
+
+(define (compiler-load-dotted-module-path [module-name : String]) : String
+  (begin
+    (compiler-load-dotted-path-cache-ensure!)
+    (let
+      [module-id : i64 (intern module-name)]
+      (match (compiler-load-dotted-path-cache-lookup module-id)
+        [(CompilerLoadSomeString path) path]
+        [(CompilerLoadNoString)
+          (let
+            [prev-arena : i64 (arena.tl_arena_current)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set node-pool-base-arena))
+              (let
+                [path : String
+                  (compiler-load-dotted-module-path-uncached module-name)]
+                (begin
+                  (compiler-load-dotted-path-cache-store! module-id path)
+                  (unsafe
+                    (arena.tl_arena_set prev-arena))
+                  path))))]))))
 
 (define (compiler-load-dotted-module-first-len [module-name : String]) : i64
   (let
@@ -8478,6 +8583,30 @@
       (compiler-load-join-import-path "src/app/main.tl" "C:/dep.tl")
       "C:/dep.tl")))
 
+(define (compiler-load-dotted-module-path-cache-ok?) : bool
+  (begin
+    (compiler-load-dotted-path-cache-reset!)
+    (let
+      [stdlib-name : String "stdlib.core_macros"]
+      [pkg-name : String "pkg.local.mod"]
+      [stdlib-id : i64 (intern stdlib-name)]
+      [pkg-id : i64 (intern pkg-name)]
+      [first : String (compiler-load-dotted-module-path "stdlib.core_macros")]
+      [second : String (compiler-load-dotted-module-path "stdlib.core_macros")]
+      [third : String (compiler-load-dotted-module-path "pkg.local.mod")]
+      (and
+        (string.string-eq first "stdlib/core_macros.tl")
+        (string.string-eq second "stdlib/core_macros.tl")
+        (string.string-eq third "pkg/local/mod.tl")
+        (match (compiler-load-dotted-path-cache-lookup stdlib-id)
+          [(CompilerLoadSomeString cached)
+            (string.string-eq cached "stdlib/core_macros.tl")]
+          [(CompilerLoadNoString) false])
+        (match (compiler-load-dotted-path-cache-lookup pkg-id)
+          [(CompilerLoadSomeString cached)
+            (string.string-eq cached "pkg/local/mod.tl")]
+          [(CompilerLoadNoString) false])))))
+
 (define (compiler-load-test-path-at [paths : AstDeclPathList] [index : i64]) : String
   (match paths
     [(AstDeclPathNil) ""]
@@ -8595,6 +8724,9 @@
     (unless
       (compiler-load-relative-resolution-ok?)
       (return (io.panic "compiler-load: relative resolution smoke mismatch")))
+    (unless
+      (compiler-load-dotted-module-path-cache-ok?)
+      (return (io.panic "compiler-load: dotted path cache smoke mismatch")))
     (unless
       (compiler-load-package-owner-paths-ok?)
       (return (io.panic "compiler-load: package owner path smoke mismatch")))

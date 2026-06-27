@@ -1400,10 +1400,10 @@
               target
               true
               (compiler-optimize-default-level))
-              [(OkCompilerDriver asm)
+              [(ResultCompilerDriver.Ok asm)
                 (ResultSourceToolString.Ok
                   (source-tool-augment-assembly-for-target asm target))]
-              [(ErrCompilerDriver diag)
+              [(ResultCompilerDriver.Err diag)
                 (ResultSourceToolString.Err
                   (compiler-diagnostic-render (box-get diag)))])]
           [(ErrCompilerLower diag)

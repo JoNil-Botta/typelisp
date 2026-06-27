@@ -2058,6 +2058,7 @@
                   (tc-context-with-module ctx "entry.module")]
                 (and
                   (= (tc-lazy-import-stub-count) 1)
+                  (= (tc-lazy-import-summary-backed-stub-count) 1)
                   (not
                     (tc-name-bound?
                       env

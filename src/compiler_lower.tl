@@ -15953,18 +15953,17 @@
 (define (lower-context-with-nominal-owner-module
   [ctx : TcContext]
   [nominal-name : String]) : TcContext
-  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
-    [(SomeI64 handle)
-      (match (tc-nominal-owner-name ctx handle)
-        [(OkTcString owner-name)
-          (if (tc-name-qualified? owner-name)
-            (tc-context-with-module ctx (tc-qualified-name-module owner-name))
-            (tc-context-with-module ctx ""))]
-        [(ErrTcString _) ctx])]
-    [(NoneI64)
-      (if (tc-name-qualified? nominal-name)
-        (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
-        ctx)]))
+  (if (tc-name-qualified? nominal-name)
+    (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
+      [(SomeI64 handle)
+        (match (tc-nominal-owner-name ctx handle)
+          [(OkTcString owner-name)
+            (if (tc-name-qualified? owner-name)
+              (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+              (tc-context-with-module ctx ""))]
+          [(ErrTcString _) ctx])]
+      [(NoneI64) ctx])))
 
 (define (lower-construct-struct
   [ctx : TcContext]

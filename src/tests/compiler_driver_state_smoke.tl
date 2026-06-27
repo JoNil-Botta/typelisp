@@ -968,7 +968,7 @@
               (BackendTargetLinux)
               (compiler-cfg-empty)))]
         (match lowered
-          [(OkCompilerDriverLowered _ _ pools-a)
+          [(ResultCompilerDriverLowered.Ok _ _ pools-a)
             (let
               [pools-b : AstNodePoolContext
                 (compiler-driver-state-pool-context state-b)]
@@ -988,12 +988,12 @@
                     0
                     true
                     false)
-                    [(OkCompilerDriver asm)
+                    [(ResultCompilerDriver.Ok asm)
                       (and
                         (compiler-backend-string-contains? asm "calc")
                         (compiler-backend-string-contains? asm "main"))]
-                    [(ErrCompilerDriver _) false]))))]
-          [(ErrCompilerDriverLowered _) false])))))
+                    [(ResultCompilerDriver.Err _) false]))))]
+          [(ResultCompilerDriverLowered.Err _) false])))))
 
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
@@ -1015,8 +1015,8 @@
             (compiler-driver-target-cfgs
               (BackendTargetLinux)
               (compiler-cfg-empty)))
-            [(OkCompilerDriverLowered _ _ _) true]
-            [(ErrCompilerDriverLowered _) false])]
+            [(ResultCompilerDriverLowered.Ok _ _ _) true]
+            [(ResultCompilerDriverLowered.Err _) false])]
         (begin
           (compiler-driver-state-capture-session-floors! state)
           ok)))))
@@ -1083,11 +1083,11 @@
         2
         (BackendModeScalar)
         (compiler-cfg-empty))
-        [(OkCompilerDriver summary)
+        [(ResultCompilerDriver.Ok summary)
           (and
             (> (string.string-length summary) 0)
             (string.string-contains (& summary) (& needle)))]
-        [(ErrCompilerDriver _) false]))))
+        [(ResultCompilerDriver.Err _) false]))))
 
 (define (main) : i64
   (begin

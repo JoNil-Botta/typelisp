@@ -723,10 +723,10 @@
         mode
         cfgs
         (source-tool-linux-crt-entry? target link-inputs))
-        [(OkCompilerDriver asm)
+        [(ResultCompilerDriver.Ok asm)
           (ResultSourceToolString.Ok
             (source-tool-augment-assembly-for-target asm target))]
-        [(ErrCompilerDriver diag)
+        [(ResultCompilerDriver.Err diag)
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]))
 
@@ -758,10 +758,10 @@
         deps
         emit-entry
         crt-entry)
-        [(OkCompilerDriver asm)
+        [(ResultCompilerDriver.Ok asm)
           (ResultSourceToolString.Ok
             (source-tool-augment-assembly-for-target asm target))]
-        [(ErrCompilerDriver diag)
+        [(ResultCompilerDriver.Err diag)
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]))
 
@@ -842,9 +842,9 @@
             mode
             cfgs
             (source-tool-linux-crt-entry? target link-inputs))
-            [(OkCompilerDriverObject image)
+            [(ResultCompilerDriverObject.Ok image)
               (source-tool-render-linkable-linux-elf-object image)]
-            [(ErrCompilerDriverObject diag)
+            [(ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler-diagnostic-render (box-get diag)))])])]
     [(BackendTargetWindows)
@@ -870,9 +870,9 @@
         opt-level
         true
         (source-tool-linux-crt-entry? target link-inputs))
-        [(OkCompilerDriverObject image)
+        [(ResultCompilerDriverObject.Ok image)
           (source-tool-render-linkable-linux-elf-object image)]
-        [(ErrCompilerDriverObject diag)
+        [(ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]
     [(BackendTargetWindows)
@@ -1003,9 +1003,9 @@
             mode
             cfgs
             (source-tool-linux-crt-entry? target link-inputs))
-            [(OkCompilerDriverObject image)
+            [(ResultCompilerDriverObject.Ok image)
               (source-tool-render-linkable-windows-coff-object image)]
-            [(ErrCompilerDriverObject diag)
+            [(ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler-diagnostic-render (box-get diag)))])])]))
 
@@ -1030,9 +1030,9 @@
         opt-level
         true
         false)
-        [(OkCompilerDriverObject image)
+        [(ResultCompilerDriverObject.Ok image)
           (source-tool-render-linkable-windows-coff-object image)]
-        [(ErrCompilerDriverObject diag)
+        [(ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]))
 
@@ -1871,7 +1871,7 @@
             target
             true
             opt-level)
-            [(OkCompilerDriver asm)
+            [(ResultCompilerDriver.Ok asm)
               (source-tool-write-assembly-and-link
                 target
                 asm-path
@@ -1880,7 +1880,7 @@
                 link-inputs
                 (source-tool-augment-assembly-for-target asm target)
                 write-context)]
-            [(ErrCompilerDriver diag)
+            [(ResultCompilerDriver.Err diag)
               (SourceToolCommandErr (compiler-diagnostic-render (box-get diag)))])])]))
 
 (define (source-tool-build-source-in-temp

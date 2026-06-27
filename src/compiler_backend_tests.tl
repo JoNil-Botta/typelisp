@@ -8707,7 +8707,7 @@
   (and
     (compiler-backend-instr-contains?
       (IrInstrAddrOf 2 1)
-      "    leaq -16(%rbp), %rax\n")
+      "    leaq -16(%rbp), %r8\n")
     (compiler-backend-instr-contains?
       (IrInstrGep 3 (IrValueVar 1) (IrValueI64 2) (AstTyI32))
       "    addq $8, %r10\n")
@@ -8907,6 +8907,20 @@
     (match (compiler-backend-emit-addr-of assignments 2 1)
       [(OkCompilerBackend asm) (string-eq asm "    leaq -16(%rbp), %r12\n")]
       [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-addr-of-spill-scratch-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrAddrOf 2 1)
+      IrInstrNil)
+    CompilerRegAssignmentNil
+    4)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    leaq -16(%rbp), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -24(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%rax")))]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-gep-copy-bytes-const-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
@@ -9296,6 +9310,7 @@
     (backend-and8
       (compiler-backend-addr-of-forwarding-shape-ok?)
       (compiler-backend-addr-of-register-home-shape-ok?)
+      (compiler-backend-addr-of-spill-scratch-shape-ok?)
       (compiler-backend-gep-copy-bytes-const-shape-ok?)
       (compiler-backend-gep-copy-bytes-index-shape-ok?)
       (compiler-backend-gep-load-r10-reuse-shape-ok?)

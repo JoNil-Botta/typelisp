@@ -11029,21 +11029,40 @@
               [(CompilerRegRegisterPair home _)
                 (str-cat "    leaq " slot ", " home "\n")]
               [(CompilerRegSpill offset)
-                (string-append
-                  (str-cat "    leaq " slot ", " "%rax" "\n")
-                  (str-cat
-                    "    movq %rax, "
-                    (compiler-backend-frame-offset offset)
-                    "\n"
-                    ""
-                    ""))]
+                (let
+                  [addr-reg : String
+                    (compiler-backend-scavenge-reg
+                      dst
+                      (compiler-backend-addr-scavenge-exclude)
+                      0
+                      "%r8")]
+                  (string-append
+                    (str-cat "    leaq " slot ", " addr-reg "\n")
+                    (str-cat
+                      "    movq "
+                      addr-reg
+                      ", "
+                      (compiler-backend-frame-offset offset)
+                      "\n"
+                      ""
+                      "")))]
               ;; The address-of result is defined by IrInstrAddrOf, never a remat
               ;; Mov; unreachable.
               [(CompilerRegRemat _) ""])]
           [(CompilerRegNoLocation)
-            (string-append
-              (str-cat "    leaq " slot ", " "%rax" "\n")
-              (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))])))))
+            (let
+              [addr-reg : String
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r8")]
+              (string-append
+                (str-cat "    leaq " slot ", " addr-reg "\n")
+                (compiler-backend-emit-store-var-with-plan
+                  assignments
+                  dst
+                  addr-reg)))])))))
 
 (define (compiler-backend-gep-index-asm [scale : i64] [index-reg : String]) : String
   (if (= scale 1)

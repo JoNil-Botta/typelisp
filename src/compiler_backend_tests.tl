@@ -3600,6 +3600,36 @@
         IrFunctionNil)
       IrExternNil)))
 
+(define (compiler-backend-register-group-f64-test-type) : AstType
+  (AstTyStruct (intern "BackendGroupF64Test")))
+
+(define (compiler-backend-register-group-f64-test-index) : CompilerBackendProgramIndex
+  (let
+    [ty : AstType (compiler-backend-register-group-f64-test-type)]
+    (compiler-backend-program-index-build
+      (compiler-ir-function-cons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          3
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (IrInstrPack
+                  2
+                  (compiler-ir-value-cons
+                    (IrValueF64 (compiler-backend-test-f64-bits "1.0"))
+                    (compiler-ir-value-cons
+                      (IrValueF64 (compiler-backend-test-f64-bits "2.0"))
+                      IrValueNil))
+                  ty)
+                IrInstrNil))
+            IrBlockNil))
+        IrFunctionNil)
+      IrExternNil)))
+
 (define (compiler-backend-register-group-mov-error-ok?
   [assignments : CompilerRegAssignmentList]
   [src : CompilerIrValue]
@@ -12240,6 +12270,30 @@
           (not (compiler-backend-string-contains? asm "%xmm15")))]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-group-stack-f64-arg-bits-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegisterPair "%xmm3" "%xmm4"))
+        CompilerRegAssignmentNil)]
+    [ty : AstType (compiler-backend-register-group-f64-test-type)]
+    (match (compiler-backend-emit-group-stack-arg
+      (BackendTargetLinux)
+      assignments
+      (IrValueVar 0)
+      0
+      2
+      ty
+      (compiler-backend-register-group-f64-test-index))
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq %xmm3, %r11\n")
+          (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movq %xmm4, %r11\n")
+          (compiler-backend-string-contains? asm "    movq %r11, 8(%rsp)\n")
+          (not (compiler-backend-string-contains? asm "%xmm15")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
     (compiler-backend-stack-int-args-ok?)
@@ -12247,6 +12301,7 @@
     (compiler-backend-stack-mixed-args-ok?)
     (compiler-backend-stack-windows-args-ok?)
     (compiler-backend-stack-f32-arg-bits-ok?)
+    (compiler-backend-group-stack-f64-arg-bits-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
 (define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String

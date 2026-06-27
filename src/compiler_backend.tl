@@ -6411,9 +6411,36 @@
   [int-idx : i64]) : bool
   (<= (+ int-idx 2) (compiler-backend-call-register-count target)))
 
+(define (compiler-backend-group-stack-exclude [operand : String]) : (Array String)
+  (let
+    [base : (Array String) (compiler-backend-c-abi-stage-exclude)]
+    (if (compiler-backend-peephole-register-operand? operand)
+      (compiler-backend-scavenge-exclude-append base 4 operand)
+      base)))
+
+(define (compiler-backend-group-stack-exclude-count [operand : String]) : i64
+  (if (compiler-backend-peephole-register-operand? operand) 5 4))
+
+(define (compiler-backend-outgoing-stack-arg-slot
+  [target : CompilerBackendTarget]
+  [stack-idx : i64]) : String
+  (str-cat
+    (int->string
+      (compiler-backend-outgoing-stack-arg-offset target stack-idx))
+    "(%rsp)"
+    ""))
+
+(define (compiler-backend-emit-group-stack-word-copy
+  [operand : String]
+  [scratch : String]
+  [slot : String]) : String
+  (string-append
+    (compiler-backend-emit-group-word-move operand scratch false)
+    (compiler-backend-emit-group-word-move scratch slot false)))
+
 ;; #2386: push a group call-arg's two words to the outgoing stack frame at
-;; consecutive slots (word0 -> stack-idx, word1 -> stack-idx+1), via %r11 so no
-;; in-flight register arg is clobbered.
+;; consecutive slots (word0 -> stack-idx, word1 -> stack-idx+1), bit-copying
+;; each eightbyte through a scavenged GP register so no in-flight arg is clobbered.
 (define (compiler-backend-emit-group-stack-arg
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -6428,52 +6455,26 @@
         [(OkCompilerBackend word0)
           (match (compiler-backend-group-word-operand assignments v 1 vars)
             [(OkCompilerBackend word1)
-              (OkCompilerBackend
-                (string-append
-                  (compiler-backend-emit-group-word-move
-                    word0
-                    (if (compiler-backend-group-word-sse? program-index ty 0)
-                      "%xmm15"
-                      "%r11")
-                    (compiler-backend-group-word-sse? program-index ty 0))
+              (let
+                [scratch : String
+                  (compiler-backend-scavenge-reg-here
+                    (compiler-backend-group-stack-exclude word1)
+                    (compiler-backend-group-stack-exclude-count word1)
+                    "%r11")]
+                (OkCompilerBackend
                   (string-append
-                    (compiler-backend-emit-group-word-move
-                      (if (compiler-backend-group-word-sse? program-index ty 0)
-                        "%xmm15"
-                        "%r11")
-                      (str-cat
-                        (int->string
-                          (compiler-backend-outgoing-stack-arg-offset
-                            target
-                            stack-idx))
-                        "(%rsp)"
-                        "")
-                      (compiler-backend-group-word-sse? program-index ty 0))
-                    (string-append
-                      (compiler-backend-emit-group-word-move
-                        word1
-                        (if (compiler-backend-group-word-sse?
-                          program-index
-                          ty
-                          1)
-                          "%xmm15"
-                          "%r11")
-                        (compiler-backend-group-word-sse? program-index ty 1))
-                      (compiler-backend-emit-group-word-move
-                        (if (compiler-backend-group-word-sse?
-                          program-index
-                          ty
-                          1)
-                          "%xmm15"
-                          "%r11")
-                        (str-cat
-                          (int->string
-                            (compiler-backend-outgoing-stack-arg-offset
-                              target
-                              (+ stack-idx 1)))
-                          "(%rsp)"
-                          "")
-                        (compiler-backend-group-word-sse? program-index ty 1))))))]
+                    (compiler-backend-emit-group-stack-word-copy
+                      word0
+                      scratch
+                      (compiler-backend-outgoing-stack-arg-slot
+                        target
+                        stack-idx))
+                    (compiler-backend-emit-group-stack-word-copy
+                      word1
+                      scratch
+                      (compiler-backend-outgoing-stack-arg-slot
+                        target
+                        (+ stack-idx 1))))))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [_
@@ -6555,15 +6556,11 @@
   (match value
     [(IrValueVar v)
       (let
-        [sse? : bool
-          (compiler-backend-group-word-sse? program-index ty word-index)]
         [scratch : String
-          (if sse?
-            "%xmm15"
-            (compiler-backend-scavenge-reg-here
-              (compiler-backend-c-abi-stage-exclude)
-              4
-              "%r11"))]
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-c-abi-stage-exclude)
+            4
+            "%r11")]
         (match (compiler-backend-group-word-operand
           assignments
           v
@@ -6571,18 +6568,10 @@
           vars)
           [(OkCompilerBackend operand)
             (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-group-word-move operand scratch sse?)
-                (compiler-backend-emit-group-word-move
-                  scratch
-                  (str-cat
-                    (int->string
-                      (compiler-backend-outgoing-stack-arg-offset
-                        target
-                        stack-idx))
-                    "(%rsp)"
-                    "")
-                  sse?)))]
+              (compiler-backend-emit-group-stack-word-copy
+                operand
+                scratch
+                (compiler-backend-outgoing-stack-arg-slot target stack-idx)))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [_
       (ErrCompilerBackend

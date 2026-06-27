@@ -27652,6 +27652,9 @@
 (define (lower-avx2-varying-match-diagnostic) : String
   "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512")
 
+(define (lower-avx2-varying-while-diagnostic) : String
+  "lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512")
+
 (define (lower-spmd-bool-lane-diagnostic) : String
   "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512")
 
@@ -28413,6 +28416,25 @@
               index
               lane-locals
               else-branch))))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (lower-masked-vector-lanes-merge
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            cond)
+          (lower-masked-vector-expr-lanes-with-locals
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            body)))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
@@ -28870,6 +28892,294 @@
     index
     (lower-masked-vector-empty-lane-locals)
     bindings))
+
+(define (lower-masked-vector-body-has-varying-while-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (lower-masked-vector-body-has-varying-while-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprAnn inner-box _)
+      (lower-masked-vector-body-has-varying-while-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprCast inner-box _)
+      (lower-masked-vector-body-has-varying-while-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (ast-node-get cond-box)]
+        [body : AstExpr (ast-node-get body-box)]
+        (or
+          (>
+            (lower-masked-vector-expr-lanes-with-locals
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              cond)
+            0)
+          (or
+            (lower-masked-vector-body-has-varying-while-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              cond)
+            (lower-masked-vector-body-has-varying-while-with-locals?
+              mode
+              env
+              type-env
+              index
+              lane-locals
+              body))))]
+    [(AstExprIf cond-box then-box else-box)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get cond-box))
+        (or
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (ast-node-get then-box))
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (ast-node-get else-box))))]
+    [(AstExprLet let-box)
+      (match (box-get let-box)
+        [(AstLet bindings body-box)
+          (let
+            [body : AstExpr (ast-node-get body-box)]
+            [body-locals : hashmap.StringI64Map
+              (lower-masked-vector-let-bindings-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                bindings)]
+            (or
+              (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                bindings)
+              (lower-masked-vector-body-has-varying-while-with-locals?
+                mode
+                env
+                type-env
+                index
+                body-locals
+                body)))])]
+    [(AstExprBegin exprs)
+      (lower-masked-vector-expr-list-has-varying-while-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        exprs)]
+    [(AstExprUnary _ inner-box)
+      (lower-masked-vector-body-has-varying-while-with-locals?
+        mode
+        env
+        type-env
+        index
+        lane-locals
+        (ast-node-get inner-box))]
+    [(AstExprBinary _ left-box right-box)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get left-box))
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get right-box)))]
+    [(AstExprArrayRef arr-box idx-box)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box)))]
+    [(AstExprArraySet arr-box idx-box value-box)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get arr-box))
+        (or
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (ast-node-get idx-box))
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (ast-node-get value-box))))]
+    [(AstExprStructSet receiver-box _ value-box)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get receiver-box))
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
+    [_ false]))
+
+(define (lower-masked-vector-expr-list-has-varying-while-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get expr))
+        (lower-masked-vector-expr-list-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (box-get rest)))]))
+
+(define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : hashmap.StringI64Map]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ init-box)
+          (let
+            [init : AstExpr (ast-node-get init-box)]
+            [init-lanes : i64
+              (lower-masked-vector-expr-lanes-with-locals
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)]
+            [next-locals : hashmap.StringI64Map
+              (if (> init-lanes 0)
+                (hashmap.string-i64-map-put
+                  lane-locals
+                  (intern-str name)
+                  init-lanes)
+                lane-locals)]
+            (or
+              (lower-masked-vector-body-has-varying-while-with-locals?
+                mode
+                env
+                type-env
+                index
+                lane-locals
+                init)
+              (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+                mode
+                env
+                type-env
+                index
+                next-locals
+                (box-get rest))))])]))
+
+(define (lower-masked-vector-body-has-varying-while?
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [expr : AstExpr]) : bool
+  (lower-masked-vector-body-has-varying-while-with-locals?
+    mode
+    env
+    type-env
+    index
+    (lower-masked-vector-empty-lane-locals)
+    expr))
 
 (define (lower-masked-vector-body-has-varying-match-with-locals?
   [mode : CompilerLowerMode]
@@ -29621,6 +29931,18 @@
             type-env
             index
             else-branch)))]
+    [(AstExprWhile cond-box body-box)
+      (or
+        (lower-masked-vector-body-has-bool-array-lane?
+          env
+          type-env
+          index
+          (ast-node-get cond-box))
+        (lower-masked-vector-body-has-bool-array-lane?
+          env
+          type-env
+          index
+          (ast-node-get body-box)))]
     [(AstExprBegin exprs)
       (lower-masked-vector-expr-list-has-bool-array-lane?
         env
@@ -29720,6 +30042,7 @@
     (lower-mode-avx512? mode)
     (or
       (lower-masked-vector-body-has-varying-if? mode env type-env index body)
+      (lower-masked-vector-body-has-varying-while? mode env type-env index body)
       (lower-masked-vector-body-has-varying-match? mode env type-env index body)
       (lower-masked-vector-body-has-bool-array-lane? env type-env index body)))
     (let
@@ -29781,6 +30104,18 @@
           (lower-array-var-set-merge
             (lower-masked-vector-array-vars env type-env index then-branch)
             (lower-masked-vector-array-vars env type-env index else-branch))))]
+    [(AstExprWhile cond-box body-box)
+      (lower-array-var-set-merge
+        (lower-masked-vector-array-vars
+          env
+          type-env
+          index
+          (ast-node-get cond-box))
+        (lower-masked-vector-array-vars
+          env
+          type-env
+          index
+          (ast-node-get body-box)))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
@@ -30797,6 +31132,18 @@
     [(LowerAlloc s v)
       (LowerExpr
         (lower-state-emit s (IrInstrMaskNot v src lanes))
+        (IrValueVar v)
+        (AstTyBool))]))
+
+(define (lower-emit-mask-reduce
+  [state : LowerState]
+  [op : CompilerIrMaskReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrMaskReduce v op src lanes))
         (IrValueVar v)
         (AstTyBool))]))
 
@@ -32778,6 +33125,132 @@
       (tc-type-without-regions ty))
     lanes))
 
+(define (lower-avx512-masked-while
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerStringSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [cond : AstExpr]
+  [body : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc mask-alloc loop-mask-var)
+      (let
+        [s : LowerState
+          (lower-state-emit
+            mask-alloc
+            (IrInstrMaskBinOp
+              loop-mask-var
+              (IrMaskOr)
+              active-mask
+              active-mask
+              lanes))]
+        [header-label : String ""]
+        [body-label : String ""]
+        [exit-label : String ""]
+        [cond-active : CompilerIrValue IrValueUnit]
+        [any-active : CompilerIrValue IrValueUnit]
+        (begin
+          (match (lower-state-fresh-label s "spmd_vwhile_header")
+            [(LowerLabel next-s label)
+              (begin
+                (set! s next-s)
+                (set! header-label label))])
+          (match (lower-state-fresh-label s "spmd_vwhile_body")
+            [(LowerLabel next-s label)
+              (begin
+                (set! s next-s)
+                (set! body-label label))])
+          (match (lower-state-fresh-label s "spmd_vwhile_exit")
+            [(LowerLabel next-s label)
+              (begin
+                (set! s next-s)
+                (set! exit-label label))])
+          (set!
+            s
+            (lower-state-finish-block
+              (lower-state-emit s (IrInstrJump header-label))
+              header-label))
+          (match (lower-avx512-masked-expr
+            ctx
+            s
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            (IrValueVar loop-mask-var)
+            lanes
+            cond)
+            [(OkLowerExpr cond-lowered)
+              (match cond-lowered
+                [(LowerExpr cond-state cond-mask _)
+                  (begin
+                    (match (lower-emit-mask-binop
+                      cond-state
+                      (IrMaskAnd)
+                      (IrValueVar loop-mask-var)
+                      cond-mask
+                      lanes)
+                      [(LowerExpr next-s value _)
+                        (begin
+                          (set! s next-s)
+                          (set! cond-active value))])
+                    (match (lower-emit-mask-reduce
+                      s
+                      (IrMaskReduceAny)
+                      cond-active
+                      lanes)
+                      [(LowerExpr next-s value _)
+                        (begin
+                          (set! s next-s)
+                          (set! any-active value))]))])]
+            [(ErrLowerExpr message) (return (ErrLowerExpr message))])
+          (set!
+            s
+            (lower-state-finish-block
+              (lower-state-emit
+                s
+                (IrInstrBranch any-active body-label exit-label))
+              body-label))
+          (match (lower-avx512-masked-expr-expected
+            ctx
+            s
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            cond-active
+            lanes
+            body
+            (AstTyUnit))
+            [(OkLowerExpr body-lowered)
+              (match body-lowered
+                [(LowerExpr body-state _ _)
+                  (set!
+                    s
+                    (lower-state-emit
+                      body-state
+                      (IrInstrMaskBinOp
+                        loop-mask-var
+                        (IrMaskOr)
+                        cond-active
+                        cond-active
+                        lanes)))])]
+            [(ErrLowerExpr message) (return (ErrLowerExpr message))])
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-finish-block
+                (lower-state-emit s (IrInstrJump header-label))
+                exit-label)
+              IrValueUnit
+              (AstTyUnit)))))]))
+
 (define (lower-avx512-masked-if
   [ctx : TcContext]
   [state : LowerState]
@@ -33806,6 +34279,19 @@
                 arms)]
             [(ErrTcType message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])])]
+    [(AstExprWhile cond-box body-box)
+      (lower-avx512-masked-while
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        (ast-node-get cond-box)
+        (ast-node-get body-box))]
     [(AstExprBegin exprs)
       (lower-avx512-masked-begin
         ctx
@@ -34624,6 +35110,19 @@
                   body))]
             [LowerNoMaskedVectorMap
               (cond
+                [(lower-masked-vector-body-has-varying-while?
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    body)
+                  (ErrLowerExpr
+                    (box
+                      (lower-diagnostic-at-expr
+                        body
+                        (if (lower-mode-avx2? (lower-state-mode state))
+                          (lower-avx2-varying-while-diagnostic)
+                          "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
                 [(lower-masked-vector-body-has-varying-if?
                     (lower-state-mode state)
                     env

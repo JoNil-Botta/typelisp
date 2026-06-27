@@ -1076,10 +1076,8 @@
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-f32-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-i16-u16-ok-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-if-source))
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-varying-while-source))
     (compiler-typecheck-ok? (compiler-typecheck-foreach-inline-call-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-foreach-varying-while-source)
-      "typecheck: foreach while condition must be uniform")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-varying-call-source)
       "typecheck: foreach calls with varying arguments are not supported")

@@ -65,6 +65,11 @@ falling back to scalar code.
 - `masked_if_match_i64.tl` - AVX-512-only varying `match` nested inside a
   masked varying `if` branch, covering branch-mask composition with match arm
   masks. Exit 42.
+- `varying_while_i64.tl` - AVX-512-only varying `while` over `n = 13` i64
+  lanes, covering per-lane loop convergence and a masked tail. Exit 42.
+- `masked_if_varying_while_i64.tl` - AVX-512-only varying `while` nested under
+  a masked varying `if`, covering parent branch masks plus loop-carried masks.
+  Exit 42.
 - `varying_match_i64.tl` - AVX-512-only value-producing varying `match` over
   scalar i64 literal patterns, wildcard fallback, and catch-all lane binding.
   Exit 42.
@@ -131,6 +136,9 @@ Coverage map:
   varying-match coverage lives in `varying_match_enum_payload.tl` through the
   scalar reference path. AVX2 keeps explicit staged diagnostics for these
   shapes.
+- AVX-512 varying `while` coverage lives in `varying_while_i64.tl` and
+  `masked_if_varying_while_i64.tl`; AVX2 keeps an explicit staged diagnostic
+  for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified

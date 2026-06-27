@@ -4711,6 +4711,56 @@
     (AstTyF64)
     reg))
 
+(define (compiler-backend-float-value-register
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id)
+      (match (compiler-reg-assignment-lookup assignments id)
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegRegister home)
+              (if (compiler-backend-string-prefix-at? home "%xmm" 0)
+                home
+                "")]
+            [_ ""])]
+        [(CompilerRegNoLocation) ""])]
+    [_ ""]))
+
+(define (compiler-backend-float-value-stack-address
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id)
+      (match (compiler-reg-assignment-lookup assignments id)
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegSpill offset) (compiler-backend-frame-offset offset)]
+            [_ ""])]
+        [(CompilerRegNoLocation) (compiler-backend-slot id)])]
+    [_ ""]))
+
+(define (compiler-backend-float-value-memory-operand
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]) : String
+  (match value
+    [(IrValueVar _) (compiler-backend-float-value-stack-address assignments value)]
+    [(IrValueGlobal name) (str-cat (compiler-backend-user-symbol name) "(%rip)")]
+    [(IrValueF64 bits) (str-cat (compiler-backend-float-label ty bits) "(%rip)")]
+    [_ ""]))
+
+(define (compiler-backend-float-direct-rhs-operand
+  [assignments : CompilerRegAssignmentList]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [dst-home : String]) : String
+  (let
+    [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
+    (if (and (not (string-eq rhs-reg "")) (not (string-eq rhs-reg dst-home)))
+      rhs-reg
+      (compiler-backend-float-value-memory-operand assignments rhs ty))))
+
 ;; #2997: prefer compact 32-bit encodings for small non-negative immediates.
 ;; Writing a 32-bit register zero-extends into the full 64-bit register, so for
 ;; 0 <= n < 2^31 the 64-bit value is exactly n: `xorl r32,r32` (2 bytes) clears
@@ -7915,6 +7965,55 @@
     [(IrUnNot) (str-cat "    xorq $1, " reg "\n")]
     [(IrUnBitNot) (str-cat "    notq " reg "\n")]))
 
+(define (compiler-backend-float-suffix [fty : AstType]) : String
+  (if (compiler-backend-f64-type? fty)
+    "sd"
+    "ss"))
+
+(define (compiler-backend-float-arith-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinAdd) true]
+    [(IrBinSub) true]
+    [(IrBinMul) true]
+    [(IrBinDiv) true]
+    [(IrBinSafeDiv) true]
+    [_ false]))
+
+(define (compiler-backend-float-arith-mnemonic [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinAdd) "add"]
+    [(IrBinSub) "sub"]
+    [(IrBinMul) "mul"]
+    [(IrBinDiv) "div"]
+    [(IrBinSafeDiv) "div"]
+    [_ ""]))
+
+(define (compiler-backend-emit-float-binop-direct
+  [assignments : CompilerRegAssignmentList]
+  [dst-home : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs-operand : String]
+  [fty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    lhs
+    fty
+    dst-home)
+    [(OkCompilerBackend lhs-asm)
+      (OkCompilerBackend
+        (str-cat
+          lhs-asm
+          "    "
+          (compiler-backend-float-arith-mnemonic op)
+          (compiler-backend-float-suffix fty)
+          " "
+          rhs-operand
+          ", "
+          dst-home
+          "\n"))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
 ;; are in %xmm0 (lhs) and %xmm1 (rhs); arithmetic leaves the result in %xmm0,
@@ -8277,38 +8376,59 @@
     (let
       [fty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        lhs
-        fty
-        "%xmm0")
-        [(OkCompilerBackend lhs-asm)
-          (match (compiler-backend-emit-load-float-value-with-plan
-            assignments
-            rhs
-            fty
-            "%xmm1")
-            [(OkCompilerBackend rhs-asm)
-              (match (compiler-backend-float-binop-asm op fty)
-                [(OkCompilerBackend op-asm)
-                  (OkCompilerBackend
-                    (str-cat
-                      lhs-asm
-                      rhs-asm
-                      op-asm
-                      (if (compiler-backend-float-type? ty)
-                        (compiler-backend-emit-store-float-var-with-plan
-                          assignments
-                          dst
-                          "%xmm0"
-                          ty)
-                        (compiler-backend-emit-store-var-with-plan
-                          assignments
-                          dst
-                          "%rax"))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+      [dst-home : String (compiler-backend-var-register-home assignments dst)]
+      [rhs-operand : String
+        (compiler-backend-float-direct-rhs-operand
+          assignments
+          rhs
+          fty
+          dst-home)]
+      (if (and
+        (compiler-backend-float-type? ty)
+        (and
+          (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+          (and
+            (compiler-backend-float-arith-op? op)
+            (not (string-eq rhs-operand "")))))
+        (compiler-backend-emit-float-binop-direct
+          assignments
+          dst-home
+          op
+          lhs
+          rhs-operand
+          fty)
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          lhs
+          fty
+          "%xmm0")
+          [(OkCompilerBackend lhs-asm)
+            (match (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              rhs
+              fty
+              "%xmm1")
+              [(OkCompilerBackend rhs-asm)
+                (match (compiler-backend-float-binop-asm op fty)
+                  [(OkCompilerBackend op-asm)
+                    (OkCompilerBackend
+                      (str-cat
+                        lhs-asm
+                        rhs-asm
+                        op-asm
+                        (if (compiler-backend-float-type? ty)
+                          (compiler-backend-emit-store-float-var-with-plan
+                            assignments
+                            dst
+                            "%xmm0"
+                            ty)
+                          (compiler-backend-emit-store-var-with-plan
+                            assignments
+                            dst
+                            "%rax"))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]

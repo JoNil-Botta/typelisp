@@ -9817,6 +9817,57 @@
         (not (compiler-backend-string-contains? asm "    ucomisd")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-float-binop-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 ty)
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 ty)
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType 2 ty)
+          CompilerRegVarTypeNil)))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm2"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%xmm3"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 2 (CompilerRegRegister "%xmm4"))
+          CompilerRegAssignmentNil)))
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    ty))
+
+(define (compiler-backend-direct-float-arith-home-ok?) : bool
+  (match (compiler-backend-direct-float-binop-asm (IrBinAdd) (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-direct-float-binop-asm (IrBinAdd) (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains?
+                f64-asm
+                "    movsd %xmm2, %xmm4\n")
+              (compiler-backend-string-contains?
+                f64-asm
+                "    addsd %xmm3, %xmm4\n")
+              (compiler-backend-string-contains?
+                f32-asm
+                "    movss %xmm2, %xmm4\n")
+              (compiler-backend-string-contains?
+                f32-asm
+                "    addss %xmm3, %xmm4\n"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm1"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm1")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -12354,6 +12405,7 @@
         (compiler-backend-f64-ok?)
         (compiler-backend-f64-neg-sign-mask-ok?)
         (compiler-backend-f32-literal-binop-ok?)
+        (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-bitcast-shape-ok?))
       (compiler-backend-bool-control-flow-ok?)
       (and
